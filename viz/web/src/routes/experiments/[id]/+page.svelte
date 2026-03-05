@@ -1,0 +1,1260 @@
+<script lang="ts">
+	import {
+		api,
+		type ConfigListResponse,
+		type Ensemble,
+		type Experiment,
+		type ExperimentConfig,
+		type ExperimentRoundResult,
+		type ExperimentRun,
+		type HpoStudy,
+		type RunJob,
+		type RunJobEvent,
+		type RunJobListResponse,
+		type RunJobLog,
+		type RunJobSample,
+		type SystemCapabilities
+	} from '$lib/api/client';
+	import {
+		CANONICAL_METRIC_KEYS,
+		DASHBOARD_KEY_METRICS,
+		metricNumber,
+		targetLabel
+	} from '$lib/metrics/canonical';
+	import {
+		hostGpu,
+		hostRamAvailableGb,
+		latestSample as latestMonitorSample,
+		processCpu,
+		processRssGb,
+		sampleAverages as monitorSampleAverages,
+		sampleStatusMessage,
+		scopeLabel
+	} from '$lib/monitor/samples';
+	import { fmt, fmtGb, fmtPercent } from '$lib/utils';
+	import SharpeBarChart from '$lib/components/charts/SharpeBarChart.svelte';
+	import ParetoChart from '$lib/components/charts/ParetoChart.svelte';
+	import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
+	import RunDetailPanel from '$lib/components/ui/RunDetailPanel.svelte';
+	import HpoDetailPanel from '$lib/components/ui/HpoDetailPanel.svelte';
+	import EnsembleDetailPanel from '$lib/components/ui/EnsembleDetailPanel.svelte';
+
+	let {
+		data
+	}: {
+			data: {
+				experiment: Experiment;
+				runs: ExperimentRun[];
+				roundResults: ExperimentRoundResult[];
+				configs: ConfigListResponse;
+				runJobs: RunJobListResponse;
+				studies: HpoStudy[];
+				ensembles: Ensemble[];
+				capabilities: SystemCapabilities;
+			};
+		} = $props();
+
+	const ACTIVE_JOB_STATUSES = new Set(['queued', 'starting', 'running', 'canceling']);
+	const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'canceled', 'stale']);
+
+	let sortColumn = $state('corr20v2_sharpe');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
+	let chartTab = $state<'composite' | 'charts'>('composite');
+	let pageTab = $state<'analysis' | 'runops'>('analysis');
+	let launchSectionOpen = $state(true);
+	let queueSectionOpen = $state(true);
+	let monitorSectionOpen = $state(true);
+
+	type ParetoColorMode = 'default' | 'model' | 'target';
+	const PARETO_COLOR_MODES: ParetoColorMode[] = ['default', 'model', 'target'];
+	const PARETO_COLOR_MODE_LABELS: Record<ParetoColorMode, string> = {
+		default: 'Default',
+		model: 'Op',
+		target: 'Target'
+	};
+	let paretoColorMode = $state<ParetoColorMode>('default');
+
+	let configItems = $state<ExperimentConfig[]>([]);
+	let configTotal = $state<number>(0);
+	let configQuery = $state('');
+	let configsError = $state<string | null>(null);
+
+	let runJobs = $state<RunJob[]>([]);
+	let runJobsTotal = $state<number>(0);
+	let jobsBusy = $state(false);
+	let jobsError = $state<string | null>(null);
+
+	let selectedJobId = $state<string | null>(null);
+	let selectedJob = $state<RunJob | null>(null);
+
+	type OpType = 'run' | 'hpo' | 'ensemble';
+	let selectedOp = $state<{ id: string; type: OpType } | null>(null);
+	let payoutWeights = $state({ corr_weight: 0.75, mmc_weight: 2.25, clip: 0.05 });
+	let readOnly = $derived(Boolean(data.capabilities?.read_only));
+
+	let monitorTab = $state<'events' | 'logs' | 'resources'>('events');
+	let monitorLoading = $state(false);
+	let monitorError = $state<string | null>(null);
+	let streamState = $state<'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error'>('idle');
+	let streamError = $state<string | null>(null);
+
+	let jobEvents = $state<RunJobEvent[]>([]);
+	let jobLogs = $state<RunJobLog[]>([]);
+	let jobSamples = $state<RunJobSample[]>([]);
+	let eventCursor = $state(0);
+	let logCursor = $state(0);
+	let sampleCursor = $state(0);
+
+	let currentStream: EventSource | null = null;
+	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+	let monitorGeneration = 0;
+	let configsRefreshGeneration = 0;
+	let jobsRefreshGeneration = 0;
+
+	const CANONICAL_METRIC_KEY_SET = new Set<string>(CANONICAL_METRIC_KEYS);
+
+	let metricColumns = $derived.by(() => {
+		const keys = new Set<string>();
+		for (const run of data.runs) {
+			for (const key of Object.keys(run.metrics)) {
+				keys.add(key);
+			}
+		}
+		const ordered: string[] = [];
+		for (const key of DASHBOARD_KEY_METRICS) {
+			if (keys.has(key)) ordered.push(key);
+		}
+		const rest = [...keys]
+			.filter((k) => CANONICAL_METRIC_KEY_SET.has(k) && !ordered.includes(k))
+			.sort();
+		return [...ordered, ...rest];
+	});
+
+	interface Operation {
+		op_id: string;
+		op_type: OpType;
+		name: string;
+		model_type: string;
+		target: string;
+		feature_set: string;
+		metrics: Record<string, number>;
+		status: string | null;
+	}
+
+	let sortedOps = $derived.by(() => {
+		const ops: Operation[] = [];
+		for (const run of data.runs) {
+			ops.push({
+				op_id: run.run_id,
+				op_type: 'run',
+				name: run.run_name || run.run_id,
+				model_type: run.model_type ?? '-',
+				target: targetLabel(run),
+				feature_set: run.feature_set ?? '-',
+				metrics: run.metrics,
+				status: run.status
+			});
+		}
+		for (const study of data.studies) {
+			ops.push({
+				op_id: study.study_id,
+				op_type: 'hpo',
+				name: study.name || study.study_id,
+				model_type: study.mode ?? '-',
+				target: '-',
+				feature_set: '-',
+				metrics: study.best_value != null ? { best_value: study.best_value } : {},
+				status: study.status
+			});
+		}
+		for (const ens of data.ensembles) {
+			ops.push({
+				op_id: ens.ensemble_id,
+				op_type: 'ensemble',
+				name: ens.name || ens.ensemble_id,
+				model_type: ens.method ?? '-',
+				target: '-',
+				feature_set: '-',
+				metrics: ens.metrics ?? {},
+				status: ens.status
+			});
+		}
+		const dir = sortDirection === 'desc' ? 1 : -1;
+		return ops.sort((a, b) => {
+			const av = a.metrics[sortColumn] ?? -Infinity;
+			const bv = b.metrics[sortColumn] ?? -Infinity;
+			return (bv - av) * dir;
+		});
+	});
+
+	function opMetricValue(op: Operation, key: string): number | undefined {
+		return metricNumber(op.metrics, key) ?? undefined;
+	}
+
+	let payoutRuns = $derived.by(() => {
+		const runPoints = data.runs
+			.filter((r) => metricNumber(r.metrics, 'payout_estimate_mean') != null)
+			.map((r) => ({
+				run_id: r.run_id,
+				run_name: r.run_name ?? undefined,
+				composite: metricNumber(r.metrics, 'payout_estimate_mean') ?? 0,
+				is_champion: r.is_champion
+			}));
+
+		const roundPoints = data.roundResults
+			.filter((r) => metricNumber(r.metrics, 'payout_estimate_mean') != null)
+			.map((r) => ({
+				run_id: r.run_id,
+				run_name: r.name,
+				composite: metricNumber(r.metrics, 'payout_estimate_mean') ?? 0,
+				is_champion: false
+			}));
+
+		return [...runPoints, ...roundPoints];
+	});
+
+	let hpoBestRunIds = $derived(
+		new Set(data.studies.map((s) => s.best_run_id).filter(Boolean) as string[])
+	);
+
+	let configNameByRunId = $derived.by(() => {
+		const map = new Map<string, string>();
+		const sourceItems = configItems.length > 0 ? configItems : (data.configs.items ?? []);
+		for (const item of sourceItems) {
+			const runId = item.summary.run_id ?? null;
+			if (!runId) continue;
+			const label = fileName(item.relative_path || item.config_id);
+			if (!map.has(runId)) map.set(runId, label);
+		}
+		return map;
+	});
+
+	let paretoRuns = $derived.by(() => {
+		const runPoints = data.runs
+			.filter(
+				(r) =>
+					metricNumber(r.metrics, 'corr20v2_mean') != null &&
+					metricNumber(r.metrics, 'mmc_mean') != null
+			)
+				.map((r) => ({
+					run_id: r.run_id,
+					config_name:
+						configNameByRunId.get(r.run_id) ??
+						r.run_name ??
+						`${r.model_type ?? 'unknown'} · ${targetLabel(r)}`,
+					corr20v2_mean: metricNumber(r.metrics, 'corr20v2_mean') ?? 0,
+					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
+					model_type: r.model_type ?? 'unknown',
+				target: targetLabel(r),
+				entity_type: hpoBestRunIds.has(r.run_id) ? ('hpo_best' as const) : ('run' as const),
+				payout_estimate_mean: metricNumber(r.metrics, 'payout_estimate_mean'),
+				mmc_coverage_ratio_rows: metricNumber(r.metrics, 'mmc_coverage_ratio_rows'),
+				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
+				corr20v2_sharpe: metricNumber(r.metrics, 'corr20v2_sharpe'),
+				max_drawdown: metricNumber(r.metrics, 'max_drawdown')
+			}));
+		const roundPoints = data.roundResults
+			.filter(
+				(r) =>
+					metricNumber(r.metrics, 'corr20v2_mean') != null &&
+					metricNumber(r.metrics, 'mmc_mean') != null
+			)
+				.map((r) => ({
+					run_id: r.run_id,
+					config_name:
+						configNameByRunId.get(r.run_id) ??
+						r.name ??
+						`${r.model_type ?? 'derived'} · ${r.target ?? '-'}`,
+					corr20v2_mean: metricNumber(r.metrics, 'corr20v2_mean') ?? 0,
+					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
+					model_type: r.model_type ?? 'derived',
+				target: r.target ?? '-',
+				entity_type: 'run' as const,
+				payout_estimate_mean: metricNumber(r.metrics, 'payout_estimate_mean'),
+				mmc_coverage_ratio_rows: metricNumber(r.metrics, 'mmc_coverage_ratio_rows'),
+				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
+				corr20v2_sharpe: metricNumber(r.metrics, 'corr20v2_sharpe'),
+				max_drawdown: metricNumber(r.metrics, 'max_drawdown')
+			}));
+		const ensemblePoints = data.ensembles
+			.filter(
+				(e) =>
+					metricNumber(e.metrics, 'corr20v2_mean') != null &&
+					metricNumber(e.metrics, 'mmc_mean') != null
+			)
+				.map((e) => ({
+					run_id: e.ensemble_id,
+					config_name: e.name ?? 'ensemble',
+					corr20v2_mean: metricNumber(e.metrics, 'corr20v2_mean') ?? 0,
+					mmc_mean: metricNumber(e.metrics, 'mmc_mean') ?? 0,
+				model_type: e.method ?? 'ensemble',
+				target: 'ensemble',
+				entity_type: 'ensemble' as const,
+				payout_estimate_mean: metricNumber(e.metrics, 'payout_estimate_mean'),
+				mmc_coverage_ratio_rows: metricNumber(e.metrics, 'mmc_coverage_ratio_rows'),
+				bmc_mean: metricNumber(e.metrics, 'bmc_mean'),
+				corr20v2_sharpe: metricNumber(e.metrics, 'corr20v2_sharpe'),
+				max_drawdown: metricNumber(e.metrics, 'max_drawdown')
+			}));
+		return [...runPoints, ...roundPoints, ...ensemblePoints];
+	});
+
+	let filteredConfigs = $derived.by(() => {
+		const query = configQuery.trim().toLowerCase();
+		return configItems.filter((item) => {
+			if (!query) return true;
+			const haystack = [
+				item.relative_path,
+				item.summary.run_id ?? '',
+				item.summary.model_type ?? '',
+				item.summary.target ?? '',
+				item.summary.target_payout ?? '',
+				item.summary.feature_set ?? ''
+			]
+				.join(' ')
+				.toLowerCase();
+			return haystack.includes(query);
+		});
+	});
+
+	let latestStageEvent = $derived.by(() => {
+		for (let i = jobEvents.length - 1; i >= 0; i -= 1) {
+			if (jobEvents[i].event_type === 'stage_update') return jobEvents[i];
+		}
+		return null;
+	});
+
+	let latestMetricEvent = $derived.by(() => {
+		for (let i = jobEvents.length - 1; i >= 0; i -= 1) {
+			if (jobEvents[i].event_type === 'metric_update') return jobEvents[i];
+		}
+		return null;
+	});
+
+	let latestSample = $derived.by(() => {
+		return latestMonitorSample(jobSamples);
+	});
+
+	let sampleAverages = $derived.by(() => {
+		return monitorSampleAverages(jobSamples, 30);
+	});
+
+	let telemetryMessage = $derived.by(() => sampleStatusMessage(latestSample));
+
+	$effect(() => {
+		void api
+			.getNumeraiClassicCompat()
+			.then((compat) => {
+				payoutWeights = compat.payout;
+			})
+			.catch(() => {});
+	});
+
+	$effect(() => {
+		const loadedConfigs = data.configs.items ?? [];
+		const loadedJobs = data.runJobs.items ?? [];
+		const sortedLoadedJobs = sortedJobs(loadedJobs);
+		configItems = loadedConfigs;
+		configTotal = data.configs.total ?? loadedConfigs.length;
+		runJobs = sortedLoadedJobs;
+		runJobsTotal = data.runJobs.total ?? loadedJobs.length;
+		selectedJobId = pickInitialJob(sortedLoadedJobs);
+		selectedJob = selectedJobId
+			? sortedLoadedJobs.find((job) => job.job_id === selectedJobId) ?? null
+			: null;
+	});
+
+	$effect(() => {
+		const timer = setInterval(() => {
+			if (streamState === 'open') return;
+			void refreshRunJobs({ keepSelection: true });
+		}, 4000);
+		return () => clearInterval(timer);
+	});
+
+	$effect(() => {
+		const jobId = selectedJobId;
+		void activateMonitor(jobId);
+		return () => {
+			monitorGeneration += 1;
+			closeMonitorStream();
+		};
+	});
+
+	function jobSortKey(job: RunJob): number {
+		if (job.status === 'running' || job.status === 'starting') return 0;
+		if (job.status === 'canceling') return 1;
+		if (job.status === 'queued') return 2;
+		return 3; // terminal: completed, failed, canceled, stale
+	}
+
+	function sortedJobs(items: RunJob[]): RunJob[] {
+		return [...items].sort((a, b) => jobSortKey(a) - jobSortKey(b));
+	}
+
+	let activeJobs = $derived(runJobs.filter((j) => !TERMINAL_JOB_STATUSES.has(j.status)));
+	let terminalJobs = $derived(runJobs.filter((j) => TERMINAL_JOB_STATUSES.has(j.status)));
+
+	function pickInitialJob(items: RunJob[]): string | null {
+		const running = items.find((i) => i.status === 'running' || i.status === 'starting');
+		if (running) return running.job_id;
+		const queued = items.find((i) => i.status === 'queued');
+		if (queued) return queued.job_id;
+		return items.length > 0 ? items[0].job_id : null;
+	}
+
+	function toggleSort(col: string) {
+		if (sortColumn === col) {
+			sortDirection = sortDirection === 'desc' ? 'asc' : 'desc';
+		} else {
+			sortColumn = col;
+			sortDirection = 'desc';
+		}
+	}
+
+	function sortIndicator(col: string): string {
+		if (sortColumn !== col) return '';
+		return sortDirection === 'desc' ? ' ▼' : ' ▲';
+	}
+
+	function metricValue(run: ExperimentRun, key: string): number | undefined {
+		return metricNumber(run.metrics, key) ?? undefined;
+	}
+
+	function runJobStatusClass(status: string): string {
+		switch (status) {
+			case 'queued':
+				return 'bg-muted text-muted-foreground';
+			case 'starting':
+			case 'running':
+				return 'bg-positive/15 text-positive';
+			case 'canceling':
+				return 'bg-amber-500/20 text-amber-300';
+			case 'completed':
+				return 'bg-blue-500/20 text-blue-300';
+			case 'failed':
+				return 'bg-negative/20 text-negative';
+			case 'canceled':
+			case 'stale':
+				return 'bg-muted text-muted-foreground';
+			default:
+				return 'bg-muted text-muted-foreground';
+		}
+	}
+
+	function shortId(value: string | null | undefined, length = 8): string {
+		if (!value) return '-';
+		if (value.length <= length) return value;
+		return value.slice(0, length);
+	}
+
+	function fileName(value: string | null | undefined): string {
+		if (!value) return '-';
+		const parts = value.split('/').filter(Boolean);
+		return parts.length === 0 ? value : parts[parts.length - 1];
+	}
+
+	function fmtTime(value: string | null | undefined): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value;
+		return date.toLocaleTimeString();
+	}
+
+	function fmtDateTime(value: string | null | undefined): string {
+		if (!value) return '-';
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) return value;
+		return date.toLocaleString();
+	}
+
+	async function refreshConfigs() {
+		const generation = ++configsRefreshGeneration;
+		configsError = null;
+		try {
+			const result = await api.getExperimentConfigs(data.experiment.experiment_id, {
+				limit: 500,
+				offset: 0
+			});
+			if (generation !== configsRefreshGeneration) return;
+			configItems = result.items;
+			configTotal = result.total;
+		} catch (error) {
+			if (generation !== configsRefreshGeneration) return;
+			configsError = error instanceof Error ? error.message : 'Failed to refresh config catalog.';
+		}
+	}
+
+	async function refreshRunJobs({ keepSelection = true }: { keepSelection: boolean }) {
+		const generation = ++jobsRefreshGeneration;
+		jobsBusy = true;
+		jobsError = null;
+		try {
+			const result = await api.listRunJobs({
+				experiment_id: data.experiment.experiment_id,
+				limit: 200,
+				offset: 0
+			});
+			if (generation !== jobsRefreshGeneration) return;
+			runJobs = sortedJobs(result.items);
+			runJobsTotal = result.total;
+			if (!keepSelection || !selectedJobId || !runJobs.some((item) => item.job_id === selectedJobId)) {
+				selectedJobId = pickInitialJob(runJobs);
+			}
+				selectedJob = selectedJobId
+					? runJobs.find((item) => item.job_id === selectedJobId) ?? selectedJob
+					: null;
+		} catch (error) {
+			if (generation !== jobsRefreshGeneration) return;
+			jobsError = error instanceof Error ? error.message : 'Failed to refresh jobs.';
+		} finally {
+			if (generation !== jobsRefreshGeneration) return;
+			jobsBusy = false;
+		}
+	}
+
+	function closeMonitorStream() {
+		if (reconnectTimer) {
+			clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+		}
+		if (currentStream) {
+			currentStream.close();
+			currentStream = null;
+		}
+	}
+
+	function parseSseData<T>(value: MessageEvent): T | null {
+		try {
+			return JSON.parse(value.data) as T;
+		} catch {
+			return null;
+		}
+	}
+
+	function appendEvent(event: RunJobEvent) {
+		jobEvents = [...jobEvents, event].slice(-400);
+		eventCursor = Math.max(eventCursor, event.id);
+	}
+
+	function appendLog(log: RunJobLog) {
+		jobLogs = [...jobLogs, log].slice(-1200);
+		logCursor = Math.max(logCursor, log.id);
+	}
+
+	function appendSample(sample: RunJobSample) {
+		jobSamples = [...jobSamples, sample].slice(-600);
+		sampleCursor = Math.max(sampleCursor, sample.id);
+	}
+
+	function scheduleReconnect(jobId: string, generation: number) {
+		if (reconnectTimer) clearTimeout(reconnectTimer);
+		reconnectTimer = setTimeout(() => {
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+			startMonitorStream(jobId, generation);
+		}, 1500);
+	}
+
+	function startMonitorStream(jobId: string, generation: number) {
+		closeMonitorStream();
+		streamState = 'connecting';
+		streamError = null;
+		const url = api.runJobStreamUrl(jobId, {
+			after_event_id: eventCursor,
+			after_log_id: logCursor,
+			after_sample_id: sampleCursor
+		});
+		const stream = new EventSource(url);
+		currentStream = stream;
+
+		stream.onopen = () => {
+			if (generation !== monitorGeneration) return;
+			streamState = 'open';
+			streamError = null;
+		};
+
+		stream.addEventListener('job_event', (raw) => {
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+			const event = parseSseData<RunJobEvent>(raw as MessageEvent);
+			if (!event) return;
+			appendEvent(event);
+			if (event.event_type.startsWith('job_')) {
+				void refreshRunJobs({ keepSelection: true });
+			}
+			if (
+				event.event_type === 'job_completed' ||
+				event.event_type === 'job_failed' ||
+				event.event_type === 'job_canceled' ||
+				event.event_type === 'job_stale'
+			) {
+				streamState = 'closed';
+				closeMonitorStream();
+			}
+		});
+
+		stream.addEventListener('log_line', (raw) => {
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+			const item = parseSseData<RunJobLog>(raw as MessageEvent);
+			if (!item) return;
+			appendLog(item);
+		});
+
+		stream.addEventListener('resource_sample', (raw) => {
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+			const item = parseSseData<RunJobSample>(raw as MessageEvent);
+			if (!item) return;
+			appendSample(item);
+		});
+
+		stream.onerror = () => {
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+			if (currentStream === stream) {
+				stream.close();
+				currentStream = null;
+			}
+			if (streamState === 'closed') return;
+			const latest = runJobs.find((item) => item.job_id === jobId) ?? selectedJob;
+			if (latest && !TERMINAL_JOB_STATUSES.has(latest.status)) {
+				streamState = 'reconnecting';
+				streamError = 'Connection dropped. Reconnecting...';
+				scheduleReconnect(jobId, generation);
+			} else {
+				streamState = 'closed';
+			}
+		};
+	}
+
+	async function activateMonitor(jobId: string | null) {
+		monitorGeneration += 1;
+		const generation = monitorGeneration;
+		closeMonitorStream();
+		monitorError = null;
+		streamError = null;
+
+		if (!jobId) {
+			selectedJob = null;
+			jobEvents = [];
+			jobLogs = [];
+			jobSamples = [];
+			streamState = 'idle';
+			return;
+		}
+
+		monitorLoading = true;
+		try {
+			const [job, events, logs, samples] = await Promise.all([
+				api.getRunJob(jobId),
+				api.getRunJobEvents(jobId, { limit: 400 }),
+				api.getRunJobLogs(jobId, { limit: 1200, stream: 'all' }),
+				api.getRunJobSamples(jobId, { limit: 600 })
+			]);
+			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
+
+			selectedJob = job;
+			jobEvents = events;
+			jobLogs = logs;
+			jobSamples = samples;
+			eventCursor = events.length > 0 ? events[events.length - 1].id : 0;
+			logCursor = logs.length > 0 ? logs[logs.length - 1].id : 0;
+			sampleCursor = samples.length > 0 ? samples[samples.length - 1].id : 0;
+
+			if (!TERMINAL_JOB_STATUSES.has(job.status)) {
+				startMonitorStream(jobId, generation);
+			} else {
+				streamState = 'closed';
+			}
+		} catch (error) {
+			if (generation !== monitorGeneration) return;
+			monitorError = error instanceof Error ? error.message : 'Failed to load monitor data.';
+			streamState = 'error';
+		} finally {
+			if (generation === monitorGeneration) {
+				monitorLoading = false;
+			}
+		}
+	}
+
+	function selectJob(jobId: string) {
+		selectedJobId = jobId;
+	}
+
+	function prettyEventPayload(event: RunJobEvent): string {
+		const value = JSON.stringify(event.payload);
+		if (value.length <= 120) return value;
+		return `${value.slice(0, 120)}...`;
+	}
+
+	function jobTypeBadge(job: RunJob): string {
+		const jt = job.job_type;
+		if (jt === 'hpo') return 'HPO';
+		if (jt === 'ensemble') return 'Ens';
+		return '';
+	}
+
+</script>
+
+{#snippet opsTable()}
+	<div class="border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" aria-label="Operations table">
+		<div class="overflow-auto flex-1 min-h-0">
+			<table class="w-full text-sm">
+				<thead class="sticky top-0 z-10 bg-background">
+					<tr class="border-b border-border bg-muted/40 text-left">
+						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Op</th>
+						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Model</th>
+						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Target</th>
+						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Features</th>
+						{#each metricColumns as col (col)}
+							<th
+								scope="col"
+								class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none"
+								onclick={() => toggleSort(col)}
+							>{col}{sortIndicator(col)}</th>
+						{/each}
+					</tr>
+				</thead>
+				<tbody class="divide-y divide-border">
+					{#each sortedOps as op (op.op_id)}
+						<tr class="hover:bg-muted/30 transition-colors">
+							<td class="px-3 py-2.5">
+								<div class="flex items-center gap-1.5">
+									{#if op.op_type === 'hpo'}
+										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-violet-500/20 text-violet-300 shrink-0">HPO</span>
+									{:else if op.op_type === 'ensemble'}
+										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-amber-500/20 text-amber-300 shrink-0">Ens</span>
+									{:else}
+										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-blue-500/20 text-blue-300 shrink-0">Run</span>
+									{/if}
+									<button
+										type="button"
+										class="text-primary underline underline-offset-2 hover:text-primary/80 text-xs text-left truncate"
+										onclick={() => (selectedOp = { id: op.op_id, type: op.op_type })}
+									>{op.name}</button>
+								</div>
+								{#if op.op_type === 'run' && op.name !== op.op_id}
+									<p class="text-[10px] font-mono text-muted-foreground">{op.op_id}</p>
+								{/if}
+							</td>
+							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.model_type}</td>
+							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.target}</td>
+							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.feature_set}</td>
+							{#each metricColumns as col (col)}
+								<td class="px-3 py-2.5 text-right tabular-nums">{fmt(opMetricValue(op, col))}</td>
+							{/each}
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	</div>
+{/snippet}
+
+<div class="-mx-8 -mt-14 md:-mt-8 -mb-8 flex flex-col h-screen">
+	<div class="flex gap-0 border-b border-border flex-shrink-0 px-8">
+		{#each [['analysis', 'Analysis'], ['runops', 'Run Ops']] as [key, label] (key)}
+			<button
+				type="button"
+				class="px-4 py-3.5 text-sm font-medium transition-colors {pageTab === key
+					? 'border-b-2 border-primary text-foreground'
+					: 'text-muted-foreground hover:text-foreground'}"
+				onclick={() => (pageTab = key as 'analysis' | 'runops')}
+			>{label}</button>
+		{/each}
+	</div>
+
+	{#if pageTab === 'analysis'}
+		<div class="flex flex-1 min-h-0">
+				<MarkdownDoc
+					borderless
+					label="Experiment"
+					load={() => api.getExperimentDoc(data.experiment.experiment_id, 'EXPERIMENT.md')}
+					readOnly={readOnly}
+					readOnlyMessage=""
+				/>
+
+			<div class="flex-1 min-h-0 p-4" aria-label="Charts wrapper">
+			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
+				<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
+					<div class="flex gap-0">
+						{#each [['composite', 'Payout Map'], ['charts', 'Charts']] as [key, label] (key)}
+							<button
+								type="button"
+								class="px-3 py-2 text-xs font-medium transition-colors {chartTab === key
+									? 'border-b-2 border-primary text-foreground'
+									: 'text-muted-foreground hover:text-foreground'}"
+								onclick={() => (chartTab = key as 'composite' | 'charts')}
+							>{label}</button>
+						{/each}
+					</div>
+					<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
+						{#each PARETO_COLOR_MODES as mode (mode)}
+							<button
+								type="button"
+								class="px-2 py-0.5 transition-colors {paretoColorMode === mode
+									? 'bg-primary text-primary-foreground'
+									: 'bg-muted/40 text-muted-foreground hover:text-foreground'}"
+								onclick={() => (paretoColorMode = mode)}
+							>{PARETO_COLOR_MODE_LABELS[mode]}</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="flex-1 min-h-0 p-5">
+					{#if chartTab === 'composite'}
+						{#if paretoRuns.length > 0}
+							<ParetoChart
+								runs={paretoRuns}
+								colorMode={paretoColorMode}
+								showIsoLines={true}
+								corrWeight={payoutWeights.corr_weight}
+								mmcWeight={payoutWeights.mmc_weight}
+								class="h-full"
+							/>
+						{:else}
+							<div class="flex h-full items-center justify-center text-muted-foreground text-sm">No CORR/MMC data</div>
+						{/if}
+					{:else}
+						<div class="flex flex-col h-full min-h-0">
+							<h3 class="mb-3 text-xs uppercase tracking-wider text-muted-foreground font-medium flex-shrink-0">
+								Payout Estimate by Run
+							</h3>
+							{#if payoutRuns.length > 0}
+								<div class="flex-1 min-h-0 overflow-y-auto">
+									<SharpeBarChart runs={payoutRuns} championRunId={data.experiment.champion_run_id} />
+								</div>
+							{:else}
+								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
+									No payout estimate data available.
+								</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+			</div>
+		</div>
+
+	{:else}
+		<div class="flex gap-6 flex-1 min-h-0 px-6 py-4">
+			<div class="w-[420px] flex-shrink-0 flex flex-col border border-border rounded-lg overflow-hidden bg-background">
+				<section class="flex flex-col min-h-0 {launchSectionOpen ? 'flex-1' : 'flex-shrink-0'}">
+					<button
+						type="button"
+						class="flex-shrink-0 px-4 w-full flex items-center gap-2.5 py-2.5 bg-muted/40 hover:bg-muted/55 transition-colors cursor-pointer select-none text-left"
+						onclick={() => (launchSectionOpen = !launchSectionOpen)}
+						aria-label={launchSectionOpen ? 'Collapse configs section' : 'Expand configs section'}
+					>
+						<span class="h-1.5 w-1.5 rounded-full bg-emerald-400/80 flex-shrink-0"></span>
+						<h2 class="text-[15px] font-semibold tracking-tight">Configs</h2>
+						<svg class="ml-auto w-4 h-4 text-muted-foreground transition-transform {launchSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+					</button>
+
+					{#if launchSectionOpen}
+						<div class="flex-shrink-0 flex gap-2 px-4 pt-2.5">
+							<input
+								type="text"
+								class="flex-1 min-w-0 rounded-md border border-border/60 bg-background/60 px-3 py-1.5 text-[12px] placeholder:text-muted-foreground/80"
+								placeholder="Search configs"
+								bind:value={configQuery}
+							/>
+						</div>
+
+						<div class="flex-1 min-h-0 overflow-y-auto mx-4 my-2 rounded-md ring-1 ring-border/40 divide-y divide-border/40">
+							{#each filteredConfigs as item (item.config_id)}
+								<div
+									class="w-full flex items-start gap-2 px-2.5 py-1.5 text-left text-[11px] hover:bg-muted/20 border-l-2 border-transparent"
+								>
+									<div class="flex-1 min-w-0">
+										<div class="font-mono text-[10px] leading-tight truncate" title={item.relative_path}>
+											{fileName(item.relative_path)}
+										</div>
+										{#if item.summary.run_id}
+											<div class="mt-0.5 text-[10px] text-muted-foreground font-mono">{shortId(item.summary.run_id, 12)}</div>
+										{/if}
+									</div>
+									<div class="text-right shrink-0">
+										<div>{item.summary.model_type ?? '-'}</div>
+										<div class="text-muted-foreground text-[10px] truncate max-w-[120px]" title={item.summary.target_payout ?? item.summary.target ?? '-'}>
+											{item.summary.target_payout ?? item.summary.target ?? '-'}
+										</div>
+									</div>
+								</div>
+							{:else}
+								<div class="px-3 py-3 text-center text-muted-foreground text-[11px]">
+									No configs found.
+								</div>
+							{/each}
+						</div>
+
+						<div class="flex-shrink-0 px-4 pb-2.5 space-y-2">
+							<p class="text-[11px] text-muted-foreground">{filteredConfigs.length} visible / {configTotal} total</p>
+							{#if configsError}
+								<p class="text-xs text-negative">{configsError}</p>
+							{/if}
+						</div>
+					{/if}
+				</section>
+
+				<section class="flex flex-col min-h-0 {queueSectionOpen ? 'flex-1' : 'flex-shrink-0'}">
+					<button
+						type="button"
+						class="flex-shrink-0 px-4 w-full flex items-center gap-2.5 py-2.5 bg-muted/40 hover:bg-muted/55 transition-colors cursor-pointer select-none text-left"
+						onclick={() => (queueSectionOpen = !queueSectionOpen)}
+						aria-label={queueSectionOpen ? 'Collapse run queue section' : 'Expand run queue section'}
+					>
+						<span class="h-1.5 w-1.5 rounded-full bg-sky-400/80 flex-shrink-0"></span>
+						<h2 class="text-[15px] font-semibold tracking-tight">Run Queue</h2>
+						<span class="text-xs text-muted-foreground ml-auto">{activeJobs.length} active</span>
+						<svg class="w-4 h-4 text-muted-foreground transition-transform {queueSectionOpen ? '' : '-rotate-90'}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+					</button>
+
+					{#if queueSectionOpen}
+						<div class="flex-1 min-h-0 overflow-y-auto px-4 py-2.5 space-y-2.5">
+							<div class="rounded-md bg-background/30 ring-1 ring-border/40">
+								<table class="w-full text-[11px]">
+									<thead class="sticky top-0 z-10 bg-background">
+										<tr class="border-b border-border/60 bg-muted/10 text-left">
+											<th scope="col" class="px-2 py-1">Job</th>
+											<th scope="col" class="px-2 py-1">Status</th>
+											<th scope="col" class="px-2 py-1">Config</th>
+										</tr>
+									</thead>
+									<tbody class="divide-y divide-border/50">
+										{#each activeJobs as job (job.job_id)}
+											<tr
+												class="hover:bg-muted/20 cursor-pointer {selectedJobId === job.job_id ? 'bg-muted/30' : ''}"
+												onclick={() => selectJob(job.job_id)}
+											>
+												<td class="px-2 py-1 font-mono">
+													{shortId(job.job_id, 10)}
+													{#if jobTypeBadge(job)}
+														<span class="ml-1 inline-block rounded px-1 py-0 text-[9px] bg-violet-500/20 text-violet-300">{jobTypeBadge(job)}</span>
+													{/if}
+												</td>
+												<td class="px-2 py-1">
+													<span class="inline-block rounded px-1.5 py-0.5 text-[10px] uppercase {runJobStatusClass(job.status)}">
+														{job.status}
+													</span>
+													{#if job.queue_position != null}
+														<div class="mt-0.5 text-[10px] text-muted-foreground">q{job.queue_position}</div>
+													{/if}
+												</td>
+												<td class="px-2 py-1">
+													<div class="font-mono text-[10px] truncate max-w-[170px]" title={job.config_id}>
+														{fileName(job.config_id)}
+													</div>
+													{#if job.canonical_run_id}
+														<a
+															href="/experiments/{data.experiment.experiment_id}/runs/{job.canonical_run_id}"
+															class="text-primary underline underline-offset-2 text-[10px]"
+															onclick={(event) => event.stopPropagation()}
+															>run {shortId(job.canonical_run_id, 10)}</a>
+													{/if}
+												</td>
+											</tr>
+										{:else}
+											<tr>
+												<td colspan="3" class="px-3 py-3 text-center text-muted-foreground">No active jobs.</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+
+							{#if terminalJobs.length > 0}
+								<details class="pt-1">
+									<summary class="text-xs text-muted-foreground cursor-pointer hover:text-foreground select-none">
+										Job History ({terminalJobs.length})
+									</summary>
+									<div class="mt-2 max-h-44 overflow-auto rounded-md bg-background/30 ring-1 ring-border/40">
+										<table class="w-full text-[11px]">
+											<thead class="sticky top-0 z-10 bg-background">
+												<tr class="border-b border-border/60 bg-muted/10 text-left">
+													<th scope="col" class="px-2 py-1">Job</th>
+													<th scope="col" class="px-2 py-1">Status</th>
+													<th scope="col" class="px-2 py-1">Config</th>
+													<th scope="col" class="px-2 py-1">Finished</th>
+												</tr>
+											</thead>
+											<tbody class="divide-y divide-border/50">
+												{#each terminalJobs as job (job.job_id)}
+													<tr
+														class="hover:bg-muted/20 cursor-pointer {selectedJobId === job.job_id ? 'bg-muted/30' : ''}"
+														onclick={() => selectJob(job.job_id)}
+													>
+														<td class="px-2 py-1 font-mono">
+															{shortId(job.job_id, 10)}
+															{#if jobTypeBadge(job)}
+																<span class="ml-1 inline-block rounded px-1 py-0 text-[9px] bg-violet-500/20 text-violet-300">{jobTypeBadge(job)}</span>
+															{/if}
+														</td>
+														<td class="px-2 py-1">
+															<span class="inline-block rounded px-1.5 py-0.5 text-[10px] uppercase {runJobStatusClass(job.status)}">
+																{job.status}
+															</span>
+														</td>
+														<td class="px-2 py-1">
+															<div class="font-mono text-[10px] truncate max-w-[160px]" title={job.config_id}>
+																{fileName(job.config_id)}
+															</div>
+															{#if job.canonical_run_id}
+																<a
+																	href="/experiments/{data.experiment.experiment_id}/runs/{job.canonical_run_id}"
+																	class="text-primary underline underline-offset-2 text-[10px]"
+																	onclick={(event) => event.stopPropagation()}
+																	>run {shortId(job.canonical_run_id, 10)}</a>
+															{/if}
+														</td>
+														<td class="px-2 py-1 text-[10px] text-muted-foreground">{fmtTime(job.finished_at)}</td>
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									</div>
+								</details>
+							{/if}
+
+							{#if jobsError}
+								<p class="text-xs text-negative mt-2">{jobsError}</p>
+							{/if}
+						</div>
+					{/if}
+				</section>
+
+				<section class="flex flex-col min-h-0 {monitorSectionOpen ? 'flex-1' : 'flex-shrink-0'}">
+					<button
+						type="button"
+						class="flex-shrink-0 px-4 w-full flex items-center gap-2.5 py-2.5 bg-muted/40 hover:bg-muted/55 transition-colors cursor-pointer select-none text-left"
+						onclick={() => (monitorSectionOpen = !monitorSectionOpen)}
+						aria-label={monitorSectionOpen ? 'Collapse live monitor section' : 'Expand live monitor section'}
+					>
+						<span class="h-1.5 w-1.5 rounded-full bg-violet-400/80 flex-shrink-0"></span>
+						<h3 class="text-[15px] font-semibold tracking-tight whitespace-nowrap">Live Monitor</h3>
+						{#if selectedJob}
+							<div class="flex items-center gap-1.5 text-[10px] text-muted-foreground whitespace-nowrap shrink-0 ml-auto">
+								<span class="font-mono text-muted-foreground/90">{shortId(selectedJob.job_id, 12)}</span>
+								<span class="inline-block rounded px-1.5 py-0.5 uppercase {runJobStatusClass(selectedJob.status)}">
+									{selectedJob.status}
+								</span>
+							</div>
+						{/if}
+						<svg class="w-4 h-4 text-muted-foreground transition-transform {monitorSectionOpen ? '' : '-rotate-90'} {selectedJob ? '' : 'ml-auto'}" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/></svg>
+					</button>
+
+					{#if monitorSectionOpen}
+						<div class="flex-1 min-h-0 overflow-y-auto px-4 py-2.5 space-y-3">
+							{#if monitorLoading}
+								<p class="text-sm text-muted-foreground">Loading monitor...</p>
+							{:else if monitorError}
+								<p class="text-sm text-negative">{monitorError}</p>
+							{:else if !selectedJob}
+								<p class="text-sm text-muted-foreground">Select a queued or running job to monitor live progress.</p>
+							{:else}
+								{#if latestSample}
+									<p class="text-[11px] text-muted-foreground">
+										Telemetry scope: {scopeLabel(latestSample.scope)}
+									</p>
+								{/if}
+								{#if telemetryMessage}
+									<p class="text-xs text-amber-300">{telemetryMessage}</p>
+								{/if}
+								{#if TERMINAL_JOB_STATUSES.has(selectedJob.status) && selectedJob.status !== 'completed'}
+									<div class="rounded-md border border-negative/40 bg-negative/10 px-3 py-2.5">
+										<div class="flex items-center gap-2 mb-1.5">
+											<span class="inline-block rounded px-1.5 py-0.5 text-[10px] uppercase {runJobStatusClass(selectedJob.status)}">{selectedJob.status}</span>
+											<span class="text-xs font-medium text-negative">Job {shortId(selectedJob.job_id, 10)}</span>
+										</div>
+										{#if selectedJob.error?.message}
+											<p class="text-xs text-foreground">{selectedJob.error.message}</p>
+										{:else if selectedJob.exit_code == null && selectedJob.signal == null}
+											<p class="text-xs text-foreground">Process terminated unexpectedly (likely OOM kill)</p>
+										{:else}
+											<p class="text-xs text-foreground">
+												Exit code: {selectedJob.exit_code ?? 'unknown'}
+												{#if selectedJob.signal != null}, Signal: {selectedJob.signal}{/if}
+											</p>
+										{/if}
+									</div>
+								{/if}
+
+								<div class="grid grid-cols-2 gap-2 text-xs">
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">Current stage</div>
+										<div class="font-medium mt-1">{latestStageEvent?.payload.current_stage ?? '-'}</div>
+									</div>
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">Completed stages</div>
+										<div class="font-medium mt-1">
+											{Array.isArray(latestStageEvent?.payload.completed_stages)
+												? latestStageEvent?.payload.completed_stages.length
+												: '-'}
+										</div>
+									</div>
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">CPU (job tree)</div>
+										<div class="font-medium mt-1 tabular-nums">{fmtPercent(processCpu(latestSample))}</div>
+									</div>
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">RAM (job tree)</div>
+										<div class="font-medium mt-1 tabular-nums">{fmtGb(processRssGb(latestSample))}</div>
+									</div>
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">RAM free (host)</div>
+										<div class="font-medium mt-1 tabular-nums">{fmtGb(hostRamAvailableGb(latestSample))}</div>
+									</div>
+									<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+										<div class="text-muted-foreground uppercase">GPU (host)</div>
+										<div class="font-medium mt-1 tabular-nums">{fmtPercent(hostGpu(latestSample))}</div>
+									</div>
+								</div>
+
+								{#if latestMetricEvent}
+									<div class="text-xs text-muted-foreground">
+										Latest metrics:
+										<span class="ml-2 tabular-nums">corr20v2_sharpe {fmt((latestMetricEvent.payload.corr20v2_sharpe as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">corr20v2_mean {fmt((latestMetricEvent.payload.corr20v2_mean as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">mmc_mean {fmt((latestMetricEvent.payload.mmc_mean as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">payout_estimate_mean {fmt((latestMetricEvent.payload.payout_estimate_mean as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">bmc_mean {fmt((latestMetricEvent.payload.bmc_mean as number | undefined) ?? null)}</span>
+									</div>
+								{/if}
+
+								<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+									{#each ['events', 'logs', 'resources'] as tab (tab)}
+										<button
+											type="button"
+											class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {monitorTab === tab ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+											onclick={() => (monitorTab = tab as 'events' | 'logs' | 'resources')}
+										>{tab}</button>
+									{/each}
+								</div>
+
+								{#if monitorTab === 'events'}
+									<div class="max-h-56 overflow-auto space-y-1.5">
+										{#each [...jobEvents].reverse().slice(0, 50) as event (event.id)}
+											<div class="rounded-md border border-border/45 bg-background/25 px-2.5 py-1.5">
+												<div class="flex items-center justify-between gap-2">
+													<span class="font-medium text-xs">{event.event_type}</span>
+													<span class="text-[10px] text-muted-foreground">{fmtTime(event.created_at)}</span>
+												</div>
+												{#if Object.keys(event.payload).length > 0}
+													<p class="mt-1 text-[10px] text-muted-foreground font-mono break-all">{prettyEventPayload(event)}</p>
+												{/if}
+											</div>
+										{:else}
+											<p class="text-xs text-muted-foreground">No events yet.</p>
+										{/each}
+									</div>
+								{:else if monitorTab === 'logs'}
+									<div class="max-h-56 overflow-auto rounded-md border border-border/45 bg-background/25 p-2 font-mono text-[10px] leading-relaxed">
+										{#each jobLogs.slice(-300) as log (log.id)}
+											<div class="whitespace-pre-wrap break-all {log.stream === 'stderr' ? 'text-negative' : 'text-foreground'}">
+												<span class="text-muted-foreground">[{fmtTime(log.created_at)}]</span>
+												<span class="text-muted-foreground ml-1 uppercase">{log.stream}</span>
+												<span class="ml-2">{log.line}</span>
+											</div>
+										{:else}
+											<p class="text-xs text-muted-foreground">No logs yet.</p>
+										{/each}
+									</div>
+								{:else}
+									<div class="space-y-2.5">
+										<div class="grid grid-cols-2 gap-2 text-xs">
+											<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+												<div class="text-muted-foreground uppercase">CPU avg (job tree)</div>
+												<div class="font-medium tabular-nums mt-1">{fmtPercent(sampleAverages?.process_cpu_percent)}</div>
+											</div>
+											<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+												<div class="text-muted-foreground uppercase">RAM avg (job tree)</div>
+												<div class="font-medium tabular-nums mt-1">{fmtGb(sampleAverages?.process_rss_gb)}</div>
+											</div>
+											<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+												<div class="text-muted-foreground uppercase">RAM free (host)</div>
+												<div class="font-medium tabular-nums mt-1">{fmtGb(latestSample?.host_ram_available_gb ?? latestSample?.ram_available_gb)}</div>
+											</div>
+											<div class="rounded-md border border-border/45 bg-background/25 px-2 py-1.5">
+												<div class="text-muted-foreground uppercase">GPU avg (host)</div>
+												<div class="font-medium tabular-nums mt-1">{fmtPercent(sampleAverages?.host_gpu_percent)}</div>
+											</div>
+										</div>
+										<div class="max-h-44 overflow-auto rounded-md bg-background/30 ring-1 ring-border/40">
+											<table class="w-full text-xs">
+												<thead class="sticky top-0 z-10 bg-background">
+													<tr class="border-b border-border/60 bg-muted/10">
+														<th scope="col" class="text-left px-2 py-1 text-muted-foreground uppercase">Time</th>
+														<th scope="col" class="text-right px-2 py-1 text-muted-foreground uppercase">CPU (job tree)</th>
+														<th scope="col" class="text-right px-2 py-1 text-muted-foreground uppercase">RAM (job tree)</th>
+														<th scope="col" class="text-right px-2 py-1 text-muted-foreground uppercase">RAM free (host)</th>
+														<th scope="col" class="text-right px-2 py-1 text-muted-foreground uppercase">GPU (host)</th>
+													</tr>
+												</thead>
+												<tbody class="divide-y divide-border/50">
+													{#each [...jobSamples].reverse().slice(0, 25) as sample (sample.id)}
+														<tr>
+															<td class="px-2 py-1">{fmtTime(sample.created_at)}</td>
+															<td class="px-2 py-1 text-right tabular-nums">{fmtPercent(processCpu(sample))}</td>
+															<td class="px-2 py-1 text-right tabular-nums">{fmtGb(processRssGb(sample))}</td>
+															<td class="px-2 py-1 text-right tabular-nums">{fmtGb(hostRamAvailableGb(sample))}</td>
+															<td class="px-2 py-1 text-right tabular-nums">{fmtPercent(hostGpu(sample))}</td>
+														</tr>
+													{:else}
+														<tr>
+															<td colspan="5" class="px-3 py-4 text-center text-muted-foreground">No resource samples yet.</td>
+														</tr>
+													{/each}
+												</tbody>
+											</table>
+										</div>
+									</div>
+								{/if}
+								{#if streamError}
+									<p class="text-xs text-amber-300 mt-2">{streamError}</p>
+								{/if}
+							{/if}
+						</div>
+					{/if}
+				</section>
+
+				<div class="flex-shrink-0 flex justify-end px-4 py-2 border-t border-border">
+					<button
+						type="button"
+						class="px-2 py-1 rounded-md border border-border/60 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/20 transition-colors"
+						onclick={() => { void refreshConfigs(); void refreshRunJobs({ keepSelection: true }); }}
+						disabled={jobsBusy}
+					>Refresh</button>
+				</div>
+			</div>
+
+			<div class="flex-1 min-w-0 flex flex-col min-h-0">
+				{#if selectedOp?.type === 'run'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+						<RunDetailPanel
+							runId={selectedOp.id}
+							experimentId={data.experiment.experiment_id}
+							runs={data.runs}
+							readOnly={readOnly}
+							onClose={() => (selectedOp = null)}
+						/>
+					</div>
+				{:else if selectedOp?.type === 'hpo'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+					<HpoDetailPanel
+						studyId={selectedOp.id}
+						experimentId={data.experiment.experiment_id}
+						onClose={() => (selectedOp = null)}
+					/>
+					</div>
+				{:else if selectedOp?.type === 'ensemble'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+					<EnsembleDetailPanel
+						ensembleId={selectedOp.id}
+						experimentId={data.experiment.experiment_id}
+						onClose={() => (selectedOp = null)}
+					/>
+					</div>
+				{:else}
+					{@render opsTable()}
+				{/if}
+			</div>
+		</div>
+	{/if}
+</div>

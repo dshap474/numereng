@@ -1,0 +1,224 @@
+@import 'tailwindcss';
+
+@theme {
+	--color-background: oklch(0.145 0 0);
+	--color-foreground: oklch(0.94 0 0);
+	--color-card: oklch(0.18 0 0);
+	--color-card-foreground: oklch(0.94 0 0);
+	--color-popover: oklch(0.18 0 0);
+	--color-popover-foreground: oklch(0.94 0 0);
+	--color-primary: oklch(0.94 0 0);
+	--color-primary-foreground: oklch(0.145 0 0);
+	--color-secondary: oklch(0.22 0 0);
+	--color-secondary-foreground: oklch(0.94 0 0);
+	--color-muted: oklch(0.22 0 0);
+	--color-muted-foreground: oklch(0.55 0 0);
+	--color-accent: oklch(0.25 0 0);
+	--color-accent-foreground: oklch(0.94 0 0);
+	--color-destructive: oklch(0.577 0.245 27.325);
+	--color-destructive-foreground: oklch(0.577 0.245 27.325);
+	--color-border: oklch(0.26 0 0);
+	--color-input: oklch(0.26 0 0);
+	--color-ring: oklch(0.45 0 0);
+	--color-chart-1: oklch(0.646 0.222 41.116);
+	--color-chart-2: oklch(0.6 0.118 184.704);
+	--color-chart-3: oklch(0.398 0.07 227.392);
+	--color-chart-4: oklch(0.828 0.189 84.429);
+	--color-chart-5: oklch(0.769 0.188 70.08);
+	--color-chart-6: oklch(0.65 0.18 150);
+	--color-chart-7: oklch(0.58 0.2 310);
+	--color-chart-8: oklch(0.72 0.16 210);
+	--color-chart-9: oklch(0.7 0.2 25);
+	--color-chart-10: oklch(0.62 0.15 260);
+	--color-chart-11: oklch(0.75 0.17 120);
+	--color-chart-12: oklch(0.55 0.18 340);
+	--color-chart-13: oklch(0.68 0.14 195);
+	--color-chart-14: oklch(0.8 0.16 55);
+	--color-chart-15: oklch(0.6 0.16 280);
+	--color-chart-16: oklch(0.73 0.2 135);
+	--color-chart-17: oklch(0.62 0.22 10);
+	--color-chart-18: oklch(0.58 0.12 240);
+	--color-chart-19: oklch(0.78 0.15 95);
+	--color-chart-20: oklch(0.65 0.16 165);
+	--color-sidebar-background: oklch(0.19 0 0);
+	--color-sidebar-foreground: oklch(0.8 0 0);
+	--color-sidebar-primary: oklch(0.98 0 0);
+	--color-sidebar-primary-foreground: oklch(0.13 0 0);
+	--color-sidebar-accent: oklch(0.27 0 0);
+	--color-sidebar-accent-foreground: oklch(0.94 0 0);
+	--color-sidebar-border: oklch(0.34 0 0);
+	--color-sidebar-ring: oklch(0.45 0 0);
+	--radius-sm: 0.25rem;
+	--radius-md: 0.375rem;
+	--radius-lg: 0.5rem;
+	--radius-xl: 0.75rem;
+
+	--color-champion: oklch(0.795 0.184 86.047);
+	--color-positive: oklch(0.627 0.194 149.214);
+	--color-negative: oklch(0.577 0.245 27.325);
+
+	--color-chart-line: oklch(0.85 0 0);
+	--color-chart-area: oklch(0.85 0 0);
+	--color-chart-bar: oklch(0.75 0 0);
+	--color-chart-bar-champion: var(--color-champion);
+}
+
+/* View Transitions — smooth cross-page navigation */
+@view-transition {
+	navigation: auto;
+}
+
+@layer base {
+	* {
+		@apply border-border;
+		/* Use custom easing for all transitions instead of default ease */
+		transition-timing-function: var(--ease-out);
+	}
+	body {
+		@apply bg-background text-foreground;
+		font-family:
+			'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+			Roboto, 'Helvetica Neue', Arial, sans-serif;
+	}
+	:root {
+		--color-surface-100: oklch(0.18 0 0);
+		--color-surface-content: oklch(0.65 0 0);
+
+		/* Easing curves */
+		--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+		--ease-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+	}
+	:global(.lc-axis-label) {
+		stroke: oklch(0.18 0 0) !important;
+		fill: oklch(0.7 0 0) !important;
+	}
+	:global(.lc-axis-tick-label) {
+		stroke: oklch(0.18 0 0) !important;
+		fill: oklch(0.7 0 0) !important;
+	}
+
+	/* Focus indicators */
+	a:focus-visible,
+	button:focus-visible,
+	[tabindex]:focus-visible {
+		outline: 2px solid oklch(0.45 0 0);
+		outline-offset: 2px;
+		border-radius: 0.25rem;
+	}
+
+	/* Dark scrollbars */
+	* {
+		scrollbar-color: oklch(0.3 0 0) transparent;
+		scrollbar-width: thin;
+	}
+	*::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+	*::-webkit-scrollbar-track {
+		background: transparent;
+	}
+	*::-webkit-scrollbar-thumb {
+		background: oklch(0.3 0 0);
+		border-radius: 3px;
+	}
+	*::-webkit-scrollbar-thumb:hover {
+		background: oklch(0.4 0 0);
+	}
+
+	/* Markdown prose styling */
+	.prose-dark {
+		color: oklch(0.82 0 0);
+		line-height: 1.7;
+		/* Skip rendering for off-screen prose sections */
+		& > h2, & > h3, & > h4,
+		& > p, & > ul, & > ol,
+		& > pre, & > blockquote, & > table {
+			content-visibility: auto;
+			contain-intrinsic-size: auto 2em;
+		}
+		& > pre, & > table {
+			contain-intrinsic-size: auto 6em;
+		}
+	}
+	.prose-dark h1,
+	.prose-dark h2,
+	.prose-dark h3,
+	.prose-dark h4 {
+		color: oklch(0.94 0 0);
+		font-weight: 600;
+		margin-top: 1.5em;
+		margin-bottom: 0.5em;
+	}
+	.prose-dark > :first-child { margin-top: 0; }
+	.prose-dark h1 { font-size: 1.5rem; }
+	.prose-dark h2 { font-size: 1.25rem; }
+	.prose-dark h3 { font-size: 1.1rem; }
+	.prose-dark p { margin-bottom: 0.75em; }
+	.prose-dark ul,
+	.prose-dark ol {
+		padding-left: 1.5em;
+		margin-bottom: 0.75em;
+	}
+	.prose-dark li { margin-bottom: 0.25em; }
+	.prose-dark ul { list-style-type: disc; }
+	.prose-dark ol { list-style-type: decimal; }
+	.prose-dark code {
+		background: oklch(0.22 0 0);
+		padding: 0.15em 0.35em;
+		border-radius: 0.25rem;
+		font-size: 0.875em;
+	}
+	.prose-dark pre {
+		background: oklch(0.16 0 0);
+		border: 1px solid oklch(0.26 0 0);
+		border-radius: 0.5rem;
+		padding: 1em;
+		overflow-x: auto;
+		margin-bottom: 1em;
+	}
+	.prose-dark pre code {
+		background: transparent;
+		padding: 0;
+	}
+	.prose-dark blockquote {
+		border-left: 3px solid oklch(0.35 0 0);
+		padding-left: 1em;
+		color: oklch(0.65 0 0);
+		margin-bottom: 0.75em;
+	}
+	.prose-dark a {
+		color: oklch(0.7 0.15 250);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.prose-dark table {
+		width: 100%;
+		border-collapse: collapse;
+		margin-bottom: 1em;
+	}
+	.prose-dark th,
+	.prose-dark td {
+		border: 1px solid oklch(0.26 0 0);
+		padding: 0.4em 0.75em;
+		text-align: left;
+	}
+	.prose-dark th {
+		background: oklch(0.2 0 0);
+		font-weight: 600;
+	}
+	.prose-dark hr {
+		border-color: oklch(0.26 0 0);
+		margin: 1.5em 0;
+	}
+
+	/* Reduced motion — disable animations for users who prefer it */
+	@media (prefers-reduced-motion: reduce) {
+		*, *::before, *::after {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
+	}
+}

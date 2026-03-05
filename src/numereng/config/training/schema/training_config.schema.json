@@ -1,0 +1,610 @@
+{
+  "$defs": {
+    "DataConfig": {
+      "additionalProperties": false,
+      "description": "Data loading and target-selection settings.",
+      "properties": {
+        "baselines_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baselines Dir"
+        },
+        "benchmark_data_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark Data Path"
+        },
+        "benchmark_model": {
+          "default": "v52_lgbm_ender20",
+          "title": "Benchmark Model",
+          "type": "string"
+        },
+        "data_version": {
+          "default": "v5.2",
+          "title": "Data Version",
+          "type": "string"
+        },
+        "dataset_scope": {
+          "default": "train_only",
+          "enum": [
+            "train_only",
+            "train_plus_validation"
+          ],
+          "title": "Dataset Scope",
+          "type": "string"
+        },
+        "dataset_variant": {
+          "enum": [
+            "non_downsampled",
+            "downsampled"
+          ],
+          "title": "Dataset Variant",
+          "type": "string"
+        },
+        "embargo_eras": {
+          "default": 13,
+          "minimum": 0,
+          "title": "Embargo Eras",
+          "type": "integer"
+        },
+        "era_col": {
+          "default": "era",
+          "title": "Era Col",
+          "type": "string"
+        },
+        "feature_set": {
+          "default": "small",
+          "title": "Feature Set",
+          "type": "string"
+        },
+        "full_data_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Full Data Path"
+        },
+        "id_col": {
+          "default": "id",
+          "title": "Id Col",
+          "type": "string"
+        },
+        "loading": {
+          "$ref": "#/$defs/DataLoadingConfig"
+        },
+        "meta_model_col": {
+          "default": "numerai_meta_model",
+          "title": "Meta Model Col",
+          "type": "string"
+        },
+        "meta_model_data_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta Model Data Path"
+        },
+        "target_col": {
+          "default": "target",
+          "title": "Target Col",
+          "type": "string"
+        },
+        "target_horizon": {
+          "anyOf": [
+            {
+              "enum": [
+                "20d",
+                "60d"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Horizon"
+        }
+      },
+      "required": [
+        "dataset_variant"
+      ],
+      "title": "DataConfig",
+      "type": "object"
+    },
+    "DataLoadingConfig": {
+      "additionalProperties": false,
+      "description": "Runtime loading/scoring controls for training and metrics.",
+      "properties": {
+        "era_chunk_size": {
+          "default": 64,
+          "minimum": 1,
+          "title": "Era Chunk Size",
+          "type": "integer"
+        },
+        "mode": {
+          "default": "materialized",
+          "enum": [
+            "materialized",
+            "fold_lazy"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "scoring_mode": {
+          "default": "materialized",
+          "enum": [
+            "materialized",
+            "era_stream"
+          ],
+          "title": "Scoring Mode",
+          "type": "string"
+        }
+      },
+      "title": "DataLoadingConfig",
+      "type": "object"
+    },
+    "ModelBaselineConfig": {
+      "additionalProperties": false,
+      "description": "Optional baseline prediction source used as an input feature.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "pred_col": {
+          "default": "prediction",
+          "title": "Pred Col",
+          "type": "string"
+        },
+        "predictions_path": {
+          "title": "Predictions Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "predictions_path"
+      ],
+      "title": "ModelBaselineConfig",
+      "type": "object"
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "description": "Model identity, hyperparameters, and optional feature options.",
+      "properties": {
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelBaselineConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "benchmark": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Benchmark"
+        },
+        "data_needed": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Needed"
+        },
+        "era_weighting": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Era Weighting"
+        },
+        "module_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Module Path"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        },
+        "prediction_batch_size": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prediction Batch Size"
+        },
+        "prediction_transform": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prediction Transform"
+        },
+        "target_transform": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Transform"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "x_groups": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X Groups"
+        }
+      },
+      "required": [
+        "type",
+        "params"
+      ],
+      "title": "ModelConfig",
+      "type": "object"
+    },
+    "OutputConfig": {
+      "additionalProperties": false,
+      "description": "Optional output path and artifact naming overrides.",
+      "properties": {
+        "baselines_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baselines Dir"
+        },
+        "output_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Dir"
+        },
+        "predictions_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predictions Name"
+        },
+        "results_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Results Name"
+        }
+      },
+      "title": "OutputConfig",
+      "type": "object"
+    },
+    "PreprocessingConfig": {
+      "additionalProperties": false,
+      "description": "Preprocessing settings applied before model fitting.",
+      "properties": {
+        "missing_value": {
+          "default": 2.0,
+          "title": "Missing Value",
+          "type": "number"
+        },
+        "nan_missing_all_twos": {
+          "default": false,
+          "title": "Nan Missing All Twos",
+          "type": "boolean"
+        }
+      },
+      "title": "PreprocessingConfig",
+      "type": "object"
+    },
+    "TrainingCacheConfig": {
+      "additionalProperties": false,
+      "description": "Deterministic cache controls for fold/runtime artifacts.",
+      "properties": {
+        "cache_features": {
+          "default": true,
+          "title": "Cache Features",
+          "type": "boolean"
+        },
+        "cache_fold_matrices": {
+          "default": false,
+          "title": "Cache Fold Matrices",
+          "type": "boolean"
+        },
+        "cache_fold_specs": {
+          "default": true,
+          "title": "Cache Fold Specs",
+          "type": "boolean"
+        },
+        "cache_labels": {
+          "default": true,
+          "title": "Cache Labels",
+          "type": "boolean"
+        },
+        "mode": {
+          "const": "deterministic",
+          "default": "deterministic",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "TrainingCacheConfig",
+      "type": "object"
+    },
+    "TrainingEngineConfig": {
+      "additionalProperties": false,
+      "description": "Training profile settings.",
+      "properties": {
+        "embargo_eras": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embargo Eras"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "official",
+                "custom",
+                "full_history"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mode"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "enum": [
+                "simple",
+                "purged_walk_forward",
+                "submission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profile"
+        },
+        "window_size_eras": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window Size Eras"
+        }
+      },
+      "title": "TrainingEngineConfig",
+      "type": "object"
+    },
+    "TrainingResourcesConfig": {
+      "additionalProperties": false,
+      "description": "Parallelism and memory controls for fold execution.",
+      "properties": {
+        "max_threads_per_worker": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "const": "default",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "default",
+          "title": "Max Threads Per Worker"
+        },
+        "memmap_enabled": {
+          "default": true,
+          "title": "Memmap Enabled",
+          "type": "boolean"
+        },
+        "parallel_backend": {
+          "const": "joblib",
+          "default": "joblib",
+          "title": "Parallel Backend",
+          "type": "string"
+        },
+        "parallel_folds": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Parallel Folds",
+          "type": "integer"
+        },
+        "sklearn_working_memory_mib": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sklearn Working Memory Mib"
+        }
+      },
+      "title": "TrainingResourcesConfig",
+      "type": "object"
+    },
+    "TrainingSectionConfig": {
+      "additionalProperties": false,
+      "description": "Training controls for engine behavior and execution policy.",
+      "properties": {
+        "cache": {
+          "$ref": "#/$defs/TrainingCacheConfig"
+        },
+        "engine": {
+          "$ref": "#/$defs/TrainingEngineConfig"
+        },
+        "resources": {
+          "$ref": "#/$defs/TrainingResourcesConfig"
+        }
+      },
+      "title": "TrainingSectionConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical top-level training config contract.",
+  "properties": {
+    "data": {
+      "$ref": "#/$defs/DataConfig"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelConfig"
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig"
+    },
+    "preprocessing": {
+      "$ref": "#/$defs/PreprocessingConfig"
+    },
+    "training": {
+      "$ref": "#/$defs/TrainingSectionConfig"
+    }
+  },
+  "required": [
+    "data",
+    "model",
+    "training"
+  ],
+  "title": "TrainingConfig",
+  "type": "object"
+}

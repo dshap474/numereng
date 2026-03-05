@@ -1,0 +1,74 @@
+"""Contracts for experiment lifecycle feature workflows."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+ExperimentStatus = Literal["draft", "active", "complete", "archived"]
+
+
+@dataclass(frozen=True)
+class ExperimentRecord:
+    """Canonical experiment record loaded from manifest storage."""
+
+    experiment_id: str
+    name: str
+    status: ExperimentStatus
+    hypothesis: str | None
+    tags: tuple[str, ...]
+    created_at: str
+    updated_at: str
+    champion_run_id: str | None
+    runs: tuple[str, ...]
+    metadata: dict[str, Any]
+    manifest_path: Path
+
+
+@dataclass(frozen=True)
+class ExperimentTrainResult:
+    """Result payload for training an experiment run."""
+
+    experiment_id: str
+    run_id: str
+    predictions_path: Path
+    results_path: Path
+
+
+@dataclass(frozen=True)
+class ExperimentPromotionResult:
+    """Result payload for champion promotion."""
+
+    experiment_id: str
+    champion_run_id: str
+    metric: str
+    metric_value: float | None
+    auto_selected: bool
+
+
+@dataclass(frozen=True)
+class ExperimentReportRow:
+    """One ranked run row in an experiment report."""
+
+    run_id: str
+    status: str | None
+    created_at: str | None
+    metric_value: float | None
+    corr_mean: float | None
+    mmc_mean: float | None
+    cwmm_mean: float | None
+    bmc_mean: float | None
+    bmc_last_200_eras_mean: float | None
+    is_champion: bool
+
+
+@dataclass(frozen=True)
+class ExperimentReport:
+    """Ranked report payload for one experiment."""
+
+    experiment_id: str
+    metric: str
+    total_runs: int
+    champion_run_id: str | None
+    rows: tuple[ExperimentReportRow, ...]
