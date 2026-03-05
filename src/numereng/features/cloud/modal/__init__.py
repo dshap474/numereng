@@ -1,0 +1,46 @@
+"""Public surface for Modal cloud lifecycle services."""
+
+from numereng.features.cloud.modal.contracts import (
+    CloudModalResponse,
+    CloudModalState,
+    ModalCallStatus,
+    ModalDataSyncFile,
+    ModalDataSyncRequest,
+    ModalDataSyncResult,
+    ModalDeployRequest,
+    ModalDeployResult,
+    ModalRuntimePayload,
+    ModalRuntimeResult,
+    ModalTrainCancelRequest,
+    ModalTrainingEngineMode,
+    ModalTrainingProfile,
+    ModalTrainLogsRequest,
+    ModalTrainPullRequest,
+    ModalTrainStatusRequest,
+    ModalTrainSubmitRequest,
+    parse_ecr_image_uri,
+)
+from numereng.features.cloud.modal.service import CloudModalError, CloudModalService
+
+__all__ = [
+    "CloudModalError",
+    "CloudModalResponse",
+    "CloudModalService",
+    "CloudModalState",
+    "ModalCallStatus",
+    "ModalDataSyncFile",
+    "ModalDataSyncRequest",
+    "ModalDataSyncResult",
+    "ModalDeployRequest",
+    "ModalDeployResult",
+    "ModalRuntimePayload",
+    "ModalRuntimeResult",
+    "parse_ecr_image_uri",
+    "ModalTrainCancelRequest",
+    "ModalTrainLogsRequest",
+    "ModalTrainPullRequest",
+    "ModalTrainStatusRequest",
+    "ModalTrainSubmitRequest",
+    "ModalTrainingEngineMode",
+    "ModalTrainingProfile",
+]

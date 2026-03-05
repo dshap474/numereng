@@ -1,0 +1,41 @@
+{
+  "study_name": "example-lgbm-hpo",
+  "config_path": ".numereng/experiments/2026-02-22_example/configs/base.json",
+  "experiment_id": "2026-02-22_example",
+  "metric": "bmc_last_200_eras.mean",
+  "direction": "maximize",
+  "n_trials": 25,
+  "sampler": "tpe",
+  "seed": 1337,
+  "search_space": {
+    "model.params.learning_rate": {
+      "type": "float",
+      "low": 0.001,
+      "high": 0.1,
+      "log": true
+    },
+    "model.params.num_leaves": {
+      "type": "int",
+      "low": 16,
+      "high": 256,
+      "step": 8
+    },
+    "model.params.feature_fraction": {
+      "type": "float",
+      "low": 0.5,
+      "high": 1.0
+    },
+    "model.params.boosting_type": {
+      "type": "categorical",
+      "choices": ["gbdt", "dart"]
+    }
+  },
+  "neutralization": {
+    "enabled": false,
+    "neutralizer_path": null,
+    "proportion": 0.5,
+    "mode": "era",
+    "neutralizer_cols": null,
+    "rank_output": true
+  }
+}

@@ -1,0 +1,4 @@
+run_id,rank,weight,source,selection_metric,selection_note,diversity_axis,expected_complementarity,include_in_final
+run-1,0,0.50,seed_average,corr20v2_sharpe,base tree,architecture,high,true
+run-2,1,0.30,seed_average,corr20v2_sharpe,diversifier,feature_scope,medium,true
+run-3,2,0.20,single_run,corr20v2_sharpe,stability model,target_variant,medium,true

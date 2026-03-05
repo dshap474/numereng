@@ -1,0 +1,20 @@
+# Deny by default inside this directory.
+# Only explicitly allowlisted skills are tracked.
+*
+
+# Keep this policy file tracked.
+!.gitignore
+
+# Shared OSS skills.
+!experiment-design/
+!experiment-design/**
+!numerai-model-implementation/
+!numerai-model-implementation/**
+!numerai-model-upload/
+!numerai-model-upload/**
+!store-ops/
+!store-ops/**
+
+# Keep Python cache artifacts in allowlisted skills local-only.
+store-ops/**/__pycache__/
+store-ops/**/*.py[cod]

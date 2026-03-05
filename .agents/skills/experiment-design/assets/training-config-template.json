@@ -1,0 +1,40 @@
+{
+  "data": {
+    "data_version": "v5.2",
+    "dataset_variant": "downsampled",
+    "feature_set": "small",
+    "target_col": "target_ender_20",
+    "era_col": "era",
+    "id_col": "id",
+    "benchmark_model": "v52_lgbm_ender20",
+    "meta_model_col": "numerai_meta_model"
+  },
+  "preprocessing": {
+    "nan_missing_all_twos": false,
+    "missing_value": 2.0
+  },
+  "model": {
+    "type": "LGBMRegressor",
+    "params": {
+      "n_estimators": 200,
+      "learning_rate": 0.03,
+      "num_leaves": 64,
+      "min_child_samples": 50,
+      "subsample": 0.8,
+      "colsample_bytree": 0.2,
+      "random_state": 42
+    },
+    "x_groups": [
+      "features",
+      "era"
+    ]
+  },
+  "training": {
+    "engine": {
+      "profile": "purged_walk_forward"
+    }
+  },
+  "output": {
+    "predictions_name": "val_predictions_scout"
+  }
+}

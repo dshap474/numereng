@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "HpoNeutralizationConfig": {
+      "additionalProperties": false,
+      "description": "Prediction-stage neutralization controls for HPO trials.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mode": {
+          "default": "era",
+          "enum": [
+            "era",
+            "global"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "neutralizer_cols": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutralizer Cols"
+        },
+        "neutralizer_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Neutralizer Path"
+        },
+        "proportion": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Proportion",
+          "type": "number"
+        },
+        "rank_output": {
+          "default": true,
+          "title": "Rank Output",
+          "type": "boolean"
+        }
+      },
+      "title": "HpoNeutralizationConfig",
+      "type": "object"
+    },
+    "HpoSearchSpaceSpec": {
+      "additionalProperties": false,
+      "description": "Typed spec for one search-space parameter path.",
+      "properties": {
+        "choices": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Choices"
+        },
+        "high": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "High"
+        },
+        "log": {
+          "default": false,
+          "title": "Log",
+          "type": "boolean"
+        },
+        "low": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Low"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "type": {
+          "enum": [
+            "float",
+            "int",
+            "categorical"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "HpoSearchSpaceSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical HPO study config contract.",
+  "properties": {
+    "config_path": {
+      "title": "Config Path",
+      "type": "string"
+    },
+    "direction": {
+      "default": "maximize",
+      "enum": [
+        "maximize",
+        "minimize"
+      ],
+      "title": "Direction",
+      "type": "string"
+    },
+    "experiment_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Experiment Id"
+    },
+    "metric": {
+      "default": "bmc_last_200_eras.mean",
+      "title": "Metric",
+      "type": "string"
+    },
+    "n_trials": {
+      "default": 100,
+      "minimum": 1,
+      "title": "N Trials",
+      "type": "integer"
+    },
+    "neutralization": {
+      "$ref": "#/$defs/HpoNeutralizationConfig"
+    },
+    "sampler": {
+      "default": "tpe",
+      "enum": [
+        "tpe",
+        "random"
+      ],
+      "title": "Sampler",
+      "type": "string"
+    },
+    "search_space": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/HpoSearchSpaceSpec"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Search Space"
+    },
+    "seed": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 1337,
+      "title": "Seed"
+    },
+    "study_name": {
+      "title": "Study Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "study_name",
+    "config_path"
+  ],
+  "title": "HpoStudyConfig",
+  "type": "object"
+}

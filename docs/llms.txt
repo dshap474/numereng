@@ -1,0 +1,192 @@
+Project: numereng
+Status: stable CLI/API boundaries; feature-slice internals
+
+Purpose:
+- Numerai workflow package (train, submit, experiments, HPO, ensemble, neutralize, store, cloud, viz monitoring).
+- Public surfaces: CLI (`numereng`) and Python facade (`import numereng.api`).
+
+Read order:
+1) docs/llms.txt
+2) docs/ARCHITECTURE.md
+3) README.md
+
+Hard rules:
+- Dependency direction is strict: `config -> platform -> features -> api -> cli`.
+- `platform/*` must not import `features/*`.
+- CLI remains thin; business logic stays in `features/*` behind `api/*`.
+- Public surface folders: `src/numereng/api/`, `src/numereng/cli/`.
+- API/CLI source files must stay <= 500 LOC.
+
+Boundary contracts:
+- CLI entrypoint: `numereng = "numereng.cli:main"`.
+- Python facade: `import numereng.api as api_module`.
+- Stable typed contracts: `src/numereng/api/contracts.py`.
+- Boundary error: `numereng.platform.errors.PackageError`.
+- CLI exit codes: `0` success/help, `1` runtime/boundary, `2` parse/usage.
+
+Source map:
+- `src/numereng/config/training/*`: strict JSON training contracts + loader.
+- `src/numereng/config/hpo/*`: strict JSON HPO contracts + loader.
+- `src/numereng/platform/*`: boundary errors + Numerai adapter + forum scraper tooling.
+- `src/numereng/features/training/*`: deterministic run orchestration + artifacts.
+- `src/numereng/features/training/scoring/*`: modular post-training scoring service + metric engines.
+- `src/numereng/features/submission/*`: run/file prediction resolution + upload.
+- `src/numereng/features/feature_neutralization/*`: prediction neutralization.
+- `src/numereng/features/experiments/*`: experiment manifests + train linkage + promote/report.
+- `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
+- `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
+- `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
+- `src/numereng/features/telemetry/*`: local run telemetry write path.
+- `src/numereng/features/dataset-tools/*`: local dataset downsampling utilities (official-style full/downsampled builders).
+- `src/numereng/features/cloud/aws/*`: EC2 + managed AWS train/image/state.
+- `src/numereng/features/cloud/modal/*`: Modal deploy/data/train/state.
+- `src/numereng/features/viz/*`: read-only API over store filesystem/sqlite.
+- `src/numereng/api/*`: typed boundary wrappers.
+- `src/numereng/cli/*`: parsing/dispatch/help.
+
+Default store layout (`.numereng`):
+- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `logs`, `notes`.
+- Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
+- Dynamic roots may appear: `hpo/`, `ensembles/`.
+
+Key artifacts:
+- `runs/<run_id>/run.json`
+- `runs/<run_id>/run.log`
+- `runs/<run_id>/resolved.json`
+- `runs/<run_id>/results.json`
+- `runs/<run_id>/metrics.json`
+- `runs/<run_id>/score_provenance.json`
+- `runs/<run_id>/artifacts/predictions/*.parquet`
+- `experiments/<experiment_id>/experiment.json`
+- `experiments/<experiment_id>/EXPERIMENT.md`
+- `experiments/<experiment_id>/configs/*.json`
+
+Wiring map:
+- Bootstrap:
+  `numereng [--fail] -> cli.main -> api.run_bootstrap_check`
+- Train:
+  `cli run train -> bind cli metadata -> api.run_training -> features.training.run_training`
+- Experiment train:
+  `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
+- Submit:
+  `cli run submit -> api.submit_predictions -> features.submission`
+- HPO:
+  `cli hpo create -> api.hpo_create -> features.hpo.create_study -> per-trial run_training + index_run`
+- Ensemble:
+  `cli ensemble build -> api.ensemble_build -> features.ensemble.build_ensemble`
+- Neutralize:
+  `cli neutralize apply -> api.neutralize_apply -> features.feature_neutralization`
+- Store:
+  `cli store * -> api.store_* -> features.store`
+- Dataset tooling command:
+  `uv run numereng dataset-tools build-full-datasets --data-version v5.2`
+- Cloud AWS:
+  `cli cloud aws * -> api.cloud_aws_* -> features.cloud.aws.*`
+- Cloud Modal:
+  `cli cloud modal * -> api.cloud_modal_* -> features.cloud.modal.*`
+- Numerai forum scrape:
+  `cli numerai forum scrape -> api.scrape_numerai_forum -> platform.scrape_forum_posts`
+  (writes `posts/YYYY/MM/*.md` plus `INDEX.md` files at archive/year/month levels).
+  Viz docs API surfaces a "Forum Archive" section in `/api/docs/numerai/tree` with year -> month nodes.
+- Viz backend:
+  `/api/* -> features.viz.routes/services/store_adapter`
+
+Telemetry launch-source precedence:
+- Source binding is context-based via `bind_launch_metadata(...)` / `get_launch_metadata()`.
+- CLI run binds `cli.run.train`; CLI experiment train binds `cli.experiment.train`.
+- API defaults bind only when unbound (`api.run.train`, `api.experiment.train`).
+- HPO fallback default source for trials: `api.hpo.create` (only when unbound).
+- Modal runtime fallback default source: `cloud.modal.runtime` (only when unbound).
+
+Local run telemetry write path:
+- `features.training.run_training` reads launch metadata.
+- If present, training opens a telemetry session (`begin_local_training_session`) and writes:
+  - `run_jobs`
+  - `run_attempts`
+  - `logical_runs`
+  - `run_job_events`
+  - `run_job_logs`
+  - `run_job_samples`
+- Status lifecycle: `queued -> starting -> running -> completed|failed`.
+- Telemetry is fail-open: telemetry failures must not fail training.
+
+Experiment scoping behavior:
+- Preferred: pass `experiment_id` explicitly (`run train --experiment-id ...` or experiment train flow).
+- Fallback: telemetry infers experiment from config path under `.numereng/experiments/<id>/configs/*`.
+
+Viz/frontend topology:
+- Frontend routes: `/docs`, `/docs/numerai`, `/notes`, `/experiments`, `/experiments/[id]`.
+- No standalone frontend routes for `/run-ops` or `/configs`.
+- Experiment page contains Analysis + Run Ops tabs; Run Ops is monitor-only (configs list + run queue + live monitor).
+- Run launch/control is CLI/API-only.
+- Backend still exposes read-only catalog/query endpoints (`/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
+
+Critical invariants:
+- Submission source XOR: exactly one of `run_id` or `predictions_path`.
+- Neutralization source XOR: exactly one of `run_id` or `predictions_path`.
+- `run_id` deterministic hash-derived 12-char prefix.
+- Training and HPO config paths must be `.json`; unknown keys hard-fail.
+- Training profile allowed only: `simple|purged_walk_forward|submission`.
+- Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
+- Loading mode allowed only: `materialized|fold_lazy`.
+- Scoring mode allowed only: `materialized|era_stream`.
+- For non-`submission` runs, model fitting/prediction persistence completes first, then `features.training.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
+- Post-run scoring emits `corr`, `fnc`, `mmc`, `cwmm`, `bmc`, and `bmc_last_200_eras`; FNC neutralizes against the run feature set (`data.feature_set`) over scored eras.
+- Training writes run-local live stage/status logs to `runs/<run_id>/run.log` and records that path in `run.json -> artifacts.log`.
+- Dataset scope allowed only: `train_only|train_plus_validation` (default `train_only`).
+- `data.dataset_variant` is required and allowed only: `non_downsampled|downsampled`.
+- Dataset defaults resolve under `.numereng/datasets/<data_version>/`.
+- Official downsampling artifacts are local files under `.numereng/datasets/<data_version>/`:
+  `full.parquet`, `full_benchmark_models.parquet`, `downsampled_full.parquet`, `downsampled_full_benchmark_models.parquet`.
+- `dataset-tools build-full-datasets` defaults to fixed era filtering (keep every 4th era, offset 0), with optional `--downsample-eras-step` and `--downsample-eras-offset`.
+- `dataset-tools build-full-datasets --skip-downsample` builds only `full.parquet` and `full_benchmark_models.parquet`.
+- In `purged_walk_forward`, walk-forward defaults are fixed: window `156`, embargo `8` for `20d` and `16` for `60d`.
+- `data.target_horizon` is `20d|60d` when provided and takes precedence over target-name inference.
+- If `target_horizon` is omitted, horizon is inferred from `target_col`; ambiguous names hard-fail.
+- Benchmark model parquet data is used for scoring metrics (BMC/correlation-to-benchmark), not as training features.
+- `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
+- In `train_plus_validation` mode (materialized or fold-lazy), `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
+- Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
+- Submission profile disables CV metrics.
+- `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
+- Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
+- Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.
+- Experiment train defaults `output_dir` to `store_root`; when provided it must equal `store_root`.
+- Ensemble supports only `rank_avg` and >=2 deduped run IDs.
+- Cloud AWS submit backend allowed only `sagemaker|batch`; `--spot` and `--on-demand` are mutually exclusive.
+- `cloud aws train pull` is download-only and writes managed artifacts under `.numereng/cloud/<run_id>/pull`.
+- `cloud aws train extract` is the separate step that unpacks pulled tarballs into `.numereng/runs/*` and indexes runs.
+- `cloud aws train extract` only promotes `runs/<run_id>/*` members from archives; non-`runs/*` members are skipped with warnings.
+- Managed archive extraction hard-fails on unsafe tar members (absolute/traversal paths, links, invalid run ids) and on run-dir hash conflicts.
+- Managed extraction indexes only extracted run IDs (no fallback indexing of outer cloud run id).
+- SageMaker managed entrypoint deletes `numereng.db`, `numereng.db-shm`, and `numereng.db-wal` from output artifacts before packaging.
+- Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
+- EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` with `.json` extension.
+- EC2 `pull` and `s3 cp` prefix downloads skip unsafe relative keys and report them in `skipped_unsafe_keys`.
+- Cloud Modal deploy requires ECR URI `<registry>/<repository>:<tag>`.
+- Cloud state file flags (`--state-path`) must decode to valid typed JSON state objects.
+
+CLI families:
+- `numereng run train|submit`
+- `numereng experiment create|list|details|train|promote|report`
+- `numereng hpo create|list|details|trials`
+- `numereng ensemble build|list|details`
+- `numereng neutralize apply`
+- `numereng dataset-tools build-full-datasets`
+- `numereng store init|index|rebuild|doctor`
+- `numereng cloud ec2 ...`
+- `numereng cloud aws image|train ...`
+- `numereng cloud modal deploy|data sync|train ...`
+- `numereng numerai datasets (list|download) | models | round | forum scrape`
+
+Verification anchors:
+- Fast: `make test`
+- Full: `make test-all`
+- Build: `uv build`
+- Surface smoke: `tests/integration/test_smoke_structure.py`
+
+When changing flows/contracts:
+1) Preserve API/CLI compatibility unless intentionally versioned.
+2) Keep dependency direction.
+3) Keep boundary error translation to `PackageError`.
+4) Update `docs/llms.txt` and `docs/ARCHITECTURE.md` in same PR.
