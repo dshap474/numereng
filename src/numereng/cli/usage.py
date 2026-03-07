@@ -4,11 +4,12 @@ USAGE = (
     "usage:\n"
     "  numereng [--fail]\n"
     "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
-    "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|submission>] [--experiment-id <id>]\n"  # noqa: E501
+    "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--experiment-id <id>]\n"  # noqa: E501
+    "  numereng run score --run-id <id> [--store-root <path>]\n"
     "  numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|submission>] [--store-root <path>]\n"  # noqa: E501
+    "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--store-root <path>]\n"  # noqa: E501
@@ -49,7 +50,7 @@ USAGE = (
     "  numereng cloud aws train extract [--run-id <id>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>]\n"  # noqa: E501
     "  numereng cloud modal deploy --ecr-image-uri <uri:tag> [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--aws-profile <name>] [--timeout-seconds <n>] [--gpu <value>] [--cpu <n>] [--memory-mb <n>] [--data-volume-name <name>] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
     "  numereng cloud modal data sync --config <path.json> --volume-name <name> [--force] [--no-create-if-missing] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
-    "  numereng cloud modal train submit --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|submission>] [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
+    "  numereng cloud modal train submit --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
     "  numereng cloud modal train status [--call-id <id>] [--timeout-seconds <n>] [--state-path <path>]\n"
     "  numereng cloud modal train logs [--call-id <id>] [--lines <n>] [--state-path <path>]\n"
     "  numereng cloud modal train cancel [--call-id <id>] [--state-path <path>]\n"

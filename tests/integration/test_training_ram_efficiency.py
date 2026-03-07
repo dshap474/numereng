@@ -44,6 +44,13 @@ class _NoDownloadClient:
         return filename
 
 
+def _write_features_metadata(root: Path, features: list[str]) -> None:
+    version_dir = root / "v5.2"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"feature_sets": {"small": features, "all": features, "fncv3_features": features}}
+    (version_dir / "features.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _build_synthetic_dataset(
     root: Path,
     *,
@@ -189,6 +196,7 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
 ) -> None:
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=180, n_features=8, seed=7)
     store_root = tmp_path / ".numereng"
+    _write_features_metadata(tmp_path, dataset.features)
 
     config_path = tmp_path / "train_fold_lazy.json"
     config_payload = _build_training_config(
@@ -203,6 +211,7 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
     _write_config(config_path, config_payload)
 
     monkeypatch.setattr(training_service_module, "create_training_data_client", lambda: _NoDownloadClient())
+    monkeypatch.setattr(training_service_module, "DEFAULT_DATASETS_DIR", tmp_path)
     monkeypatch.setattr(
         training_service_module,
         "load_features",
@@ -268,6 +277,7 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
 @pytest.mark.integration
 def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=220, n_features=6, seed=11)
+    _write_features_metadata(tmp_path, dataset.features)
     predictions_path = tmp_path / "predictions.parquet"
 
     full = pd.read_parquet(dataset.full_path)
@@ -282,7 +292,6 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
-        feature_cols=dataset.features,
         full_data_path=dataset.full_path,
         dataset_scope="train_plus_validation",
         benchmark_model="v52_lgbm_ender20",
@@ -301,7 +310,6 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
-        feature_cols=dataset.features,
         full_data_path=dataset.full_path,
         dataset_scope="train_plus_validation",
         benchmark_model="v52_lgbm_ender20",
@@ -332,8 +340,10 @@ def test_parallel_memmap_outputs_match_single_worker(
 ) -> None:
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=320, n_features=10, seed=23)
     store_root = tmp_path / ".numereng"
+    _write_features_metadata(tmp_path, dataset.features)
 
     monkeypatch.setattr(training_service_module, "create_training_data_client", lambda: _NoDownloadClient())
+    monkeypatch.setattr(training_service_module, "DEFAULT_DATASETS_DIR", tmp_path)
     monkeypatch.setattr(
         training_service_module,
         "load_features",
@@ -449,7 +459,13 @@ def test_fold_lazy_slow_peak_rss_regression_gate(tmp_path: Path) -> None:
 
     dataset_root = workdir / ".numereng" / "datasets" / "v5.2"
     dataset_root.mkdir(parents=True, exist_ok=True)
-    features_payload = {"feature_sets": {"small": dataset.features}}
+    features_payload = {
+        "feature_sets": {
+            "small": dataset.features,
+            "all": dataset.features,
+            "fncv3_features": dataset.features,
+        }
+    }
     (dataset_root / "features.json").write_text(json.dumps(features_payload), encoding="utf-8")
     pd.read_parquet(dataset.train_path).to_parquet(dataset_root / "train.parquet", index=False)
     pd.read_parquet(dataset.validation_path).to_parquet(dataset_root / "validation.parquet", index=False)

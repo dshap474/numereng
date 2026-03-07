@@ -15,7 +15,14 @@ from numereng.features.training.models import (
 
 
 def test_normalize_x_groups_defaults_added() -> None:
-    assert normalize_x_groups(["features"]) == ["features", "era"]
+    assert normalize_x_groups(["features"]) == ["features"]
+
+
+def test_normalize_x_groups_rejects_identifier_groups() -> None:
+    with pytest.raises(ValueError, match="training_model_x_groups_not_supported:era"):
+        normalize_x_groups(["features", "era"])
+    with pytest.raises(ValueError, match="training_model_x_groups_not_supported:id"):
+        normalize_x_groups(["features", "id"])
 
 
 def test_normalize_x_groups_rejects_benchmark_models_aliases() -> None:
@@ -32,14 +39,14 @@ def test_normalize_x_groups_unknown_raises() -> None:
         normalize_x_groups(["unknown"])
 
 
-def test_build_x_cols_with_features_and_era() -> None:
+def test_build_x_cols_with_features_only() -> None:
     cols = build_x_cols(
-        x_groups=["features", "era"],
+        x_groups=["features"],
         features=["feature_1", "feature_2"],
         era_col="era",
         id_col="id",
     )
-    assert cols == ["feature_1", "feature_2", "era"]
+    assert cols == ["feature_1", "feature_2"]
 
 
 def test_build_model_data_loader_loads_subset() -> None:
@@ -53,14 +60,14 @@ def test_build_model_data_loader_loads_subset() -> None:
     )
     loader = build_model_data_loader(
         full=full,
-        x_cols=["feature_1", "era"],
+        x_cols=["feature_1"],
         era_col="era",
         target_col="target",
         id_col="id",
     )
 
     batch = loader.load(["era2"])
-    assert batch.X.shape == (2, 2)
+    assert batch.X.shape == (2, 1)
     assert batch.y.tolist() == [0.3, 0.4]
     assert batch.id is not None
     assert batch.id.tolist() == ["c", "d"]
@@ -99,7 +106,7 @@ def test_build_lazy_parquet_data_loader_loads_and_joins_sources(tmp_path: Path) 
 
     loader = build_lazy_parquet_data_loader(
         source_paths=[train_path, validation_path],
-        x_cols=["feature_1", "era", "benchmark_pred"],
+        x_cols=["feature_1", "benchmark_pred"],
         era_col="era",
         target_col="target",
         id_col="id",

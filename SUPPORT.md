@@ -2,10 +2,9 @@
 
 ## Where to ask for help
 
-- Bug reports: open a GitHub issue using the bug template.
-- Feature requests: open a GitHub issue using the feature template.
-- Security concerns: follow `SECURITY.md` and email `security@numer.ai`.
-- Numerai platform/account questions: `support@numer.ai`.
+- Bugs, feature requests, and usage questions for `numereng`: use the GitHub issue forms in this repository.
+- Security concerns: follow `SECURITY.md` and use private vulnerability reporting.
+- Official Numerai platform or account questions that are not caused by `numereng`: use the official Numerai channels listed in `docs/numerai/connect/index.md`.
 
 ## What to include
 

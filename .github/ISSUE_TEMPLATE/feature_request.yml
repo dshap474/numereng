@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a new capability or workflow improvement
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests are most useful when they are specific about the user workflow and the expected result.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow gap
+      description: What are you trying to do, and what is currently missing?
+      placeholder: I want to ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe the behavior, command, or API you want.
+      placeholder: Add a command / option / workflow that ...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any workarounds or adjacent approaches you tried.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: What would success look like?
+      description: List the result, constraints, or acceptance criteria that would make this useful.
+    validations:
+      required: true

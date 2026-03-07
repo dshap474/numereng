@@ -23,10 +23,10 @@ _TOURNAMENT_USAGE = "classic|signals|crypto"
 _TRAINING_PROFILE_MAP: dict[str, api.TrainingProfile] = {
     "simple": "simple",
     "purged_walk_forward": "purged_walk_forward",
-    "submission": "submission",
+    "full_history_refit": "full_history_refit",
 }
 _TRAINING_PROFILES = set(_TRAINING_PROFILE_MAP)
-_TRAINING_PROFILE_USAGE = "simple|purged_walk_forward|submission"
+_TRAINING_PROFILE_USAGE = "simple|purged_walk_forward|full_history_refit"
 _CLOUD_AWS_BACKENDS = {"sagemaker", "batch"}
 _CLOUD_AWS_BACKENDS_USAGE = "sagemaker|batch"
 _EXPERIMENT_STATUSES = {"draft", "active", "complete", "archived"}
@@ -91,6 +91,8 @@ def _parse_tournament_value(value: str) -> tuple[api.NumeraiTournament | None, s
 
 
 def _parse_training_profile_value(value: str) -> tuple[api.TrainingProfile | None, str | None]:
+    if value == "submission":
+        return None, "invalid value for --profile: submission (renamed to full_history_refit)"
     if value not in _TRAINING_PROFILES:
         return None, f"invalid value for --profile: {value} (expected {_TRAINING_PROFILE_USAGE})"
     return _TRAINING_PROFILE_MAP[value], None

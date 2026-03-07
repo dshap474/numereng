@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -10,7 +11,11 @@ import pytest
 import numereng.features.training.service as service_module
 from numereng.features.store import StoreError
 from numereng.features.training.errors import TrainingConfigError, TrainingError
-from numereng.features.training.scoring.models import PostTrainingScoringRequest, PostTrainingScoringResult
+from numereng.features.training.scoring.models import (
+    PostTrainingScoringRequest,
+    PostTrainingScoringResult,
+    ResolvedScoringPolicy,
+)
 from numereng.features.training.strategies.core.protocol import TrainingEnginePlan
 
 
@@ -88,10 +93,15 @@ def test_available_cpu_count_falls_back_to_one_when_detection_unavailable(
         _ = pid
         raise OSError("affinity unavailable")
 
-    monkeypatch.setattr(service_module.os, "sched_getaffinity", _raise_os_error, raising=False)
-    monkeypatch.setattr(service_module.os, "cpu_count", lambda: None)
+    monkeypatch.setattr(os, "sched_getaffinity", _raise_os_error, raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
 
     assert service_module._available_cpu_count() == 1
+
+
+def test_clip_payout_estimate_matches_classic_formula() -> None:
+    assert service_module._clip_payout_estimate_mean(corr_mean=0.1, mmc_mean=0.03) == pytest.approx(0.05)
+    assert service_module._clip_payout_estimate_mean(corr_mean=-0.1, mmc_mean=-0.03) == pytest.approx(-0.05)
 
 
 def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -108,7 +118,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         "model": {
             "type": "LGBMRegressor",
             "params": {"n_estimators": 10},
-            "x_groups": ["features", "era"],
+            "x_groups": ["features"],
         },
         "training": {"engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8}},
     }
@@ -172,9 +182,9 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="custom",
+            mode="purged_walk_forward",
             cv_config={"enabled": True, "n_splits": 2, "embargo": 0, "mode": "blocked", "min_train_size": 1},
-            resolved_config={"mode": "custom", "window_size_eras": 156, "embargo_eras": 8},
+            resolved_config={"profile": "purged_walk_forward", "window_size_eras": 156, "embargo_eras": 8},
             override_sources=["default"],
         ),
     )
@@ -241,6 +251,11 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
             },
             score_provenance={"schema_version": "1"},
             effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                benchmark_overlap_policy="overlap_required",
+                meta_overlap_policy="overlap_required",
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -294,10 +309,11 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert "mmc" in metrics_block
     assert "cwmm" in metrics_block
     assert "bmc" in metrics_block
+    assert metrics_block["payout_estimate_mean"] is None
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
-    assert engine_block["mode"] == "custom"
+    assert engine_block["mode"] == "purged_walk_forward"
     loading_block = cast(dict[str, object], training_block["loading"])
     assert loading_block["mode"] == "materialized"
     scoring_block = cast(dict[str, object], training_block["scoring"])
@@ -308,7 +324,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     cache_block = cast(dict[str, object], training_block["cache"])
     assert cache_block["mode"] == "deterministic"
     data_block = cast(dict[str, object], saved_results["data"])
-    assert data_block["dataset_scope"] == "train_only"
+    assert data_block["dataset_scope"] == "train_plus_validation"
     assert data_block["configured_embargo_eras"] == 13
     assert data_block["effective_embargo_eras"] == 0
     assert data_block["embargo_eras"] == 0
@@ -347,7 +363,7 @@ def test_run_training_submission_full_history_skips_validation_metrics(
         "model": {
             "type": "LGBMRegressor",
             "params": {"n_estimators": 10},
-            "x_groups": ["features", "era"],
+            "x_groups": ["features"],
         },
     }
 
@@ -380,16 +396,16 @@ def test_run_training_submission_full_history_skips_validation_metrics(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -427,7 +443,7 @@ def test_run_training_submission_full_history_skips_validation_metrics(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -477,11 +493,11 @@ def test_run_training_submission_full_history_skips_validation_metrics(
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
-    assert engine_block["mode"] == "full_history"
+    assert engine_block["mode"] == "full_history_refit"
     loading_block = cast(dict[str, object], training_block["loading"])
     assert loading_block["mode"] == "materialized"
     data_block = cast(dict[str, object], saved_results["data"])
-    assert data_block["dataset_scope"] == "train_only"
+    assert data_block["dataset_scope"] == "train_plus_validation"
     assert data_block["configured_embargo_eras"] == 13
     assert data_block["effective_embargo_eras"] == 0
     output_block = cast(dict[str, object], saved_results["output"])
@@ -501,7 +517,7 @@ def test_run_training_index_failure_raises_training_error(
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
     full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
     predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
@@ -513,16 +529,16 @@ def test_run_training_index_failure_raises_training_error(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -547,7 +563,7 @@ def test_run_training_index_failure_raises_training_error(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -609,7 +625,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
         "model": {
             "type": "LGBMRegressor",
             "params": {"n_estimators": 10},
-            "x_groups": ["features", "era"],
+            "x_groups": ["features"],
         },
         "training": {
             "engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8},
@@ -679,9 +695,9 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="custom",
+            mode="purged_walk_forward",
             cv_config={"enabled": True, "n_splits": 2, "embargo": 0, "mode": "blocked", "min_train_size": 1},
-            resolved_config={"mode": "custom", "window_size_eras": 156, "embargo_eras": 8},
+            resolved_config={"profile": "purged_walk_forward", "window_size_eras": 156, "embargo_eras": 8},
             override_sources=["default"],
         ),
     )
@@ -768,6 +784,11 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
                 },
             },
             effective_scoring_backend="era_stream",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                benchmark_overlap_policy="overlap_required",
+                meta_overlap_policy="overlap_required",
+            ),
         )
 
     monkeypatch.setattr(service_module, "run_post_training_scoring", _fake_score)
@@ -832,10 +853,10 @@ def test_run_training_fold_lazy_full_data_path_disables_validation_only_filter(
         "model": {
             "type": "LGBMRegressor",
             "params": {"n_estimators": 10},
-            "x_groups": ["features", "era"],
+            "x_groups": ["features"],
         },
         "training": {
-            "engine": {"mode": "full_history"},
+            "engine": {"mode": "full_history_refit"},
         },
     }
     store_root = tmp_path / "store"
@@ -856,16 +877,16 @@ def test_run_training_fold_lazy_full_data_path_disables_validation_only_filter(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -906,7 +927,7 @@ def test_run_training_fold_lazy_full_data_path_disables_validation_only_filter(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -950,7 +971,7 @@ def test_run_training_index_failure_writes_failed_manifest(monkeypatch: pytest.M
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
     full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
     predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
@@ -960,16 +981,16 @@ def test_run_training_index_failure_writes_failed_manifest(monkeypatch: pytest.M
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -994,7 +1015,7 @@ def test_run_training_index_failure_writes_failed_manifest(monkeypatch: pytest.M
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -1058,7 +1079,7 @@ def test_run_training_second_index_failure_keeps_finished_manifest(
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
     full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
     predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
@@ -1068,16 +1089,16 @@ def test_run_training_second_index_failure_keeps_finished_manifest(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -1102,7 +1123,7 @@ def test_run_training_second_index_failure_keeps_finished_manifest(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -1172,7 +1193,7 @@ def test_run_training_startup_write_failure_writes_failed_manifest(
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
 
     monkeypatch.setattr(service_module, "load_config", lambda path: config)
@@ -1180,16 +1201,16 @@ def test_run_training_startup_write_failure_writes_failed_manifest(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -1243,7 +1264,7 @@ def test_run_training_unexpected_exception_writes_failed_manifest(
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
     full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
     predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
@@ -1253,16 +1274,16 @@ def test_run_training_unexpected_exception_writes_failed_manifest(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -1287,7 +1308,7 @@ def test_run_training_unexpected_exception_writes_failed_manifest(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -1347,7 +1368,7 @@ def test_run_training_failed_run_writes_run_local_failure_log(
             "era_col": "era",
             "id_col": "id",
         },
-        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features", "era"]},
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
     }
     full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
     predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
@@ -1358,16 +1379,16 @@ def test_run_training_failed_run_writes_run_local_failure_log(
         service_module,
         "resolve_training_engine",
         lambda **kwargs: TrainingEnginePlan(
-            mode="full_history",
+            mode="full_history_refit",
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,
                 "max_train_eras": None,
             },
-            resolved_config={"mode": "full_history"},
+            resolved_config={"mode": "full_history_refit"},
             override_sources=["default"],
         ),
     )
@@ -1394,7 +1415,7 @@ def test_run_training_failed_run_writes_run_local_failure_log(
             {
                 "n_splits": 0,
                 "embargo": 0,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "min_train_size": 0,
                 "max_train_eras": None,
                 "folds_used": 1,
@@ -1439,3 +1460,199 @@ def test_run_training_failed_run_writes_run_local_failure_log(
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_failed" in run_log
     assert "boom" in run_log
+
+
+def test_run_training_rejects_non_fresh_run_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = {
+        "data": {
+            "data_version": "v5.2",
+            "dataset_variant": "non_downsampled",
+            "feature_set": "small",
+            "target_col": "target",
+            "era_col": "era",
+            "id_col": "id",
+        },
+        "model": {"type": "LGBMRegressor", "params": {"n_estimators": 10}, "x_groups": ["features"]},
+    }
+    captured_run_dir: dict[str, Path] = {}
+
+    monkeypatch.setattr(service_module, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        service_module,
+        "resolve_training_engine",
+        lambda **kwargs: TrainingEnginePlan(
+            mode="full_history_refit",
+            cv_config={
+                "enabled": False,
+                "mode": "full_history_refit",
+                "n_splits": 0,
+                "embargo": 0,
+                "min_train_size": 0,
+                "max_train_eras": None,
+            },
+            resolved_config={"mode": "full_history_refit"},
+            override_sources=["default"],
+        ),
+    )
+
+    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path]:
+        _ = (cfg, override)
+        run_dir = tmp_path / "store" / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "stale.txt").write_text("stale", encoding="utf-8")
+        captured_run_dir["path"] = run_dir
+        return (
+            run_dir,
+            tmp_path / "baselines",
+            run_dir,
+            run_dir / "artifacts" / "predictions",
+        )
+
+    monkeypatch.setattr(service_module, "resolve_output_locations", _resolve_output_locations)
+
+    with pytest.raises(TrainingError, match="training_run_dir_not_fresh"):
+        service_module.run_training(
+            config_path=tmp_path / "config.json",
+            output_dir=None,
+            client=_FakeClient(),
+        )
+
+    run_dir = captured_run_dir["path"]
+    assert (run_dir / "stale.txt").is_file()
+    assert not (run_dir / "run.json").exists()
+
+
+def test_run_training_scoring_failure_marks_run_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = {
+        "data": {
+            "data_version": "v5.2",
+            "dataset_variant": "non_downsampled",
+            "feature_set": "small",
+            "target_col": "target",
+            "era_col": "era",
+            "id_col": "id",
+            "embargo_eras": 13,
+        },
+        "model": {
+            "type": "LGBMRegressor",
+            "params": {"n_estimators": 10},
+            "x_groups": ["features"],
+        },
+        "training": {"engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8}},
+    }
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era2"],
+            "target": [0.2, 0.4],
+            "feature_1": [1.0, 2.0],
+        }
+    )
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era2"],
+            "target": [0.2, 0.4],
+            "prediction": [0.1, 0.2],
+            "cv_fold": [0, 1],
+        }
+    )
+
+    store_root = tmp_path / "store"
+    captured_run_dir: dict[str, Path] = {}
+
+    monkeypatch.setattr(service_module, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        service_module,
+        "resolve_training_engine",
+        lambda **kwargs: TrainingEnginePlan(
+            mode="purged_walk_forward",
+            cv_config={"enabled": True, "n_splits": 2, "embargo": 0, "mode": "blocked", "min_train_size": 1},
+            resolved_config={"profile": "purged_walk_forward", "window_size_eras": 156, "embargo_eras": 8},
+            override_sources=["default"],
+        ),
+    )
+
+    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path]:
+        _ = (cfg, override)
+        run_dir = store_root / "runs" / run_id
+        captured_run_dir["path"] = run_dir
+        return (
+            run_dir,
+            tmp_path / "baselines",
+            run_dir,
+            run_dir / "artifacts" / "predictions",
+        )
+
+    monkeypatch.setattr(service_module, "resolve_output_locations", _resolve_output_locations)
+    monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
+    monkeypatch.setattr(service_module, "load_full_data", lambda *args, **kwargs: full)
+    monkeypatch.setattr(service_module, "build_model_data_loader", lambda **kwargs: object())
+    monkeypatch.setattr(
+        service_module,
+        "build_oof_predictions",
+        lambda *args, **kwargs: (
+            predictions,
+            {
+                "n_splits": 2,
+                "embargo": 0,
+                "mode": "blocked",
+                "min_train_size": 1,
+                "max_train_eras": None,
+                "folds_used": 2,
+                "folds": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(service_module, "select_prediction_columns", lambda df, id_col, era_col, target_col: df)
+    monkeypatch.setattr(
+        service_module,
+        "save_predictions",
+        lambda predictions, config, config_path, predictions_dir, output_dir: (
+            output_dir / "artifacts" / "predictions" / "run.parquet",
+            Path("predictions/run.parquet"),
+        ),
+    )
+    def _raise_scoring_failure(**kwargs: object) -> PostTrainingScoringResult:
+        _ = kwargs
+        raise RuntimeError("score boom")
+
+    monkeypatch.setattr(service_module, "run_post_training_scoring", _raise_scoring_failure)
+    monkeypatch.setattr(
+        service_module,
+        "resolve_results_path",
+        lambda cfg, path, results_dir: results_dir / "run.json",
+    )
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    written_statuses: list[str] = []
+    save_run_manifest_original = cast(Any, getattr(service_module, "save_run_manifest"))
+
+    def _record_manifest(manifest: dict[str, object], manifest_path: Path) -> None:
+        status = manifest.get("status")
+        if isinstance(status, str):
+            written_statuses.append(status)
+        save_run_manifest_original(manifest, manifest_path)
+
+    monkeypatch.setattr(service_module, "save_run_manifest", _record_manifest)
+
+    with pytest.raises(TrainingError, match="training_post_run_scoring_failed"):
+        service_module.run_training(
+            config_path=tmp_path / "config.json",
+            output_dir=None,
+            client=_FakeClient(),
+        )
+
+    run_dir = captured_run_dir["path"]
+    run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    run_log = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert run_manifest["status"] == "FAILED"
+    assert written_statuses == ["RUNNING", "FAILED"]
+    assert "post_run_scoring_failed" in run_log
+    assert "run_failed" in run_log

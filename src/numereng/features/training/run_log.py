@@ -17,31 +17,62 @@ def resolve_run_log_path(run_dir: Path) -> Path:
 
 
 def initialize_run_log(run_dir: Path) -> Path:
-    """Create/truncate one run-local live log file."""
+    """Ensure one run-local live log file exists without truncating history."""
     run_log_path = resolve_run_log_path(run_dir)
     run_log_path.parent.mkdir(parents=True, exist_ok=True)
-    run_log_path.write_text("", encoding="utf-8")
+    run_log_path.touch(exist_ok=True)
     return run_log_path
 
 
-def log_stage(run_log_path: Path | None, *, stage_name: str, message: str) -> None:
+def log_stage(
+    run_log_path: Path | None,
+    *,
+    stage_name: str,
+    message: str,
+    attempt_id: str | None = None,
+) -> None:
     """Append one stage update line to the run-local log."""
     _log_line(
         run_log_path,
         level="INFO",
         event="stage_update",
         message=f"{stage_name} :: {message}",
+        attempt_id=attempt_id,
     )
 
 
-def log_info(run_log_path: Path | None, *, event: str, message: str) -> None:
+def log_info(
+    run_log_path: Path | None,
+    *,
+    event: str,
+    message: str,
+    attempt_id: str | None = None,
+) -> None:
     """Append one informational line to the run-local log."""
-    _log_line(run_log_path, level="INFO", event=event, message=message)
+    _log_line(
+        run_log_path,
+        level="INFO",
+        event=event,
+        message=message,
+        attempt_id=attempt_id,
+    )
 
 
-def log_error(run_log_path: Path | None, *, event: str, message: str) -> None:
+def log_error(
+    run_log_path: Path | None,
+    *,
+    event: str,
+    message: str,
+    attempt_id: str | None = None,
+) -> None:
     """Append one error line to the run-local log."""
-    _log_line(run_log_path, level="ERROR", event=event, message=message)
+    _log_line(
+        run_log_path,
+        level="ERROR",
+        event=event,
+        message=message,
+        attempt_id=attempt_id,
+    )
 
 
 def _log_line(
@@ -50,11 +81,13 @@ def _log_line(
     level: str,
     event: str,
     message: str,
+    attempt_id: str | None,
 ) -> None:
     if run_log_path is None:
         return
 
-    line = f"{_utc_now_iso()} | {level.upper()} | {event} | {message}\n"
+    resolved_attempt_id = attempt_id or "unknown"
+    line = f"{_utc_now_iso()} | attempt_id={resolved_attempt_id} | {level.upper()} | {event} | {message}\n"
     try:
         _append_line(run_log_path, line)
     except Exception:
@@ -69,4 +102,3 @@ def _append_line(run_log_path: Path, line: str) -> None:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
-

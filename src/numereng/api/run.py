@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 
-from numereng.api.contracts import SubmissionRequest, SubmissionResponse, TrainRunRequest, TrainRunResponse
+from numereng.api.contracts import (
+    ScoreRunRequest,
+    ScoreRunResponse,
+    SubmissionRequest,
+    SubmissionResponse,
+    TrainRunRequest,
+    TrainRunResponse,
+)
 from numereng.features.feature_neutralization import (
     NeutralizationDataError,
     NeutralizationExecutionError,
@@ -112,17 +119,25 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
     )
     try:
         with launch_scope:
-            run_kwargs: dict[str, object] = {
-                "config_path": request.config_path,
-                "output_dir": request.output_dir,
-                "engine_mode": request.engine_mode,
-                "window_size_eras": request.window_size_eras,
-                "embargo_eras": request.embargo_eras,
-                "experiment_id": request.experiment_id,
-            }
-            if request.profile is not None:
-                run_kwargs["profile"] = request.profile
-            result = api_module.run_training_pipeline(**run_kwargs)
+            if request.profile is None:
+                result = api_module.run_training_pipeline(
+                    config_path=request.config_path,
+                    output_dir=request.output_dir,
+                    engine_mode=request.engine_mode,
+                    window_size_eras=request.window_size_eras,
+                    embargo_eras=request.embargo_eras,
+                    experiment_id=request.experiment_id,
+                )
+            else:
+                result = api_module.run_training_pipeline(
+                    config_path=request.config_path,
+                    output_dir=request.output_dir,
+                    profile=request.profile,
+                    engine_mode=request.engine_mode,
+                    window_size_eras=request.window_size_eras,
+                    embargo_eras=request.embargo_eras,
+                    experiment_id=request.experiment_id,
+                )
     except TrainingConfigError as exc:
         raise PackageError("training_config_invalid") from exc
     except TrainingDataError as exc:
@@ -150,4 +165,53 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
     )
 
 
-__all__ = ["run_training", "submit_predictions"]
+def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
+    """Recompute scoring artifacts for one persisted run-id."""
+    from numereng import api as api_module
+
+    launch_scope = (
+        nullcontext()
+        if get_launch_metadata() is not None
+        else bind_launch_metadata(source="api.run.score", operation_type="run", job_type="run")
+    )
+    try:
+        with launch_scope:
+            result = api_module.score_run_pipeline(
+                run_id=request.run_id,
+                store_root=request.store_root,
+            )
+    except TrainingConfigError as exc:
+        raise PackageError("training_score_config_invalid") from exc
+    except TrainingDataError as exc:
+        raise PackageError("training_score_data_load_failed") from exc
+    except TrainingMetricsError as exc:
+        raise PackageError("training_score_metrics_failed") from exc
+    except TrainingError as exc:
+        message = str(exc)
+        if message.startswith("training_score_run_not_found:"):
+            raise PackageError("training_score_run_not_found") from exc
+        if message.startswith("training_score_run_id_invalid:"):
+            raise PackageError("training_score_run_id_invalid") from exc
+        if message.startswith("training_score_predictions_not_found:"):
+            raise PackageError("training_score_predictions_not_found") from exc
+        if message.startswith("training_score_store_index_failed:"):
+            raise PackageError("training_score_store_index_failed") from exc
+        raise PackageError("training_score_failed") from exc
+    except ValueError as exc:
+        raise PackageError("training_score_config_invalid") from exc
+    except NumeraiClientError as exc:
+        raise PackageError(str(exc)) from exc
+    except Exception as exc:
+        raise PackageError(f"training_score_unexpected_error:{exc.__class__.__name__}") from exc
+
+    return ScoreRunResponse(
+        run_id=result.run_id,
+        predictions_path=str(result.predictions_path),
+        results_path=str(result.results_path),
+        metrics_path=str(result.metrics_path),
+        score_provenance_path=str(result.score_provenance_path),
+        effective_scoring_backend=result.effective_scoring_backend,
+    )
+
+
+__all__ = ["run_training", "score_run", "submit_predictions"]

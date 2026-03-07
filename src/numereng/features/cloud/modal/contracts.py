@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from numereng.config.training import ensure_json_config_path
 
-ModalTrainingProfile = Literal["simple", "purged_walk_forward", "submission"]
+ModalTrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 ModalTrainingEngineMode = Literal["official", "custom", "full_history"]
 ModalCallStatus = Literal[
     "unknown",
@@ -122,6 +122,13 @@ class ModalTrainSubmitRequest(CloudModalRequestBase):
     @classmethod
     def _validate_config_path(cls, value: str) -> str:
         return ensure_json_config_path(value, field_name="config_path")
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _reject_submission_profile(cls, value: object) -> object:
+        if value is not None and str(value) == "submission":
+            raise ValueError("training profile 'submission' was renamed to 'full_history_refit'")
+        return value
 
 
 class ModalTrainStatusRequest(CloudModalRequestBase):
@@ -252,6 +259,13 @@ class ModalRuntimePayload(BaseModel):
     @classmethod
     def _validate_config_filename(cls, value: str) -> str:
         return ensure_json_config_path(value, field_name="config_filename")
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _reject_submission_profile(cls, value: object) -> object:
+        if value is not None and str(value) == "submission":
+            raise ValueError("training profile 'submission' was renamed to 'full_history_refit'")
+        return value
 
 
 class ModalRuntimeResult(BaseModel):

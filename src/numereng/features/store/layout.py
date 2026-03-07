@@ -9,7 +9,6 @@ CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "datasets",
     "cloud",
     "experiments",
-    "logs",
     "notes",
 )
 CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
@@ -18,6 +17,7 @@ CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
     "numereng.db-wal",
 )
 TARGETED_STRAY_DIRS: tuple[str, ...] = (
+    "logs",
     "modal_smoke_data",
     "smoke_live_check",
 )

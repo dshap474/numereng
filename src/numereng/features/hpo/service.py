@@ -496,7 +496,6 @@ def _extract_metric_value_from_predictions(
                 data_version=data_version,
                 dataset_variant=dataset_variant,
                 feature_set=feature_set,
-                feature_cols=None,
                 feature_source_paths=None,
                 full_data_path=full_data_path,
                 dataset_scope=dataset_scope,

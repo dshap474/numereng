@@ -1,6 +1,6 @@
 ---
 name: experiment-design
-description: "Complete experiment lifecycle on current numereng contracts: hypothesis, config rounds, training, reporting, champion promotion, and submission handoff."
+description: "Complete experiment lifecycle on current numereng contracts: hypothesis, config rounds, training, reporting, champion promotion, and live submission handoff."
 user-invocable: true
 ---
 
@@ -36,9 +36,9 @@ If the user asks for removed command families, translate intent to supported com
 
 Use this dataset-variant default unless the user explicitly overrides it:
 
-- Default for scout rounds and smoke validation: `data.dataset_variant = "downsampled"`.
-- Use `data.dataset_variant = "non_downsampled"` for scale/champion/final validation runs.
-- If `non_downsampled` is used before scale/final validation, record the reason in `EXPERIMENT.md`.
+- Default for scout rounds and smoke validation: `data.dataset_variant = "non_downsampled"`.
+- Use `data.dataset_variant = "downsampled"` only as an explicit low-cost scout override.
+- If `downsampled` is used, record the reason in `EXPERIMENT.md`.
 
 ## Experiment-Local Learning Policy
 
@@ -197,8 +197,10 @@ Run 4-5 config variants per round by default, changing one variable at a time.
 uv run numereng experiment train --id <id> --config <config.json>
 uv run numereng experiment train --id <id> --config <config.json> --profile purged_walk_forward
 uv run numereng experiment train --id <id> --config <config.json> --profile simple
-uv run numereng experiment train --id <id> --config <config.json> --profile submission
+uv run numereng experiment train --id <id> --config <config.json> --profile full_history_refit
 ```
+
+Use `full_history_refit` only after model selection is complete. It is a final full-history fit, not an evaluation profile.
 
 After each round:
 
@@ -239,7 +241,7 @@ Sweep selection should match research type:
 - model architecture idea -> sweep model hyperparameters
 - ensemble/blend idea -> sweep candidate composition and weights
 - training procedure idea -> sweep procedure controls (profile, loading/scoring mode, neutralization settings)
-- data scope idea -> sweep feature scope and dataset variant (`downsampled` scout vs `non_downsampled` scale)
+- data scope idea -> sweep feature scope and dataset variant (default `non_downsampled`, optional `downsampled` scout override)
 
 Avoid broad unfocused sweeps; each round should answer one concrete question.
 
@@ -373,6 +375,18 @@ Required keys:
 - nested: `model.type`, `model.params`
 
 Unknown keys are forbidden by contract.
+Removed config fields are invalid and should not appear in new templates:
+- `model.prediction_transform`
+- `model.era_weighting`
+- `model.prediction_batch_size`
+
+Canonical model input policy:
+- `model.x_groups` defaults to `["features"]`
+- `era` and `id` are not valid model inputs and must not appear in `x_groups` / `data_needed`
+
+Canonical post-run scoring policy:
+- FNC always neutralizes against dataset feature set `fncv3_features`, independent of the training `feature_set`
+- benchmark and meta-model diagnostics require nonzero `(era, id)` overlap with strict era alignment; partial overlap is allowed and scored on overlapping rows
 
 Use this as a valid training config shape:
 
@@ -380,7 +394,7 @@ Use this as a valid training config shape:
 {
   "data": {
     "data_version": "v5.2",
-    "dataset_variant": "downsampled",
+    "dataset_variant": "non_downsampled",
     "feature_set": "small",
     "target_col": "target_ender_20",
     "target_horizon": "20d",
@@ -399,8 +413,7 @@ Use this as a valid training config shape:
       "num_leaves": 64
     },
     "x_groups": [
-      "features",
-      "era"
+      "features"
     ]
   },
   "training": {
@@ -414,7 +427,7 @@ Use this as a valid training config shape:
 Training profile constraints:
 - `simple`: train on train eras and validate on validation eras (split sources only).
 - `purged_walk_forward`: 156-era walk-forward CV over train+validation with embargo by horizon (`20d -> 8`, `60d -> 16`).
-- `submission`: train on full history and skip validation metrics.
+- `full_history_refit`: train on full history and skip validation metrics. Use only after model selection is complete.
 
 Legacy config fields like `training.method`, `training.strategy`, or `training.cv` are hard-fail.
 
@@ -444,6 +457,7 @@ Canonical report/promotion metric keys:
 - `corr.mean`
 - `mmc.mean`
 - `cwmm.mean`
+- optional diagnostic: `payout_estimate.mean`
 
 ## Quick Command Reference
 

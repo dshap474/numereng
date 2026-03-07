@@ -17,6 +17,7 @@ Run from:
 - Preferred extension path is plugin modules under:
   - `src/numereng/features/models/custom_models/`
 - Training config input is JSON-only (`.json`), unknown keys are forbidden.
+- Canonical model inputs are features-only; model wrappers must not depend on `era` or `id` being present in `X`.
 - Keep CLI/API surfaces unchanged unless explicitly requested.
 - Use project-managed env and commands:
   - `uv sync --extra dev`
@@ -104,7 +105,7 @@ Example:
 - Confirm `run.json`/results payload records expected:
   - `model.type`
   - `model.params`
-  - optional model extras copied from config (`target_transform`, `prediction_transform`, etc.)
+  - implemented model extras copied from config (for example `target_transform`, when configured)
 
 ## Error Reference
 

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/dshap474/numereng/security/policy
+    about: Do not file vulnerabilities publicly. Use the Security tab for private reporting.
+  - name: Official Numerai support
+    url: https://github.com/dshap474/numereng/blob/main/docs/numerai/connect/index.md
+    about: Use official Numerai channels for platform or account issues unrelated to numereng.

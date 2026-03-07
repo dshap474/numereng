@@ -9,6 +9,7 @@ from numereng.features.training.scoring.metrics import summarize_prediction_file
 from numereng.features.training.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
+    default_scoring_policy,
 )
 
 
@@ -19,6 +20,7 @@ def run_post_training_scoring(
 ) -> PostTrainingScoringResult:
     """Compute post-training metrics/provenance from persisted predictions."""
     effective_scoring_backend = _resolve_effective_scoring_mode(request)
+    policy = default_scoring_policy()
 
     summaries, score_provenance = summarize_prediction_file_with_scores(
         predictions_path=request.predictions_path,
@@ -27,7 +29,6 @@ def run_post_training_scoring(
         data_version=request.data_version,
         dataset_variant=request.dataset_variant,
         feature_set=request.feature_set,
-        feature_cols=request.feature_cols,
         feature_source_paths=request.feature_source_paths,
         full_data_path=request.full_data_path,
         dataset_scope=request.dataset_scope,
@@ -41,6 +42,7 @@ def run_post_training_scoring(
         data_root=request.data_root,
         scoring_mode=effective_scoring_backend,
         era_chunk_size=request.era_chunk_size,
+        scoring_policy=policy,
     )
 
     execution_payload: dict[str, object] = {
@@ -56,6 +58,7 @@ def run_post_training_scoring(
         summaries=summaries,
         score_provenance=score_provenance,
         effective_scoring_backend=effective_scoring_backend,
+        policy=policy,
     )
 
 

@@ -137,18 +137,27 @@ def experiment_train(request: ExperimentTrainRequest) -> ExperimentTrainResponse
     )
     try:
         with launch_scope:
-            train_kwargs: dict[str, object] = {
-                "store_root": request.store_root,
-                "experiment_id": request.experiment_id,
-                "config_path": request.config_path,
-                "output_dir": request.output_dir,
-                "engine_mode": request.engine_mode,
-                "window_size_eras": request.window_size_eras,
-                "embargo_eras": request.embargo_eras,
-            }
-            if request.profile is not None:
-                train_kwargs["profile"] = request.profile
-            result = api_module.train_experiment_record(**train_kwargs)
+            if request.profile is None:
+                result = api_module.train_experiment_record(
+                    store_root=request.store_root,
+                    experiment_id=request.experiment_id,
+                    config_path=request.config_path,
+                    output_dir=request.output_dir,
+                    engine_mode=request.engine_mode,
+                    window_size_eras=request.window_size_eras,
+                    embargo_eras=request.embargo_eras,
+                )
+            else:
+                result = api_module.train_experiment_record(
+                    store_root=request.store_root,
+                    experiment_id=request.experiment_id,
+                    config_path=request.config_path,
+                    output_dir=request.output_dir,
+                    profile=request.profile,
+                    engine_mode=request.engine_mode,
+                    window_size_eras=request.window_size_eras,
+                    embargo_eras=request.embargo_eras,
+                )
     except (
         ExperimentNotFoundError,
         ExperimentValidationError,

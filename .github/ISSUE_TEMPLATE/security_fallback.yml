@@ -1,0 +1,38 @@
+name: Security contact request
+description: Request a private follow-up channel for a potential security issue
+title: "[Security]: private follow-up requested"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form only when GitHub private vulnerability reporting is unavailable.
+
+        Do not include exploit details, secrets, proof-of-concept payloads, or step-by-step reproduction here.
+  - type: textarea
+    id: summary
+    attributes:
+      label: High-level summary
+      description: Describe the affected area at a high level without disclosing sensitive details.
+      placeholder: Potential issue in cloud artifact extraction or submission handling.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Affected commit, tag, or version
+      placeholder: main, v0.1.0, or a commit SHA
+  - type: textarea
+    id: contact
+    attributes:
+      label: Preferred follow-up path
+      description: Describe how maintainers should continue privately through GitHub once they acknowledge the report.
+      placeholder: Please acknowledge here and provide a private GitHub follow-up path.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I have not included secrets, exploit details, or proof-of-concept payloads in this issue.
+          required: true

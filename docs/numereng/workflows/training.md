@@ -49,7 +49,7 @@ uv run numereng run train --config configs/run.json
 Optional overrides:
 
 - `--output-dir <path>`
-- `--profile <simple|purged_walk_forward|submission>`
+- `--profile <simple|purged_walk_forward|full_history_refit>`
 
 ## Outputs
 
@@ -68,11 +68,16 @@ Run indexing is mandatory. If indexing fails, the command fails.
 
 - Config path must be `.json`; other suffixes hard-fail.
 - Unknown config keys hard-fail (`extra=forbid`).
-- Training profiles are only `simple`, `purged_walk_forward`, `submission`.
+- Training profiles are only `simple`, `purged_walk_forward`, `full_history_refit`.
 - `purged_walk_forward` uses a fixed 156-era walk-forward window; embargo defaults to `8` (20D) or `16` (60D), with no legacy window/embargo overrides.
 - `data.target_horizon` (`20d|60d`) is the preferred way to control purged walk-forward embargo defaults.
 - If `target_horizon` is omitted and `target_col` name is ambiguous, training hard-fails.
 - Training does not perform row-level subsampling; reduce size only via dataset-level downsampling.
 - `simple` requires split sources (`train.parquet` + `validation.parquet`) and does not accept downsampled variants.
 - If `full_data_path` is set with `simple`, sibling `train.parquet` and `validation.parquet` must exist beside that file.
-- `submission` skips CV metrics and trains one model on full history.
+- `full_history_refit` skips validation metrics and trains one model on full history.
+- Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are not valid input groups.
+- Post-run FNC always neutralizes to dataset feature set `all`.
+- Post-run scoring persists `payout_estimate_mean` and `score_provenance.json`.
+- `payout_estimate_mean` uses Numerai Classic 2026 semantics (`0.75*corr + 2.25*mmc`, clipped to `±0.05`) and is populated only for `target_ender_20`; other targets persist `null`.
+- Benchmark and meta-model joins require exact `(id, era)` coverage with strict era alignment.

@@ -31,7 +31,7 @@ Choose the sweep dimension that matches the hypothesis:
 - model architecture idea -> sweep model hyperparameters,
 - ensemble/blend idea -> sweep component selection and weight strategy,
 - training-procedure idea -> sweep procedure controls (profile, loading/scoring mode, neutralization settings),
-- data-scope idea -> sweep feature scope and dataset variant (`downsampled` for scout vs `non_downsampled` for scale).
+- data-scope idea -> sweep feature scope and dataset variant (default `non_downsampled`, with optional `downsampled` scout overrides when needed).
 
 Do not run broad unfocused sweeps. Each round should answer one concrete question.
 
@@ -57,17 +57,19 @@ uv run numereng experiment details --id <id> --format json
 - `model.params.min_child_samples`
 - `model.params.subsample`
 - `model.params.colsample_bytree`
-- `training.engine.profile` (`simple|purged_walk_forward|submission`)
-- `data.dataset_variant` (`downsampled` for scout vs `non_downsampled` for scale)
+- `training.engine.profile` (`simple|purged_walk_forward|full_history_refit`)
+- `data.dataset_variant` (`non_downsampled` default, optional `downsampled` scout override)
 
 ### Guardrails
 
 - Keep one-variable-at-a-time within a round.
 - Default round size is 4-5 variants; use fewer only when explicitly requested.
-- Use only supported profiles: `simple`, `purged_walk_forward`, `submission`.
+- Use only supported profiles: `simple`, `purged_walk_forward`, `full_history_refit`.
+- Use `full_history_refit` only for final full-history refits after model selection, not for comparative evaluation rounds.
 - Do not use legacy config fields (`training.method`, `training.strategy`, `training.cv`).
+- Do not use removed no-op model fields (`prediction_transform`, `era_weighting`, `prediction_batch_size`).
 - Use scout->scale progression:
-  - scout with lower-cost settings first (for example `data.dataset_variant=downsampled`),
+  - scout with lower-cost settings only when needed (for example `data.dataset_variant=downsampled`),
   - scale top candidates only after repeatable scout improvements.
 - Apply numeric stop gate between rounds:
   - if best `bmc_last_200_eras.mean` gain is below `1e-4` to `3e-4` for two consecutive rounds, run remaining-knobs audit before continuing.

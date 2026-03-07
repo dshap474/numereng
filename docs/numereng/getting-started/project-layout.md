@@ -29,7 +29,6 @@ Default store root: `.numereng`.
       ensembles/
   hpo/
   ensembles/
-  logs/
   notes/
 ```
 

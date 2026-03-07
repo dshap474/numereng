@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible defect in numereng
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report.
+
+        Please keep reports focused on `numereng`. Do not include secrets or vulnerability details here.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed problem and why it is incorrect.
+      placeholder: A short description of the broken behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: List the exact steps or commands needed to reproduce the issue.
+      placeholder: |
+        1. Run `uv run numereng ...`
+        2. Use config `...`
+        3. Observe the failure
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or traceback
+      description: Paste the smallest relevant error output.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Commit, tag, or package version
+      placeholder: main, v0.1.0, or a commit SHA
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python version, `uv` version, and any relevant runtime context.
+      placeholder: macOS 15, Python 3.11, uv 0.x, local store root under .numereng/
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues before opening this report.
+          required: true
+        - label: I confirmed this is about `numereng`, not an official Numerai account or platform issue.
+          required: true

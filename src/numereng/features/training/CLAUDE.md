@@ -64,6 +64,7 @@ Canonical metric aliases (for viz/read APIs):
 Canonical payout fallback formula:
 
 - `payout_estimate_mean = clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, +/-0.05)`
+- Applies only for `target_ender_20` (Numerai Classic 2026 semantics); non-Ender targets keep `payout_estimate_mean = null`.
 
 ## Score Provenance Contract
 

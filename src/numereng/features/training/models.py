@@ -14,11 +14,9 @@ from numereng.features.training.scoring.metrics import attach_benchmark_predicti
 
 _KNOWN_X_GROUPS = {
     "features",
-    "era",
     "baseline",
-    "id",
 }
-_DEFAULT_X_GROUPS = ("features", "era")
+_DEFAULT_X_GROUPS = ("features",)
 
 
 @dataclass(frozen=True)
@@ -127,6 +125,18 @@ class TrainingRunResult:
 
 
 @dataclass(frozen=True)
+class ScoreRunResult:
+    """Top-level score-only run outputs."""
+
+    run_id: str
+    predictions_path: Path
+    results_path: Path
+    metrics_path: Path
+    score_provenance_path: Path
+    effective_scoring_backend: str
+
+
+@dataclass(frozen=True)
 class FoldJoinColumn:
     """Fold-time join source attached by `(id, era)`."""
 
@@ -192,6 +202,8 @@ def normalize_x_groups(x_groups: Iterable[str] | None) -> list[str]:
         resolved = key
         if resolved in {"target", "y"}:
             continue
+        if resolved in {"era", "id"}:
+            raise ValueError(f"training_model_x_groups_not_supported:{resolved}")
         # Benchmark model predictions are metrics/ensemble inputs, not model
         # training features.
         if resolved in {"benchmark", "benchmarks", "benchmark_models"}:
@@ -224,16 +236,10 @@ def build_x_cols(
     for key in x_groups:
         if key == "features":
             x_cols.extend(features)
-        elif key == "era":
-            x_cols.append(era_col)
         elif key == "baseline":
             if not baseline_col:
                 raise ValueError("baseline requested but no baseline column provided")
             x_cols.append(baseline_col)
-        elif key == "id":
-            if not id_col:
-                raise ValueError("id requested but id_col is not set")
-            x_cols.append(id_col)
         else:
             raise ValueError(f"Unknown x_group '{key}'")
 

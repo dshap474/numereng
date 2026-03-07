@@ -45,7 +45,7 @@ Source map:
 - `src/numereng/cli/*`: parsing/dispatch/help.
 
 Default store layout (`.numereng`):
-- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `logs`, `notes`.
+- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
 - Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
 - Dynamic roots may appear: `hpo/`, `ensembles/`.
 
@@ -66,6 +66,8 @@ Wiring map:
   `numereng [--fail] -> cli.main -> api.run_bootstrap_check`
 - Train:
   `cli run train -> bind cli metadata -> api.run_training -> features.training.run_training`
+- Re-score persisted run:
+  `cli run score -> bind cli metadata -> api.score_run -> features.training.score_run`
 - Experiment train:
   `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
 - Submit:
@@ -125,13 +127,22 @@ Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
 - Neutralization source XOR: exactly one of `run_id` or `predictions_path`.
 - `run_id` deterministic hash-derived 12-char prefix.
+- Training enforces single-writer execution per deterministic `run_id` via `runs/<run_id>/.train.lock`; concurrent starts hard-fail.
+- Training requires a fresh deterministic run directory (no pre-existing artifacts besides `.train.lock`), so reruns after partial/failed attempts require store reset.
 - Training and HPO config paths must be `.json`; unknown keys hard-fail.
-- Training profile allowed only: `simple|purged_walk_forward|submission`.
+- Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
 - Loading mode allowed only: `materialized|fold_lazy`.
 - Scoring mode allowed only: `materialized|era_stream`.
-- For non-`submission` runs, model fitting/prediction persistence completes first, then `features.training.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
-- Post-run scoring emits `corr`, `fnc`, `mmc`, `cwmm`, `bmc`, and `bmc_last_200_eras`; FNC neutralizes against the run feature set (`data.feature_set`) over scored eras.
+- For non-`full_history_refit` runs, model fitting/prediction persistence completes first, then `features.training.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
+- Post-run scoring persists `corr`, `fnc`, `mmc`, `cwmm`, `bmc`, `bmc_last_200_eras`, `payout_estimate_mean`, and `score_provenance.json`.
+- `payout_estimate_mean` follows Numerai Classic 2026 semantics (`0.75*corr + 2.25*mmc`, clipped to `±0.05`) and is only populated for `target_ender_20`; non-Ender targets persist `null`.
+- Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
+- `features.training.score_run` can recompute the same scoring artifacts for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows.
+- Canonical FNC neutralizes against dataset feature set `fncv3_features`, independent of the run training feature set.
+- `score_provenance.json` records `policy.fnc_feature_set=fncv3_features`, benchmark overlap policy, meta overlap policy, join row/era counts, and benchmark missing-row/era counts.
+- Benchmark post-run scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial benchmark overlap is tolerated and scored on overlapping rows only.
+- Meta-model post-run scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial meta-model overlap is tolerated and scored on overlapping rows only.
 - Training writes run-local live stage/status logs to `runs/<run_id>/run.log` and records that path in `run.json -> artifacts.log`.
 - Dataset scope allowed only: `train_only|train_plus_validation` (default `train_only`).
 - `data.dataset_variant` is required and allowed only: `non_downsampled|downsampled`.
@@ -144,10 +155,11 @@ Critical invariants:
 - `data.target_horizon` is `20d|60d` when provided and takes precedence over target-name inference.
 - If `target_horizon` is omitted, horizon is inferred from `target_col`; ambiguous names hard-fail.
 - Benchmark model parquet data is used for scoring metrics (BMC/correlation-to-benchmark), not as training features.
+- Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
 - In `train_plus_validation` mode (materialized or fold-lazy), `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
-- Submission profile disables CV metrics.
+- `full_history_refit` disables validation metrics and is final-fit only.
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
 - Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
 - Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.
@@ -167,7 +179,7 @@ Critical invariants:
 - Cloud state file flags (`--state-path`) must decode to valid typed JSON state objects.
 
 CLI families:
-- `numereng run train|submit`
+- `numereng run train|score|submit`
 - `numereng experiment create|list|details|train|promote|report`
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`

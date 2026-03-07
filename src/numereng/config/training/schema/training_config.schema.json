@@ -56,10 +56,17 @@
           "type": "string"
         },
         "embargo_eras": {
-          "default": 13,
-          "minimum": 0,
-          "title": "Embargo Eras",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embargo Eras"
         },
         "era_col": {
           "default": "era",
@@ -236,19 +243,6 @@
           "default": null,
           "title": "Data Needed"
         },
-        "era_weighting": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Era Weighting"
-        },
         "module_path": {
           "anyOf": [
             {
@@ -265,32 +259,6 @@
           "additionalProperties": true,
           "title": "Params",
           "type": "object"
-        },
-        "prediction_batch_size": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Prediction Batch Size"
-        },
-        "prediction_transform": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Prediction Transform"
         },
         "target_transform": {
           "anyOf": [
@@ -480,7 +448,7 @@
               "enum": [
                 "simple",
                 "purged_walk_forward",
-                "submission"
+                "full_history_refit"
               ],
               "type": "string"
             },

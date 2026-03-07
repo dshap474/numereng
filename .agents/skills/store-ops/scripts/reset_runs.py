@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from numereng.features.experiments import service as experiment_service
+from numereng.features.training.run_lock import RUN_LOCK_FILENAME, is_lock_payload_active, read_run_lock
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 
@@ -33,6 +34,7 @@ class Scope:
     run_dirs_present: list[str]
     manifest_references: dict[str, list[str]]
     active_writers: list[str]
+    active_run_locks: list[dict[str, Any]]
     job_ids: list[str]
     logical_run_ids: list[str]
     study_ids: list[str]
@@ -167,12 +169,33 @@ def gather_manifest_references(paths: StorePaths, target_run_ids: set[str]) -> d
     return references
 
 
+def gather_active_run_locks(paths: StorePaths, target_run_ids: list[str]) -> list[dict[str, Any]]:
+    active_locks: list[dict[str, Any]] = []
+    for run_id in target_run_ids:
+        lock_path = paths.runs_dir / run_id / RUN_LOCK_FILENAME
+        payload = read_run_lock(lock_path)
+        if not payload:
+            continue
+        if not is_lock_payload_active(payload):
+            continue
+        lock_details: dict[str, Any] = {
+            "run_id": run_id,
+            "lock_path": str(lock_path),
+        }
+        for key in ("attempt_id", "pid", "host", "created_at"):
+            if key in payload:
+                lock_details[key] = payload[key]
+        active_locks.append(lock_details)
+    return active_locks
+
+
 def gather_scope(paths: StorePaths, target_run_ids: list[str]) -> Scope:
     unique_run_ids = sorted(set(target_run_ids))
     target_run_id_set = set(unique_run_ids)
     run_dirs_present = sorted(run_id for run_id in unique_run_ids if (paths.runs_dir / run_id).is_dir())
     manifest_references = gather_manifest_references(paths, target_run_id_set)
     active_writers = detect_active_writers()
+    active_run_locks = gather_active_run_locks(paths, unique_run_ids)
 
     db_counts: dict[str, dict[str, int]] = {}
     job_ids: list[str] = []
@@ -186,6 +209,7 @@ def gather_scope(paths: StorePaths, target_run_ids: list[str]) -> Scope:
             run_dirs_present=run_dirs_present,
             manifest_references=manifest_references,
             active_writers=active_writers,
+            active_run_locks=active_run_locks,
             job_ids=job_ids,
             logical_run_ids=logical_run_ids,
             study_ids=study_ids,
@@ -350,6 +374,7 @@ def gather_scope(paths: StorePaths, target_run_ids: list[str]) -> Scope:
         run_dirs_present=run_dirs_present,
         manifest_references=manifest_references,
         active_writers=active_writers,
+        active_run_locks=active_run_locks,
         job_ids=job_ids,
         logical_run_ids=logical_run_ids,
         study_ids=study_ids,
@@ -544,6 +569,8 @@ def make_output(
     blocked_reasons: list[str] = []
     if scope.active_writers and not allow_active_writers:
         blocked_reasons.append("active_writers_detected")
+    if scope.active_run_locks:
+        blocked_reasons.append("active_run_locks_detected")
 
     return {
         "store_root": str(paths.store_root),
@@ -560,6 +587,7 @@ def make_output(
         },
         "db_counts": scope.db_counts,
         "active_writers": scope.active_writers,
+        "active_run_locks": scope.active_run_locks,
         "blocked": bool(blocked_reasons),
         "blocked_reasons": blocked_reasons,
         "allow_flags": {
@@ -580,6 +608,8 @@ def main() -> int:
 
     scope = gather_scope(paths, run_ids)
     blocked = bool(scope.active_writers and not args.allow_active_writers)
+    if scope.active_run_locks:
+        blocked = True
     mutation_result: dict[str, Any] | None = None
 
     if args.execute:

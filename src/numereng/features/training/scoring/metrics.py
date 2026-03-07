@@ -26,8 +26,12 @@ from numereng.features.training.repo import (
     resolve_fold_lazy_source_paths,
     resolve_variant_dataset_filename,
 )
+from numereng.features.training.scoring.models import ResolvedScoringPolicy, default_scoring_policy
 
 DEFAULT_META_MODEL_COL = "numerai_meta_model"
+
+def _resolve_scoring_policy(scoring_policy: ResolvedScoringPolicy | None) -> ResolvedScoringPolicy:
+    return scoring_policy or default_scoring_policy()
 
 
 def _load_scoring_functions() -> tuple[Callable[..., pd.Series], Callable[..., pd.Series]]:
@@ -658,6 +662,7 @@ def attach_meta_model_predictions(
     *,
     era_col: str = "era",
     id_col: str = "id",
+    allow_partial_overlap: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Align and attach meta model predictions to model predictions."""
     if id_col not in predictions.columns:
@@ -674,6 +679,11 @@ def attach_meta_model_predictions(
     common_ids = preds.index.intersection(meta.index)
     if common_ids.empty:
         raise TrainingDataError("training_meta_model_no_overlapping_ids")
+    if len(common_ids) != len(preds.index) and not allow_partial_overlap:
+        raise TrainingDataError(
+            "training_meta_model_partial_id_overlap:"
+            f"predictions={len(preds.index)},meta_model={len(meta.index)},overlap={len(common_ids)}"
+        )
 
     preds = preds.loc[common_ids]
     meta = meta.loc[common_ids]
@@ -694,24 +704,101 @@ def attach_meta_model_predictions(
     return attached, stats
 
 
+def validate_join_source_coverage(
+    predictions: pd.DataFrame,
+    source: pd.DataFrame,
+    *,
+    source_name: str,
+    era_col: str,
+    id_col: str,
+    require_full_coverage: bool = True,
+    include_missing_counts: bool = False,
+) -> dict[str, int]:
+    """Validate `(id, era)` coverage for one scoring join source."""
+    prediction_frame = _normalize_join_keys_frame(predictions, id_col=id_col, era_col=era_col, source_name=None)
+    source_frame = _normalize_join_keys_frame(source, id_col=id_col, era_col=era_col, source_name=source_name)
+
+    prediction_keys = prediction_frame[[id_col, era_col]].copy()
+    source_keys = source_frame[[id_col, era_col]].copy()
+    prediction_key_index = pd.MultiIndex.from_frame(prediction_keys)
+    source_key_index = pd.MultiIndex.from_frame(source_keys)
+    overlap = prediction_key_index.intersection(source_key_index)
+    missing = prediction_key_index.difference(source_key_index)
+    if overlap.empty:
+        raise TrainingDataError(f"training_{source_name}_no_overlapping_ids")
+    if len(missing) and require_full_coverage:
+        raise TrainingDataError(
+            f"training_{source_name}_partial_id_overlap:"
+            f"predictions={len(prediction_key_index)},"
+            f"{source_name}={len(source_key_index)},"
+            f"overlap={len(overlap)}"
+        )
+
+    stats = {
+        f"{source_name}_source_rows": int(len(source_keys)),
+        f"{source_name}_overlap_rows": int(len(overlap)),
+        f"{source_name}_overlap_eras": int(overlap.to_frame(index=False)[era_col].nunique()),
+    }
+    if include_missing_counts:
+        stats[f"{source_name}_missing_rows"] = int(len(missing))
+        stats[f"{source_name}_missing_eras"] = (
+            int(missing.to_frame(index=False)[era_col].nunique()) if len(missing) else 0
+        )
+    return stats
+
+
+def _normalize_join_keys_frame(
+    frame: pd.DataFrame,
+    *,
+    id_col: str,
+    era_col: str,
+    source_name: str | None,
+) -> pd.DataFrame:
+    normalized = frame
+    if id_col not in normalized.columns:
+        if normalized.index.name == id_col:
+            normalized = normalized.reset_index()
+        else:
+            if source_name is None:
+                raise TrainingDataError(f"training_predictions_missing_columns:{id_col}")
+            raise TrainingDataError(f"training_{source_name}_missing_id_col:{id_col}")
+    if era_col not in normalized.columns:
+        if source_name is None:
+            raise TrainingDataError(f"training_predictions_missing_columns:{era_col}")
+        raise TrainingDataError(f"training_{source_name}_missing_era_col:{era_col}")
+    return normalized
+
+
+def read_join_source_keys(
+    path: Path,
+    *,
+    id_col: str,
+    era_col: str,
+    extra_cols: Sequence[str] | None = None,
+    source_name: str,
+) -> pd.DataFrame:
+    """Read the minimal join-key frame from one predictions/benchmark/meta file."""
+    available_columns = set(_table_columns(path))
+    requested = [col for col in [id_col, era_col, *(extra_cols or ())] if col in available_columns]
+    frame = _read_table(path, columns=requested or None)
+    normalized = _normalize_join_keys_frame(frame, id_col=id_col, era_col=era_col, source_name=source_name)
+    keep_cols = [col for col in [id_col, era_col, *(extra_cols or ())] if col in normalized.columns]
+    return normalized[keep_cols]
+
+
 def resolve_fnc_feature_columns(
     *,
     client: TrainingDataClient,
     data_version: str,
     dataset_variant: str,
-    feature_set: str,
-    feature_cols: Sequence[str] | None,
+    scoring_policy: ResolvedScoringPolicy,
     data_root: Path,
 ) -> list[str]:
     """Resolve feature columns used as neutralizers for FNC."""
-    if feature_cols is not None:
-        resolved = [str(col) for col in feature_cols]
-        if resolved:
-            return resolved
     return load_features(
         client,
         data_version,
-        feature_set,
+        scoring_policy.fnc_feature_set,
         dataset_variant=dataset_variant,
         data_root=data_root,
     )
@@ -766,6 +853,11 @@ def attach_fnc_features(
     common_ids = preds.index.intersection(features.index)
     if common_ids.empty:
         raise TrainingDataError("training_fnc_no_overlapping_ids")
+    if len(common_ids) != len(preds.index):
+        raise TrainingDataError(
+            "training_fnc_partial_id_overlap:"
+            f"predictions={len(preds.index)},features={len(features.index)},overlap={len(common_ids)}"
+        )
 
     preds = preds.loc[common_ids]
     features = features.loc[common_ids]
@@ -841,7 +933,6 @@ def _summarize_prediction_file_with_scores_materialized(
     dataset_variant: str,
     client: TrainingDataClient,
     feature_set: str,
-    feature_cols: Sequence[str] | None = None,
     feature_source_paths: Sequence[Path] | None = None,
     full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
@@ -853,6 +944,7 @@ def _summarize_prediction_file_with_scores_materialized(
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
     era_chunk_size: int = 64,
+    scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
     """Summarize prediction metrics and build per-run scoring provenance."""
     resolved_pred_cols = [str(col) for col in _as_list(pred_cols)]
@@ -872,12 +964,14 @@ def _summarize_prediction_file_with_scores_materialized(
     if id_col not in predictions.columns:
         raise TrainingDataError(f"training_predictions_missing_columns:{id_col}")
 
+    resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
+    benchmark_allows_partial_overlap = resolved_scoring_policy.benchmark_overlap_policy == "overlap_required"
+    meta_allows_partial_overlap = resolved_scoring_policy.meta_overlap_policy == "overlap_required"
     resolved_feature_cols = resolve_fnc_feature_columns(
         client=client,
         data_version=data_version,
         dataset_variant=dataset_variant,
-        feature_set=feature_set,
-        feature_cols=feature_cols,
+        scoring_policy=resolved_scoring_policy,
         data_root=data_root,
     )
     fnc_source_paths, fnc_include_validation_only = resolve_fnc_source_paths(
@@ -890,6 +984,20 @@ def _summarize_prediction_file_with_scores_materialized(
         data_root=data_root,
     )
 
+    fnc_preflight = validate_join_source_coverage(
+        predictions,
+        load_fold_data_lazy(
+            fnc_source_paths,
+            eras=sorted(set(predictions[era_col].tolist()), key=_era_sort_key),
+            columns=[era_col, id_col],
+            era_col=era_col,
+            id_col=id_col,
+            include_validation_only=fnc_include_validation_only,
+        ),
+        source_name="fnc",
+        era_col=era_col,
+        id_col=id_col,
+    )
     fnc_chunks: list[pd.DataFrame] = []
     fnc_overlap_rows = 0
     fnc_overlap_eras: set[object] = set()
@@ -907,29 +1015,24 @@ def _summarize_prediction_file_with_scores_materialized(
             id_col=id_col,
             include_validation_only=fnc_include_validation_only,
         )
-        try:
-            predictions_for_fnc = attach_fnc_features(
-                chunk_predictions,
-                feature_chunk,
-                feature_cols=resolved_feature_cols,
+        predictions_for_fnc = attach_fnc_features(
+            chunk_predictions,
+            feature_chunk,
+            feature_cols=resolved_feature_cols,
+            era_col=era_col,
+            id_col=id_col,
+        )
+        fnc_overlap_rows += int(len(predictions_for_fnc))
+        fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
+        fnc_chunks.append(
+            per_era_fnc(
+                predictions_for_fnc,
+                resolved_pred_cols,
+                resolved_feature_cols,
+                target_col,
                 era_col=era_col,
-                id_col=id_col,
             )
-        except TrainingDataError as exc:
-            if str(exc) != "training_fnc_no_overlapping_ids":
-                raise
-        else:
-            fnc_overlap_rows += int(len(predictions_for_fnc))
-            fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
-            fnc_chunks.append(
-                per_era_fnc(
-                    predictions_for_fnc,
-                    resolved_pred_cols,
-                    resolved_feature_cols,
-                    target_col,
-                    era_col=era_col,
-                )
-            )
+        )
 
     if not fnc_chunks:
         raise TrainingDataError("training_fnc_no_overlapping_ids")
@@ -952,6 +1055,15 @@ def _summarize_prediction_file_with_scores_materialized(
         id_col=id_col,
         data_root=data_root,
     )
+    benchmark_stats = validate_join_source_coverage(
+        predictions,
+        benchmark,
+        source_name="benchmark",
+        era_col=era_col,
+        id_col=id_col,
+        require_full_coverage=not benchmark_allows_partial_overlap,
+        include_missing_counts=True,
+    )
 
     predictions_for_benchmark = attach_benchmark_predictions(
         predictions,
@@ -959,7 +1071,7 @@ def _summarize_prediction_file_with_scores_materialized(
         benchmark_col,
         era_col=era_col,
         id_col=id_col,
-        allow_partial_overlap=True,
+        allow_partial_overlap=benchmark_allows_partial_overlap,
     )
 
     per_era = per_era_bmc(predictions_for_benchmark, resolved_pred_cols, benchmark_col, target_col, era_col)
@@ -998,12 +1110,22 @@ def _summarize_prediction_file_with_scores_materialized(
         id_col=id_col,
         data_root=data_root,
     )
+    preflight_meta_stats = validate_join_source_coverage(
+        predictions,
+        meta_model,
+        source_name="meta_model",
+        era_col=era_col,
+        id_col=id_col,
+        require_full_coverage=not meta_allows_partial_overlap,
+        include_missing_counts=True,
+    )
     predictions_for_meta, meta_stats = attach_meta_model_predictions(
         predictions,
         meta_model,
         resolved_meta_model_col,
         era_col=era_col,
         id_col=id_col,
+        allow_partial_overlap=meta_allows_partial_overlap,
     )
     per_era_mmc_scores = per_era_mmc(
         predictions_for_meta,
@@ -1023,7 +1145,7 @@ def _summarize_prediction_file_with_scores_materialized(
     summaries["cwmm"] = summarize_scores(cwmm_per_era)
 
     provenance: dict[str, object] = {
-        "schema_version": "1",
+        "schema_version": "2",
         "data_version": data_version,
         "dataset_variant": dataset_variant,
         "columns": {
@@ -1031,10 +1153,16 @@ def _summarize_prediction_file_with_scores_materialized(
             "target_col": target_col,
             "id_col": id_col,
             "era_col": era_col,
-            "fnc_feature_set": feature_set,
+            "training_feature_set": feature_set,
+            "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
             "fnc_feature_count": len(resolved_feature_cols),
             "meta_model_col": resolved_meta_model_col,
             "benchmark_col": benchmark_col,
+        },
+        "policy": {
+            "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
+            "benchmark_overlap_policy": resolved_scoring_policy.benchmark_overlap_policy,
+            "meta_overlap_policy": resolved_scoring_policy.meta_overlap_policy,
         },
         "sources": {
             "predictions": _file_fingerprint(predictions_path_resolved),
@@ -1047,8 +1175,9 @@ def _summarize_prediction_file_with_scores_materialized(
             "predictions_eras": int(predictions[era_col].nunique()) if era_col in predictions.columns else 0,
             "fnc_overlap_rows": fnc_overlap_rows,
             "fnc_overlap_eras": int(len(fnc_overlap_eras)),
-            "benchmark_overlap_rows": int(len(predictions_for_benchmark)),
-            "benchmark_overlap_eras": int(predictions_for_benchmark[era_col].nunique()),
+            **fnc_preflight,
+            **benchmark_stats,
+            **preflight_meta_stats,
             **meta_stats,
         },
     }
@@ -1064,7 +1193,6 @@ def summarize_prediction_file_with_scores(
     dataset_variant: str = DEFAULT_DATASET_VARIANT,
     client: TrainingDataClient,
     feature_set: str = "small",
-    feature_cols: Sequence[str] | None = None,
     feature_source_paths: Sequence[Path] | None = None,
     full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
@@ -1077,8 +1205,10 @@ def summarize_prediction_file_with_scores(
     data_root: Path = DEFAULT_DATASETS_DIR,
     scoring_mode: str = "materialized",
     era_chunk_size: int = 64,
+    scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
     """Summarize prediction metrics with explicit scoring execution mode."""
+    resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
     if scoring_mode == "materialized":
         summaries, provenance = _summarize_prediction_file_with_scores_materialized(
             predictions_path,
@@ -1088,7 +1218,6 @@ def summarize_prediction_file_with_scores(
             dataset_variant=dataset_variant,
             client=client,
             feature_set=feature_set,
-            feature_cols=feature_cols,
             feature_source_paths=feature_source_paths,
             full_data_path=full_data_path,
             dataset_scope=dataset_scope,
@@ -1100,6 +1229,7 @@ def summarize_prediction_file_with_scores(
             id_col=id_col,
             data_root=data_root,
             era_chunk_size=era_chunk_size,
+            scoring_policy=resolved_scoring_policy,
         )
         provenance["execution"] = {
             "requested_scoring_mode": scoring_mode,
@@ -1117,7 +1247,6 @@ def summarize_prediction_file_with_scores(
             dataset_variant=dataset_variant,
             client=client,
             feature_set=feature_set,
-            feature_cols=feature_cols,
             feature_source_paths=feature_source_paths,
             full_data_path=full_data_path,
             dataset_scope=dataset_scope,
@@ -1129,6 +1258,7 @@ def summarize_prediction_file_with_scores(
             id_col=id_col,
             data_root=data_root,
             era_chunk_size=era_chunk_size,
+            scoring_policy=resolved_scoring_policy,
         )
 
     raise TrainingMetricsError("training_metrics_scoring_mode_invalid")
@@ -1143,7 +1273,6 @@ def _summarize_prediction_file_with_scores_era_stream(
     dataset_variant: str,
     client: TrainingDataClient,
     feature_set: str,
-    feature_cols: Sequence[str] | None = None,
     feature_source_paths: Sequence[Path] | None = None,
     full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
@@ -1155,6 +1284,7 @@ def _summarize_prediction_file_with_scores_era_stream(
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
     era_chunk_size: int,
+    scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
     if era_chunk_size < 1:
         raise TrainingMetricsError("training_metrics_era_chunk_size_invalid")
@@ -1195,12 +1325,14 @@ def _summarize_prediction_file_with_scores_era_stream(
         era_col=era_col,
         id_col=id_col,
     )
+    resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
+    benchmark_allows_partial_overlap = resolved_scoring_policy.benchmark_overlap_policy == "overlap_required"
+    meta_allows_partial_overlap = resolved_scoring_policy.meta_overlap_policy == "overlap_required"
     resolved_feature_cols = resolve_fnc_feature_columns(
         client=client,
         data_version=data_version,
         dataset_variant=dataset_variant,
-        feature_set=feature_set,
-        feature_cols=feature_cols,
+        scoring_policy=resolved_scoring_policy,
         data_root=data_root,
     )
     fnc_source_paths, fnc_include_validation_only = resolve_fnc_source_paths(
@@ -1216,6 +1348,59 @@ def _summarize_prediction_file_with_scores_era_stream(
     era_values = _parquet_unique_values(predictions_path_resolved, column=era_col)
     if not era_values:
         raise TrainingDataError("training_predictions_missing_rows")
+    prediction_keys = read_join_source_keys(
+        predictions_path_resolved,
+        id_col=id_col,
+        era_col=era_col,
+        source_name="predictions",
+    )
+    fnc_keys = load_fold_data_lazy(
+        fnc_source_paths,
+        eras=era_values,
+        columns=[era_col, id_col],
+        era_col=era_col,
+        id_col=id_col,
+        include_validation_only=fnc_include_validation_only,
+    )
+    benchmark_keys = read_join_source_keys(
+        benchmark_path,
+        id_col=id_col,
+        era_col=era_col,
+        extra_cols=[benchmark_col],
+        source_name="benchmark",
+    )
+    meta_keys = read_join_source_keys(
+        meta_model_path,
+        id_col=id_col,
+        era_col=era_col,
+        extra_cols=[resolved_meta_model_col],
+        source_name="meta_model",
+    )
+    fnc_preflight = validate_join_source_coverage(
+        prediction_keys,
+        fnc_keys,
+        source_name="fnc",
+        era_col=era_col,
+        id_col=id_col,
+    )
+    benchmark_stats = validate_join_source_coverage(
+        prediction_keys,
+        benchmark_keys,
+        source_name="benchmark",
+        era_col=era_col,
+        id_col=id_col,
+        require_full_coverage=not benchmark_allows_partial_overlap,
+        include_missing_counts=True,
+    )
+    preflight_meta_stats = validate_join_source_coverage(
+        prediction_keys,
+        meta_keys,
+        source_name="meta_model",
+        era_col=era_col,
+        id_col=id_col,
+        require_full_coverage=not meta_allows_partial_overlap,
+        include_missing_counts=True,
+    )
 
     corr_chunks: list[pd.DataFrame] = []
     fnc_chunks: list[pd.DataFrame] = []
@@ -1257,29 +1442,24 @@ def _summarize_prediction_file_with_scores_era_stream(
             id_col=id_col,
             include_validation_only=fnc_include_validation_only,
         )
-        try:
-            predictions_for_fnc = attach_fnc_features(
-                chunk_predictions,
-                fnc_feature_chunk,
-                feature_cols=resolved_feature_cols,
+        predictions_for_fnc = attach_fnc_features(
+            chunk_predictions,
+            fnc_feature_chunk,
+            feature_cols=resolved_feature_cols,
+            era_col=era_col,
+            id_col=id_col,
+        )
+        fnc_overlap_rows += int(len(predictions_for_fnc))
+        fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
+        fnc_chunks.append(
+            per_era_fnc(
+                predictions_for_fnc,
+                resolved_pred_cols,
+                resolved_feature_cols,
+                target_col,
                 era_col=era_col,
-                id_col=id_col,
             )
-        except TrainingDataError as exc:
-            if str(exc) != "training_fnc_no_overlapping_ids":
-                raise
-        else:
-            fnc_overlap_rows += int(len(predictions_for_fnc))
-            fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
-            fnc_chunks.append(
-                per_era_fnc(
-                    predictions_for_fnc,
-                    resolved_pred_cols,
-                    resolved_feature_cols,
-                    target_col,
-                    era_col=era_col,
-                )
-            )
+        )
 
         benchmark_chunk = _read_parquet_era_chunk(
             benchmark_path,
@@ -1295,31 +1475,31 @@ def _summarize_prediction_file_with_scores_era_stream(
                 benchmark_col,
                 era_col=era_col,
                 id_col=id_col,
-                allow_partial_overlap=True,
+                allow_partial_overlap=benchmark_allows_partial_overlap,
             )
         except TrainingDataError as exc:
-            if str(exc) != "training_benchmark_no_overlapping_ids":
+            if str(exc) != "training_benchmark_no_overlapping_ids" or not benchmark_allows_partial_overlap:
                 raise
-        else:
-            benchmark_overlap_rows += int(len(predictions_for_benchmark))
-            benchmark_overlap_eras.update(predictions_for_benchmark[era_col].tolist())
-            bmc_chunks.append(
-                per_era_bmc(
-                    predictions_for_benchmark,
-                    resolved_pred_cols,
-                    benchmark_col,
-                    target_col,
-                    era_col,
-                )
+            continue
+        benchmark_overlap_rows += int(len(predictions_for_benchmark))
+        benchmark_overlap_eras.update(predictions_for_benchmark[era_col].tolist())
+        bmc_chunks.append(
+            per_era_bmc(
+                predictions_for_benchmark,
+                resolved_pred_cols,
+                benchmark_col,
+                target_col,
+                era_col,
             )
-            bmc_corr_chunks.append(
-                per_era_pred_corr(
-                    predictions_for_benchmark,
-                    resolved_pred_cols,
-                    benchmark_col,
-                    era_col=era_col,
-                )
+        )
+        bmc_corr_chunks.append(
+            per_era_pred_corr(
+                predictions_for_benchmark,
+                resolved_pred_cols,
+                benchmark_col,
+                era_col=era_col,
             )
+        )
 
         meta_chunk = _read_parquet_era_chunk(
             meta_model_path,
@@ -1335,30 +1515,31 @@ def _summarize_prediction_file_with_scores_era_stream(
                 resolved_meta_model_col,
                 era_col=era_col,
                 id_col=id_col,
+                allow_partial_overlap=meta_allows_partial_overlap,
             )
         except TrainingDataError as exc:
-            if str(exc) != "training_meta_model_no_overlapping_ids":
+            if str(exc) != "training_meta_model_no_overlapping_ids" or not meta_allows_partial_overlap:
                 raise
-        else:
-            meta_overlap_rows += int(meta_stats["meta_overlap_rows"])
-            meta_overlap_eras.update(predictions_for_meta[era_col].tolist())
-            mmc_chunks.append(
-                per_era_mmc(
-                    predictions_for_meta,
-                    resolved_pred_cols,
-                    resolved_meta_model_col,
-                    target_col,
-                    era_col=era_col,
-                )
+            continue
+        meta_overlap_rows += int(meta_stats["meta_overlap_rows"])
+        meta_overlap_eras.update(predictions_for_meta[era_col].tolist())
+        mmc_chunks.append(
+            per_era_mmc(
+                predictions_for_meta,
+                resolved_pred_cols,
+                resolved_meta_model_col,
+                target_col,
+                era_col=era_col,
             )
-            cwmm_chunks.append(
-                per_era_pred_corr(
-                    predictions_for_meta,
-                    resolved_pred_cols,
-                    resolved_meta_model_col,
-                    era_col=era_col,
-                )
+        )
+        cwmm_chunks.append(
+            per_era_pred_corr(
+                predictions_for_meta,
+                resolved_pred_cols,
+                resolved_meta_model_col,
+                era_col=era_col,
             )
+        )
 
     if not corr_chunks:
         raise TrainingDataError("training_metrics_era_stream_no_chunks")
@@ -1401,7 +1582,7 @@ def _summarize_prediction_file_with_scores_era_stream(
     summaries["cwmm"] = summarize_scores(cwmm_per_era)
 
     provenance: dict[str, object] = {
-        "schema_version": "1",
+        "schema_version": "2",
         "data_version": data_version,
         "dataset_variant": dataset_variant,
         "columns": {
@@ -1409,10 +1590,16 @@ def _summarize_prediction_file_with_scores_era_stream(
             "target_col": target_col,
             "id_col": id_col,
             "era_col": era_col,
-            "fnc_feature_set": feature_set,
+            "training_feature_set": feature_set,
+            "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
             "fnc_feature_count": len(resolved_feature_cols),
             "meta_model_col": resolved_meta_model_col,
             "benchmark_col": benchmark_col,
+        },
+        "policy": {
+            "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
+            "benchmark_overlap_policy": resolved_scoring_policy.benchmark_overlap_policy,
+            "meta_overlap_policy": resolved_scoring_policy.meta_overlap_policy,
         },
         "sources": {
             "predictions": _file_fingerprint(predictions_path_resolved),
@@ -1425,8 +1612,11 @@ def _summarize_prediction_file_with_scores_era_stream(
             "predictions_eras": int(len(era_values)),
             "fnc_overlap_rows": fnc_overlap_rows,
             "fnc_overlap_eras": int(len(fnc_overlap_eras)),
-            "benchmark_overlap_rows": benchmark_overlap_rows,
-            "benchmark_overlap_eras": int(len(benchmark_overlap_eras)),
+            **fnc_preflight,
+            **benchmark_stats,
+            **preflight_meta_stats,
+            "benchmark_stream_overlap_rows": benchmark_overlap_rows,
+            "benchmark_stream_overlap_eras": int(len(benchmark_overlap_eras)),
             "meta_overlap_rows": meta_overlap_rows,
             "meta_overlap_eras": int(len(meta_overlap_eras)),
             "meta_source_rows": _table_row_count(meta_model_path),

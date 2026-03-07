@@ -23,8 +23,10 @@ uv run numereng experiment train \
 Optional training overrides are the same as `run train`:
 
 - `--output-dir`
-- `--profile <simple|purged_walk_forward|submission>`
+- `--profile <simple|purged_walk_forward|full_history_refit>`
 - `--store-root`
+
+Use `--profile full_history_refit` only for final refits; it does not emit validation metrics.
 
 ## Inspect
 

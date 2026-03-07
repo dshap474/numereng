@@ -12,6 +12,7 @@ from typing import Any, cast
 from numereng.features.cloud.modal.contracts import (
     ModalRuntimePayload,
     ModalRuntimeResult,
+    ModalTrainingEngineMode,
     ModalTrainingProfile,
 )
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
@@ -42,7 +43,7 @@ def build_runtime_payload_from_config(
     config_path: str | Path,
     output_dir: str | None = None,
     profile: ModalTrainingProfile | None = None,
-    engine_mode: str | None = None,
+    engine_mode: ModalTrainingEngineMode | None = None,
     window_size_eras: int | None = None,
     embargo_eras: int | None = None,
 ) -> ModalRuntimePayload:

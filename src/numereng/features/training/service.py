@@ -69,6 +69,13 @@ from numereng.features.training.repo import (
     save_score_provenance,
     select_prediction_columns,
 )
+from numereng.features.training.run_lock import (
+    RUN_LOCK_FILENAME,
+    RunLock,
+    acquire_run_lock,
+    build_local_attempt_id,
+    release_run_lock,
+)
 from numereng.features.training.run_log import (
     initialize_run_log,
     log_error,
@@ -87,7 +94,11 @@ from numereng.features.training.scoring.metrics import (
     attach_benchmark_predictions,
     load_custom_benchmark_predictions,
 )
-from numereng.features.training.scoring.models import PostTrainingScoringRequest
+from numereng.features.training.scoring.models import (
+    PostTrainingScoringRequest,
+    ResolvedScoringPolicy,
+    default_scoring_policy,
+)
 from numereng.features.training.scoring.service import run_post_training_scoring
 from numereng.features.training.strategies import (
     TrainingEnginePlan,
@@ -99,9 +110,13 @@ _MATERIALIZED_LOADING_MODE = "materialized"
 _FOLD_LAZY_LOADING_MODE = "fold_lazy"
 _SIMPLE_PROFILE: TrainingProfile = "simple"
 _PURGED_WALK_FORWARD_PROFILE: TrainingProfile = "purged_walk_forward"
-_SUBMISSION_PROFILE: TrainingProfile = "submission"
+_FULL_HISTORY_REFIT_PROFILE: TrainingProfile = "full_history_refit"
 _MATERIALIZED_SCORING_MODE = "materialized"
 _ERA_STREAM_SCORING_MODE = "era_stream"
+_CLASSIC_PAYOUT_TARGET = "target_ender_20"
+_PAYOUT_CORR_WEIGHT = 0.75
+_PAYOUT_MMC_WEIGHT = 2.25
+_PAYOUT_CLIP = 0.05
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +182,7 @@ def build_results_payload(
     full_eras: int,
     oof_rows: int,
     oof_eras: int,
-    configured_embargo_eras: int,
+    configured_embargo_eras: int | None,
     effective_embargo_eras: int,
     benchmark_model: str,
     benchmark_data_path: str | Path | None,
@@ -186,6 +201,7 @@ def build_results_payload(
     resource_policy: dict[str, object],
     cache_policy: dict[str, object],
     scoring_backend: str,
+    scoring_policy: ResolvedScoringPolicy | None = None,
     metrics_status: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build canonical results payload persisted for each training run."""
@@ -198,9 +214,6 @@ def build_results_payload(
         "x_groups",
         "data_needed",
         "target_transform",
-        "prediction_transform",
-        "era_weighting",
-        "prediction_batch_size",
         "benchmark",
         "baseline",
     ):
@@ -217,6 +230,14 @@ def build_results_payload(
         metrics_cwmm = summaries["cwmm"].loc["prediction"].to_dict()
         metrics_bmc = summaries["bmc"].loc["prediction"].to_dict()
         metrics_bmc_200 = summaries["bmc_last_200_eras"].loc["prediction"].to_dict()
+        payout_estimate_mean = (
+            _clip_payout_estimate_mean(
+                corr_mean=_coerce_finite_float(metrics_corr.get("mean")),
+                mmc_mean=_coerce_finite_float(metrics_mmc.get("mean")),
+            )
+            if _is_classic_payout_target(target_col)
+            else None
+        )
         metrics_payload = {
             "corr": metrics_corr,
             "fnc": metrics_fnc,
@@ -224,7 +245,13 @@ def build_results_payload(
             "cwmm": metrics_cwmm,
             "bmc": metrics_bmc,
             "bmc_last_200_eras": metrics_bmc_200,
+            "payout_estimate": {
+                "mean": payout_estimate_mean,
+            },
+            "payout_estimate_mean": payout_estimate_mean,
         }
+
+    resolved_scoring_policy = scoring_policy or default_scoring_policy()
 
     return {
         "model": model_meta,
@@ -290,6 +317,7 @@ def build_results_payload(
                 "mode": scoring_mode,
                 "era_chunk_size": scoring_era_chunk_size,
                 "effective_backend": scoring_backend,
+                "policy": _scoring_policy_payload(resolved_scoring_policy),
             },
             "resources": resource_policy,
             "cache": cache_policy,
@@ -336,7 +364,7 @@ def run_training(
     benchmark_data_path = _optional_path(data_config.get("benchmark_data_path"))
     meta_model_data_path = _optional_path(data_config.get("meta_model_data_path"))
     meta_model_col = str(data_config.get("meta_model_col", "numerai_meta_model"))
-    data_embargo_eras = _coerce_int(data_config.get("embargo_eras"), default=13)
+    data_embargo_eras = _coerce_optional_int(data_config.get("embargo_eras"))
     benchmark_model = str(data_config.get("benchmark_model", DEFAULT_BENCHMARK_MODEL))
     dataset_scope_config = _resolve_dataset_scope(data_config.get("dataset_scope"))
     loading_config = _as_dict(data_config.get("loading"))
@@ -368,6 +396,18 @@ def run_training(
         full_data_path=full_data_path,
     )
     model_type, model_params = resolve_model_config(model_config)
+    raw_x_groups = model_config.get("x_groups") or model_config.get("data_needed")
+    if raw_x_groups is None:
+        x_groups_input: list[str] | None = None
+    elif isinstance(raw_x_groups, (list, tuple)):
+        x_groups_input = [str(item) for item in raw_x_groups]
+    else:
+        raise TrainingConfigError("training_model_x_groups_invalid")
+    try:
+        x_groups = normalize_x_groups(x_groups_input)
+    except ValueError as exc:
+        raise TrainingConfigError(str(exc)) from exc
+
     run_hash = compute_run_hash(
         config=config,
         data_version=data_version,
@@ -399,6 +439,7 @@ def run_training(
             "mode": scoring_mode,
             "era_chunk_size": scoring_era_chunk_size,
             "effective_backend": scoring_mode,
+            "policy": _scoring_policy_payload(default_scoring_policy()),
         },
         "resources": resource_policy,
         "cache": cache_policy,
@@ -417,8 +458,17 @@ def run_training(
     telemetry_session: LocalRunTelemetrySession | None = None
     telemetry_sampler: LocalResourceSampler | None = None
     completed_stages: list[str] = []
+    run_attempt_id = build_local_attempt_id(run_id)
+    run_manifest_written = False
+    run_lock: RunLock | None = acquire_run_lock(
+        run_dir=output_root,
+        run_id=run_id,
+        attempt_id=run_attempt_id,
+    )
 
     try:
+        _ensure_run_dir_is_fresh(output_root)
+
         if launch_metadata is not None:
             try:
                 run_store_root = _resolve_store_root_for_run(output_root)
@@ -447,6 +497,7 @@ def run_training(
                         stage_name="initializing",
                         message="Training session initialized.",
                         run_log_path=None,
+                        attempt_id=run_attempt_id,
                     )
             except Exception:
                 logger.exception("training telemetry bootstrap failed for run_id=%s", run_id)
@@ -467,6 +518,7 @@ def run_training(
             training_metadata=training_runtime_metadata,
         )
         save_run_manifest(running_manifest, run_manifest_path)
+        run_manifest_written = True
         try:
             initialize_run_log(output_root)
         except Exception:
@@ -478,6 +530,7 @@ def run_training(
                 f"run_id={run_id} engine_mode={engine_plan.mode} "
                 f"loading_mode={loading_mode} scoring_mode={scoring_mode}"
             ),
+            attempt_id=run_attempt_id,
         )
         save_resolved_config(config, resolved_snapshot_path)
         created_at = str(running_manifest["created_at"])
@@ -488,6 +541,7 @@ def run_training(
             stage_name="load_data",
             message="Loading training datasets and feature metadata.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
 
         features = load_features(training_client, data_version, feature_set, dataset_variant=dataset_variant)
@@ -543,18 +597,6 @@ def run_training(
             all_eras = sorted(set(profile_frame[era_col].tolist()), key=_era_sort_key)
             full_rows = int(profile_frame.shape[0])
             full_eras = int(profile_frame[era_col].nunique()) if era_col in profile_frame.columns else len(all_eras)
-
-        raw_x_groups = model_config.get("x_groups") or model_config.get("data_needed")
-        if raw_x_groups is None:
-            x_groups_input: list[str] | None = None
-        elif isinstance(raw_x_groups, (list, tuple)):
-            x_groups_input = [str(item) for item in raw_x_groups]
-        else:
-            raise TrainingConfigError("training_model_x_groups_invalid")
-        try:
-            x_groups = normalize_x_groups(x_groups_input)
-        except ValueError as exc:
-            raise TrainingConfigError(str(exc)) from exc
 
         baseline_col: str | None = None
         join_columns: list[FoldJoinColumn] = []
@@ -650,7 +692,8 @@ def run_training(
             cv_config["train_eras"] = simple_train_eras
             cv_config["val_eras"] = simple_val_eras
         else:
-            cv_config.setdefault("embargo", data_embargo_eras)
+            if data_embargo_eras is not None:
+                cv_config.setdefault("embargo", data_embargo_eras)
         cv_enabled = bool(cv_config.get("enabled", True))
         _record_telemetry_stage(
             telemetry_session,
@@ -658,9 +701,10 @@ def run_training(
             stage_name="train_model",
             message="Building model predictions.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
 
-        if _is_submission_profile(engine_plan.mode):
+        if _is_full_history_refit_profile(engine_plan.mode):
             predictions, cv_meta = build_full_history_predictions(
                 all_eras,
                 data_loader,
@@ -691,7 +735,10 @@ def run_training(
                 memmap_enabled=bool(resource_policy["memmap_enabled"]),
             )
 
-        effective_embargo_eras = _coerce_int(cv_meta.get("embargo"), default=data_embargo_eras)
+        effective_embargo_eras = _coerce_int(
+            cv_meta.get("embargo"),
+            default=0 if data_embargo_eras is None else data_embargo_eras,
+        )
 
         predictions = select_prediction_columns(predictions, id_col, era_col, target_col)
         predictions_path, predictions_relative = save_predictions(
@@ -716,11 +763,12 @@ def run_training(
             stage_name="score_predictions",
             message="Deferring scoring to post-run metrics phase.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
-        if _is_submission_profile(engine_plan.mode):
+        if _is_full_history_refit_profile(engine_plan.mode):
             metrics_status = {
                 "status": "not_applicable",
-                "reason": "training_profile_submission_no_validation_metrics",
+                "reason": "training_profile_full_history_refit_no_validation_metrics",
             }
             effective_scoring_backend = "not_applicable"
         else:
@@ -734,6 +782,7 @@ def run_training(
             "mode": scoring_mode,
             "era_chunk_size": scoring_era_chunk_size,
             "effective_backend": effective_scoring_backend,
+            "policy": _scoring_policy_payload(default_scoring_policy()),
         }
         _record_telemetry_stage(
             telemetry_session,
@@ -741,6 +790,7 @@ def run_training(
             stage_name="persist_artifacts",
             message="Persisting run artifacts and metrics.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
 
         results_path = resolve_results_path(config, resolved_config_path, results_dir)
@@ -779,6 +829,7 @@ def run_training(
             resource_policy=resource_policy,
             cache_policy=cache_policy,
             scoring_backend=effective_scoring_backend,
+            scoring_policy=default_scoring_policy(),
             metrics_status=metrics_status,
         )
         save_results(results, results_path)
@@ -793,6 +844,7 @@ def run_training(
             stage_name="index_run",
             message="Indexing run artifacts in store.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
 
         run_store_root = _resolve_store_root_for_run(output_root)
@@ -801,18 +853,20 @@ def run_training(
         except StoreError as exc:
             raise TrainingError(f"training_store_index_failed:{run_id}") from exc
 
-        if not _is_submission_profile(engine_plan.mode):
+        if not _is_full_history_refit_profile(engine_plan.mode):
             _record_telemetry_stage(
                 telemetry_session,
                 completed_stages=completed_stages,
                 stage_name="score_predictions_post_run",
                 message="Computing metrics in post-run phase.",
                 run_log_path=run_log_path,
+                attempt_id=run_attempt_id,
             )
             log_info(
                 run_log_path,
                 event="post_run_scoring_started",
                 message=f"mode={scoring_mode} era_chunk_size={scoring_era_chunk_size}",
+                attempt_id=run_attempt_id,
             )
             # Release large in-memory training frames before post-run scoring to
             # lower peak RAM usage during metric computation.
@@ -835,7 +889,6 @@ def run_training(
                         data_version=data_version,
                         dataset_variant=dataset_variant,
                         feature_set=feature_set,
-                        feature_cols=tuple(features),
                         feature_source_paths=scoring_feature_source_paths,
                         full_data_path=full_data_path,
                         dataset_scope=dataset_scope,
@@ -858,6 +911,7 @@ def run_training(
                     "mode": scoring_mode,
                     "era_chunk_size": scoring_era_chunk_size,
                     "effective_backend": effective_scoring_backend,
+                    "policy": _scoring_policy_payload(scoring_result.policy),
                 }
                 save_score_provenance(score_provenance, score_provenance_path)
                 score_provenance_relative = score_provenance_path.relative_to(output_root)
@@ -867,25 +921,24 @@ def run_training(
                     run_log_path,
                     event="post_run_scoring_succeeded",
                     message=f"effective_backend={effective_scoring_backend}",
+                    attempt_id=run_attempt_id,
                 )
             except Exception as exc:
                 logger.exception("post-run scoring failed for run_id=%s", run_id)
-                summaries = None
-                metrics_status = {
-                    "status": "failed",
-                    "reason": str(exc),
-                }
                 effective_scoring_backend = "failed"
                 training_runtime_metadata["scoring"] = {
                     "mode": scoring_mode,
                     "era_chunk_size": scoring_era_chunk_size,
                     "effective_backend": effective_scoring_backend,
+                    "policy": _scoring_policy_payload(default_scoring_policy()),
                 }
                 log_error(
                     run_log_path,
                     event="post_run_scoring_failed",
                     message=str(exc),
+                    attempt_id=run_attempt_id,
                 )
+                raise TrainingError(f"training_post_run_scoring_failed:{run_id}") from exc
 
             results = build_results_payload(
                 model_type=model_type,
@@ -922,7 +975,8 @@ def run_training(
                 resource_policy=resource_policy,
                 cache_policy=cache_policy,
                 scoring_backend=effective_scoring_backend,
-                metrics_status=metrics_status,
+                scoring_policy=scoring_result.policy,
+                metrics_status=None,
             )
             save_results(results, results_path)
             metrics_payload = _extract_metrics_payload(results)
@@ -946,6 +1000,7 @@ def run_training(
             stage_name="finalize_manifest",
             message="Writing final run manifest.",
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
         finished_manifest = build_run_manifest(
             run_id=run_id,
@@ -986,6 +1041,7 @@ def run_training(
             run_id=run_id,
             run_dir=output_root,
             run_log_path=run_log_path,
+            attempt_id=run_attempt_id,
         )
 
         return TrainingRunResult(
@@ -994,42 +1050,48 @@ def run_training(
             results_path=results_path,
         )
     except Exception as exc:
-        failed_manifest = build_run_manifest(
-            run_id=run_id,
-            run_hash=run_hash,
-            status="FAILED",
-            config_path=resolved_config_path,
-            config_hash=config_hash,
-            data_version=data_version,
-            feature_set=feature_set,
-            target_col=target_col,
-            model_type=model_type,
-            engine_mode=engine_plan.mode,
-            experiment_id=experiment_id,
-            created_at=created_at,
-            artifacts=artifacts,
-            error=error_payload(exc),
-            training_metadata=training_runtime_metadata,
-        )
-        try:
-            save_run_manifest(failed_manifest, run_manifest_path)
-        except Exception:
-            pass
-        if run_store_root is not None:
+        if run_manifest_written:
+            failed_manifest = build_run_manifest(
+                run_id=run_id,
+                run_hash=run_hash,
+                status="FAILED",
+                config_path=resolved_config_path,
+                config_hash=config_hash,
+                data_version=data_version,
+                feature_set=feature_set,
+                target_col=target_col,
+                model_type=model_type,
+                engine_mode=engine_plan.mode,
+                experiment_id=experiment_id,
+                created_at=created_at,
+                artifacts=artifacts,
+                error=error_payload(exc),
+                training_metadata=training_runtime_metadata,
+            )
             try:
-                index_run(store_root=run_store_root, run_id=run_id)
+                save_run_manifest(failed_manifest, run_manifest_path)
             except Exception:
                 pass
-        _mark_telemetry_failed(
-            telemetry_session,
-            run_id=run_id,
-            error=error_payload(exc),
-            message=str(exc),
-            run_log_path=run_log_path,
-        )
+            if run_store_root is not None:
+                try:
+                    index_run(store_root=run_store_root, run_id=run_id)
+                except Exception:
+                    pass
+        if run_manifest_written:
+            _mark_telemetry_failed(
+                telemetry_session,
+                run_id=run_id,
+                error=error_payload(exc),
+                message=str(exc),
+                run_log_path=run_log_path,
+                attempt_id=run_attempt_id,
+            )
         raise
     finally:
-        stop_local_resource_sampler(telemetry_sampler)
+        try:
+            stop_local_resource_sampler(telemetry_sampler)
+        finally:
+            release_run_lock(run_lock)
 
 
 def _record_telemetry_stage(
@@ -1039,8 +1101,9 @@ def _record_telemetry_stage(
     stage_name: str,
     message: str,
     run_log_path: Path | None,
+    attempt_id: str,
 ) -> None:
-    log_stage(run_log_path, stage_name=stage_name, message=message)
+    log_stage(run_log_path, stage_name=stage_name, message=message, attempt_id=attempt_id)
 
     if session is not None:
         try:
@@ -1082,8 +1145,14 @@ def _mark_telemetry_completed(
     run_id: str,
     run_dir: Path,
     run_log_path: Path | None,
+    attempt_id: str,
 ) -> None:
-    log_info(run_log_path, event="run_completed", message=f"run_id={run_id} run_dir={run_dir}")
+    log_info(
+        run_log_path,
+        event="run_completed",
+        message=f"run_id={run_id} run_dir={run_dir}",
+        attempt_id=attempt_id,
+    )
     if session is not None:
         try:
             mark_job_completed(
@@ -1104,8 +1173,14 @@ def _mark_telemetry_failed(
     error: dict[str, str],
     message: str,
     run_log_path: Path | None,
+    attempt_id: str,
 ) -> None:
-    log_error(run_log_path, event="run_failed", message=f"run_id={run_id} error={message}")
+    log_error(
+        run_log_path,
+        event="run_failed",
+        message=f"run_id={run_id} error={message}",
+        attempt_id=attempt_id,
+    )
     if session is not None:
         try:
             mark_job_failed(
@@ -1167,8 +1242,8 @@ def _resolve_loading_mode(value: object) -> str:
     return resolved
 
 
-def _is_submission_profile(value: object) -> bool:
-    return str(value) in {"submission", "full_history"}
+def _is_full_history_refit_profile(value: object) -> bool:
+    return str(value) == _FULL_HISTORY_REFIT_PROFILE
 
 
 def _resolve_dataset_scope(value: object) -> str:
@@ -1187,7 +1262,7 @@ def _resolve_dataset_scope_for_profile(
     dataset_variant: str,
     full_data_path: str | Path | None,
 ) -> str:
-    if profile in {_PURGED_WALK_FORWARD_PROFILE, _SUBMISSION_PROFILE}:
+    if profile in {_PURGED_WALK_FORWARD_PROFILE, _FULL_HISTORY_REFIT_PROFILE}:
         return "train_plus_validation"
     if profile == _SIMPLE_PROFILE:
         if dataset_variant == "downsampled":
@@ -1293,9 +1368,10 @@ def _apply_resource_policy(resource_policy: dict[str, object]) -> None:
 
 
 def _available_cpu_count() -> int:
+    sched_getaffinity = getattr(os, "sched_getaffinity", None)
     try:
-        affinity = os.sched_getaffinity(0)
-    except (AttributeError, OSError):
+        affinity = sched_getaffinity(0) if callable(sched_getaffinity) else None
+    except OSError:
         affinity = None
     if affinity:
         return len(affinity)
@@ -1318,6 +1394,20 @@ def _resolve_baseline_path(path: str, baselines_dir: Path) -> Path:
     if candidate.is_absolute():
         return candidate.resolve()
     return (baselines_dir / candidate).resolve()
+
+
+def _scoring_policy_payload(policy: ResolvedScoringPolicy) -> dict[str, str]:
+    return {
+        "fnc_feature_set": policy.fnc_feature_set,
+        "benchmark_overlap_policy": policy.benchmark_overlap_policy,
+        "meta_overlap_policy": policy.meta_overlap_policy,
+    }
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return _coerce_int(value, default=0)
 
 
 def _coerce_int(value: object, *, default: int) -> int:
@@ -1360,11 +1450,37 @@ def _coerce_finite_float(value: object) -> float | None:
     return None
 
 
+def _clip_payout_estimate_mean(*, corr_mean: float | None, mmc_mean: float | None) -> float | None:
+    if corr_mean is None or mmc_mean is None:
+        return None
+    estimate = (_PAYOUT_CORR_WEIGHT * corr_mean) + (_PAYOUT_MMC_WEIGHT * mmc_mean)
+    return float(min(_PAYOUT_CLIP, max(-_PAYOUT_CLIP, estimate)))
+
+
+def _is_classic_payout_target(target_col: str) -> bool:
+    return target_col == _CLASSIC_PAYOUT_TARGET
+
+
 def _resolve_store_root_for_run(run_dir: Path) -> Path:
     """Resolve store root path from canonical run dir `<store_root>/runs/<run_id>`."""
     if run_dir.parent.name != "runs":
         raise TrainingConfigError("training_output_run_dir_invalid")
     return run_dir.parent.parent
+
+
+def _ensure_run_dir_is_fresh(run_dir: Path) -> None:
+    """Require no pre-existing artifacts under deterministic run directory."""
+    if not run_dir.exists():
+        return
+    if not run_dir.is_dir():
+        raise TrainingError("training_run_dir_not_directory")
+    preexisting_entries = [entry.name for entry in run_dir.iterdir() if entry.name != RUN_LOCK_FILENAME]
+    if not preexisting_entries:
+        return
+    preexisting_entries.sort()
+    raise TrainingError(
+        f"training_run_dir_not_fresh:{run_dir.name}:preexisting={','.join(preexisting_entries)}:reset_required"
+    )
 
 
 def _era_sort_key(era: object) -> int | str:

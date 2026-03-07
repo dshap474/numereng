@@ -314,6 +314,10 @@ def test_doctor_fix_strays_deletes_targeted_dirs(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     init_store_db(store_root=store_root)
 
+    legacy_logs = store_root / "logs"
+    legacy_logs.mkdir(parents=True, exist_ok=True)
+    (legacy_logs / "exp.launch.log").write_text("", encoding="utf-8")
+
     modal_smoke_data = store_root / "modal_smoke_data" / "v5.2"
     modal_smoke_data.mkdir(parents=True, exist_ok=True)
     (modal_smoke_data / "smoke_validation.parquet").write_text("payload", encoding="utf-8")
@@ -325,9 +329,11 @@ def test_doctor_fix_strays_deletes_targeted_dirs(tmp_path: Path) -> None:
     report = doctor_store(store_root=store_root, fix_strays=True)
 
     assert report.stray_cleanup_applied is True
+    assert str(store_root / "logs") in report.deleted_paths
     assert str(store_root / "modal_smoke_data") in report.deleted_paths
     assert str(store_root / "smoke_live_check") in report.deleted_paths
     assert report.missing_paths == ()
+    assert not (store_root / "logs").exists()
     assert not (store_root / "modal_smoke_data").exists()
     assert not (store_root / "smoke_live_check").exists()
 

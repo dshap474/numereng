@@ -112,12 +112,12 @@ def resolve_training_engine(
             override_sources=override_sources,
         )
 
-    if resolved_profile == "submission":
+    if resolved_profile == "full_history_refit":
         return TrainingEnginePlan(
             mode=resolved_profile,
             cv_config={
                 "enabled": False,
-                "mode": "full_history",
+                "mode": "full_history_refit",
                 "n_splits": 0,
                 "embargo": 0,
                 "min_train_size": 0,

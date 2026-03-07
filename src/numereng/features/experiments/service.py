@@ -158,17 +158,25 @@ def train_experiment(
     output_dir_resolved = _resolve_experiment_output_dir(output_dir=output_dir, store_root=root)
 
     manifest = _load_manifest(manifest_path)
-    run_kwargs: dict[str, object] = {
-        "config_path": config_resolved,
-        "output_dir": output_dir_resolved,
-        "engine_mode": engine_mode,
-        "window_size_eras": window_size_eras,
-        "embargo_eras": embargo_eras,
-        "experiment_id": safe_experiment_id,
-    }
-    if profile is not None:
-        run_kwargs["profile"] = profile
-    result = run_training(**run_kwargs)
+    if profile is None:
+        result = run_training(
+            config_path=config_resolved,
+            output_dir=output_dir_resolved,
+            engine_mode=engine_mode,
+            window_size_eras=window_size_eras,
+            embargo_eras=embargo_eras,
+            experiment_id=safe_experiment_id,
+        )
+    else:
+        result = run_training(
+            config_path=config_resolved,
+            output_dir=output_dir_resolved,
+            profile=profile,
+            engine_mode=engine_mode,
+            window_size_eras=window_size_eras,
+            embargo_eras=embargo_eras,
+            experiment_id=safe_experiment_id,
+        )
 
     run_ids = _normalize_run_ids(manifest.get("runs"))
     if result.run_id not in run_ids:

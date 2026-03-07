@@ -20,6 +20,7 @@ Current implementation defaults:
 - `proportion = 0.5`
 - `rank_output = true`
 - `neutralizer_cols = None` (auto-select numeric neutralizer columns, excluding `era`, `id`, `prediction`, and common target columns)
+- post-run benchmark/meta diagnostics require nonzero `(era, id)` overlap with strict era alignment; partial overlap is allowed and scored on overlapping rows
 
 Important column-selection behavior:
 - `neutralizer_cols=None` => auto-select.
@@ -107,6 +108,7 @@ Notes:
 - Neutralizer join keys (`era`, `id`) must be unique.
 - Joins normalize key formats internally (`era`, `id`) for matching.
 - Output preserves the original prediction key formatting from the source predictions.
+- If the training run also requests benchmark/meta diagnostics, keep the scored prediction frame aligned with those sources for every `(era, id)` row.
 
 ### Decision Rules
 

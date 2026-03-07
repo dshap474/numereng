@@ -63,10 +63,10 @@ Staked NMR will remain locked until you release it back to your wallet, which ta
 
 Your payout is a primarily a function of your scores. If you have a positive score you will get a payout. If you have a negative score a portion of your stake will burn.
 
-The maximum payout or burn per round is capped at ±5% and uses the following formula:
+As of January 1, 2026, Numerai Classic payout uses the Ender20 target and the maximum payout or burn per round remains capped at ±5%:
 
 ```
-payout = stake * clip(payout_factor * (corr * 0.5 + mmc * 2), -0.05, 0.05) 
+payout = stake * clip(payout_factor * (corr * 0.75 + mmc * 2.25), -0.05, 0.05)
 ```
 
 `stake` is your model's stake value at the `close` of the round. This is also referred to as the stake value `at-risk` for a round. Your stake value `at-risk` for a round does not include any unstaked amounts that are pending release, and is set to 0 if you have no valid submission for a round.

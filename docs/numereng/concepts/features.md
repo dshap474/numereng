@@ -22,6 +22,7 @@ Feature inputs are controlled through `model` fields:
 - `benchmark`
 
 If `x_groups` includes `baseline`, ensure `data.id_col` is present.
+If `model.x_groups` or `model.data_needed` is omitted, training uses feature columns only. `era` and `id` are never auto-included and are not valid training input groups.
 `benchmark_models` aliases (`benchmark`, `benchmarks`, `benchmark_models`) are invalid in
 `x_groups` and fail config validation.
 

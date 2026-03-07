@@ -78,6 +78,8 @@ from numereng.api.contracts import (
     NumeraiModelsRequest,
     NumeraiModelsResponse,
     NumeraiTournament,
+    ScoreRunRequest,
+    ScoreRunResponse,
     StoreDoctorRequest,
     StoreDoctorResponse,
     StoreIndexRequest,
@@ -122,7 +124,7 @@ from numereng.api.numerai import (
     list_numerai_models,
     scrape_numerai_forum,
 )
-from numereng.api.run import run_training, submit_predictions
+from numereng.api.run import run_training, score_run, submit_predictions
 from numereng.api.store import store_doctor, store_index_run, store_init, store_rebuild
 from numereng.features.cloud.aws import (
     AwsImageBuildPushRequest,
@@ -181,6 +183,7 @@ from numereng.features.hpo import list_studies_view as hpo_list_studies
 from numereng.features.store import doctor_store, index_run, init_store_db, rebuild_run_index
 from numereng.features.submission import submit_predictions_file, submit_run_predictions
 from numereng.features.training import run_training as run_training_pipeline
+from numereng.features.training import score_run as score_run_pipeline
 from numereng.platform.errors import PackageError
 from numereng.platform.forum_scraper import scrape_forum_posts
 
@@ -212,6 +215,7 @@ _COMPAT_EXPORTS = (
     submit_run_predictions,
     neutralize_prediction_artifact,
     neutralize_run_prediction_artifact,
+    score_run_pipeline,
     run_training_pipeline,
     scrape_forum_posts,
 )
@@ -284,6 +288,8 @@ __all__ = [
     "NumeraiModelsResponse",
     "NumeraiForumScrapeResponse",
     "NumeraiTournament",
+    "ScoreRunRequest",
+    "ScoreRunResponse",
     "NeutralizationMode",
     "NeutralizeRequest",
     "NeutralizeResponse",
@@ -385,7 +391,9 @@ __all__ = [
     "promote_experiment_record",
     "rebuild_run_index",
     "report_experiment_record",
+    "score_run_pipeline",
     "run_training_pipeline",
+    "score_run",
     "store_doctor",
     "store_index_run",
     "store_init",

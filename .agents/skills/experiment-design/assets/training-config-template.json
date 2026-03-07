@@ -1,40 +1,597 @@
 {
-  "data": {
-    "data_version": "v5.2",
-    "dataset_variant": "downsampled",
-    "feature_set": "small",
-    "target_col": "target_ender_20",
-    "era_col": "era",
-    "id_col": "id",
-    "benchmark_model": "v52_lgbm_ender20",
-    "meta_model_col": "numerai_meta_model"
-  },
-  "preprocessing": {
-    "nan_missing_all_twos": false,
-    "missing_value": 2.0
-  },
-  "model": {
-    "type": "LGBMRegressor",
-    "params": {
-      "n_estimators": 200,
-      "learning_rate": 0.03,
-      "num_leaves": 64,
-      "min_child_samples": 50,
-      "subsample": 0.8,
-      "colsample_bytree": 0.2,
-      "random_state": 42
+  "template": {
+    "data": {
+      "data_version": "v5.2",
+      "dataset_variant": "non_downsampled",
+      "dataset_scope": "train_plus_validation",
+      "feature_set": "small",
+      "target_col": "target_ender_20",
+      "target_horizon": "20d",
+      "era_col": "era",
+      "id_col": "id",
+      "full_data_path": null,
+      "benchmark_data_path": null,
+      "meta_model_data_path": null,
+      "meta_model_col": "numerai_meta_model",
+      "benchmark_model": "v52_lgbm_ender20",
+      "embargo_eras": null,
+      "baselines_dir": null,
+      "loading": {
+        "mode": "materialized",
+        "scoring_mode": "materialized",
+        "era_chunk_size": 64
+      }
     },
-    "x_groups": [
-      "features",
-      "era"
-    ]
-  },
-  "training": {
-    "engine": {
-      "profile": "purged_walk_forward"
+    "preprocessing": {
+      "nan_missing_all_twos": false,
+      "missing_value": 2.0
+    },
+    "model": {
+      "type": "LGBMRegressor",
+      "params": {
+        "n_estimators": 20000,
+        "learning_rate": 0.001,
+        "max_depth": 6,
+        "num_leaves": 64,
+        "colsample_bytree": 0.1,
+        "random_state": 42
+      },
+      "x_groups": [
+        "features"
+      ],
+      "data_needed": null,
+      "module_path": null,
+      "target_transform": null,
+      "benchmark": null,
+      "baseline": null
+    },
+    "training": {
+      "engine": {
+        "profile": "purged_walk_forward",
+        "mode": null,
+        "window_size_eras": null,
+        "embargo_eras": null
+      },
+      "resources": {
+        "parallel_folds": 1,
+        "parallel_backend": "joblib",
+        "memmap_enabled": true,
+        "max_threads_per_worker": "default",
+        "sklearn_working_memory_mib": null
+      },
+      "cache": {
+        "mode": "deterministic",
+        "cache_fold_specs": true,
+        "cache_features": true,
+        "cache_labels": true,
+        "cache_fold_matrices": false
+      }
+    },
+    "output": {
+      "output_dir": null,
+      "baselines_dir": null,
+      "predictions_name": "val_predictions_scout",
+      "results_name": null
     }
   },
-  "output": {
-    "predictions_name": "val_predictions_scout"
+  "allowed_values": {
+    "data": {
+      "data_version": {
+        "type": "string",
+        "examples": [
+          "v5.2"
+        ]
+      },
+      "dataset_variant": [
+        "non_downsampled",
+        "downsampled"
+      ],
+      "dataset_scope": [
+        "train_only",
+        "train_plus_validation"
+      ],
+      "feature_set": {
+        "type": "string",
+        "common_values": [
+          "small",
+          "medium",
+          "all"
+        ],
+        "note": "Must exist under datasets/<data_version>/features.json feature_sets."
+      },
+      "target_col": {
+        "type": "string",
+        "examples": [
+          "target_ender_20",
+          "target_cyrusd_60",
+          "target"
+        ]
+      },
+      "target_horizon": [
+        "20d",
+        "60d",
+        null
+      ],
+      "era_col": {
+        "type": "string",
+        "examples": [
+          "era"
+        ]
+      },
+      "id_col": {
+        "type": "string",
+        "examples": [
+          "id"
+        ]
+      },
+      "full_data_path": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          "v5.2/full.parquet",
+          "/abs/path/full.parquet"
+        ]
+      },
+      "benchmark_data_path": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          "v5.2/full_benchmark_models.parquet"
+        ]
+      },
+      "meta_model_data_path": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          "v5.2/meta_model.parquet"
+        ]
+      },
+      "meta_model_col": {
+        "type": "string",
+        "examples": [
+          "numerai_meta_model"
+        ]
+      },
+      "benchmark_model": {
+        "type": "string",
+        "examples": [
+          "v52_lgbm_ender20"
+        ]
+      },
+      "embargo_eras": {
+        "type": "integer_or_null",
+        "minimum": 0,
+        "examples": [
+          null,
+          8,
+          16
+        ],
+        "note": "Ignored for simple profile; for walk-forward/full-history, effective embargo comes from resolved engine horizon defaults unless overridden by metadata pathing."
+      },
+      "baselines_dir": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          ".numereng/baselines"
+        ]
+      },
+      "loading": {
+        "mode": [
+          "materialized",
+          "fold_lazy"
+        ],
+        "scoring_mode": [
+          "materialized",
+          "era_stream"
+        ],
+        "era_chunk_size": {
+          "type": "integer",
+          "minimum": 1,
+          "examples": [
+            64,
+            128
+          ]
+        }
+      }
+    },
+    "preprocessing": {
+      "nan_missing_all_twos": [
+        false,
+        true
+      ],
+      "missing_value": {
+        "type": "number",
+        "examples": [
+          2.0,
+          -1.0,
+          0.0
+        ]
+      }
+    },
+    "model": {
+      "type": {
+        "type": "string",
+        "examples": [
+          "LGBMRegressor"
+        ]
+      },
+      "params": {
+        "type": "object",
+        "default_for_lgbmregressor": {
+          "preset": "Official Standard Large",
+          "n_estimators": 20000,
+          "learning_rate": 0.001,
+          "max_depth": 6,
+          "num_leaves": 64,
+          "colsample_bytree": 0.1,
+          "random_state": 42,
+          "note": "min_child_samples and subsample omitted (use model defaults) for this preset."
+        },
+        "note": "Model-specific hyperparameters; required."
+      },
+      "x_groups": {
+        "item_values": [
+          "features",
+          "baseline"
+        ],
+        "examples": [
+          [
+            "features"
+          ],
+          [
+            "features",
+            "baseline"
+          ]
+        ],
+        "forbidden_item_values": [
+          "era",
+          "id",
+          "benchmark",
+          "benchmarks",
+          "benchmark_models"
+        ]
+      },
+      "data_needed": {
+        "item_values": [
+          "features",
+          "baseline"
+        ],
+        "examples": [
+          null,
+          [
+            "features"
+          ],
+          [
+            "features",
+            "baseline"
+          ]
+        ],
+        "note": "Alias for x_groups; if both are set, x_groups wins."
+      },
+      "module_path": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          "my_package.models"
+        ]
+      },
+      "target_transform": {
+        "type": "object_or_null",
+        "examples": [
+          null
+        ]
+      },
+      "benchmark": {
+        "type": "object_or_null",
+        "examples": [
+          null
+        ]
+      },
+      "baseline": {
+        "type": "object_or_null",
+        "shape": {
+          "name": "string",
+          "predictions_path": "string",
+          "pred_col": "string (default: prediction)"
+        },
+        "examples": [
+          null,
+          {
+            "name": "my_baseline",
+            "predictions_path": "baselines/my_baseline.parquet",
+            "pred_col": "prediction"
+          }
+        ]
+      },
+      "lgbmregressor_presets": [
+        {
+          "name": "Official Quickstart",
+          "params": {
+            "n_estimators": 2000,
+            "learning_rate": 0.01,
+            "max_depth": 5,
+            "num_leaves": 32,
+            "colsample_bytree": 0.1
+          },
+          "min_child_samples": null,
+          "runtime_estimate_hours": {
+            "cpu": 0.3,
+            "gpu_unknown": 0.13,
+            "gpu_cuda": 0.11
+          }
+        },
+        {
+          "name": "Fast Screening Low",
+          "params": {
+            "n_estimators": 1500,
+            "learning_rate": 0.02,
+            "max_depth": 5,
+            "num_leaves": 31,
+            "colsample_bytree": 0.1,
+            "min_child_samples": 500
+          },
+          "runtime_estimate_hours": {
+            "cpu": 0.23,
+            "gpu_unknown": 0.1,
+            "gpu_cuda": 0.08
+          }
+        },
+        {
+          "name": "Fast Screening Mid",
+          "params": {
+            "n_estimators": 3000,
+            "learning_rate": 0.01,
+            "max_depth": 6,
+            "num_leaves": 64,
+            "colsample_bytree": 0.15,
+            "min_child_samples": 1500
+          },
+          "runtime_estimate_hours": {
+            "cpu": 0.71,
+            "gpu_unknown": 0.29,
+            "gpu_cuda": 0.25
+          }
+        },
+        {
+          "name": "Fast Screening High",
+          "params": {
+            "n_estimators": 4000,
+            "learning_rate": 0.008,
+            "max_depth": 6,
+            "num_leaves": 127,
+            "colsample_bytree": 0.2,
+            "min_child_samples": 3000
+          },
+          "runtime_estimate_hours": {
+            "cpu": 1.06,
+            "gpu_unknown": 0.42,
+            "gpu_cuda": 0.37
+          }
+        },
+        {
+          "name": "Final-like Low",
+          "params": {
+            "n_estimators": 6000,
+            "learning_rate": 0.005,
+            "max_depth": 8,
+            "num_leaves": 256,
+            "colsample_bytree": 0.1,
+            "min_child_samples": 5000
+          },
+          "runtime_estimate_hours": {
+            "cpu": 1.78,
+            "gpu_unknown": 0.68,
+            "gpu_cuda": 0.59
+          }
+        },
+        {
+          "name": "Final-like Mid",
+          "params": {
+            "n_estimators": 9000,
+            "learning_rate": 0.003,
+            "max_depth": 9,
+            "num_leaves": 512,
+            "colsample_bytree": 0.1,
+            "min_child_samples": 7500
+          },
+          "runtime_estimate_hours": {
+            "cpu": 3.53,
+            "gpu_unknown": 1.29,
+            "gpu_cuda": 1.12
+          }
+        },
+        {
+          "name": "Final-like High",
+          "params": {
+            "n_estimators": 12000,
+            "learning_rate": 0.002,
+            "max_depth": 10,
+            "num_leaves": 1024,
+            "colsample_bytree": 0.1,
+            "min_child_samples": 10000
+          },
+          "runtime_estimate_hours": {
+            "cpu": 6.22,
+            "gpu_unknown": 2.2,
+            "gpu_cuda": 1.94
+          }
+        },
+        {
+          "name": "Reduced-compute Large (Observed Anchor)",
+          "params": {
+            "n_estimators": 20000,
+            "learning_rate": 0.01,
+            "max_depth": 6,
+            "num_leaves": 64,
+            "colsample_bytree": 0.1
+          },
+          "min_child_samples": null,
+          "runtime_estimate_hours": {
+            "cpu": 4.0,
+            "gpu_unknown": 1.58,
+            "gpu_cuda": 1.37
+          }
+        },
+        {
+          "name": "Official Standard Large",
+          "default": true,
+          "params": {
+            "n_estimators": 20000,
+            "learning_rate": 0.001,
+            "max_depth": 6,
+            "num_leaves": 64,
+            "colsample_bytree": 0.1,
+            "random_state": 42
+          },
+          "min_child_samples": null,
+          "runtime_estimate_hours": {
+            "cpu": 4.0,
+            "gpu_unknown": 1.58,
+            "gpu_cuda": 1.37
+          }
+        }
+      ]
+    },
+    "training": {
+      "engine": {
+        "profile": [
+          "simple",
+          "purged_walk_forward",
+          "full_history_refit",
+          null
+        ],
+        "mode": [
+          "official",
+          "full_history",
+          null
+        ],
+        "window_size_eras": [
+          null
+        ],
+        "embargo_eras": [
+          null
+        ]
+      },
+      "resources": {
+        "parallel_folds": {
+          "type": "integer",
+          "minimum": 1,
+          "examples": [
+            1,
+            2,
+            4
+          ]
+        },
+        "parallel_backend": [
+          "joblib"
+        ],
+        "memmap_enabled": [
+          true,
+          false
+        ],
+        "max_threads_per_worker": {
+          "type": "integer_or_default_or_null",
+          "examples": [
+            "default",
+            null,
+            1,
+            4,
+            8
+          ],
+          "minimum_if_integer": 1
+        },
+        "sklearn_working_memory_mib": {
+          "type": "integer_or_null",
+          "minimum": 1,
+          "examples": [
+            null,
+            256,
+            1024
+          ]
+        }
+      },
+      "cache": {
+        "mode": [
+          "deterministic"
+        ],
+        "cache_fold_specs": [
+          true,
+          false
+        ],
+        "cache_features": [
+          true,
+          false
+        ],
+        "cache_labels": [
+          true,
+          false
+        ],
+        "cache_fold_matrices": [
+          true,
+          false
+        ]
+      }
+    },
+    "output": {
+      "output_dir": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          ".numereng"
+        ]
+      },
+      "baselines_dir": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          ".numereng/baselines"
+        ]
+      },
+      "predictions_name": {
+        "type": "string_or_null",
+        "examples": [
+          "val_predictions_scout",
+          "pred_target_ender_20_small_mod_s42",
+          null
+        ]
+      },
+      "results_name": {
+        "type": "string_or_null",
+        "examples": [
+          null,
+          "results"
+        ]
+      }
+    },
+    "defaults": {
+      "dataset_variant": "non_downsampled",
+      "loading_mode": "materialized",
+      "scoring_mode": "materialized",
+      "training_profile": "purged_walk_forward",
+      "lgbmregressor_default_preset": "Official Standard Large"
+    }
+  },
+  "runtime_constraints": [
+    "Default profile/loading/variant for this template: purged_walk_forward + materialized + non_downsampled.",
+    "Never train on era/id: model.x_groups and model.data_needed must not include era or id.",
+    "model.x_groups and model.data_needed must not include benchmark aliases: benchmark, benchmarks, benchmark_models.",
+    "If baseline is requested in model.x_groups or model.data_needed, model.baseline.name and model.baseline.predictions_path are required, and data.id_col must be present.",
+    "model.x_groups and model.data_needed are aliases; when both are set, x_groups is used.",
+    "training.engine.profile=simple disallows data.dataset_variant=downsampled.",
+    "data.loading.mode=fold_lazy disallows preprocessing.nan_missing_all_twos=true.",
+    "training.engine.mode=custom is not runtime-supported in features/training.",
+    "training.engine.window_size_eras and training.engine.embargo_eras are legacy knobs and must remain null.",
+    "Legacy training fields training.method, training.method_overrides, training.strategy, and training.cv are runtime-disallowed.",
+    "If data.target_horizon is null, horizon is inferred from target_col; ambiguous target names fail.",
+    "Only .json training configs are accepted; unknown keys are forbidden (extra=forbid)."
+  ],
+  "source_of_truth": {
+    "contracts": "src/numereng/config/training/contracts.py",
+    "schema": "src/numereng/config/training/schema/training_config.schema.json",
+    "runtime": "src/numereng/features/training"
+  },
+  "usage": {
+    "copy_template_only": true,
+    "note": "Use the object under template as your runnable config. allowed_values and runtime_constraints are reference metadata."
   }
 }

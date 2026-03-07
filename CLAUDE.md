@@ -44,7 +44,7 @@ Read order:
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
-- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `logs`, `notes`.
+- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.
 - `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.

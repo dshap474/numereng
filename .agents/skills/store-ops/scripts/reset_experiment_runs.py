@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from numereng.features.experiments import service as experiment_service
+from numereng.features.training.run_lock import RUN_LOCK_FILENAME, is_lock_payload_active, read_run_lock
 
 PRESERVE_DESIGN_FILES = "preserve_design_files"
 PRESERVE_ONLY_CONFIGS = "preserve_only_configs"
@@ -41,6 +42,7 @@ class Scope:
     overlaps_manifest: dict[str, list[str]]
     overlaps_db_runs: list[dict[str, str | None]]
     active_writers: list[str]
+    active_run_locks: list[dict[str, Any]]
     db_counts: dict[str, dict[str, int]]
 
 
@@ -196,6 +198,26 @@ def gather_manifest_overlaps(
     return overlaps
 
 
+def gather_active_run_locks(paths: StorePaths, target_run_ids: list[str]) -> list[dict[str, Any]]:
+    active_locks: list[dict[str, Any]] = []
+    for run_id in target_run_ids:
+        lock_path = paths.runs_dir / run_id / RUN_LOCK_FILENAME
+        payload = read_run_lock(lock_path)
+        if not payload:
+            continue
+        if not is_lock_payload_active(payload):
+            continue
+        lock_details: dict[str, Any] = {
+            "run_id": run_id,
+            "lock_path": str(lock_path),
+        }
+        for key in ("attempt_id", "pid", "host", "created_at"):
+            if key in payload:
+                lock_details[key] = payload[key]
+        active_locks.append(lock_details)
+    return active_locks
+
+
 def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
     if not paths.db_path.is_file():
         raise FileNotFoundError(f"missing_db:{paths.db_path}")
@@ -278,6 +300,7 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
     )
 
     overlaps_manifest = gather_manifest_overlaps(paths, set(experiment_ids), set(target_run_ids_list))
+    active_run_locks = gather_active_run_locks(paths, target_run_ids_list)
 
     overlaps_db_runs: list[dict[str, str | None]] = []
     if target_run_ids_list:
@@ -377,6 +400,7 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
         overlaps_manifest=overlaps_manifest,
         overlaps_db_runs=overlaps_db_runs,
         active_writers=active_writers,
+        active_run_locks=active_run_locks,
         db_counts=db_counts,
     )
 
@@ -624,6 +648,8 @@ def make_output(
     blocked_reasons: list[str] = []
     if scope.active_writers and not allow_active_writers:
         blocked_reasons.append("active_writers_detected")
+    if scope.active_run_locks:
+        blocked_reasons.append("active_run_locks_detected")
     if (scope.overlaps_manifest or scope.overlaps_db_runs) and not allow_overlap:
         blocked_reasons.append("run_overlap_detected")
 
@@ -643,6 +669,7 @@ def make_output(
         },
         "db_counts": scope.db_counts,
         "active_writers": scope.active_writers,
+        "active_run_locks": scope.active_run_locks,
         "overlaps": {
             "manifest": scope.overlaps_manifest,
             "db_runs": scope.overlaps_db_runs,
@@ -668,6 +695,8 @@ def main() -> int:
 
     blocked = False
     if scope.active_writers and not args.allow_active_writers:
+        blocked = True
+    if scope.active_run_locks:
         blocked = True
     if (scope.overlaps_manifest or scope.overlaps_db_runs) and not args.allow_overlap:
         blocked = True

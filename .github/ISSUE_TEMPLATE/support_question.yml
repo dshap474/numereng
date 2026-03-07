@@ -1,0 +1,42 @@
+name: Support question
+description: Ask for help using numereng
+title: "[Support]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for `numereng` usage questions.
+
+        For security issues, use the Security tab instead. For official Numerai account or platform questions, use Numerai's support channels rather than this repository.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      placeholder: I am trying to train / submit / neutralize / inspect ...
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant command or config
+      description: Paste the command, config snippet, or workflow context that matters.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: blocked
+    attributes:
+      label: Where are you blocked?
+      description: Describe the exact failure, confusing behavior, or missing documentation.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you already tried?
+      placeholder: I checked ..., ran ..., and read ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Python version, `uv` version, and any relevant paths or store layout details.
