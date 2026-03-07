@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-TrainingProfile = Literal["simple", "purged_walk_forward", "submission"]
+TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 TrainingEngineMode = Literal["official", "custom", "full_history"]
 DataLoadingMode = Literal["materialized", "fold_lazy"]
 ScoringMode = Literal["materialized", "era_stream"]
@@ -44,7 +44,7 @@ class DataConfig(_StrictConfigModel):
     benchmark_data_path: str | None = None
     meta_model_data_path: str | None = None
     meta_model_col: str = "numerai_meta_model"
-    embargo_eras: int = Field(default=13, ge=0)
+    embargo_eras: int | None = Field(default=None, ge=0)
     benchmark_model: str = "v52_lgbm_ender20"
     baselines_dir: str | None = None
     dataset_scope: DatasetScope = "train_only"
@@ -75,11 +75,21 @@ class ModelConfig(_StrictConfigModel):
     data_needed: list[str] | None = None
     module_path: str | None = None
     target_transform: dict[str, object] | None = None
-    prediction_transform: dict[str, object] | None = None
-    era_weighting: dict[str, object] | None = None
-    prediction_batch_size: int | None = Field(default=None, ge=1)
     benchmark: dict[str, object] | None = None
     baseline: ModelBaselineConfig | None = None
+
+    @field_validator("x_groups", "data_needed")
+    @classmethod
+    def _validate_input_groups(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        normalized = [str(item) for item in value]
+        for item in normalized:
+            if item in {"era", "id"}:
+                raise ValueError(f"training_model_x_groups_not_supported:{item}")
+            if item in {"benchmark", "benchmarks", "benchmark_models"}:
+                raise ValueError("training_model_x_groups_benchmark_not_supported")
+        return normalized
 
 
 class TrainingEngineConfig(_StrictConfigModel):
@@ -90,6 +100,13 @@ class TrainingEngineConfig(_StrictConfigModel):
     mode: TrainingEngineMode | None = None
     window_size_eras: int | None = Field(default=None, ge=1)
     embargo_eras: int | None = Field(default=None, ge=1)
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _reject_submission_profile(cls, value: object) -> object:
+        if value is not None and str(value) == "submission":
+            raise ValueError("training profile 'submission' was renamed to 'full_history_refit'")
+        return value
 
 
 class TrainingResourcesConfig(_StrictConfigModel):

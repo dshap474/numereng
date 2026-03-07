@@ -35,14 +35,12 @@ def test_resolve_training_engine_simple_profile() -> None:
     assert plan.cv_config["embargo"] == 0
 
 
-def test_resolve_training_engine_submission_profile() -> None:
-    plan = resolve_training_engine(
-        training_config={"engine": {"profile": "submission"}},
-        data_config={},
-    )
-    assert plan.mode == "submission"
-    assert plan.cv_config["enabled"] is False
-    assert plan.cv_config["mode"] == "full_history"
+def test_resolve_training_engine_rejects_submission_profile_rename() -> None:
+    with pytest.raises(TrainingConfigError, match="training_profile_renamed:submission->full_history_refit"):
+        resolve_training_engine(
+            training_config={"engine": {"profile": "submission"}},
+            data_config={},
+        )
 
 
 def test_resolve_training_engine_legacy_official_mode_maps_to_purged_walk_forward() -> None:
@@ -54,12 +52,12 @@ def test_resolve_training_engine_legacy_official_mode_maps_to_purged_walk_forwar
     assert "config_engine_mode_legacy" in plan.override_sources
 
 
-def test_resolve_training_engine_legacy_full_history_mode_maps_to_submission() -> None:
+def test_resolve_training_engine_legacy_full_history_mode_maps_to_full_history_refit() -> None:
     plan = resolve_training_engine(
         training_config={"engine": {"mode": "full_history"}},
         data_config={},
     )
-    assert plan.mode == "submission"
+    assert plan.mode == "full_history_refit"
     assert "config_engine_mode_legacy" in plan.override_sources
 
 
@@ -84,7 +82,7 @@ def test_resolve_training_engine_rejects_profile_conflicts() -> None:
         resolve_training_engine(
             training_config={"engine": {"profile": "simple"}},
             data_config={},
-            profile="submission",
+            profile="full_history_refit",
         )
 
 

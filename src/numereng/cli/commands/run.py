@@ -224,6 +224,41 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
     return request, None
 
 
+def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | None, str | None]:
+    run_id: str | None = None
+    store_root = ".numereng"
+
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg in {"-h", "--help"}:
+            return None, "__help__"
+        if arg in {"--run-id", "--store-root"}:
+            if idx + 1 >= len(argv):
+                return None, f"missing value for {arg}"
+            value = argv[idx + 1]
+            if arg == "--run-id":
+                run_id = value
+            else:
+                store_root = value
+            idx += 2
+            continue
+        return None, f"unknown arguments: {arg}"
+
+    if run_id is None:
+        return None, "missing required argument: --run-id"
+
+    try:
+        request = api.ScoreRunRequest(run_id=run_id, store_root=store_root)
+    except ValidationError as exc:
+        errors = exc.errors()
+        if errors:
+            return None, str(errors[0]["msg"])
+        return None, str(exc)
+
+    return request, None
+
+
 def handle_run_command(args: Sequence[str]) -> int:
     if not args:
         print(USAGE)
@@ -273,6 +308,29 @@ def handle_run_command(args: Sequence[str]) -> int:
             return 1
 
         print(training_payload.model_dump_json())
+        return 0
+
+    if args[0] == "score":
+        score_request, parse_error = _parse_score_request(args[1:])
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if score_request is None:  # pragma: no cover - parse_error branch guards this
+            print("score_request_invalid", file=sys.stderr)
+            return 2
+
+        try:
+            with bind_launch_metadata(source="cli.run.score", operation_type="run", job_type="run"):
+                score_payload = api.score_run(score_request)
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        print(score_payload.model_dump_json())
         return 0
 
     if args[0] in {"-h", "--help"}:

@@ -20,7 +20,7 @@ Prepare config -> Train run -> Analyze metrics -> Promote/ensemble -> Submit
 - Deterministic run IDs: identical resolved configs reuse the same run identity.
 - Strict config contracts: training and HPO configs are JSON-only and reject unknown keys.
 - Thin CLI, typed API: command handlers parse/dispatch only; feature logic runs behind `numereng.api`.
-- Canonical store layout: `.numereng/` keeps runs, experiments, HPO studies, ensembles, cloud state, logs, and notes aligned with SQLite indexing.
+- Canonical store layout: `.numereng/` keeps runs, experiments, HPO studies, ensembles, cloud state, and notes aligned with SQLite indexing.
 
 ## Quick Start
 

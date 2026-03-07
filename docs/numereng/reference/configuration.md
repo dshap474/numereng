@@ -79,7 +79,7 @@ Key fields:
 - `benchmark_data_path` (optional)
 - `meta_model_data_path` (optional)
 - `meta_model_col` (default `numerai_meta_model`)
-- `embargo_eras` (legacy compatibility fallback default `13`; profile behavior is driven by `training.engine.profile`)
+- `embargo_eras` (optional explicit integer; canonical `purged_walk_forward` derives official embargo from `data.target_horizon`)
 - `benchmark_model` (default `v52_lgbm_ender20`)
 - `baselines_dir` (optional)
 - `loading.mode` (`materialized|fold_lazy`)
@@ -102,13 +102,10 @@ Required:
 
 Optional:
 
-- `x_groups`
-- `data_needed`
+- `x_groups` (default: features-only; `era` and `id` are never valid input groups)
+- `data_needed` (default: features-only runtime inputs; `era` and `id` are never valid input groups)
 - `module_path`
 - `target_transform`
-- `prediction_transform`
-- `era_weighting`
-- `prediction_batch_size`
 - `benchmark`
 - `baseline` (`name`, `predictions_path`, optional `pred_col`)
 
@@ -120,17 +117,17 @@ Optional:
 
 - `simple`
 - `purged_walk_forward`
-- `submission`
+- `full_history_refit`
 
 Rules:
 
 - `purged_walk_forward` uses a fixed 156-era walk-forward window; embargo is horizon-derived (`20d -> 8`, `60d -> 16`) and not user-configurable.
 - For `purged_walk_forward`, horizon resolution is `target_horizon` first, then `target_col` name inference.
 - If `target_horizon` is omitted and `target_col` is ambiguous, config execution fails (`training_engine_target_horizon_ambiguous`).
-- Only `training.engine.profile` is accepted (`simple|purged_walk_forward|submission`); legacy engine parameters are rejected.
+- Only `training.engine.profile` is accepted (`simple|purged_walk_forward|full_history_refit`); legacy engine parameters are rejected.
 - Training never applies row-level subsampling; dataset size reduction must happen at dataset construction time.
 - `simple` requires split train/validation sources (`dataset_variant=non_downsampled`); with `full_data_path`, sibling `train.parquet` and `validation.parquet` files must exist in the same directory.
-- `submission` disables CV metrics.
+- `full_history_refit` is final-fit only and emits no validation metrics.
 
 ### `training.resources`
 
@@ -169,9 +166,16 @@ Optional overrides:
 ## High-Risk Gotchas
 
 - Benchmark model predictions are metrics-only and are not used as training features.
+- Canonical `model.x_groups` / `model.data_needed` are features-only by default.
+- `model.x_groups` / `model.data_needed` reject `era` and `id`; omitted groups never auto-include identifier columns.
 - `model.x_groups` rejects benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with
   `training_model_x_groups_benchmark_not_supported`.
-- For non-`submission` runs, metrics are computed in a post-run scoring phase from the saved predictions parquet.
+- Removed legacy model config fields `prediction_transform`, `era_weighting`, and `prediction_batch_size` now hard-fail schema validation.
+- For non-`full_history_refit` runs, metrics are computed in a post-run scoring phase from the saved predictions parquet.
+- Canonical FNC neutralizes to dataset feature set `all`, independent of `data.feature_set`.
+- Benchmark scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial benchmark overlap is tolerated and scored on overlapping rows only. Meta-model scoring remains exact-coverage strict.
+- Post-run scoring persists `payout_estimate_mean` and `score_provenance.json` with the fixed scoring policy plus join row/era counts.
+- `payout_estimate_mean` follows Numerai Classic 2026 payout semantics and is populated only when `data.target_col=target_ender_20`; other targets persist `null`.
 - If `x_groups` includes `baseline`, `id_col` must be present.
 - Training config values are validated before execution; type coercion failures hard-fail.
 - The canonical schema is generated from `src/numereng/config/training/contracts.py`.

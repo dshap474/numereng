@@ -4,12 +4,13 @@
 
 Do not report security issues in public GitHub issues.
 
-Send a report to `security@numer.ai` with:
+Use GitHub private vulnerability reporting for this repository:
 
-- Affected component(s) and version/commit
-- Reproduction steps or proof of concept
-- Impact assessment
-- Any suggested mitigation
+- Open the repository Security tab.
+- Start a private vulnerability report.
+- Include the affected component(s), reproduction steps, impact, and any suggested mitigation.
+
+If private reporting is unavailable in your GitHub session, use the public security contact issue template to request a private follow-up channel. Do not include exploit details, secrets, or proof-of-concept payloads in that issue.
 
 ## Response expectations
 

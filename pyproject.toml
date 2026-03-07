@@ -1,7 +1,7 @@
 [project]
 name = "numereng"
 version = "0.1.0"
-description = "Bootstrap package scaffold for the numereng refactor."
+description = "Numerai workflow package for training, experiments, submissions, ensembles, HPO, cloud runs, and monitoring."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,11 @@ dependencies = [
     "pyyaml>=6.0",
     "uvicorn>=0.30",
 ]
+
+[project.urls]
+Repository = "https://github.com/dshap474/numereng"
+Issues = "https://github.com/dshap474/numereng/issues"
+Documentation = "https://github.com/dshap474/numereng/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [

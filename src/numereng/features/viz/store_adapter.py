@@ -37,6 +37,7 @@ _FORUM_POSTS_RELATIVE_PATH = "forum/posts"
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled", "stale"}
 _ACTIVE_JOB_STATUSES = {"queued", "starting", "running", "canceling"}
 _HIDDEN_NOTE_STEMS = {"CLAUDE", "AGENTS"}
+_CLASSIC_PAYOUT_TARGET = "target_ender_20"
 _PAYOUT_CORR_WEIGHT = 0.75
 _PAYOUT_MMC_WEIGHT = 2.25
 _PAYOUT_CLIP = 0.05
@@ -50,6 +51,10 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
 _DERIVED_METRIC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "payout_estimate_mean": ("corr20v2_mean", "mmc_mean"),
 }
+
+
+def _is_classic_payout_target(target_col: str | None) -> bool:
+    return target_col == _CLASSIC_PAYOUT_TARGET
 
 
 @lru_cache(maxsize=512)
@@ -441,7 +446,11 @@ def _extract_numeric_metric(metrics: dict[str, Any], *keys: str) -> float | None
     return None
 
 
-def _normalize_round_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+def _normalize_round_metrics(
+    metrics: dict[str, Any],
+    *,
+    target_col: str | None = None,
+) -> dict[str, Any]:
     normalized: dict[str, Any] = _sanitize_metrics(metrics)
     flattened = _flatten_metrics(normalized)
     for key, value in flattened.items():
@@ -516,11 +525,23 @@ def _normalize_round_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         normalized["cwmm_sharpe"] = cwmm_sharpe
 
     payout = _extract_numeric_metric(normalized, "payout_estimate_mean", "payout_score")
-    if payout is None and corr_mean is not None and mmc_mean is not None:
+    payout_key_present = any(
+        key in normalized for key in ("payout_estimate_mean", "payout_score", "payout_estimate", "payout_estimate.mean")
+    )
+    can_derive_payout = target_col is None or _is_classic_payout_target(target_col)
+    if (
+        payout is None
+        and not payout_key_present
+        and can_derive_payout
+        and corr_mean is not None
+        and mmc_mean is not None
+    ):
         payout_raw = (_PAYOUT_CORR_WEIGHT * corr_mean) + (_PAYOUT_MMC_WEIGHT * mmc_mean)
         payout = max(-_PAYOUT_CLIP, min(_PAYOUT_CLIP, payout_raw))
     if payout is not None:
         normalized["payout_estimate_mean"] = payout
+    elif payout_key_present:
+        normalized.setdefault("payout_estimate_mean", None)
 
     max_drawdown = _extract_numeric_metric(normalized, "max_drawdown", "corr.max_drawdown")
     if max_drawdown is not None:
@@ -1020,10 +1041,35 @@ class VizStoreAdapter:
             if not isinstance(run_id, str) or not isinstance(name, str):
                 continue
             raw_metrics.setdefault(run_id, {})[name] = _metric_row_value(row["value"], row["value_json"])
-        return {
-            run_id: _normalize_round_metrics(metrics)
-            for run_id, metrics in raw_metrics.items()
-        }
+        return raw_metrics
+
+    def _run_target_map(self, run_ids: list[str]) -> dict[str, str | None]:
+        if not run_ids:
+            return {}
+        target_map: dict[str, str | None] = {}
+
+        if self._table_exists("runs"):
+            placeholders = ",".join("?" for _ in run_ids)
+            rows = self._query(
+                f"SELECT run_id, manifest_json FROM runs WHERE run_id IN ({placeholders})",
+                tuple(run_ids),
+            )
+            for row in rows:
+                run_id = row["run_id"]
+                if not isinstance(run_id, str):
+                    continue
+                manifest = _parse_json_object(row["manifest_json"])
+                target_train, _, _ = _resolve_run_targets(manifest)
+                target_map[run_id] = target_train
+
+        for run_id in run_ids:
+            if run_id in target_map:
+                continue
+            manifest = _read_json_dict(self.store_root / "runs" / run_id / "run.json")
+            target_train, _, _ = _resolve_run_targets(manifest)
+            target_map[run_id] = target_train
+
+        return target_map
 
     def _format_run(
         self,
@@ -1047,7 +1093,7 @@ class VizStoreAdapter:
             "created_at": row.get("created_at"),
             "status": row.get("status"),
             "is_champion": bool(champion_run_id and run_id == champion_run_id),
-            "metrics": _normalize_round_metrics(metrics),
+            "metrics": _normalize_round_metrics(metrics, target_col=target_train),
             "config_hash": manifest.get("config_hash"),
             "notes": None,
             "round_id": lineage.get("round_id"),
@@ -1147,7 +1193,7 @@ class VizStoreAdapter:
                     "created_at": payload_raw.get("created_at"),
                     "status": payload_raw.get("status"),
                     "is_champion": bool(champion_run_id and champion_run_id == run_id),
-                    "metrics": _normalize_round_metrics(metrics),
+                    "metrics": _normalize_round_metrics(metrics, target_col=target_train),
                     "config_hash": payload_raw.get("config_hash"),
                     "notes": None,
                     "round_id": lineage.get("round_id"),
@@ -1206,7 +1252,10 @@ class VizStoreAdapter:
             target_train = summary.get("target")
             target_payout = summary.get("target_payout")
 
-            normalized_metrics = _normalize_round_metrics(raw)
+            normalized_metrics = _normalize_round_metrics(
+                raw,
+                target_col=_to_non_empty_str(target_train),
+            )
             created_at = datetime.fromtimestamp(metrics_path.stat().st_mtime, tz=UTC).isoformat()
             try:
                 source_file = metrics_path.relative_to(self.store_root).as_posix()
@@ -1287,9 +1336,10 @@ class VizStoreAdapter:
             if not isinstance(run_id, str) or not isinstance(name, str):
                 continue
             raw_metrics.setdefault(run_id, {})[name] = _metric_row_value(row["value"], row["value_json"])
+        target_map = self._run_target_map(list(raw_metrics))
         metrics: dict[str, dict[str, Any]] = {}
         for run_id, payload in raw_metrics.items():
-            normalized = _normalize_round_metrics(payload)
+            normalized = _normalize_round_metrics(payload, target_col=target_map.get(run_id))
             if metric_names:
                 filtered: dict[str, Any] = {}
                 for metric_name in metric_names:
@@ -1583,6 +1633,8 @@ class VizStoreAdapter:
         frame, context = loaded
         era_col = str(context["era_col"])
         target_col = str(context["target_col"])
+        if not _is_classic_payout_target(target_col):
+            return None
         prediction_col = str(context["prediction_col"])
         id_col_raw = context.get("id_col")
         if not isinstance(id_col_raw, str) or id_col_raw not in frame.columns:
@@ -1655,6 +1707,10 @@ class VizStoreAdapter:
     def get_per_era_payout_map(self, run_id: str) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
+        manifest = self.get_run_manifest(run_id) or _read_json_dict(run_dir / "run.json")
+        target_train, _, _ = _resolve_run_targets(manifest)
+        if not _is_classic_payout_target(target_train):
+            return None
         parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.parquet"
         csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.csv"
         from_artifact = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
@@ -1724,9 +1780,10 @@ class VizStoreAdapter:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
         manifest = self.get_run_manifest(run_id) or _read_json_dict(run_dir / "run.json")
+        target_train, _, _ = _resolve_run_targets(manifest)
 
         def _enrich_metrics(metrics_payload: dict[str, Any]) -> dict[str, Any]:
-            normalized = _normalize_round_metrics(metrics_payload)
+            normalized = _normalize_round_metrics(metrics_payload, target_col=target_train)
             if "mmc_coverage_ratio_rows" in normalized:
                 return normalized
             provenance = self._score_provenance(run_dir, manifest)

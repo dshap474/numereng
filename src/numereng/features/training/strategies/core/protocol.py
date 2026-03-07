@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-TrainingProfile = Literal["simple", "purged_walk_forward", "submission"]
+TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 # Backward-compatible legacy engine mode type for API/config migration.
 TrainingEngineMode = Literal["official", "custom", "full_history"]
 

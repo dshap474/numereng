@@ -29,7 +29,7 @@ def _sorted_unique_eras(eras: Iterable[object]) -> list[object]:
 
 def era_cv_splits(
     eras: Iterable[object],
-    embargo: int = 13,
+    embargo: int,
     mode: str = "official_walkforward",
     min_train_size: int = 1,
     chunk_size: int = 156,
@@ -118,7 +118,7 @@ def build_oof_predictions(
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Build out-of-fold predictions and CV metadata."""
     cv_mode = str(cv_config.get("mode", "official_walkforward"))
-    cv_embargo = _coerce_int(cv_config.get("embargo"), default=13)
+    cv_embargo = _require_int(cv_config.get("embargo"), field="training.cv.embargo")
     cv_min_train_size = _coerce_int(cv_config.get("min_train_size"), default=0)
     cv_chunk_size = _coerce_int(cv_config.get("chunk_size"), default=156)
     holdout_train_eras = _coerce_eras_list(cv_config.get("train_eras"), field="training.cv.train_eras")
@@ -335,7 +335,7 @@ def build_full_history_predictions(
     meta: dict[str, object] = {
         "n_splits": 0,
         "embargo": 0,
-        "mode": "full_history",
+        "mode": "full_history_refit",
         "min_train_size": 0,
         "folds_used": 1,
         "folds": [
@@ -460,6 +460,12 @@ def _coerce_int(value: object, *, default: int) -> int:
         except ValueError as exc:
             raise TrainingConfigError("training_cv_integer_value_invalid") from exc
     raise TrainingConfigError("training_cv_integer_value_invalid")
+
+
+def _require_int(value: object, *, field: str) -> int:
+    if value is None:
+        raise TrainingConfigError(f"training_cv_integer_value_missing:{field}")
+    return _coerce_int(value, default=0)
 
 
 def _coerce_eras_list(value: object, *, field: str) -> list[object] | None:

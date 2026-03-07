@@ -292,6 +292,58 @@ def test_cli_run_train_legacy_method_flag_hard_fails(capsys: pytest.CaptureFixtu
     assert "legacy training option is no longer supported: --method" in captured.err
 
 
+def test_cli_run_score_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_score_run(request: api_module.ScoreRunRequest) -> api_module.ScoreRunResponse:
+        assert request.run_id == "run-123"
+        assert request.store_root == ".numereng"
+        return api_module.ScoreRunResponse(
+            run_id="run-123",
+            predictions_path="/tmp/preds.parquet",
+            results_path="/tmp/results.json",
+            metrics_path="/tmp/metrics.json",
+            score_provenance_path="/tmp/score_provenance.json",
+            effective_scoring_backend="materialized",
+        )
+
+    monkeypatch.setattr(api_module, "score_run", fake_score_run)
+
+    exit_code = cli.main(["run", "score", "--run-id", "run-123"])
+    captured = capsys.readouterr()
+    payload = _parse_stdout_json(captured.out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-123"
+    assert payload["metrics_path"] == "/tmp/metrics.json"
+
+
+def test_cli_run_score_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["run", "score"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "missing required argument: --run-id" in captured.err
+
+
+def test_cli_run_score_boundary_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_score_run(request: api_module.ScoreRunRequest) -> api_module.ScoreRunResponse:
+        _ = request
+        raise PackageError("training_score_run_not_found")
+
+    monkeypatch.setattr(api_module, "score_run", fake_score_run)
+
+    exit_code = cli.main(["run", "score", "--run-id", "run-404"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "training_score_run_not_found" in captured.err
+
+
 def test_cli_run_unknown_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["run", "unknown"])
     captured = capsys.readouterr()
@@ -1578,7 +1630,7 @@ def test_cli_cloud_modal_train_submit_success(
 
     def fake_cloud_modal_train_submit(request: api_module.ModalTrainSubmitRequest) -> api_module.CloudModalResponse:
         assert request.config_path == str(config_path)
-        assert request.profile == "submission"
+        assert request.profile == "full_history_refit"
         assert request.engine_mode is None
         assert request.window_size_eras is None
         assert request.embargo_eras is None
@@ -1604,7 +1656,7 @@ def test_cli_cloud_modal_train_submit_success(
             "--config",
             str(config_path),
             "--profile",
-            "submission",
+            "full_history_refit",
             "--app-name",
             "numereng-train",
             "--function-name",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -48,6 +48,8 @@ from numereng.api import (
     NumeraiModelsResponse,
     NumeraiTournament,
     PackageError,
+    ScoreRunRequest,
+    ScoreRunResponse,
     StoreDoctorRequest,
     StoreDoctorResponse,
     StoreIndexRequest,
@@ -73,6 +75,7 @@ from numereng.api import (
     list_numerai_models,
     run_bootstrap_check,
     run_training,
+    score_run,
     store_doctor,
     store_index_run,
     store_init,
@@ -106,7 +109,7 @@ from numereng.features.submission import (
     SubmissionRunPredictionsPathUnsafeError,
 )
 from numereng.features.telemetry import get_launch_metadata
-from numereng.features.training import TrainingError, TrainingModelError, TrainingRunResult
+from numereng.features.training import ScoreRunResult, TrainingError, TrainingModelError, TrainingRunResult
 from numereng.platform.errors import ForumScraperError, NumeraiClientError
 
 CloudApiFunc = Callable[[Any], CloudEc2Response]
@@ -802,6 +805,65 @@ def test_numerai_api_translates_client_errors(monkeypatch: pytest.MonkeyPatch) -
         get_numerai_current_round(NumeraiCurrentRoundRequest())
 
 
+def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
+        assert run_id == "run-123"
+        assert store_root == ".numereng"
+        return ScoreRunResult(
+            run_id=run_id,
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+            metrics_path=Path("/tmp/metrics.json"),
+            score_provenance_path=Path("/tmp/score_provenance.json"),
+            effective_scoring_backend="materialized",
+        )
+
+    monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
+
+    response = score_run(ScoreRunRequest(run_id="run-123"))
+    assert isinstance(response, ScoreRunResponse)
+    assert response.run_id == "run-123"
+    assert response.predictions_path == "/tmp/preds.parquet"
+    assert response.results_path == "/tmp/results.json"
+    assert response.metrics_path == "/tmp/metrics.json"
+    assert response.score_provenance_path == "/tmp/score_provenance.json"
+    assert response.effective_scoring_backend == "materialized"
+
+
+def test_score_run_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
+        _ = (run_id, store_root)
+        launch_metadata = get_launch_metadata()
+        assert launch_metadata is not None
+        assert launch_metadata.source == "api.run.score"
+        assert launch_metadata.operation_type == "run"
+        assert launch_metadata.job_type == "run"
+        return ScoreRunResult(
+            run_id="run-123",
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+            metrics_path=Path("/tmp/metrics.json"),
+            score_provenance_path=Path("/tmp/score_provenance.json"),
+            effective_scoring_backend="materialized",
+        )
+
+    monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
+
+    response = score_run(ScoreRunRequest(run_id="run-123"))
+    assert response.run_id == "run-123"
+
+
+def test_score_run_translates_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
+        _ = (run_id, store_root)
+        raise TrainingError("training_score_run_not_found:run-404")
+
+    monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
+
+    with pytest.raises(PackageError, match="training_score_run_not_found"):
+        score_run(ScoreRunRequest(run_id="run-404"))
+
+
 def test_run_training_success(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run_training_pipeline(
         *,
@@ -893,6 +955,28 @@ def test_train_run_request_rejects_non_json_config_path() -> None:
 def test_experiment_train_request_rejects_non_json_config_path() -> None:
     with pytest.raises(ValidationError, match="config_path must reference a .json file"):
         ExperimentTrainRequest(experiment_id="2026-02-22_test-exp", config_path="configs/run.yaml")
+
+
+def test_experiment_train_request_rejects_submission_profile_rename() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="training profile 'submission' was renamed to 'full_history_refit'",
+    ):
+        ExperimentTrainRequest(
+            experiment_id="2026-02-22_test-exp",
+            config_path="configs/run.json",
+            profile=cast(Any, "submission"),
+        )
+
+
+def test_experiment_train_request_accepts_full_history_refit_profile() -> None:
+    request = ExperimentTrainRequest(
+        experiment_id="2026-02-22_test-exp",
+        config_path="configs/run.json",
+        profile="full_history_refit",
+    )
+
+    assert request.profile == "full_history_refit"
 
 
 def test_run_training_translates_backend_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1652,6 +1736,17 @@ def test_cloud_aws_train_submit_request_rejects_non_json_config_values() -> None
         AwsTrainSubmitRequest(run_id="run-1", config_s3_uri="s3://bucket/runs/run-1/config.yaml")
 
 
+def test_cloud_modal_train_submit_request_profile_contract() -> None:
+    request = ModalTrainSubmitRequest(config_path="config.json", profile="full_history_refit")
+    assert request.profile == "full_history_refit"
+
+    with pytest.raises(
+        ValidationError,
+        match="training profile 'submission' was renamed to 'full_history_refit'",
+    ):
+        ModalTrainSubmitRequest(config_path="config.json", profile=cast(Any, "submission"))
+
+
 @pytest.mark.parametrize(
     ("api_func", "req", "method"),
     [
@@ -1972,6 +2067,7 @@ def test_api_exports_are_explicit() -> None:
         "get_health",
         "run_bootstrap_check",
         "run_training",
+        "score_run",
         "submit_predictions",
         "store_init",
         "store_index_run",

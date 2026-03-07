@@ -19,8 +19,9 @@ Examples include:
 
 ## Reporting
 
-If you experience or witness unacceptable behavior, report it to `support@numer.ai`.
-Include links, timestamps, and any relevant context.
+If you experience or witness unacceptable behavior on GitHub, use GitHub's built-in reporting tools for abusive content or users.
+
+For project-specific conduct concerns that do not need platform moderation, open an issue only if you are comfortable making the report publicly visible. Include links, timestamps, and any relevant context.
 
 ## Enforcement
 

@@ -35,6 +35,45 @@ def test_load_training_config_json_accepts_canonical_payload(tmp_path: Path) -> 
     assert payload["model"] == {"type": "LGBMRegressor", "params": {}}
 
 
+def test_load_training_config_json_accepts_full_history_refit_profile(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"engine": {"profile": "full_history_refit"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_training_config_json(config_path)
+    training_block = cast(dict[str, object], payload["training"])
+    engine_block = cast(dict[str, object], training_block["engine"])
+    assert engine_block["profile"] == "full_history_refit"
+
+
+def test_load_training_config_json_rejects_submission_profile_rename(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"engine": {"profile": "submission"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        TrainingConfigLoaderError,
+        match="training profile 'submission' was renamed to 'full_history_refit'",
+    ):
+        load_training_config_json(config_path)
+
+
 def test_load_training_config_json_accepts_downsampled_dataset_variant(tmp_path: Path) -> None:
     config_path = tmp_path / "train.json"
     config_path.write_text(
@@ -60,6 +99,24 @@ def test_load_training_config_json_rejects_unknown_fields(tmp_path: Path) -> Non
             {
                 "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled", "unknown": "x"},
                 "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TrainingConfigLoaderError, match="training_config_schema_invalid"):
+        load_training_config_json(config_path)
+
+
+@pytest.mark.parametrize("field_name", ["prediction_transform", "era_weighting", "prediction_batch_size"])
+def test_load_training_config_json_rejects_removed_model_fields(tmp_path: Path, field_name: str) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}, field_name: "legacy"},
                 "training": {},
             }
         ),

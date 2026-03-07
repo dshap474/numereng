@@ -57,6 +57,7 @@ def test_era_cv_splits_holdout_overlap_raises() -> None:
     with pytest.raises(TrainingConfigError, match="training_cv_holdout_eras_overlap"):
         cv_module.era_cv_splits(
             eras=["1", "2", "3"],
+            embargo=0,
             mode="train_validation_holdout",
             holdout_train_eras=["1", "2"],
             holdout_val_eras=["2", "3"],
@@ -77,7 +78,7 @@ def test_build_oof_predictions_train_validation_holdout(monkeypatch) -> None:  #
     )
     loader = build_model_data_loader(
         full=full,
-        x_cols=["feature_1", "era", "benchmark"],
+        x_cols=["feature_1", "benchmark"],
         era_col="era",
         target_col="target",
         id_col="id",
@@ -123,7 +124,7 @@ def test_build_oof_predictions_fold_descriptors_are_deterministic(monkeypatch) -
     )
     loader = build_model_data_loader(
         full=full,
-        x_cols=["feature_1", "era", "benchmark"],
+        x_cols=["feature_1", "benchmark"],
         era_col="era",
         target_col="target",
         id_col="id",
@@ -182,7 +183,7 @@ def test_build_full_history_predictions(monkeypatch) -> None:  # type: ignore[no
     )
     loader = build_model_data_loader(
         full=full,
-        x_cols=["feature_1", "era"],
+        x_cols=["feature_1"],
         era_col="era",
         target_col="target",
         id_col="id",
@@ -202,6 +203,6 @@ def test_build_full_history_predictions(monkeypatch) -> None:  # type: ignore[no
 
     assert list(predictions.columns) == ["id", "era", "target", "prediction"]
     assert len(predictions) == len(full)
-    assert cast(str, meta["mode"]) == "full_history"
+    assert cast(str, meta["mode"]) == "full_history_refit"
     assert cast(int, meta["folds_used"]) == 1
     assert "max_train_eras" not in meta

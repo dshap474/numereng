@@ -14,7 +14,7 @@ Validation behavior is controlled by `training.engine.profile`:
 |---------|----------|-------|
 | `simple` | Train on train eras, validate on validation eras | Holdout split, no embargo |
 | `purged_walk_forward` | Purged walk-forward CV over train+validation eras | Recommended evaluation mode |
-| `submission` | One-shot fit on full history | Final fit mode, no validation metrics |
+| `full_history_refit` | One-shot fit on full history | Final fit mode, no validation metrics |
 
 ## Embargo and Horizon
 
@@ -36,6 +36,6 @@ For `purged_walk_forward`:
 
 ## High-Risk Gotchas
 
-- `submission` does not produce validation metrics.
+- `full_history_refit` is a final refit mode and does not produce validation metrics.
 - Training does not apply row-level subsampling; use dataset-level downsampling when reducing training size.
 - Validation behavior is controlled only by `training.engine.profile`; legacy engine parameters are not supported.

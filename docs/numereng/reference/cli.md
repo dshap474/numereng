@@ -9,17 +9,27 @@ Reference for the supported `numereng` CLI surface.
 
 ## `run`
 
-- `numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|submission>]`
+- `numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>]`
 - `numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]`
+- `numereng run score --run-id <id> [--store-root <path>]`
+
+Training profile notes:
+
+- `full_history_refit` is final-fit only and emits no validation metrics.
+- `simple` and `purged_walk_forward` persist post-run scoring outputs including `payout_estimate_mean` and `score_provenance.json`.
+- `payout_estimate_mean` follows Numerai Classic 2026 payout semantics and is populated only for `target_ender_20`.
+- `run score` recomputes metrics from persisted predictions and refreshes `results.json`, `metrics.json`, `score_provenance.json`, and run index rows.
 
 ## `experiment`
 
 - `numereng experiment create --id <id> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]`
 - `numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]`
 - `numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]`
-- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|submission>] [--store-root <path>]`
+- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]`
 - `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]`
 - `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]`
+
+Experiment training uses the same profile semantics as `run train`: canonical profiles are `simple|purged_walk_forward|full_history_refit`, and `full_history_refit` is refit-only with no validation metrics.
 
 ## `hpo`
 

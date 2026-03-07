@@ -10,57 +10,56 @@ Thanks for contributing.
 
 ## Setup
 
-Numereng now lives in its own repository directory.
-
 ```bash
-uv sync
+uv sync --extra dev
 ```
 
-Then work from `numereng`.
+Optional extras:
+
+- `uv sync --extra training`
+- `uv sync --extra mlops`
 
 ## Development workflow
 
-1. Keep changes scoped to the issue you are fixing.
-2. Add or update tests for behavior changes.
-3. Run relevant checks before opening a PR.
+1. Branch from `main`.
+2. Keep each change scoped to one behavior or documentation update.
+3. Add or update tests when behavior changes.
+4. Open a pull request back to `main`.
+
+`main` is intended to stay merge-only. Even solo-maintainer changes should land through a PR so CI, docs, and release notes stay reviewable. Direct pushes to `main` are blocked by branch protection.
 
 ## Common checks
 
 ```bash
-# unit + integration
+# repo hygiene and high-confidence secret scan
+make oss-preflight
+
+# fast gate: lint + types + non-slow tests
 make test
 
-# targeted suites
-make test-unit
-make test-integration
+# full gate: includes slow tests
+make test-all
 
-# OSS hygiene/public snapshot checks
-make check-oss-hygiene
-make verify-public-snapshot
+# build package artifacts
+uv build
 ```
 
-## Type and lint ratchet
+For targeted work, prefer direct `uv run` commands:
 
 ```bash
-# run full typecheck/lint
-make hygiene
-
-# capture current baseline (writes dev/hygiene/*.json)
-make hygiene-capture-baseline
-
-# fail only if mypy/ruff counts increase vs baseline
-make hygiene-ratchet
-
-# collect tests without coverage gate
-make test-collect
+uv run ruff check .
+uv run mypy --strict src tests
+uv run pytest -q tests/path/to/test_file.py
 ```
 
 ## Pull requests
 
-- Use a clear title and include a short problem/solution summary.
+- Use a clear title and short problem/solution summary.
 - Include testing notes (what you ran and what passed).
 - Avoid unrelated refactors in the same PR.
+- Update docs when public CLI, API, or workflow behavior changes.
+- Update `docs/llms.txt` and `docs/ARCHITECTURE.md` in the same PR when contracts or flows change.
 
 ## Security
 
-For vulnerabilities, do not open a public issue first. Follow `SECURITY.md`.
+Do not report vulnerabilities in public issues. Follow `SECURITY.md`.

@@ -43,7 +43,9 @@ def default_embargo_for_horizon(horizon: Literal["20d", "60d"]) -> int:
 def parse_training_profile(value: object) -> TrainingProfile:
     """Coerce one training profile value."""
     profile = str(value)
-    if profile not in {"simple", "purged_walk_forward", "submission"}:
+    if profile == "submission":
+        raise TrainingConfigError("training_profile_renamed:submission->full_history_refit")
+    if profile not in {"simple", "purged_walk_forward", "full_history_refit"}:
         raise TrainingConfigError(f"training_profile_unknown:{profile}")
     return profile  # type: ignore[return-value]
 
@@ -54,7 +56,7 @@ def parse_legacy_training_engine_mode(value: object) -> TrainingProfile:
     if mode == "official":
         return "purged_walk_forward"
     if mode == "full_history":
-        return "submission"
+        return "full_history_refit"
     if mode == "custom":
         raise TrainingConfigError("training_profile_legacy_custom_not_supported")
     raise TrainingConfigError(f"training_engine_unknown:{mode}")

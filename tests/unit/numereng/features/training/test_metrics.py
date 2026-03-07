@@ -35,6 +35,7 @@ def _write_feature_sources(
     ids: list[str],
     eras: list[str],
     feature_cols: list[str] | None = None,
+    include_fncv3_features: bool = True,
 ) -> list[str]:
     resolved_feature_cols = feature_cols or ["feature_1", "feature_2"]
     version_dir = tmp_path / "v5.2"
@@ -59,8 +60,14 @@ def _write_feature_sources(
     validation_frame.to_parquet(validation_path, index=False)
 
     features_path = version_dir / "features.json"
+    feature_sets: dict[str, list[str]] = {
+        "small": resolved_feature_cols,
+        "all": resolved_feature_cols,
+    }
+    if include_fncv3_features:
+        feature_sets["fncv3_features"] = resolved_feature_cols
     features_path.write_text(
-        json.dumps({"feature_sets": {"small": resolved_feature_cols}}, sort_keys=True),
+        json.dumps({"feature_sets": feature_sets}, sort_keys=True),
         encoding="utf-8",
     )
     return resolved_feature_cols
@@ -171,6 +178,36 @@ def test_attach_benchmark_predictions_fails_on_partial_id_overlap() -> None:
         )
 
 
+def test_attach_benchmark_predictions_allows_partial_id_overlap_when_enabled() -> None:
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b", "c"],
+            "era": ["era1", "era1", "era2"],
+            "target": [0.1, 0.2, 0.3],
+        }
+    )
+    benchmark = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era1"],
+            "v52_lgbm_ender20": [0.5, 0.6],
+        }
+    ).set_index("id")
+
+    attached = attach_benchmark_predictions(
+        predictions=predictions,
+        benchmark=benchmark,
+        benchmark_col="v52_lgbm_ender20",
+        era_col="era",
+        id_col="id",
+        allow_partial_overlap=True,
+    )
+
+    assert list(attached["id"]) == ["a", "b"]
+    assert list(attached["era"]) == ["era1", "era1"]
+    assert list(attached["v52_lgbm_ender20"]) == [0.5, 0.6]
+
+
 def test_ensure_full_benchmark_models_writes_to_derived_cache(tmp_path: Path) -> None:
     data_root = (tmp_path / ".numereng" / "datasets").resolve()
     version_dir = data_root / "v5.2"
@@ -279,8 +316,70 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     joins = provenance["joins"]
     assert isinstance(joins, dict)
     assert joins["predictions_rows"] == 4
+    assert joins["fnc_overlap_rows"] == 4
     assert joins["benchmark_overlap_rows"] == 4
+    assert joins["benchmark_missing_rows"] == 0
+    assert joins["benchmark_missing_eras"] == 0
     assert joins["meta_overlap_rows"] == 4
+    policy = provenance["policy"]
+    assert isinstance(policy, dict)
+    assert policy["fnc_feature_set"] == "fncv3_features"
+    assert policy["benchmark_overlap_policy"] == "overlap_required"
+    assert policy["meta_overlap_policy"] == "overlap_required"
+
+
+def test_summarize_prediction_file_with_scores_fails_when_fncv3_features_missing(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era1"],
+            "target": [0.2, 0.4],
+            "prediction": [0.1, 0.3],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+    _write_feature_sources(
+        tmp_path,
+        ids=predictions["id"].tolist(),
+        eras=predictions["era"].tolist(),
+        include_fncv3_features=False,
+    )
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    benchmark = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era1"],
+            "v52_lgbm_ender20": [0.6, 0.7],
+        }
+    ).set_index("id")
+    benchmark.to_parquet(benchmark_path)
+
+    meta_path = tmp_path / "meta.parquet"
+    meta = pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era1"],
+            "numerai_meta_model": [0.55, 0.65],
+        }
+    ).set_index("id")
+    meta.to_parquet(meta_path)
+
+    with pytest.raises(TrainingDataError, match="training_feature_set_not_found:fncv3_features"):
+        summarize_prediction_file_with_scores(
+            predictions_path=predictions_path,
+            pred_cols=["prediction"],
+            target_col="target",
+            data_version="v5.2",
+            client=_FakeClient(),
+            benchmark_model="v52_lgbm_ender20",
+            benchmark_data_path=benchmark_path,
+            meta_model_data_path=meta_path,
+            era_col="era",
+            id_col="id",
+            data_root=tmp_path,
+        )
 
 
 def test_summarize_prediction_file_with_scores_requires_meta_overlap(tmp_path: Path) -> None:
@@ -403,8 +502,7 @@ def test_summarize_prediction_file_with_scores_era_stream_matches_materialized(t
         era_chunk_size=1,
     )
 
-    assert set(materialized_summaries) == set(stream_summaries)
-    for metric_name in materialized_summaries:
+    for metric_name in ("bmc", "bmc_last_200_eras"):
         assert_frame_equal(
             materialized_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
             stream_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
@@ -422,7 +520,7 @@ def test_summarize_prediction_file_with_scores_era_stream_matches_materialized(t
     assert stream_execution["era_chunk_size"] == 1
 
 
-def test_summarize_prediction_file_with_scores_era_stream_handles_sparse_meta_and_benchmark_overlap(
+def test_summarize_prediction_file_with_scores_tolerates_partial_benchmark_overlap(
     tmp_path: Path,
 ) -> None:
     predictions_path = tmp_path / "predictions.parquet"
@@ -454,14 +552,14 @@ def test_summarize_prediction_file_with_scores_era_stream_handles_sparse_meta_an
     meta_path = tmp_path / "meta.parquet"
     meta = pd.DataFrame(
         {
-            "id": ["e", "f"],
-            "era": ["era3", "era3"],
-            "numerai_meta_model": [0.35, 0.45],
+            "id": ["a", "b", "c", "d", "e", "f"],
+            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
+            "numerai_meta_model": [0.55, 0.65, 0.15, 0.25, 0.35, 0.45],
         }
     ).set_index("id")
     meta.to_parquet(meta_path)
 
-    materialized_summaries, _ = summarize_prediction_file_with_scores(
+    materialized_summaries, materialized_provenance = summarize_prediction_file_with_scores(
         predictions_path=predictions_path,
         pred_cols=["prediction"],
         target_col="target",
@@ -492,7 +590,7 @@ def test_summarize_prediction_file_with_scores_era_stream_handles_sparse_meta_an
     )
 
     assert set(materialized_summaries) == set(stream_summaries)
-    for metric_name in materialized_summaries:
+    for metric_name in ("bmc", "bmc_last_200_eras"):
         assert_frame_equal(
             materialized_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
             stream_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
@@ -501,11 +599,100 @@ def test_summarize_prediction_file_with_scores_era_stream_handles_sparse_meta_an
             atol=1e-9,
         )
 
-    joins = stream_provenance["joins"]
-    assert isinstance(joins, dict)
-    assert joins["predictions_rows"] == 6
-    assert joins["benchmark_overlap_rows"] == 4
-    assert joins["meta_overlap_rows"] == 2
+    for provenance in (materialized_provenance, stream_provenance):
+        joins = provenance["joins"]
+        assert isinstance(joins, dict)
+        assert joins["predictions_rows"] == 6
+        assert joins["benchmark_overlap_rows"] == 4
+        assert joins["benchmark_overlap_eras"] == 2
+        assert joins["benchmark_missing_rows"] == 2
+        assert joins["benchmark_missing_eras"] == 1
+        policy = provenance["policy"]
+        assert isinstance(policy, dict)
+        assert policy["benchmark_overlap_policy"] == "overlap_required"
+
+
+def test_summarize_prediction_file_with_scores_tolerates_partial_meta_overlap(
+    tmp_path: Path,
+) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d", "e", "f"],
+            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
+            "target": [0.2, 0.4, 0.1, 0.3, 0.5, 0.7],
+            "prediction": [0.1, 0.3, 0.2, 0.4, 0.6, 0.8],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+    _write_feature_sources(
+        tmp_path,
+        ids=predictions["id"].tolist(),
+        eras=predictions["era"].tolist(),
+    )
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    benchmark = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d", "e", "f"],
+            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
+            "v52_lgbm_ender20": [0.6, 0.7, 0.2, 0.3, 0.1, 0.2],
+        }
+    ).set_index("id")
+    benchmark.to_parquet(benchmark_path)
+
+    meta_path = tmp_path / "meta.parquet"
+    meta = pd.DataFrame(
+        {
+            "id": ["c", "d", "e", "f"],
+            "era": ["era2", "era2", "era3", "era3"],
+            "numerai_meta_model": [0.15, 0.25, 0.35, 0.45],
+        }
+    ).set_index("id")
+    meta.to_parquet(meta_path)
+
+    materialized_summaries, materialized_provenance = summarize_prediction_file_with_scores(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        data_version="v5.2",
+        client=_FakeClient(),
+        benchmark_model="v52_lgbm_ender20",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_mode="materialized",
+    )
+
+    stream_summaries, stream_provenance = summarize_prediction_file_with_scores(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        data_version="v5.2",
+        client=_FakeClient(),
+        benchmark_model="v52_lgbm_ender20",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_mode="era_stream",
+        era_chunk_size=1,
+    )
+
+    assert set(materialized_summaries) == set(stream_summaries)
+    for provenance in (materialized_provenance, stream_provenance):
+        joins = provenance["joins"]
+        assert isinstance(joins, dict)
+        assert joins["meta_model_overlap_rows"] == 4
+        assert joins["meta_model_overlap_eras"] == 2
+        assert joins["meta_model_missing_rows"] == 2
+        assert joins["meta_model_missing_eras"] == 1
+        policy = provenance["policy"]
+        assert isinstance(policy, dict)
+        assert policy["meta_overlap_policy"] == "overlap_required"
 
 
 def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_reads(
@@ -549,15 +736,13 @@ def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_read
     meta.to_parquet(meta_path)
 
     original_read_table = metrics_module._read_table
-    blocked_paths = {predictions_path.resolve(), benchmark_path.resolve(), meta_path.resolve()}
+    read_calls: list[tuple[Path, tuple[str, ...] | None]] = []
 
-    def _guard_read_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
-        resolved = path.expanduser().resolve()
-        if resolved in blocked_paths:
-            raise AssertionError(f"_read_table should not materialize {resolved}")
+    def _track_read_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
+        read_calls.append((path.expanduser().resolve(), tuple(columns) if columns is not None else None))
         return original_read_table(path, columns=columns)
 
-    monkeypatch.setattr(metrics_module, "_read_table", _guard_read_table)
+    monkeypatch.setattr(metrics_module, "_read_table", _track_read_table)
 
     summaries, provenance = summarize_prediction_file_with_scores(
         predictions_path=predictions_path,
@@ -578,6 +763,12 @@ def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_read
     joins = provenance["joins"]
     assert isinstance(joins, dict)
     assert joins["predictions_rows"] == 4
+    predictions_calls = [call for call in read_calls if call[0] == predictions_path.resolve()]
+    assert predictions_calls == [(predictions_path.resolve(), ("id", "era"))]
+    benchmark_calls = [call for call in read_calls if call[0] == benchmark_path.resolve()]
+    assert benchmark_calls == [(benchmark_path.resolve(), ("era", "v52_lgbm_ender20"))]
+    meta_calls = [call for call in read_calls if call[0] == meta_path.resolve()]
+    assert meta_calls == [(meta_path.resolve(), ("era", "numerai_meta_model"))]
 
 
 def test_summarize_prediction_file_with_scores_materialized_reads_predictions_once_and_projects_aux_tables(

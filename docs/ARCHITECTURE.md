@@ -156,7 +156,6 @@ Canonical top-level dirs:
 - `datasets`
 - `cloud`
 - `experiments`
-- `logs`
 - `notes`
 
 Canonical top-level sqlite files:
@@ -196,7 +195,6 @@ Dynamic top-level dirs may also appear:
   ensembles/<ensemble_id>/...         # global ensembles
   datasets/
   cloud/
-  logs/
   notes/
 ```
 
@@ -229,16 +227,38 @@ cli run train
       (default metadata source=api.run.train only when unbound)
   -> features.training.run_training
       1) load strict JSON config
-      2) resolve training profile (`simple|purged_walk_forward|submission`)
+      2) resolve training profile (`simple|purged_walk_forward|full_history_refit`)
       3) resolve loading/scoring modes
       4) compute deterministic run_hash -> run_id
       5) resolve output root + run dir
-      6) write RUNNING manifest + resolved config
-      7) write run-local live stage/status log (`run.log`) during execution
-      8) train + persist predictions/results/metrics placeholders
-      9) index run (mandatory pre-finalization)
-      10) write FINISHED/FAILED manifest
-      11) for non-`submission`, call `features.training.scoring.run_post_training_scoring` from saved predictions and refresh run artifacts (`corr`, `fnc`, `mmc`, `cwmm`, `bmc`, `bmc_last_200_eras`)
+      6) acquire exclusive run lock (`runs/<run_id>/.train.lock`) and require fresh run dir state
+      7) write RUNNING manifest + resolved config
+      8) write run-local live stage/status log (`run.log`) during execution
+      9) train + persist predictions/results/metrics placeholders
+      10) index run (mandatory pre-finalization)
+      11) for non-`full_history_refit`, call `features.training.scoring.run_post_training_scoring` from saved predictions and refresh run artifacts (`corr`, `fnc`, `mmc`, `cwmm`, `bmc`, `bmc_last_200_eras`, `payout_estimate_mean`, `score_provenance.json`)
+      12) scoring failures are fail-closed (`FAILED` manifest + command failure)
+      13) write FINISHED/FAILED manifest and release run lock
+```
+
+### 7.2b Run Re-Scoring
+Entry points:
+- CLI: `numereng run score --run-id <id>`
+- API: `api.score_run(ScoreRunRequest)`
+- Feature: `features.training.score_run`
+
+```text
+cli run score
+  -> parse/validate args
+  -> bind launch metadata source=cli.run.score
+  -> api.score_run
+      (default metadata source=api.run.score only when unbound)
+  -> features.training.score_run
+      1) load persisted run artifacts (`run.json`, `resolved.json`, `results.json`, predictions parquet)
+      2) execute canonical post-training scoring from saved predictions
+      3) persist refreshed `results.json`, `metrics.json`, `score_provenance.json`
+      4) refresh run manifest metrics/artifact links
+      5) re-index run in store
 ```
 
 Data loading and CV rules:
@@ -252,7 +272,12 @@ Data loading and CV rules:
 - `data.dataset_scope=train_plus_validation` uses `train.parquet` plus `validation.parquet`, and applies `data_type=validation` filtering only on validation sources.
 - `purged_walk_forward` uses walk-forward defaults of `chunk_size=156`; embargo is horizon-based (`20d -> 8`, `60d -> 16`).
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
-- FNC diagnostics are computed in post-run scoring by neutralizing predictions to the run's feature set (`data.feature_set`) rather than during model fitting.
+- Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
+- FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set.
+- `payout_estimate_mean` follows Numerai Classic 2026 payout semantics (`0.75*corr + 2.25*mmc`, clipped to `±0.05`) and is populated only when `target_col=target_ender_20`; non-Ender targets persist `null`.
+- `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, benchmark overlap required, meta overlap required) plus join row/era counts and benchmark missing-row/era counts.
+- Benchmark post-run scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial benchmark overlap is tolerated and scored on overlapping rows only.
+- Meta-model post-run scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial meta-model overlap is tolerated and scored on overlapping rows only.
 - Horizon resolution prefers explicit `data.target_horizon` (`20d|60d`), then falls back to `target_col` name inference.
 - If `data.target_horizon` is omitted and target-name inference is ambiguous, training fails with `training_engine_target_horizon_ambiguous`.
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; insufficient eras fail with an explicit configuration error.
@@ -463,7 +488,7 @@ success/help
 1. Submission source XOR: exactly one of `run_id` or `predictions_path`.
 2. Neutralization source XOR: exactly one of `run_id` or `predictions_path`.
 3. Training/HPO config files are JSON-only and reject unknown keys.
-4. Training profile allowed only: `simple|purged_walk_forward|submission`.
+4. Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 5. Legacy training flags `--method` and `--method-overrides-json` are hard-fail.
 6. Run IDs are deterministic hash-derived IDs (12-char prefix).
 7. Training success requires pre-finalization `index_run` success.
@@ -483,16 +508,19 @@ success/help
 21. Horizon resolution uses `data.target_horizon` first and target-name inference second; unresolved ambiguity is a hard error.
 22. Purged walk-forward CV requires `chunk_size + 1` or more unique eras.
 23. Benchmark model parquet data is metrics-only (BMC/correlation diagnostics) and is not included as training features.
-24. `model.x_groups` benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) are invalid and hard-fail with `training_model_x_groups_benchmark_not_supported`.
-25. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
-26. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
-27. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
-28. Managed AWS extract hard-fails on unsafe archive members (absolute/traversal paths, links, invalid run IDs) and on hash-mismatched run-dir collisions.
-29. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
-30. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
-31. Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
-32. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
-33. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
+24. Canonical `model.x_groups` / `model.data_needed` are features-only; identifier groups (`era`, `id`) and benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) are rejected.
+25. Canonical FNC uses dataset feature set `fncv3_features`; if `features.json` does not define `fncv3_features`, post-run scoring fails.
+26. Benchmark and meta-model post-run scoring require nonzero `(id, era)` overlap with strict era alignment; partial overlap is tolerated and scored on overlapping rows only.
+27. `full_history_refit` is final-fit only and does not emit validation metrics.
+28. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
+29. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
+30. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
+31. Managed AWS extract hard-fails on unsafe archive members (absolute/traversal paths, links, invalid run IDs) and on hash-mismatched run-dir collisions.
+32. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
+33. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
+34. Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
+35. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
+36. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
 
 ## 12. Testing + Verification
 Primary checks:

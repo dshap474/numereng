@@ -34,7 +34,6 @@ def _request(
         data_version="v5.2",
         dataset_variant="non_downsampled",
         feature_set="small",
-        feature_cols=("feature_1", "feature_2"),
         feature_source_paths=None,
         full_data_path=None,
         dataset_scope="train_plus_validation",
@@ -78,6 +77,7 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     assert execution["requested_scoring_mode"] == "era_stream"
     assert execution["effective_scoring_mode"] == "materialized"
     assert execution["fallback_reason"] == "external_source_not_parquet"
+    assert result.policy.fnc_feature_set == "fncv3_features"
 
 
 def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
@@ -108,3 +108,5 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     assert execution["requested_scoring_mode"] == "era_stream"
     assert execution["effective_scoring_mode"] == "era_stream"
     assert "fallback_reason" not in execution
+    assert result.policy.benchmark_overlap_policy == "overlap_required"
+    assert result.policy.meta_overlap_policy == "overlap_required"

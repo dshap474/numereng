@@ -7,11 +7,13 @@ from numereng.features.training.errors import (
     TrainingMetricsError,
     TrainingModelError,
 )
-from numereng.features.training.models import TrainingRunResult
+from numereng.features.training.models import ScoreRunResult, TrainingRunResult
+from numereng.features.training.scoring.run_service import score_run
 from numereng.features.training.service import run_training
 from numereng.features.training.strategies import TrainingEngineMode, TrainingProfile
 
 __all__ = [
+    "ScoreRunResult",
     "TrainingConfigError",
     "TrainingDataError",
     "TrainingError",
@@ -20,5 +22,6 @@ __all__ = [
     "TrainingEngineMode",
     "TrainingProfile",
     "TrainingRunResult",
+    "score_run",
     "run_training",
 ]

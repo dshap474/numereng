@@ -166,6 +166,13 @@ class TrainRunRequest(BaseModel):
     def _validate_config_path(cls, value: str) -> str:
         return ensure_json_config_path(value, field_name="config_path")
 
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _reject_submission_profile(cls, value: object) -> object:
+        if value is not None and str(value) == "submission":
+            raise ValueError("training profile 'submission' was renamed to 'full_history_refit'")
+        return value
+
 
 class TrainRunResponse(BaseModel):
     """Public API response for a completed training run."""
@@ -173,6 +180,24 @@ class TrainRunResponse(BaseModel):
     run_id: str
     predictions_path: str
     results_path: str
+
+
+class ScoreRunRequest(BaseModel):
+    """Public API request for rescoring one persisted run."""
+
+    run_id: str = Field(min_length=1)
+    store_root: str = ".numereng"
+
+
+class ScoreRunResponse(BaseModel):
+    """Public API response for one completed score-only run."""
+
+    run_id: str
+    predictions_path: str
+    results_path: str
+    metrics_path: str
+    score_provenance_path: str
+    effective_scoring_backend: str
 
 
 class ExperimentCreateRequest(BaseModel):
@@ -238,6 +263,13 @@ class ExperimentTrainRequest(BaseModel):
     @classmethod
     def _validate_config_path(cls, value: str) -> str:
         return ensure_json_config_path(value, field_name="config_path")
+
+    @field_validator("profile", mode="before")
+    @classmethod
+    def _reject_submission_profile(cls, value: object) -> object:
+        if value is not None and str(value) == "submission":
+            raise ValueError("training profile 'submission' was renamed to 'full_history_refit'")
+        return value
 
 
 class ExperimentTrainResponse(BaseModel):

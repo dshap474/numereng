@@ -17,7 +17,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Fallback computations viz relies on
 
-- When `payout_estimate_mean` is missing, viz computes `clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, -0.05, +0.05)` to mimic Numerai’s payout scoring. Experiments that manipulate corr/mmc still end up with actionable payout estimates without writing extra data.
+- When `payout_estimate_mean` is missing, viz computes `clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, -0.05, +0.05)` to mimic Numerai Classic payout scoring. This fallback applies to `target_ender_20` contexts; non-Ender targets intentionally keep payout estimate unset/null.
 - Per-era CORR (val_per_era_corr20v2) and payout maps are expected artifacts (`artifacts/predictions/val_per_era_*.parquet|csv`), but viz can derive them from the canonical predictors/meta model if they are absent. The derivation path requires `numerai_tools` in the environment and `score_provenance.json` plus the predictions/meta files to merge on `era` + `id`. Experiments must ensure those base artifacts exist for viz derivation.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
