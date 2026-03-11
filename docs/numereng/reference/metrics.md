@@ -6,36 +6,28 @@ Canonical run metrics written by Numereng and consumed by reporting/viz flows.
 
 `metrics.json` and normalized views expose these families:
 
-- `corr20v2_*`
-- `fnc_*`
-- `mmc_*`
-- `cwmm_*`
-- `bmc_*`
-- `bmc_last_200_eras_*`
-- `payout_estimate_*`
-- `mmc_coverage_*`
-- `validation_profile`
+- `corr`
+- `corr_<alias>`
+- `fnc`
+- `fnc_<alias>`
+- `mmc`
+- `mmc_<alias>`
+- `cwmm`
+- `bmc`
+- `bmc_last_200_eras`
+- `feature_exposure`
+- `max_feature_exposure`
+
+No payout estimate fields are emitted.
 
 ## Interpretation
 
-- `corr20v2_*`: primary tournament-aligned correlation metrics.
-- `fnc_*`: feature-neutral correlation diagnostics using the fixed `all` neutralization set.
-- `mmc_*`: meta-model contribution metrics.
-- `cwmm_*`: prediction/meta correlation diagnostics.
-- `bmc_*`: benchmark contribution diagnostics (informational, not payout axis).
-- `payout_estimate_*`: clipped blend of CORR and MMC.
-
-## Payout Estimate
-
-For Numerai Classic (as of January 1, 2026), canonical training persists `payout_estimate_*` only for runs scored on `target_ender_20`, using:
-
-```text
-clip(0.75 * corr20v2 + 2.25 * mmc, -0.05, +0.05)
-```
-
-For non-`target_ender_20` runs, `payout_estimate_mean` is intentionally `null`.
-
-The same weights are exposed via compat payloads. Viz fallback logic only applies to older runs that predate persisted payout metrics.
+- `corr` / `corr_<alias>`: Numerai correlation against the native or aliased scoring target.
+- `fnc` / `fnc_<alias>`: feature-neutral correlation using `fncv3_features`, then correlating against the scoring target being evaluated.
+- `mmc` / `mmc_<alias>`: meta-model contribution metrics on the available overlapping meta window.
+- `cwmm`: prediction/meta correlation diagnostic using the Numerai prediction transform and raw meta model series.
+- `bmc` / `bmc_last_200_eras`: benchmark contribution diagnostics against one selected benchmark model.
+- `feature_exposure` / `max_feature_exposure`: local diagnostics on rank-based exposure to `fncv3_features`.
 
 ## Coverage and Provenance
 
@@ -50,22 +42,22 @@ The same weights are exposed via compat payloads. Viz fallback logic only applie
 - `joins.meta_source_rows`
 - `joins.meta_overlap_eras`
 - `policy.fnc_feature_set`
-- `policy.benchmark_overlap_policy`
-- `policy.meta_overlap_policy`
+- `policy.fnc_target_policy`
+- `policy.benchmark_min_overlap_ratio`
+- `policy.include_feature_neutral_metrics`
 
-`mmc_coverage_ratio_rows` is effectively `meta_overlap_rows / predictions_rows` when available.
-Low coverage means MMC and payout estimates are less reliable even when headline values look strong.
-Canonical training requires benchmark overlap, not benchmark full coverage. Partial benchmark overlap is preserved in provenance and benchmark diagnostics are computed on overlapping rows only. Meta-model coverage remains strict.
+Canonical training requires strict era alignment for benchmark/meta joins, but not whole-run full coverage. Benchmark diagnostics are computed on overlapping rows only. Meta metrics are emitted on the maximum available overlapping meta-model window whenever any overlap exists.
 
 ## Dashboard Contract
 
-Primary ranking/report keys:
+Primary ranking/report keys currently exposed by viz include:
 
-- `corr20v2_sharpe`
-- `corr20v2_mean`
+- `corr_mean`
+- `corr_sharpe`
+- `fnc_mean`
 - `mmc_mean`
-- `payout_estimate_mean`
-- `mmc_coverage_ratio_rows`
-- `bmc_mean` (diagnostic)
+- `bmc_mean`
+- `feature_exposure_mean`
+- `max_feature_exposure`
 
-Payout map axes are `corr20v2_mean` (x) and `mmc_mean` (y).
+Additional aliased families such as `corr_ender20.mean` or `fnc_ender20.mean` remain available in `metrics.json` even when viz normalizes only the native-target scalar keys.

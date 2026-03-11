@@ -346,8 +346,8 @@
 	{/if}
 {/snippet}
 
-	<div class={className} class:flex={true} style:height={height ? `${height}px` : '100%'}>
-		<div class="flex-1 min-w-0 relative">
+	<div class={`flex min-h-0 flex-col ${className ?? ''}`} style:height={height ? `${height}px` : '100%'}>
+		<div class="relative min-h-0 flex-1 min-w-0">
 			{#if showIsoLines && runs.length > 0}
 				<div class="pointer-events-none absolute left-3 top-2 z-10 rounded bg-background/80 px-2 py-1 text-[10px] text-muted-foreground">
 					Iso-lines: raw payout score (unclipped) = {corrWeight.toFixed(2)}*CORR + {mmcWeight.toFixed(2)}*MMC
@@ -419,18 +419,18 @@
 		{/if}
 	</div>
 	{#if seriesConfig}
-		<div class="w-44 shrink-0 ml-10 overflow-y-auto border-l border-border pl-4">
-			<div class="flex flex-col gap-1 py-1">
+		<div class="mt-4 max-h-28 shrink-0 overflow-y-auto border-t border-border pt-3">
+			<div class="flex flex-wrap gap-x-4 gap-y-2">
 				{#each seriesConfig as s (s.key)}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div
-						class="flex items-center gap-1.5 min-w-0 cursor-pointer"
+						class="flex min-w-0 items-center gap-1.5 cursor-pointer"
 						title={s.label}
 						onmouseenter={() => (highlightedSeries = s.key)}
 						onmouseleave={() => (highlightedSeries = null)}
 					>
 						<span class="w-2 h-2 rounded-full shrink-0" style:background={s.color}></span>
-						<span class="text-[10px] text-muted-foreground break-words leading-tight">{s.label}</span>
+						<span class="text-[10px] leading-tight text-muted-foreground">{s.label}</span>
 					</div>
 				{/each}
 			</div>

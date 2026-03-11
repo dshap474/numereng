@@ -172,10 +172,10 @@ Optional overrides:
   `training_model_x_groups_benchmark_not_supported`.
 - Removed legacy model config fields `prediction_transform`, `era_weighting`, and `prediction_batch_size` now hard-fail schema validation.
 - For non-`full_history_refit` runs, metrics are computed in a post-run scoring phase from the saved predictions parquet.
-- Canonical FNC neutralizes to dataset feature set `all`, independent of `data.feature_set`.
-- Benchmark scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial benchmark overlap is tolerated and scored on overlapping rows only. Meta-model scoring remains exact-coverage strict.
-- Post-run scoring persists `payout_estimate_mean` and `score_provenance.json` with the fixed scoring policy plus join row/era counts.
-- `payout_estimate_mean` follows Numerai Classic 2026 payout semantics and is populated only when `data.target_col=target_ender_20`; other targets persist `null`.
+- Canonical FNC neutralizes to dataset feature set `fncv3_features`, independent of `data.feature_set`, then correlates against the scoring target being evaluated.
+- Benchmark scoring joins require nonzero `(id, era)` overlap with strict era alignment; partial benchmark overlap is tolerated and scored on overlapping rows only. Meta metrics are emitted on the available overlapping meta-model window whenever any overlap exists.
+- Post-run scoring persists `score_provenance.json` with the fixed scoring policy plus join row/era counts.
+- Numereng does not emit `payout_estimate_mean`.
 - If `x_groups` includes `baseline`, `id_col` must be present.
 - Training config values are validated before execution; type coercion failures hard-fail.
 - The canonical schema is generated from `src/numereng/config/training/contracts.py`.

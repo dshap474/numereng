@@ -262,6 +262,10 @@ def test_get_metrics_for_runs_normalizes_store_aliases(tmp_path: Path) -> None:
         )
         conn.execute(
             "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
+            ("run-1", "fnc.mean", 0.04, None),
+        )
+        conn.execute(
+            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
             ("run-1", "mmc.mean", 0.02, None),
         )
         conn.execute(
@@ -281,11 +285,12 @@ def test_get_metrics_for_runs_normalizes_store_aliases(tmp_path: Path) -> None:
 
     payload = adapter.get_metrics_for_runs(
         ["run-1"],
-        ["corr20v2_mean", "corr20v2_sharpe", "mmc_mean", "payout_estimate_mean", "bmc_mean"],
+        ["corr20v2_mean", "corr20v2_sharpe", "fnc_mean", "mmc_mean", "payout_estimate_mean", "bmc_mean"],
     )
 
     assert payload["run-1"]["corr20v2_mean"] == pytest.approx(0.10)
     assert payload["run-1"]["corr20v2_sharpe"] == pytest.approx(1.25)
+    assert payload["run-1"]["fnc_mean"] == pytest.approx(0.04)
     assert payload["run-1"]["mmc_mean"] == pytest.approx(0.02)
     assert payload["run-1"]["bmc_mean"] == pytest.approx(0.03)
     assert payload["run-1"]["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
@@ -405,6 +410,9 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
         """
         {
           "corr": {"mean": 0.12, "sharpe": 0.8, "std": 0.2, "max_drawdown": 0.9},
+          "fnc": {"mean": 0.06, "std": 0.03, "sharpe": 2.0},
+          "feature_exposure": {"mean": 0.16, "std": 0.05, "sharpe": 3.2},
+          "max_feature_exposure": {"mean": 0.31, "std": 0.07, "sharpe": 4.4},
           "mmc": {"mean": 0.01, "sharpe": 0.2},
           "bmc": {"mean": 0.04}
         }
@@ -423,8 +431,13 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
     assert payload is not None
     assert payload["corr20v2_mean"] == pytest.approx(0.12)
     assert payload["corr20v2_sharpe"] == pytest.approx(0.8)
+    assert payload["fnc_mean"] == pytest.approx(0.06)
+    assert payload["fnc_sharpe"] == pytest.approx(2.0)
     assert payload["mmc_mean"] == pytest.approx(0.01)
     assert payload["bmc_mean"] == pytest.approx(0.04)
+    assert payload["feature_exposure_mean"] == pytest.approx(0.16)
+    assert payload["feature_exposure_sharpe"] == pytest.approx(3.2)
+    assert payload["max_feature_exposure"] == pytest.approx(0.31)
     assert payload["max_drawdown"] == pytest.approx(0.9)
     assert payload["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
 
@@ -468,6 +481,18 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
         )
         conn.execute(
             "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
+            ("run-1", "fnc", None, '{"mean": 0.05, "std": 0.02, "sharpe": 2.5}'),
+        )
+        conn.execute(
+            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
+            ("run-1", "feature_exposure", None, '{"mean": 0.14, "std": 0.03, "sharpe": 4.5}'),
+        )
+        conn.execute(
+            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
+            ("run-1", "max_feature_exposure", None, '{"mean": 0.27, "std": 0.05, "sharpe": 5.4}'),
+        )
+        conn.execute(
+            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
             ("run-1", "mmc", None, '{"mean": 0.01}'),
         )
         conn.execute(
@@ -490,8 +515,13 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
     assert payload is not None
     assert payload["corr20v2_mean"] == pytest.approx(0.11)
     assert payload["corr20v2_sharpe"] == pytest.approx(0.9)
+    assert payload["fnc_mean"] == pytest.approx(0.05)
+    assert payload["fnc_sharpe"] == pytest.approx(2.5)
     assert payload["mmc_mean"] == pytest.approx(0.01)
     assert payload["bmc_mean"] == pytest.approx(0.02)
+    assert payload["feature_exposure_mean"] == pytest.approx(0.14)
+    assert payload["feature_exposure_sharpe"] == pytest.approx(4.5)
+    assert payload["max_feature_exposure"] == pytest.approx(0.27)
     assert payload["max_drawdown"] == pytest.approx(0.7)
     assert payload["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
 
@@ -639,19 +669,10 @@ def test_per_era_fallback_derives_corr_and_payout_map(tmp_path: Path) -> None:
     )
 
     per_era_corr = adapter.get_per_era_corr("run-1")
-    assert per_era_corr is not None
-    assert [row["era"] for row in per_era_corr] == [1, 2]
-    assert all("corr20v2" in row for row in per_era_corr)
+    assert per_era_corr is None
 
     payout_map = adapter.get_per_era_payout_map("run-1")
-    assert payout_map is not None
-    assert [row["era"] for row in payout_map] == [1, 2]
-    for row in payout_map:
-        assert "corr20v2" in row
-        assert "mmc" in row
-        assert "payout_estimate" in row
-        expected = max(-0.05, min(0.05, (0.75 * float(row["corr20v2"])) + (2.25 * float(row["mmc"]))))
-        assert row["payout_estimate"] == pytest.approx(expected)
+    assert payout_map is None
 
 
 def test_get_per_era_payout_map_non_ender_target_returns_none(tmp_path: Path) -> None:

@@ -35,6 +35,41 @@ def test_load_training_config_json_accepts_canonical_payload(tmp_path: Path) -> 
     assert payload["model"] == {"type": "LGBMRegressor", "params": {}}
 
 
+def test_load_training_config_json_accepts_explicit_model_device(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "device": "cuda", "params": {}},
+                "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_training_config_json(config_path)
+    model_block = cast(dict[str, object], payload["model"])
+    assert model_block["device"] == "cuda"
+
+
+def test_load_training_config_json_rejects_invalid_model_device(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "device": "metal", "params": {}},
+                "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TrainingConfigLoaderError, match="training_model_device_invalid"):
+        load_training_config_json(config_path)
+
+
 def test_load_training_config_json_accepts_full_history_refit_profile(tmp_path: Path) -> None:
     config_path = tmp_path / "train.json"
     config_path.write_text(
@@ -210,7 +245,12 @@ def test_load_training_config_json_accepts_loading_resources_cache_sections(tmp_
     payload = load_training_config_json(config_path)
     data_block = cast(dict[str, object], payload["data"])
     data_loading = cast(dict[str, object], data_block["loading"])
-    assert data_loading == {"mode": "fold_lazy", "scoring_mode": "era_stream", "era_chunk_size": 32}
+    assert data_loading == {
+        "mode": "fold_lazy",
+        "scoring_mode": "era_stream",
+        "era_chunk_size": 32,
+        "include_feature_neutral_metrics": True,
+    }
     training_block = cast(dict[str, object], payload["training"])
     training_resources = cast(dict[str, object], training_block["resources"])
     assert training_resources["parallel_folds"] == 2

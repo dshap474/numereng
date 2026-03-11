@@ -42,11 +42,11 @@ from numereng.features.telemetry import bind_launch_metadata, get_launch_metadat
 from numereng.features.training import TrainingRunResult, run_training
 from numereng.features.training.client import TrainingDataClient, create_training_data_client
 from numereng.features.training.repo import DEFAULT_BENCHMARK_MODEL, DEFAULT_DATASETS_DIR
-from numereng.features.training.scoring.metrics import (
+from numereng.features.scoring.metrics import (
     DEFAULT_META_MODEL_COL,
 )
-from numereng.features.training.scoring.models import PostTrainingScoringRequest
-from numereng.features.training.scoring.service import run_post_training_scoring
+from numereng.features.scoring.models import PostTrainingScoringRequest
+from numereng.features.scoring.service import run_post_training_scoring
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 
@@ -493,6 +493,7 @@ def _extract_metric_value_from_predictions(
                 predictions_path=predictions_path,
                 pred_cols=("prediction",),
                 target_col=target_col,
+                scoring_target_cols=(target_col, "target_ender_20"),
                 data_version=data_version,
                 dataset_variant=dataset_variant,
                 feature_set=feature_set,

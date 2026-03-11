@@ -11,7 +11,7 @@ import pytest
 import numereng.features.training.service as service_module
 from numereng.features.store import StoreError
 from numereng.features.training.errors import TrainingConfigError, TrainingError
-from numereng.features.training.scoring.models import (
+from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
@@ -34,6 +34,33 @@ class _FakeClient:
 def test_resolve_model_config_requires_params() -> None:
     with pytest.raises(TrainingConfigError, match="training_model_params_missing"):
         service_module.resolve_model_config({"type": "LGBMRegressor"})
+
+
+def test_resolve_model_config_promotes_model_device_to_device_type() -> None:
+    model_type, model_params = service_module.resolve_model_config(
+        {"type": "LGBMRegressor", "device": "cuda", "params": {"n_estimators": 10}}
+    )
+
+    assert model_type == "LGBMRegressor"
+    assert model_params["device_type"] == "cuda"
+
+
+def test_resolve_model_config_rejects_conflicting_device_inputs() -> None:
+    with pytest.raises(TrainingConfigError, match="training_model_device_conflict"):
+        service_module.resolve_model_config(
+            {
+                "type": "LGBMRegressor",
+                "device": "cuda",
+                "params": {"n_estimators": 10, "device_type": "cpu"},
+            }
+        )
+
+
+def test_resolve_model_config_rejects_device_for_non_lgbm() -> None:
+    with pytest.raises(TrainingConfigError, match="training_model_device_requires_lgbm"):
+        service_module.resolve_model_config(
+            {"type": "CustomRegressor", "device": "cuda", "params": {"alpha": 1}}
+        )
 
 
 def test_resolve_resource_policy_defaults_max_threads_from_cpu_split(
@@ -97,11 +124,6 @@ def test_available_cpu_count_falls_back_to_one_when_detection_unavailable(
     monkeypatch.setattr(os, "cpu_count", lambda: None)
 
     assert service_module._available_cpu_count() == 1
-
-
-def test_clip_payout_estimate_matches_classic_formula() -> None:
-    assert service_module._clip_payout_estimate_mean(corr_mean=0.1, mmc_mean=0.03) == pytest.approx(0.05)
-    assert service_module._clip_payout_estimate_mean(corr_mean=-0.1, mmc_mean=-0.03) == pytest.approx(-0.05)
 
 
 def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -168,6 +190,14 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     )
     cwmm_df = pd.DataFrame(
         [{"mean": 0.2, "std": 0.3, "sharpe": 0.67, "max_drawdown": 0.11}],
+        index=["prediction"],
+    )
+    feature_exposure_df = pd.DataFrame(
+        [{"mean": 0.12, "std": 0.05, "sharpe": 2.4, "max_drawdown": 0.08}],
+        index=["prediction"],
+    )
+    max_feature_exposure_df = pd.DataFrame(
+        [{"mean": 0.22, "std": 0.06, "sharpe": 3.67, "max_drawdown": 0.09}],
         index=["prediction"],
     )
 
@@ -248,13 +278,16 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 "cwmm": cwmm_df,
                 "bmc": bmc_df,
                 "bmc_last_200_eras": bmc_df,
+                "feature_exposure": feature_exposure_df,
+                "max_feature_exposure": max_feature_exposure_df,
             },
             score_provenance={"schema_version": "1"},
             effective_scoring_backend="materialized",
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
-                benchmark_overlap_policy="overlap_required",
-                meta_overlap_policy="overlap_required",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
             ),
         ),
     )
@@ -309,7 +342,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert "mmc" in metrics_block
     assert "cwmm" in metrics_block
     assert "bmc" in metrics_block
-    assert metrics_block["payout_estimate_mean"] is None
+    assert "payout_estimate_mean" not in metrics_block
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
@@ -682,6 +715,14 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
         [{"mean": 0.2, "std": 0.3, "sharpe": 0.67, "max_drawdown": 0.11}],
         index=["prediction"],
     )
+    feature_exposure_df = pd.DataFrame(
+        [{"mean": 0.12, "std": 0.05, "sharpe": 2.4, "max_drawdown": 0.08}],
+        index=["prediction"],
+    )
+    max_feature_exposure_df = pd.DataFrame(
+        [{"mean": 0.22, "std": 0.06, "sharpe": 3.67, "max_drawdown": 0.09}],
+        index=["prediction"],
+    )
     store_root = tmp_path / "store"
     predictions_path = store_root / "runs" / "run-temp" / "artifacts" / "predictions" / "run.parquet"
     source_paths = (
@@ -774,6 +815,8 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
                 "cwmm": cwmm_df,
                 "bmc": bmc_df,
                 "bmc_last_200_eras": bmc_df,
+                "feature_exposure": feature_exposure_df,
+                "max_feature_exposure": max_feature_exposure_df,
             },
             score_provenance={
                 "schema_version": "1",
@@ -786,8 +829,9 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
             effective_scoring_backend="era_stream",
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
-                benchmark_overlap_policy="overlap_required",
-                meta_overlap_policy="overlap_required",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
             ),
         )
 

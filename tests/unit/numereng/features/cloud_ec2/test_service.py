@@ -319,6 +319,52 @@ def test_install_runs_remote_commands() -> None:
     assert len(ssm.command_calls) == 3
 
 
+def test_install_cuda_profile_requires_gpu_instance(tmp_path: Path) -> None:
+    state_path = _state_path(tmp_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        CloudEc2State(run_id="run-4", instance_id="i-4", region="us-east-2", is_gpu=False).model_dump_json(),
+        encoding="utf-8",
+    )
+    service, _ec2, _s3, _ssm, _iam = _build_service()
+
+    with pytest.raises(CloudEc2Error, match="cloud_ec2_cuda_install_requires_gpu_instance"):
+        service.install(
+            Ec2InstallRequest(
+                run_id="run-4",
+                instance_id="i-4",
+                region="us-east-2",
+                runtime_profile="lgbm-cuda",
+                state_path=str(state_path),
+            )
+        )
+
+
+def test_install_cuda_profile_runs_lightgbm_cuda_reinstall(tmp_path: Path) -> None:
+    state_path = _state_path(tmp_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        CloudEc2State(
+            run_id="run-4",
+            instance_id="i-4",
+            region="us-east-2",
+            is_gpu=True,
+            runtime_profile="lgbm-cuda",
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    service, _ec2, _s3, ssm, _iam = _build_service()
+
+    response = service.install(Ec2InstallRequest(run_id="run-4", instance_id="i-4", state_path=str(state_path)))
+
+    assert response.state is not None
+    assert response.state.runtime_profile == "lgbm-cuda"
+    assert len(ssm.command_calls) == 4
+    assert "CMAKE_ARGS='-DUSE_CUDA=ON' uv pip install --force-reinstall --no-binary lightgbm lightgbm" in (
+        ssm.command_calls[2][1]
+    )
+
+
 def test_train_start_success_and_invalid_pid() -> None:
     service, _ec2, _s3, ssm, _iam = _build_service()
     ssm.responses.append(SsmCommandResult(exit_code=0, stdout="4321\n", stderr=""))

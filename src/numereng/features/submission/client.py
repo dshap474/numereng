@@ -15,6 +15,18 @@ class SubmissionClient(Protocol):
     def get_models(self) -> dict[str, str]:
         """Return Numerai model mapping."""
 
+    def list_datasets(self, round_num: int | None = None) -> list[str]:
+        """Return available dataset names for the authenticated tournament."""
+
+    def download_dataset(
+        self,
+        filename: str,
+        *,
+        dest_path: str | None = None,
+        round_num: int | None = None,
+    ) -> str:
+        """Download one dataset file and return the local path."""
+
     def upload_predictions(self, *, file_path: str, model_id: str) -> str:
         """Upload predictions and return submission id."""
 

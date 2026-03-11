@@ -77,7 +77,7 @@ Run indexing is mandatory. If indexing fails, the command fails.
 - If `full_data_path` is set with `simple`, sibling `train.parquet` and `validation.parquet` must exist beside that file.
 - `full_history_refit` skips validation metrics and trains one model on full history.
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are not valid input groups.
-- Post-run FNC always neutralizes to dataset feature set `all`.
-- Post-run scoring persists `payout_estimate_mean` and `score_provenance.json`.
-- `payout_estimate_mean` uses Numerai Classic 2026 semantics (`0.75*corr + 2.25*mmc`, clipped to `±0.05`) and is populated only for `target_ender_20`; other targets persist `null`.
-- Benchmark and meta-model joins require exact `(id, era)` coverage with strict era alignment.
+- Post-run FNC always neutralizes to dataset feature set `fncv3_features`, then correlates against the scoring target being evaluated.
+- Post-run scoring persists `score_provenance.json`.
+- Numereng does not emit `payout_estimate_mean`.
+- Benchmark and meta-model joins require strict era alignment; benchmark diagnostics are computed on overlapping rows only, and meta metrics are emitted on the available overlapping meta window whenever any overlap exists.

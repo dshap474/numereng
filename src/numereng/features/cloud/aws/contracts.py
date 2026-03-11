@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from numereng.config.training import ensure_json_config_path
+from numereng.features.cloud.aws.managed_contracts import CloudRuntimeProfile
 
 
 class CloudEc2State(BaseModel):
@@ -22,6 +23,7 @@ class CloudEc2State(BaseModel):
     bucket: str | None = None
     instance_type: str | None = None
     is_gpu: bool = False
+    runtime_profile: CloudRuntimeProfile = "standard"
     data_version: str | None = None
     training_pid: int | None = None
     status: str = "unknown"
@@ -124,6 +126,17 @@ class Ec2InstallRequest(CloudEc2RequestBase):
     run_id: str | None = None
     instance_id: str | None = None
     region: str | None = None
+    runtime_profile: CloudRuntimeProfile | None = None
+
+    @field_validator("runtime_profile", mode="before")
+    @classmethod
+    def _normalize_runtime_profile(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            return stripped or None
+        return value
 
 
 class Ec2TrainStartRequest(CloudEc2RequestBase):

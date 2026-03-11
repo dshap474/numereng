@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -101,6 +102,7 @@ from numereng.features.store import (
     StoreRebuildResult,
 )
 from numereng.features.submission import (
+    SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsReadError,
     SubmissionResult,
@@ -165,6 +167,17 @@ def test_run_bootstrap_check_translates_internal_error() -> None:
         run_bootstrap_check(fail=True)
 
 
+def test_public_pipeline_module_is_importable() -> None:
+    pipeline_module = importlib.import_module("numereng.api.pipeline")
+
+    assert hasattr(pipeline_module, "run_training_pipeline")
+
+
+def test_old_deep_run_module_is_not_publicly_importable() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("numereng.api.run")
+
+
 def test_submission_request_requires_exactly_one_source() -> None:
     with pytest.raises(ValidationError, match="exactly one of run_id or predictions_path is required"):
         SubmissionRequest(model_name="main")
@@ -176,6 +189,12 @@ def test_submission_request_requires_exactly_one_source() -> None:
 def test_submission_request_requires_neutralizer_path_when_neutralizing() -> None:
     with pytest.raises(ValidationError, match="neutralizer_path is required when neutralize is true"):
         SubmissionRequest(model_name="main", run_id="run-1", neutralize=True)
+
+
+def test_submission_request_allows_non_classic_tournament() -> None:
+    request = SubmissionRequest(model_name="main", run_id="run-1", tournament="signals")
+
+    assert request.tournament == "signals"
 
 
 def test_submit_predictions_file_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -533,6 +552,41 @@ def test_submit_predictions_translates_predictions_read_error(monkeypatch: pytes
     request = SubmissionRequest(model_name="main", predictions_path="predictions.csv")
 
     with pytest.raises(PackageError, match="submission_predictions_read_failed"):
+        submit_predictions(request)
+
+
+def test_submit_predictions_translates_live_universe_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_submit_predictions_file(
+        *,
+        predictions_path: str,
+        model_name: str,
+        tournament: NumeraiTournament,
+        allow_non_live_artifact: bool,
+        neutralize: bool,
+        neutralizer_path: str | None,
+        neutralization_proportion: float,
+        neutralization_mode: str,
+        neutralizer_cols: tuple[str, ...] | None,
+        neutralization_rank_output: bool,
+    ) -> SubmissionResult:
+        _ = (
+            predictions_path,
+            model_name,
+            tournament,
+            allow_non_live_artifact,
+            neutralize,
+            neutralizer_path,
+            neutralization_proportion,
+            neutralization_mode,
+            neutralizer_cols,
+            neutralization_rank_output,
+        )
+        raise SubmissionLiveUniverseUnavailableError("submission_live_universe_unavailable")
+
+    monkeypatch.setattr(api_module, "submit_predictions_file", fake_submit_predictions_file)
+    request = SubmissionRequest(model_name="main", predictions_path="predictions.csv")
+
+    with pytest.raises(PackageError, match="submission_live_universe_unavailable"):
         submit_predictions(request)
 
 

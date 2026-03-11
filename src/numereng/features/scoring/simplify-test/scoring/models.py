@@ -1,0 +1,74 @@
+"""Data structures for modular post-training scoring."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import pandas as pd
+
+
+@dataclass(frozen=True)
+class PostTrainingScoringRequest:
+    """Inputs required to compute post-training scoring artifacts."""
+
+    predictions_path: Path
+    pred_cols: tuple[str, ...]
+    target_col: str
+    scoring_target_cols: tuple[str, ...]
+    data_version: str
+    dataset_variant: str
+    feature_set: str
+    feature_source_paths: tuple[Path, ...] | None
+    full_data_path: str | Path | None
+    dataset_scope: str
+    benchmark_model: str
+    benchmark_data_path: str | Path | None
+    meta_model_col: str
+    meta_model_data_path: str | Path | None
+    era_col: str
+    id_col: str
+    data_root: Path
+    scoring_mode: str
+    era_chunk_size: int
+    include_feature_neutral_metrics: bool = True
+
+
+@dataclass(frozen=True)
+class ResolvedScoringPolicy:
+    """Explicit scoring semantics resolved for a post-training run."""
+
+    fnc_feature_set: str
+    benchmark_min_overlap_ratio: float
+    meta_min_overlap_ratio: float
+    include_feature_neutral_metrics: bool
+
+
+_DEFAULT_SCORING_POLICY = ResolvedScoringPolicy(
+    fnc_feature_set="fncv3_features",
+    benchmark_min_overlap_ratio=0.0,
+    meta_min_overlap_ratio=0.80,
+    include_feature_neutral_metrics=True,
+)
+
+
+def default_scoring_policy(include_feature_neutral_metrics: bool | None = None) -> ResolvedScoringPolicy:
+    """Return the canonical scoring policy for training metrics."""
+    if include_feature_neutral_metrics is None:
+        return _DEFAULT_SCORING_POLICY
+    return ResolvedScoringPolicy(
+        fnc_feature_set=_DEFAULT_SCORING_POLICY.fnc_feature_set,
+        benchmark_min_overlap_ratio=_DEFAULT_SCORING_POLICY.benchmark_min_overlap_ratio,
+        meta_min_overlap_ratio=_DEFAULT_SCORING_POLICY.meta_min_overlap_ratio,
+        include_feature_neutral_metrics=include_feature_neutral_metrics,
+    )
+
+
+@dataclass(frozen=True)
+class PostTrainingScoringResult:
+    """Computed summaries and provenance from one scoring run."""
+
+    summaries: dict[str, pd.DataFrame]
+    score_provenance: dict[str, object]
+    effective_scoring_backend: str
+    policy: ResolvedScoringPolicy

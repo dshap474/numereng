@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from numereng.features.training.client import TrainingDataClient
-from numereng.features.training.scoring.metrics import summarize_prediction_file_with_scores
-from numereng.features.training.scoring.models import (
+from numereng.features.scoring.metrics import summarize_prediction_file_with_scores
+from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
+    ResolvedScoringPolicy,
     default_scoring_policy,
 )
 
@@ -20,12 +21,19 @@ def run_post_training_scoring(
 ) -> PostTrainingScoringResult:
     """Compute post-training metrics/provenance from persisted predictions."""
     effective_scoring_backend = _resolve_effective_scoring_mode(request)
-    policy = default_scoring_policy()
+    base_policy = default_scoring_policy()
+    policy = ResolvedScoringPolicy(
+        fnc_feature_set=base_policy.fnc_feature_set,
+        benchmark_min_overlap_ratio=base_policy.benchmark_min_overlap_ratio,
+        meta_min_overlap_ratio=base_policy.meta_min_overlap_ratio,
+        include_feature_neutral_metrics=request.include_feature_neutral_metrics,
+    )
 
     summaries, score_provenance = summarize_prediction_file_with_scores(
         predictions_path=request.predictions_path,
         pred_cols=list(request.pred_cols),
         target_col=request.target_col,
+        scoring_target_cols=list(request.scoring_target_cols),
         data_version=request.data_version,
         dataset_variant=request.dataset_variant,
         feature_set=request.feature_set,

@@ -3,6 +3,9 @@ export const CANONICAL_METRIC_KEYS = [
 	'corr20v2_std',
 	'corr20v2_sharpe',
 	'corr20v2_n_eras',
+	'fnc_mean',
+	'fnc_std',
+	'fnc_sharpe',
 	'mmc_mean',
 	'mmc_std',
 	'mmc_sharpe',
@@ -20,7 +23,53 @@ export const CANONICAL_METRIC_KEYS = [
 	'bmc_sharpe',
 	'bmc_n_eras',
 	'bmc_coverage_ratio_rows',
-	'bmc_coverage_ratio_eras'
+	'bmc_coverage_ratio_eras',
+	'bmc_last_200_eras_mean',
+	'cwmm_mean',
+	'cwmm_std',
+	'cwmm_sharpe',
+	'feature_exposure_mean',
+	'feature_exposure_std',
+	'feature_exposure_sharpe',
+	'max_feature_exposure',
+	'max_drawdown'
+] as const;
+
+export const RUNOPS_MAIN_METRICS = [
+	'corr20v2_sharpe',
+	'corr20v2_mean',
+	'fnc_mean',
+	'mmc_mean',
+	'payout_estimate_mean',
+	'bmc_mean',
+	'feature_exposure_mean',
+	'max_feature_exposure',
+	'max_drawdown'
+] as const;
+
+export const RUNOPS_ALL_SCORING_METRICS = [
+	'corr20v2_mean',
+	'corr20v2_std',
+	'corr20v2_sharpe',
+	'fnc_mean',
+	'fnc_std',
+	'fnc_sharpe',
+	'mmc_mean',
+	'mmc_std',
+	'mmc_sharpe',
+	'payout_estimate_mean',
+	'bmc_mean',
+	'bmc_std',
+	'bmc_sharpe',
+	'bmc_last_200_eras_mean',
+	'cwmm_mean',
+	'cwmm_std',
+	'cwmm_sharpe',
+	'feature_exposure_mean',
+	'feature_exposure_std',
+	'feature_exposure_sharpe',
+	'max_feature_exposure',
+	'max_drawdown'
 ] as const;
 
 export const DASHBOARD_KEY_METRICS = [
@@ -54,6 +103,12 @@ export function metricLabel(key: string): string {
 			return 'CORR20v2 Std';
 		case 'corr20v2_sharpe':
 			return 'CORR20v2 Sharpe';
+		case 'fnc_mean':
+			return 'FNC Mean';
+		case 'fnc_std':
+			return 'FNC Std';
+		case 'fnc_sharpe':
+			return 'FNC Sharpe';
 		case 'mmc_mean':
 			return 'MMC Mean';
 		case 'mmc_std':
@@ -70,6 +125,28 @@ export function metricLabel(key: string): string {
 			return 'MMC Coverage Rows';
 		case 'bmc_mean':
 			return 'BMC Mean (Diagnostic)';
+		case 'bmc_std':
+			return 'BMC Std';
+		case 'bmc_sharpe':
+			return 'BMC Sharpe';
+		case 'bmc_last_200_eras_mean':
+			return 'BMC Mean (Last 200 Eras)';
+		case 'cwmm_mean':
+			return 'CWMM Mean';
+		case 'cwmm_std':
+			return 'CWMM Std';
+		case 'cwmm_sharpe':
+			return 'CWMM Sharpe';
+		case 'feature_exposure_mean':
+			return 'Feature Exposure Mean';
+		case 'feature_exposure_std':
+			return 'Feature Exposure Std';
+		case 'feature_exposure_sharpe':
+			return 'Feature Exposure Sharpe';
+		case 'max_feature_exposure':
+			return 'Max Feature Exposure';
+		case 'max_drawdown':
+			return 'Max Drawdown';
 		default:
 			return key;
 	}

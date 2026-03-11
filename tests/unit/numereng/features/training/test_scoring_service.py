@@ -5,8 +5,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import numereng.features.training.scoring.service as scoring_service_module
-from numereng.features.training.scoring.models import PostTrainingScoringRequest
+import numereng.features.scoring.service as scoring_service_module
+from numereng.features.scoring.models import PostTrainingScoringRequest
 
 
 class _FakeClient:
@@ -31,6 +31,7 @@ def _request(
         predictions_path=Path("predictions.parquet"),
         pred_cols=("prediction",),
         target_col="target",
+        scoring_target_cols=("target", "target_ender_20"),
         data_version="v5.2",
         dataset_variant="non_downsampled",
         feature_set="small",
@@ -108,5 +109,5 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     assert execution["requested_scoring_mode"] == "era_stream"
     assert execution["effective_scoring_mode"] == "era_stream"
     assert "fallback_reason" not in execution
-    assert result.policy.benchmark_overlap_policy == "overlap_required"
-    assert result.policy.meta_overlap_policy == "overlap_required"
+    assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
+    assert result.policy.fnc_target_policy == "scoring_target"

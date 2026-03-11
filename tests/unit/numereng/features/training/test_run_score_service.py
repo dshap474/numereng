@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
 
-import numereng.features.training.scoring.run_service as run_score_module
+import numereng.features.scoring.run_service as run_score_module
 from numereng.features.training.errors import TrainingError
-from numereng.features.training.scoring.models import PostTrainingScoringResult, ResolvedScoringPolicy
+from numereng.features.scoring.models import PostTrainingScoringResult, ResolvedScoringPolicy
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -35,6 +36,8 @@ def _scoring_summaries() -> dict[str, pd.DataFrame]:
     return {
         "corr": _summary_frame(0.1),
         "fnc": _summary_frame(0.09),
+        "feature_exposure": _summary_frame(0.12),
+        "max_feature_exposure": _summary_frame(0.22),
         "mmc": _summary_frame(0.03),
         "cwmm": _summary_frame(0.2),
         "bmc": _summary_frame(0.01),
@@ -42,18 +45,14 @@ def _scoring_summaries() -> dict[str, pd.DataFrame]:
     }
 
 
-def test_metrics_payload_from_summaries_ender20_only() -> None:
-    ender_payload = run_score_module._metrics_payload_from_summaries(
-        _scoring_summaries(),
-        target_col="target_ender_20",
-    )
-    assert ender_payload["payout_estimate_mean"] == pytest.approx(0.05)
-
-    non_ender_payload = run_score_module._metrics_payload_from_summaries(
-        _scoring_summaries(),
-        target_col="target",
-    )
-    assert non_ender_payload["payout_estimate_mean"] is None
+def test_metrics_payload_from_summaries_excludes_payout_fields() -> None:
+    payload = run_score_module._metrics_payload_from_summaries(_scoring_summaries())
+    assert "payout_estimate" not in payload
+    assert "payout_estimate_mean" not in payload
+    assert isinstance(payload["feature_exposure"], dict)
+    assert isinstance(payload["max_feature_exposure"], dict)
+    assert cast(dict[str, object], payload["feature_exposure"])["mean"] == pytest.approx(0.12)
+    assert cast(dict[str, object], payload["max_feature_exposure"])["mean"] == pytest.approx(0.22)
 
 
 def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -115,8 +114,9 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
             effective_scoring_backend="materialized",
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
-                benchmark_overlap_policy="overlap_required",
-                meta_overlap_policy="overlap_required",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
             ),
         ),
     )
@@ -137,9 +137,10 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     saved_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
     assert saved_results["metrics"]["corr"]["mean"] == 0.1
-    assert saved_results["metrics"]["payout_estimate_mean"] is None
+    assert "payout_estimate_mean" not in saved_results["metrics"]
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
     assert saved_results["training"]["scoring"]["effective_backend"] == "materialized"
+    assert saved_results["training"]["scoring"]["policy"]["fnc_target_policy"] == "scoring_target"
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"

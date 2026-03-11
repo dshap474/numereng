@@ -115,6 +115,21 @@
           "default": null,
           "title": "Meta Model Data Path"
         },
+        "scoring_targets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scoring Targets"
+        },
         "target_col": {
           "default": "target",
           "title": "Target Col",
@@ -152,6 +167,11 @@
           "minimum": 1,
           "title": "Era Chunk Size",
           "type": "integer"
+        },
+        "include_feature_neutral_metrics": {
+          "default": true,
+          "title": "Include Feature Neutral Metrics",
+          "type": "boolean"
         },
         "mode": {
           "default": "materialized",
@@ -242,6 +262,22 @@
           ],
           "default": null,
           "title": "Data Needed"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "enum": [
+                "cpu",
+                "cuda"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device"
         },
         "module_path": {
           "anyOf": [

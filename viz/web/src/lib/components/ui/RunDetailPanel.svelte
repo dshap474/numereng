@@ -209,9 +209,9 @@
 		>Back to runs</button>
 	</div>
 {:else}
-	<div class="space-y-6 min-w-0">
-		<header class="sticky top-0 z-20 -mx-2 px-2 py-3 bg-background/90 backdrop-blur border-b border-border/60">
-			<div class="flex items-start justify-between gap-3">
+	<div class="space-y-6 min-w-0 px-4 pb-6 lg:px-5">
+		<header class="sticky top-0 z-20 py-3 bg-background/90 backdrop-blur border-b border-border/60">
+			<div class="flex items-start gap-3">
 				<div>
 					<h1 class="text-xl font-semibold">
 						{manifest?.run_name ?? runId}
@@ -226,42 +226,8 @@
 						{/if}
 					</div>
 				</div>
-				<button
-					type="button"
-					class="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 whitespace-nowrap"
-					onclick={onClose}
-				>&larr; Back to runs</button>
 			</div>
 		</header>
-
-		{#if metrics}
-			<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" aria-label="Key metrics">
-				{#each metricCards as card (card.key)}
-					<div class="bg-card border border-border rounded-lg p-3.5">
-						<p class="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">{card.label}</p>
-						<p class="text-2xl font-semibold tabular-nums">{fmt(card.value)}</p>
-						<p class="mt-1 text-[11px] text-muted-foreground">
-							{#if card.rank && card.total > 0}
-								rank #{card.rank} / {card.total}
-							{:else}
-								rank n/a
-							{/if}
-						</p>
-						<p class="text-[11px] {improvementClass(card.improvement)}">
-							{#if card.isChampion}
-								champion
-							{:else}
-								vs champion {signed(card.improvement)}
-							{/if}
-						</p>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<div class="bg-card border border-border rounded-lg p-6 text-center text-muted-foreground text-sm">
-				Metrics not available for this run.
-			</div>
-		{/if}
 
 		<div class="flex flex-wrap items-center gap-2 border-b border-border">
 			{#each [
@@ -284,6 +250,35 @@
 
 		{#if mainTab === 'performance'}
 			<div class="space-y-5">
+				{#if metrics}
+					<div class="grid grid-cols-1 gap-3 xl:grid-cols-7" aria-label="Key metrics">
+						{#each metricCards as card (card.key)}
+							<div class="bg-card border border-border rounded-lg p-3.5">
+								<p class="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">{card.label}</p>
+								<p class="text-2xl font-semibold tabular-nums">{fmt(card.value)}</p>
+								<p class="mt-1 text-[11px] text-muted-foreground">
+									{#if card.rank && card.total > 0}
+										rank #{card.rank} / {card.total}
+									{:else}
+										rank n/a
+									{/if}
+								</p>
+								<p class="text-[11px] {improvementClass(card.improvement)}">
+									{#if card.isChampion}
+										champion
+									{:else}
+										vs champion {signed(card.improvement)}
+									{/if}
+								</p>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<div class="bg-card border border-border rounded-lg p-6 text-center text-muted-foreground text-sm">
+						Metrics not available for this run.
+					</div>
+				{/if}
+
 				{#if perEraCorr}
 					<div class="bg-card border border-border rounded-lg p-5">
 						<div class="flex items-center justify-between gap-2 mb-3">

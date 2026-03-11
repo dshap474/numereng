@@ -46,6 +46,7 @@ from numereng.features.cloud.aws.contracts import (
     Ec2TrainPollRequest,
     Ec2TrainStartRequest,
 )
+from numereng.features.cloud.aws.managed_contracts import CloudRuntimeProfile
 from numereng.features.cloud.aws.state_store import CloudEc2StateStore
 from numereng.features.store.layout import ensure_allowed_store_target
 
@@ -64,6 +65,8 @@ DEFAULT_DATA_VERSION = "v5.2"
 
 DEFAULT_CPU_AMI = os.getenv("NUMERENG_EC2_AMI_CPU", "ami-0b97b64b68a731354") or "ami-0b97b64b68a731354"
 DEFAULT_GPU_AMI = os.getenv("NUMERENG_EC2_AMI_GPU", "ami-06aed396fdc6ea5f3") or "ami-06aed396fdc6ea5f3"
+DEFAULT_RUNTIME_PROFILE: CloudRuntimeProfile = "standard"
+CUDA_RUNTIME_PROFILE: CloudRuntimeProfile = "lgbm-cuda"
 
 CPU_INSTANCE_TYPES: dict[str, str] = {
     "m7i.xlarge": "m7i.xlarge",
@@ -114,7 +117,8 @@ exec &>> /var/log/numereng-bootstrap.log
 snap install amazon-ssm-agent 2>/dev/null || apt-get install -y amazon-ssm-agent 2>/dev/null || true
 systemctl start amazon-ssm-agent 2>/dev/null || snap start amazon-ssm-agent 2>/dev/null || true
 apt-get update -y -q
-DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3.11 python3.11-venv python3-pip curl
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+python3.11 python3.11-venv python3-pip curl build-essential cmake ninja-build git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH=\"/root/.local/bin:$PATH\"
 mkdir -p /opt/numereng
@@ -208,6 +212,17 @@ class CloudEc2Service:
         if state is not None and state.data_version is not None and state.data_version:
             return state.data_version
         return DEFAULT_DATA_VERSION
+
+    def _resolve_runtime_profile(
+        self,
+        explicit: CloudRuntimeProfile | None,
+        state: CloudEc2State | None = None,
+    ) -> CloudRuntimeProfile:
+        if explicit is not None:
+            return explicit
+        if state is not None:
+            return state.runtime_profile
+        return DEFAULT_RUNTIME_PROFILE
 
     def _require(self, value: str | None, field_name: str) -> str:
         if value is None or not value:
@@ -554,6 +569,9 @@ class CloudEc2Service:
         run_id = self._require(request.run_id or state.run_id, "run_id")
         instance_id = self._require(request.instance_id or state.instance_id, "instance_id")
         region = self._resolve_region(request.region, state)
+        runtime_profile = self._resolve_runtime_profile(request.runtime_profile, state)
+        if runtime_profile == CUDA_RUNTIME_PROFILE and not state.is_gpu:
+            raise CloudEc2Error("cloud_ec2_cuda_install_requires_gpu_instance")
 
         ssm = self._ssm(region)
         activate = ". /opt/numereng/.venv/bin/activate"
@@ -576,6 +594,17 @@ class CloudEc2Service:
             ),
             timeout_seconds=240,
         )
+        if runtime_profile == CUDA_RUNTIME_PROFILE:
+            ssm.run_command(
+                instance_id=instance_id,
+                command=(
+                    "export PATH=/root/.local/bin:$PATH && "
+                    "test -x /usr/bin/nvidia-smi && /usr/bin/nvidia-smi >/dev/null && "
+                    f"{activate} && "
+                    "CMAKE_ARGS='-DUSE_CUDA=ON' uv pip install --force-reinstall --no-binary lightgbm lightgbm"
+                ),
+                timeout_seconds=1800,
+            )
         ssm.run_command(
             instance_id=instance_id,
             command=f"{activate} && python -c 'import numereng; print(\"ok\")'",
@@ -587,6 +616,7 @@ class CloudEc2Service:
                 "run_id": run_id,
                 "instance_id": instance_id,
                 "region": region,
+                "runtime_profile": runtime_profile,
                 "status": "runtime_installed",
             },
             deep=True,

@@ -12,7 +12,7 @@ This package provides a provider-local Modal adapter for running `numereng` trai
 - Data sync orchestration for uploading config-required datasets into a Modal Volume.
 - Service orchestration for `submit`, `status`, `logs`, `cancel`, and `pull`.
 - `logs` and `pull` currently return metadata only (no direct artifact/log stream download).
-- API wiring at `numereng.api.cloud.modal` and CLI wiring at `numereng.cli.commands.cloud_modal`.
+- API wiring at `numereng.api.cloud` via internal `numereng.api.cloud._modal` and CLI wiring at `numereng.cli.commands.cloud_modal`.
 
 ## What Is Not Included
 

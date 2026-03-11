@@ -26,8 +26,8 @@
   - then score metrics from saved predictions parquet
   - rewrite results/metrics with final scoring outputs
 - Moved scoring internals into a dedicated module boundary:
-  - `src/numereng/features/training/scoring/service.py` (orchestration)
-  - `src/numereng/features/training/scoring/metrics.py` (metric engines)
+  - `src/numereng/features/scoring/service.py` (orchestration)
+  - `src/numereng/features/scoring/metrics.py` (metric engines)
   - `src/numereng/features/training/metrics.py` now acts as a compatibility re-export shim
 - Updated metric-time benchmark join to allow partial overlap in scoring paths.
 - Fixed `era_stream` scoring to handle sparse overlap by chunk:

@@ -20,8 +20,8 @@ In local post-run scoring, numereng previously required exact `(id, era)` overla
 
 Current strict enforcement lives in:
 
-- `src/numereng/features/training/scoring/models.py`
-- `src/numereng/features/training/scoring/metrics.py`
+- `src/numereng/features/scoring/models.py`
+- `src/numereng/features/scoring/metrics.py`
 
 Relevant behavior:
 

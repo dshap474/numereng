@@ -1,48 +1,48 @@
 # Targets & Scoring
 
-Numereng keeps target/scoring behavior aligned with compat metadata and persisted run provenance.
+Numereng keeps target/scoring behavior aligned with persisted run provenance.
 
 ## Targets
 
 Training config target keys:
 
-- `data.target_col`: training target used for model fit and core scoring context.
-- `data.target_horizon` (optional `20d|60d`): explicit official-horizon control used for embargo defaults.
+- `data.target_col`: native training target used for model fit and native scoring outputs.
+- `data.scoring_targets` (optional): explicit list of scoring targets to evaluate in post-run scoring.
 
-Official default mapping:
-- `20d -> embargo 8`
-- `60d -> embargo 16`
+Scoring target resolution:
 
-Horizon resolution order:
-1. `data.target_horizon` (when set)
-2. infer from `data.target_col`
-3. fail if still ambiguous
+1. use `data.scoring_targets` when present
+2. otherwise score the native target plus `target_ender_20`
+3. dedupe while preserving order
+
+The native target always keeps the unsuffixed metric keys (`corr`, `fnc`, `mmc`). Additional scoring targets use aliased keys such as `corr_ender20`, `fnc_ender20`, and `mmc_ender20`.
 
 ## Canonical Metric Families
 
 Run scoring produces:
 
-- `corr20v2_*`
-- `fnc_*`
-- `mmc_*`
-- `cwmm_*`
-- `bmc_*`
-- `bmc_last_200_eras_*`
-- `payout_estimate_*`
+- `corr` / `corr_<alias>`
+- `fnc` / `fnc_<alias>`
+- `mmc` / `mmc_<alias>`
+- `cwmm`
+- `bmc`
+- `bmc_last_200_eras`
+- `feature_exposure`
+- `max_feature_exposure`
 
-`bmc_*` is diagnostic; payout alignment is driven by CORR + MMC.
+`bmc` and feature-exposure metrics are diagnostics. Numereng does not emit payout estimate fields.
 
-## Payout Estimate
+## FNC Semantics
 
-For Numerai Classic (as of January 1, 2026), payout estimate semantics are tied to `target_ender_20`.
+Canonical FNC is:
 
-```text
-clip(0.75 * CORR20v2 + 2.25 * MMC, -0.05, +0.05)
-```
+1. neutralize predictions to `fncv3_features`
+2. correlate the neutralized submission against the scoring target being evaluated
 
-Compat payload endpoint:
+That means:
 
-- `GET /api/system/numerai-classic-compat`
+- `fnc` uses the native run target
+- `fnc_<alias>` uses the corresponding aliased scoring target
 
 ## Provenance
 
@@ -56,18 +56,8 @@ Compat payload endpoint:
 - `joins.meta_overlap_rows`
 - `joins.meta_source_rows`
 - `policy.fnc_feature_set`
-- `policy.benchmark_overlap_policy`
-- `policy.meta_overlap_policy`
+- `policy.fnc_target_policy`
+- `policy.benchmark_min_overlap_ratio`
+- `policy.include_feature_neutral_metrics`
 
-These fields are used to reason about MMC coverage quality (for example, `mmc_coverage_ratio_rows`).
-Canonical training scoring uses `fnc_feature_set=all`, requires benchmark overlap, and keeps meta-model overlap strict. Partial benchmark overlap is tolerated and benchmark diagnostics are computed on overlapping rows only; partial or misaligned meta-model joins are scoring errors.
-
-## Viz Alignment
-
-Dashboard payout map uses:
-
-- X axis: `corr20v2_mean`
-- Y axis: `mmc_mean`
-
-Canonical training persists `payout_estimate_mean` for `target_ender_20` runs. For non-`target_ender_20` runs this field is intentionally `null`.
-Viz computes the same fallback formula only for older runs that predate persisted payout metrics.
+Feature-neutral metrics can be disabled via `include_feature_neutral_metrics=false`; when disabled, FNC/exposure outputs and their FNC-specific provenance fields are omitted.

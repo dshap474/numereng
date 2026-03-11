@@ -16,8 +16,9 @@
 		type SystemCapabilities
 	} from '$lib/api/client';
 	import {
-		CANONICAL_METRIC_KEYS,
 		DASHBOARD_KEY_METRICS,
+		RUNOPS_ALL_SCORING_METRICS,
+		RUNOPS_MAIN_METRICS,
 		metricNumber,
 		targetLabel
 	} from '$lib/metrics/canonical';
@@ -60,10 +61,14 @@
 	let sortColumn = $state('corr20v2_sharpe');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
 	let chartTab = $state<'composite' | 'charts'>('composite');
-	let pageTab = $state<'analysis' | 'runops'>('analysis');
+	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
+	let runOpsView = $state<'table' | 'chart'>('table');
+	let runOpsMetricMode = $state<'main' | 'all'>('main');
 	let launchSectionOpen = $state(true);
 	let queueSectionOpen = $state(true);
 	let monitorSectionOpen = $state(true);
+	let progressQuery = $state('');
+	const SHOW_RUNOPS_SIDEBAR = false;
 
 	type ParetoColorMode = 'default' | 'model' | 'target';
 	const PARETO_COLOR_MODES: ParetoColorMode[] = ['default', 'model', 'target'];
@@ -111,23 +116,20 @@
 	let configsRefreshGeneration = 0;
 	let jobsRefreshGeneration = 0;
 
-	const CANONICAL_METRIC_KEY_SET = new Set<string>(CANONICAL_METRIC_KEYS);
-
-	let metricColumns = $derived.by(() => {
+	let runOpsAvailableMetricKeys = $derived.by(() => {
 		const keys = new Set<string>();
 		for (const run of data.runs) {
 			for (const key of Object.keys(run.metrics)) {
 				keys.add(key);
 			}
 		}
-		const ordered: string[] = [];
-		for (const key of DASHBOARD_KEY_METRICS) {
-			if (keys.has(key)) ordered.push(key);
-		}
-		const rest = [...keys]
-			.filter((k) => CANONICAL_METRIC_KEY_SET.has(k) && !ordered.includes(k))
-			.sort();
-		return [...ordered, ...rest];
+		return keys;
+	});
+
+	let metricColumns = $derived.by(() => {
+		const preferred =
+			runOpsMetricMode === 'main' ? RUNOPS_MAIN_METRICS : RUNOPS_ALL_SCORING_METRICS;
+		return preferred.filter((key) => runOpsAvailableMetricKeys.has(key));
 	});
 
 	interface Operation {
@@ -137,7 +139,7 @@
 		model_type: string;
 		target: string;
 		feature_set: string;
-		metrics: Record<string, number>;
+		metrics: Record<string, number | null>;
 		status: string | null;
 	}
 
@@ -187,9 +189,22 @@
 		});
 	});
 
+	$effect(() => {
+		if (!metricColumns.some((column) => column === sortColumn)) {
+			sortColumn = (metricColumns[0] ?? DASHBOARD_KEY_METRICS[0]) as string;
+			sortDirection = 'desc';
+		}
+	});
+
 	function opMetricValue(op: Operation, key: string): number | undefined {
 		return metricNumber(op.metrics, key) ?? undefined;
 	}
+
+	let selectedOperationItem = $derived.by(() => {
+		const current = selectedOp;
+		if (!current) return null;
+		return sortedOps.find((item) => item.op_id === current.id && item.op_type === current.type) ?? null;
+	});
 
 	let payoutRuns = $derived.by(() => {
 		const runPoints = data.runs
@@ -227,6 +242,113 @@
 			if (!map.has(runId)) map.set(runId, label);
 		}
 		return map;
+	});
+
+	type ProgressState = 'not_started' | 'running' | 'finished' | 'failed';
+
+	interface ProgressRow {
+		config_id: string;
+		relative_path: string;
+		model_type: string;
+		target: string;
+		feature_set: string;
+		status: ProgressState;
+		run_id: string | null;
+		job_id: string | null;
+		job_status: string | null;
+		finished_at: string | null;
+		created_at: string | null;
+	}
+
+	let latestJobByConfigId = $derived.by(() => {
+		const map = new Map<string, RunJob>();
+		for (const job of runJobs) {
+			if (!job.config_id) continue;
+			const existing = map.get(job.config_id);
+			if (!existing || (job.created_at ?? '') > (existing.created_at ?? '')) {
+				map.set(job.config_id, job);
+			}
+		}
+		return map;
+	});
+
+	let runById = $derived.by(() => {
+		const map = new Map<string, ExperimentRun>();
+		for (const run of data.runs) {
+			map.set(run.run_id, run);
+		}
+		return map;
+	});
+
+	let progressRows = $derived.by(() => {
+		const sourceItems = configItems.length > 0 ? configItems : (data.configs.items ?? []);
+		return sourceItems.map((item): ProgressRow => {
+			const latestJob = latestJobByConfigId.get(item.config_id) ?? null;
+			const linkedRunId = item.summary.run_id ?? latestJob?.canonical_run_id ?? null;
+			const linkedRun = linkedRunId ? runById.get(linkedRunId) ?? null : null;
+			let status: ProgressState = 'not_started';
+			if (latestJob && ACTIVE_JOB_STATUSES.has(latestJob.status)) {
+				status = 'running';
+			} else if (linkedRunId || linkedRun?.status === 'FINISHED') {
+				status = 'finished';
+			} else if (latestJob && TERMINAL_JOB_STATUSES.has(latestJob.status)) {
+				status = latestJob.status === 'completed' ? 'finished' : 'failed';
+			}
+			return {
+				config_id: item.config_id,
+				relative_path: item.relative_path,
+				model_type: item.summary.model_type ?? '-',
+				target: item.summary.target ?? '-',
+				feature_set: item.summary.feature_set ?? '-',
+				status,
+				run_id: linkedRunId,
+				job_id: latestJob?.job_id ?? null,
+				job_status: latestJob?.status ?? null,
+				finished_at: latestJob?.finished_at ?? linkedRun?.created_at ?? null,
+				created_at: latestJob?.created_at ?? linkedRun?.created_at ?? null
+			};
+		});
+	});
+
+	let progressCounts = $derived.by(() => {
+		const counts = {
+			total: progressRows.length,
+			not_started: 0,
+			running: 0,
+			finished: 0,
+			failed: 0
+		};
+		for (const row of progressRows) {
+			counts[row.status] += 1;
+		}
+		return counts;
+	});
+
+	let nextPendingRow = $derived.by(
+		() => progressRows.find((row) => row.status === 'not_started') ?? null
+	);
+
+	let nextAttentionRow = $derived.by(
+		() => progressRows.find((row) => row.status === 'failed') ?? null
+	);
+
+	let filteredProgressRows = $derived.by(() => {
+		const query = progressQuery.trim().toLowerCase();
+		if (!query) return progressRows;
+		return progressRows.filter((row) =>
+			[
+				row.relative_path,
+				row.model_type,
+				row.target,
+				row.feature_set,
+				row.status,
+				row.run_id ?? '',
+				row.job_id ?? ''
+			]
+				.join(' ')
+				.toLowerCase()
+				.includes(query)
+		);
 	});
 
 	let paretoRuns = $derived.by(() => {
@@ -365,6 +487,15 @@
 	});
 
 	$effect(() => {
+		if (pageTab !== 'runops') return;
+		if (runOpsView !== 'chart') return;
+		if (selectedOp != null) return;
+		const first = sortedOps[0];
+		if (!first) return;
+		selectedOp = { id: first.op_id, type: first.op_type };
+	});
+
+	$effect(() => {
 		const timer = setInterval(() => {
 			if (streamState === 'open') return;
 			void refreshRunJobs({ keepSelection: true });
@@ -439,6 +570,28 @@
 				return 'bg-muted text-muted-foreground';
 			default:
 				return 'bg-muted text-muted-foreground';
+		}
+	}
+
+	function progressStatusClass(status: ProgressState): string {
+		switch (status) {
+			case 'finished':
+				return 'bg-positive/15 text-positive';
+			case 'running':
+				return 'bg-sky-500/15 text-sky-300';
+			case 'failed':
+				return 'bg-negative/15 text-negative';
+			default:
+				return 'bg-muted text-muted-foreground';
+		}
+	}
+
+	function progressStatusLabel(status: ProgressState): string {
+		switch (status) {
+			case 'not_started':
+				return 'not started';
+			default:
+				return status;
 		}
 	}
 
@@ -678,6 +831,22 @@
 		selectedJobId = jobId;
 	}
 
+	function selectOperation(op: Operation) {
+		selectedOp = { id: op.op_id, type: op.op_type };
+	}
+
+	function opTypeLabel(opType: OpType): string {
+		if (opType === 'hpo') return 'HPO';
+		if (opType === 'ensemble') return 'Ens';
+		return 'Run';
+	}
+
+	function opTypeBadgeClass(opType: OpType): string {
+		if (opType === 'hpo') return 'bg-violet-500/20 text-violet-300';
+		if (opType === 'ensemble') return 'bg-amber-500/20 text-amber-300';
+		return 'bg-blue-500/20 text-blue-300';
+	}
+
 	function prettyEventPayload(event: RunJobEvent): string {
 		const value = JSON.stringify(event.payload);
 		if (value.length <= 120) return value;
@@ -695,50 +864,35 @@
 
 {#snippet opsTable()}
 	<div class="border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" aria-label="Operations table">
+		<div class="flex items-center justify-end border-b border-border px-4 py-2.5">
+			<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+				{#each [['main', 'Main'], ['all', 'All Metrics']] as [mode, label] (mode)}
+					<button
+						type="button"
+						class="px-2.5 py-1 rounded text-[11px] transition-colors {runOpsMetricMode === mode ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+						onclick={() => (runOpsMetricMode = mode as 'main' | 'all')}
+					>{label}</button>
+				{/each}
+			</div>
+		</div>
 		<div class="overflow-auto flex-1 min-h-0">
-			<table class="w-full text-sm">
-				<thead class="sticky top-0 z-10 bg-background">
-					<tr class="border-b border-border bg-muted/40 text-left">
-						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Op</th>
-						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Model</th>
-						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Target</th>
-						<th scope="col" class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground">Features</th>
-						{#each metricColumns as col (col)}
-							<th
-								scope="col"
-								class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none"
-								onclick={() => toggleSort(col)}
-							>{col}{sortIndicator(col)}</th>
-						{/each}
-					</tr>
+				<table class="w-full text-sm leading-[1.35]">
+					<thead class="sticky top-0 z-10 bg-background">
+						<tr class="h-[92px] border-b border-border bg-muted/40 text-left align-middle">
+							{#each metricColumns as col (col)}
+								<th
+									scope="col"
+									class="px-3 py-2.5 align-middle font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none"
+									onclick={() => toggleSort(col)}
+								>{col}{sortIndicator(col)}</th>
+							{/each}
+						</tr>
 				</thead>
 				<tbody class="divide-y divide-border">
 					{#each sortedOps as op (op.op_id)}
-						<tr class="hover:bg-muted/30 transition-colors">
-							<td class="px-3 py-2.5">
-								<div class="flex items-center gap-1.5">
-									{#if op.op_type === 'hpo'}
-										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-violet-500/20 text-violet-300 shrink-0">HPO</span>
-									{:else if op.op_type === 'ensemble'}
-										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-amber-500/20 text-amber-300 shrink-0">Ens</span>
-									{:else}
-										<span class="inline-block rounded px-1 py-0 text-[9px] uppercase bg-blue-500/20 text-blue-300 shrink-0">Run</span>
-									{/if}
-									<button
-										type="button"
-										class="text-primary underline underline-offset-2 hover:text-primary/80 text-xs text-left truncate"
-										onclick={() => (selectedOp = { id: op.op_id, type: op.op_type })}
-									>{op.name}</button>
-								</div>
-								{#if op.op_type === 'run' && op.name !== op.op_id}
-									<p class="text-[10px] font-mono text-muted-foreground">{op.op_id}</p>
-								{/if}
-							</td>
-							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.model_type}</td>
-							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.target}</td>
-							<td class="px-3 py-2.5 text-muted-foreground text-xs">{op.feature_set}</td>
+						<tr class="h-[88px] hover:bg-muted/30 transition-colors">
 							{#each metricColumns as col (col)}
-								<td class="px-3 py-2.5 text-right tabular-nums">{fmt(opMetricValue(op, col))}</td>
+								<td class="px-3 py-0 text-right tabular-nums align-middle">{fmt(opMetricValue(op, col))}</td>
 							{/each}
 						</tr>
 					{/each}
@@ -750,13 +904,13 @@
 
 <div class="-mx-8 -mt-14 md:-mt-8 -mb-8 flex flex-col h-screen">
 	<div class="flex gap-0 border-b border-border flex-shrink-0 px-8">
-		{#each [['analysis', 'Analysis'], ['runops', 'Run Ops']] as [key, label] (key)}
+		{#each [['analysis', 'Analysis'], ['progress', 'Progress'], ['runops', 'Run Ops']] as [key, label] (key)}
 			<button
 				type="button"
 				class="px-4 py-3.5 text-sm font-medium transition-colors {pageTab === key
 					? 'border-b-2 border-primary text-foreground'
 					: 'text-muted-foreground hover:text-foreground'}"
-				onclick={() => (pageTab = key as 'analysis' | 'runops')}
+				onclick={() => (pageTab = key as 'analysis' | 'progress' | 'runops')}
 			>{label}</button>
 		{/each}
 	</div>
@@ -833,8 +987,131 @@
 			</div>
 		</div>
 
+	{:else if pageTab === 'progress'}
+		<div class="flex-1 min-h-0 px-6 py-4 overflow-auto">
+			<div class="space-y-4">
+				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Total Configs</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.total}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Finished</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-positive">{progressCounts.finished}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Running</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-sky-300">{progressCounts.running}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Needs Attention</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-negative">{progressCounts.failed}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Not Started</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.not_started}</div>
+					</div>
+				</div>
+
+				<div class="grid gap-4 xl:grid-cols-2">
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Next Pending</div>
+						{#if nextPendingRow}
+							<div class="mt-2 font-mono text-sm">{fileName(nextPendingRow.relative_path)}</div>
+							<div class="mt-1 text-xs text-muted-foreground">
+								{nextPendingRow.model_type} · {nextPendingRow.target} · {nextPendingRow.feature_set}
+							</div>
+						{:else}
+							<div class="mt-2 text-sm text-muted-foreground">All configs have been attempted.</div>
+						{/if}
+					</div>
+
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Needs Attention</div>
+						{#if nextAttentionRow}
+							<div class="mt-2 font-mono text-sm">{fileName(nextAttentionRow.relative_path)}</div>
+							<div class="mt-1 text-xs text-muted-foreground">
+								Last job {nextAttentionRow.job_id ? shortId(nextAttentionRow.job_id, 12) : '-'}
+							</div>
+						{:else}
+							<div class="mt-2 text-sm text-muted-foreground">No failed configs currently tracked.</div>
+						{/if}
+					</div>
+				</div>
+
+				<div class="rounded-lg border border-border bg-card overflow-hidden">
+					<div class="flex items-center gap-3 border-b border-border px-4 py-3">
+						<div>
+							<h2 class="text-sm font-semibold">Config Status</h2>
+							<p class="text-xs text-muted-foreground">Durable execution state derived from configs, runs, and latest job outcomes.</p>
+						</div>
+						<input
+							type="text"
+							class="ml-auto w-full max-w-sm rounded-md border border-border/60 bg-background/60 px-3 py-1.5 text-[12px] placeholder:text-muted-foreground/80"
+							placeholder="Search configs"
+							bind:value={progressQuery}
+						/>
+					</div>
+
+					<div class="overflow-auto">
+						<table class="w-full text-sm">
+							<thead class="sticky top-0 z-10 bg-card">
+								<tr class="border-b border-border/60 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+									<th class="px-4 py-2">Status</th>
+									<th class="px-4 py-2">Config</th>
+									<th class="px-4 py-2">Model</th>
+									<th class="px-4 py-2">Target</th>
+									<th class="px-4 py-2">Features</th>
+									<th class="px-4 py-2">Run</th>
+									<th class="px-4 py-2">Last Update</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-border/50">
+								{#each filteredProgressRows as row (row.config_id)}
+									<tr class="hover:bg-muted/15">
+										<td class="px-4 py-2.5">
+											<span class="inline-flex rounded px-2 py-0.5 text-[10px] font-medium uppercase {progressStatusClass(row.status)}">
+												{progressStatusLabel(row.status)}
+											</span>
+										</td>
+										<td class="px-4 py-2.5">
+											<div class="font-mono text-[12px]">{fileName(row.relative_path)}</div>
+											<div class="text-[11px] text-muted-foreground">{row.relative_path}</div>
+										</td>
+										<td class="px-4 py-2.5">{row.model_type}</td>
+										<td class="px-4 py-2.5">{row.target}</td>
+										<td class="px-4 py-2.5">{row.feature_set}</td>
+										<td class="px-4 py-2.5">
+											{#if row.run_id}
+												<a
+													href="/experiments/{data.experiment.experiment_id}/runs/{row.run_id}"
+													class="font-mono text-primary underline underline-offset-2"
+												>
+													{shortId(row.run_id, 12)}
+												</a>
+											{:else if row.job_id}
+												<span class="font-mono text-muted-foreground">{shortId(row.job_id, 12)}</span>
+											{:else}
+												<span class="text-muted-foreground">-</span>
+											{/if}
+										</td>
+										<td class="px-4 py-2.5 text-muted-foreground">{fmtTime(row.finished_at ?? row.created_at)}</td>
+									</tr>
+								{:else}
+									<tr>
+										<td colspan="7" class="px-4 py-6 text-center text-muted-foreground">No configs match the current filter.</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</div>
+		</div>
+
 	{:else}
-		<div class="flex gap-6 flex-1 min-h-0 px-6 py-4">
+		<div class="flex flex-1 min-h-0 px-6 py-4 {SHOW_RUNOPS_SIDEBAR ? 'gap-6' : ''}">
+			{#if SHOW_RUNOPS_SIDEBAR}
 			<div class="w-[420px] flex-shrink-0 flex flex-col border border-border rounded-lg overflow-hidden bg-background">
 				<section class="flex flex-col min-h-0 {launchSectionOpen ? 'flex-1' : 'flex-shrink-0'}">
 					<button
@@ -1223,34 +1500,91 @@
 					>Refresh</button>
 				</div>
 			</div>
+			{/if}
+
+			<div class="w-[320px] flex-shrink-0 flex flex-col rounded-lg border border-border bg-card overflow-hidden">
+				<div class="h-[92px] border-b border-border px-4 py-3">
+					<div class="flex items-center justify-between gap-3">
+						<div>
+							<h2 class="text-sm font-semibold">Ops</h2>
+							<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
+						</div>
+						<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+							{#each ['table', 'chart'] as view (view)}
+								<button
+									type="button"
+									class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+									onclick={() => (runOpsView = view as 'table' | 'chart')}
+								>{view}</button>
+							{/each}
+						</div>
+					</div>
+					{#if runOpsView === 'chart' && selectedOperationItem}
+						<p class="mt-2 text-[11px] text-muted-foreground">
+							Selected: {selectedOperationItem.name}
+						</p>
+					{/if}
+				</div>
+
+				<div class="flex-1 min-h-0 overflow-auto divide-y divide-border/50">
+					{#each sortedOps as op (op.op_id)}
+						<button
+							type="button"
+							class="h-[88px] w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
+							onclick={() => selectOperation(op)}
+						>
+							<div class="flex items-start gap-2">
+								<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
+									{opTypeLabel(op.op_type)}
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="truncate text-[12px] font-medium">{op.name}</div>
+									<div class="mt-1 text-[10px] text-muted-foreground">
+										{op.model_type} · {op.target} · {op.feature_set}
+									</div>
+									<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
+								</div>
+							</div>
+						</button>
+					{:else}
+						<div class="px-4 py-6 text-sm text-muted-foreground">No ops available.</div>
+					{/each}
+				</div>
+			</div>
 
 			<div class="flex-1 min-w-0 flex flex-col min-h-0">
-				{#if selectedOp?.type === 'run'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
-						<RunDetailPanel
-							runId={selectedOp.id}
+				{#if runOpsView === 'chart'}
+					{#if selectedOp?.type === 'run'}
+						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+							<RunDetailPanel
+								runId={selectedOp.id}
+								experimentId={data.experiment.experiment_id}
+								runs={data.runs}
+								readOnly={readOnly}
+								onClose={() => (selectedOp = null)}
+							/>
+						</div>
+					{:else if selectedOp?.type === 'hpo'}
+						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+						<HpoDetailPanel
+							studyId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
-							runs={data.runs}
-							readOnly={readOnly}
 							onClose={() => (selectedOp = null)}
 						/>
-					</div>
-				{:else if selectedOp?.type === 'hpo'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
-					<HpoDetailPanel
-						studyId={selectedOp.id}
-						experimentId={data.experiment.experiment_id}
-						onClose={() => (selectedOp = null)}
-					/>
-					</div>
-				{:else if selectedOp?.type === 'ensemble'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
-					<EnsembleDetailPanel
-						ensembleId={selectedOp.id}
-						experimentId={data.experiment.experiment_id}
-						onClose={() => (selectedOp = null)}
-					/>
-					</div>
+						</div>
+					{:else if selectedOp?.type === 'ensemble'}
+						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+						<EnsembleDetailPanel
+							ensembleId={selectedOp.id}
+							experimentId={data.experiment.experiment_id}
+							onClose={() => (selectedOp = null)}
+						/>
+						</div>
+					{:else}
+						<div class="flex flex-1 items-center justify-center rounded-lg border border-border bg-card text-sm text-muted-foreground">
+							Select an op from the left to inspect it.
+						</div>
+					{/if}
 				{:else}
 					{@render opsTable()}
 				{/if}

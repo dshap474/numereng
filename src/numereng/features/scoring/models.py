@@ -15,6 +15,7 @@ class PostTrainingScoringRequest:
     predictions_path: Path
     pred_cols: tuple[str, ...]
     target_col: str
+    scoring_target_cols: tuple[str, ...]
     data_version: str
     dataset_variant: str
     feature_set: str
@@ -30,6 +31,7 @@ class PostTrainingScoringRequest:
     data_root: Path
     scoring_mode: str
     era_chunk_size: int
+    include_feature_neutral_metrics: bool = True
 
 
 @dataclass(frozen=True)
@@ -37,20 +39,29 @@ class ResolvedScoringPolicy:
     """Explicit scoring semantics resolved for a post-training run."""
 
     fnc_feature_set: str
-    benchmark_overlap_policy: str
-    meta_overlap_policy: str
+    fnc_target_policy: str
+    benchmark_min_overlap_ratio: float
+    include_feature_neutral_metrics: bool
 
 
 _DEFAULT_SCORING_POLICY = ResolvedScoringPolicy(
     fnc_feature_set="fncv3_features",
-    benchmark_overlap_policy="overlap_required",
-    meta_overlap_policy="overlap_required",
+    fnc_target_policy="scoring_target",
+    benchmark_min_overlap_ratio=0.0,
+    include_feature_neutral_metrics=True,
 )
 
 
-def default_scoring_policy() -> ResolvedScoringPolicy:
+def default_scoring_policy(include_feature_neutral_metrics: bool | None = None) -> ResolvedScoringPolicy:
     """Return the canonical scoring policy for training metrics."""
-    return _DEFAULT_SCORING_POLICY
+    if include_feature_neutral_metrics is None:
+        return _DEFAULT_SCORING_POLICY
+    return ResolvedScoringPolicy(
+        fnc_feature_set=_DEFAULT_SCORING_POLICY.fnc_feature_set,
+        fnc_target_policy=_DEFAULT_SCORING_POLICY.fnc_target_policy,
+        benchmark_min_overlap_ratio=_DEFAULT_SCORING_POLICY.benchmark_min_overlap_ratio,
+        include_feature_neutral_metrics=include_feature_neutral_metrics,
+    )
 
 
 @dataclass(frozen=True)

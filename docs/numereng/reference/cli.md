@@ -16,8 +16,8 @@ Reference for the supported `numereng` CLI surface.
 Training profile notes:
 
 - `full_history_refit` is final-fit only and emits no validation metrics.
-- `simple` and `purged_walk_forward` persist post-run scoring outputs including `payout_estimate_mean` and `score_provenance.json`.
-- `payout_estimate_mean` follows Numerai Classic 2026 payout semantics and is populated only for `target_ender_20`.
+- `simple` and `purged_walk_forward` persist post-run scoring outputs including `score_provenance.json`.
+- Numereng does not emit `payout_estimate_mean`.
 - `run score` recomputes metrics from persisted predictions and refreshes `results.json`, `metrics.json`, `score_provenance.json`, and run index rows.
 
 ## `experiment`
@@ -69,7 +69,7 @@ Experiment training uses the same profile semantics as `run train`: canonical pr
 - `cloud ec2 package build-upload`
 - `cloud ec2 config upload`
 - `cloud ec2 push`
-- `cloud ec2 install`
+- `cloud ec2 install` (`--runtime-profile <standard|lgbm-cuda>`)
 - `cloud ec2 train start|poll`
 - `cloud ec2 logs`
 - `cloud ec2 pull`
@@ -79,8 +79,8 @@ Experiment training uses the same profile semantics as `run train`: canonical pr
 
 ### AWS Managed (SageMaker/Batch)
 
-- `cloud aws image build-push`
-- `cloud aws train submit|status|logs|cancel|pull`
+- `cloud aws image build-push` (`--runtime-profile <standard|lgbm-cuda>`)
+- `cloud aws train submit|status|logs|cancel|pull` (`submit` supports `--runtime-profile <standard|lgbm-cuda>`)
 
 ### Modal
 
