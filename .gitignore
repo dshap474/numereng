@@ -10,6 +10,7 @@ predictions/
 src/numereng/features/models/custom_models/
 !src/numereng/features/models/custom_models/.gitkeep
 !src/numereng/features/models/custom_models/template_model.py
+numerai-example/
 
 # Python
 __pycache__/

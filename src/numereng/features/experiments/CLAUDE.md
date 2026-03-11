@@ -18,19 +18,19 @@ Explorations driven by `features.experiments` land directly in the viz read path
 ## Fallback computations viz relies on
 
 - When `payout_estimate_mean` is missing, viz computes `clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, -0.05, +0.05)` to mimic Numerai Classic payout scoring. This fallback applies to `target_ender_20` contexts; non-Ender targets intentionally keep payout estimate unset/null.
-- Per-era CORR (val_per_era_corr20v2) and payout maps are expected artifacts (`artifacts/predictions/val_per_era_*.parquet|csv`), but viz can derive them from the canonical predictors/meta model if they are absent. The derivation path requires `numerai_tools` in the environment and `score_provenance.json` plus the predictions/meta files to merge on `era` + `id`. Experiments must ensure those base artifacts exist for viz derivation.
+- Per-era CORR (val_per_era_corr20v2) and payout maps are optional persisted visualization artifacts (`artifacts/predictions/val_per_era_*.parquet|csv`). Viz must treat them as read-only inputs: if they are absent, the UI surfaces them as unavailable instead of deriving them from predictions/meta-model artifacts at request time.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
 ## Provenance, diagnostics, and artefact resolution
 
 - `score_provenance.json` (or `manifest.artifacts.score_provenance`) is the trust source for `columns`, `joins`, and `sources`. Viz exposes that information through `diagnostics_sources`, reporting column names, join counts, artifact paths, and existence/sha256 metadata so users can trace how a metric was computed.
-- Predictions and meta-model artifacts are resolved by checking, in order: the score provenance `sources` map, explicit `artifacts` entries in `run.json`, the `results.json` output, and then the `artifacts/predictions/` directory for parquet/csv blobs. Losing any link in that chain means viz cannot build the per-era fallback or show coverage diagnostics, so experiment runs must annotate artifacts consistently.
+- Predictions and meta-model artifacts are resolved by checking, in order: the score provenance `sources` map, explicit `artifacts` entries in `run.json`, the `results.json` output, and then the `artifacts/predictions/` directory for parquet/csv blobs. Losing any link in that chain means viz cannot show provenance/coverage diagnostics, so experiment runs must annotate artifacts consistently.
 - Meta-model resolution also accepts dataset-level pointers (`datasets/<version>/meta_model.parquet`) when the run manifest supplies `data.version`/`data.data_version`. Experiments that upgrade dataset snapshots must still write a deterministic pointer so viz can find the meta model without exploring the entire dataset tree.
 
 ## Read-path resilience
 
 - `get_run_manifest` and `get_run_metrics` prefer SQLite-backed rows but gracefully read `run.json`/`metrics.json` when the DB is missing. That means offline experiments (without the index) still show up in viz if their directories contain the canonical files.
-- Derivation functions (`_scoring_context`, `_derive_per_era_corr_fallback`, `_derive_per_era_payout_map_fallback`) aggressively fallback to column heuristics (infer `era`, `target`, `prediction` columns by case/substring) so experiments that rename columns still work as long as a sensible guess exists.
+- Derivation helpers may still exist for offline/backfill workflows, but they are not part of the live viz request path. Read-only UI/API surfaces must not perform on-demand scoring work.
 
 ## Maintenance & anti-drift
 

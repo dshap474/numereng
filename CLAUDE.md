@@ -28,6 +28,8 @@ Read order:
 - CLI entrypoint: `numereng = "numereng.cli:main"`.
 - Python entrypoint: `import numereng.api as api_module`.
 - Stable contracts live in `src/numereng/api/contracts.py`.
+- Full local train/score pipeline entrypoint: `src/numereng/api/pipeline.py::run_training_pipeline(request)`.
+  It runs `prepare_training_run -> load_training_data -> train_model -> score_predictions -> finalize_training_run`, then maps internal failures to `PackageError` and always performs cleanup.
 - API boundary must translate internal errors to `PackageError`.
 - CLI exit codes are fixed: `0` success/help, `1` runtime/boundary error, `2` parse/usage error.
 

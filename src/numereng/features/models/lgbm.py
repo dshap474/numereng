@@ -25,6 +25,7 @@ class LGBMRegressor:
         self._params: dict[str, Any] = resolved_params
         self._model = lgb.LGBMRegressor(**resolved_params)
         self._feature_cols = feature_cols
+        self._device_type = str(resolved_params.get("device_type", "")).lower()
 
     def fit(self, X: pd.DataFrame, y: pd.Series, **kwargs: Any) -> LGBMRegressor:
         """Fit model, falling back to CPU when GPU backend is unavailable."""
@@ -34,8 +35,11 @@ class LGBMRegressor:
         except self._lgb.basic.LightGBMError as exc:
             if self._should_fallback_to_cpu(exc):
                 self._params["device_type"] = "cpu"
+                self._device_type = "cpu"
                 self._model = self._lgb.LGBMRegressor(**self._params)
                 self._model.fit(filtered_X, y, **kwargs)
+            elif self._device_type == "cuda":
+                raise TrainingModelError("training_model_cuda_fit_failed") from exc
             else:
                 raise TrainingModelError("training_model_fit_failed") from exc
         return self
@@ -47,8 +51,7 @@ class LGBMRegressor:
 
     def _should_fallback_to_cpu(self, exc: Exception) -> bool:
         message = str(exc)
-        device_type = str(self._params.get("device_type", "")).lower()
-        return device_type == "gpu" and "GPU Tree Learner was not enabled" in message
+        return self._device_type == "gpu" and "GPU Tree Learner was not enabled" in message
 
     @staticmethod
     def _filter_features(X: pd.DataFrame, feature_cols: list[str] | None) -> pd.DataFrame:

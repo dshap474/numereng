@@ -6,9 +6,11 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 import pandas as pd
+from numerai_tools.submissions import validate_submission_numerai
 
 from numereng.features.feature_neutralization import (
     NeutralizationMode,
@@ -29,6 +31,7 @@ _PREDICTIONS_CANDIDATES = (
     "val_predictions.csv",
 )
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_CLASSIC_LIVE_DATASET_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?/live\.parquet$")
 
 
 class SubmissionModelNotFoundError(Exception):
@@ -61,6 +64,10 @@ class SubmissionRunIdInvalidError(Exception):
 
 class SubmissionRunPredictionsPathUnsafeError(Exception):
     """Raised when manifest predictions path escapes the run directory."""
+
+
+class SubmissionLiveUniverseUnavailableError(Exception):
+    """Raised when the classic live universe cannot be loaded for validation."""
 
 
 @dataclass(frozen=True)
@@ -166,40 +173,81 @@ def _resolve_run_predictions_path(*, store_root: Path, run_id: str) -> Path:
     raise SubmissionRunPredictionsNotFoundError(safe_run_id)
 
 
+def _read_predictions_frame(predictions_path: Path) -> pd.DataFrame:
+    suffix = predictions_path.suffix.lower()
+    try:
+        if suffix == ".csv":
+            return pd.read_csv(predictions_path)
+        if suffix == ".parquet":
+            return pd.read_parquet(predictions_path)
+    except Exception as exc:
+        raise SubmissionPredictionsReadError("submission_predictions_read_failed") from exc
+    raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible")
+
+
+def _resolve_classic_live_dataset_name(*, client: SubmissionClient) -> str:
+    dataset_names = client.list_datasets()
+    candidates = [
+        item
+        for item in dataset_names
+        if item.lower().endswith("/live.parquet") and not item.lower().startswith(("signals/", "crypto/"))
+    ]
+    if not candidates:
+        raise SubmissionLiveUniverseUnavailableError("submission_live_universe_unavailable")
+    return max(candidates, key=_classic_live_dataset_sort_key)
+
+
+def _classic_live_dataset_sort_key(dataset_name: str) -> tuple[int, int, int, str]:
+    match = _CLASSIC_LIVE_DATASET_PATTERN.fullmatch(dataset_name.lower())
+    if match is None:
+        return (-1, -1, -1, dataset_name)
+    return (
+        int(match.group("major")),
+        int(match.group("minor") or 0),
+        int(match.group("patch") or 0),
+        dataset_name,
+    )
+
+
+def _load_classic_live_ids(*, client: SubmissionClient) -> pd.Series:
+    dataset_name = _resolve_classic_live_dataset_name(client=client)
+    try:
+        with TemporaryDirectory(prefix="numereng-submit-live-") as tmp_dir:
+            destination = Path(tmp_dir) / "live.parquet"
+            local_path = Path(
+                client.download_dataset(
+                    dataset_name,
+                    dest_path=str(destination),
+                )
+            )
+            frame = pd.read_parquet(local_path, columns=["id"])
+    except Exception as exc:
+        raise SubmissionLiveUniverseUnavailableError("submission_live_universe_unavailable") from exc
+    if "id" not in frame.columns:
+        raise SubmissionLiveUniverseUnavailableError("submission_live_universe_unavailable")
+    return frame["id"]
+
+
 def _validate_predictions_live_eligible(
     *,
     predictions_path: Path,
+    tournament: NumeraiTournament,
+    client: SubmissionClient,
     allow_non_live_artifact: bool,
 ) -> None:
     if allow_non_live_artifact:
         return
 
-    columns = _read_prediction_columns(predictions_path)
-    if "prediction" not in columns:
-        raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible")
-    if {"target", "cv_fold"} & columns:
-        raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible")
+    if tournament != "classic":
+        _read_predictions_frame(predictions_path)
+        return
 
-
-def _read_prediction_columns(predictions_path: Path) -> set[str]:
-    suffix = predictions_path.suffix.lower()
+    submission = _read_predictions_frame(predictions_path)
+    live_ids = _load_classic_live_ids(client=client)
     try:
-        if suffix == ".csv":
-            frame = pd.read_csv(predictions_path, nrows=0)
-            return {str(column) for column in frame.columns}
-        if suffix == ".parquet":
-            try:
-                import pyarrow.parquet as pq  # type: ignore[import-untyped]
-            except Exception:
-                pq = None
-            if pq is not None:
-                parquet_file = pq.ParquetFile(predictions_path)
-                return {str(column) for column in parquet_file.schema.names}
-            frame = pd.read_parquet(predictions_path)
-            return {str(column) for column in frame.columns}
-    except Exception as exc:
-        raise SubmissionPredictionsReadError("submission_predictions_read_failed") from exc
-    raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible")
+        validate_submission_numerai(live_ids, submission)
+    except AssertionError as exc:
+        raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible") from exc
 
 
 def submit_predictions_file(
@@ -236,6 +284,8 @@ def submit_predictions_file(
 
     _validate_predictions_live_eligible(
         predictions_path=resolved_predictions_path,
+        tournament=tournament,
+        client=submission_client,
         allow_non_live_artifact=allow_non_live_artifact,
     )
     model_id = _resolve_model_id(model_name=model_name, client=submission_client)
@@ -270,10 +320,6 @@ def submit_run_predictions(
     """Resolve run artifacts and submit the discovered predictions file."""
     submission_client = create_submission_client(tournament=tournament) if client is None else client
     resolved_predictions_path = _resolve_run_predictions_path(store_root=Path(store_root), run_id=run_id)
-    _validate_predictions_live_eligible(
-        predictions_path=resolved_predictions_path,
-        allow_non_live_artifact=allow_non_live_artifact,
-    )
     if neutralize:
         if neutralizer_path is None:
             raise ValueError("submission_neutralizer_path_required")
@@ -315,6 +361,7 @@ __all__ = [
     "SubmissionRunPredictionsNotFoundError",
     "SubmissionRunPredictionsNotLiveEligibleError",
     "SubmissionRunPredictionsPathUnsafeError",
+    "SubmissionLiveUniverseUnavailableError",
     "submit_predictions_file",
     "submit_run_predictions",
 ]

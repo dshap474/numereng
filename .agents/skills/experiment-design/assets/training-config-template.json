@@ -6,6 +6,7 @@
       "dataset_scope": "train_plus_validation",
       "feature_set": "small",
       "target_col": "target_ender_20",
+      "scoring_targets": null,
       "target_horizon": "20d",
       "era_col": "era",
       "id_col": "id",
@@ -19,7 +20,8 @@
       "loading": {
         "mode": "materialized",
         "scoring_mode": "materialized",
-        "era_chunk_size": 64
+        "era_chunk_size": 64,
+        "include_feature_neutral_metrics": true
       }
     },
     "preprocessing": {
@@ -107,6 +109,20 @@
           "target"
         ]
       },
+      "scoring_targets": {
+        "type": "array_of_strings_or_null",
+        "examples": [
+          null,
+          [
+            "target_ender_20"
+          ],
+          [
+            "target_agnes_20",
+            "target_ender_20"
+          ]
+        ],
+        "note": "Optional scoring override. If null, scoring defaults to [target_col, target_ender_20]. If provided, this list becomes the full scoring-target set."
+      },
       "target_horizon": [
         "20d",
         "60d",
@@ -191,6 +207,14 @@
             64,
             128
           ]
+        },
+        "include_feature_neutral_metrics": {
+          "type": "boolean",
+          "examples": [
+            true,
+            false
+          ],
+          "note": "When false, skip FNC and feature-exposure scoring to reduce scoring time."
         }
       }
     },

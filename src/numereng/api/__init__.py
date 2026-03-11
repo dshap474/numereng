@@ -96,9 +96,9 @@ from numereng.api.contracts import (
     TrainRunRequest,
     TrainRunResponse,
 )
-from numereng.api.dataset_tools import dataset_tools_build_downsampled_full
-from numereng.api.ensemble import ensemble_build, ensemble_get, ensemble_list
-from numereng.api.experiment import (
+from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
+from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
+from numereng.api._experiment import (
     experiment_create,
     experiment_get,
     experiment_list,
@@ -106,17 +106,17 @@ from numereng.api.experiment import (
     experiment_report,
     experiment_train,
 )
-from numereng.api.factories import (
+from numereng.api._factories import (
     _create_cloud_aws_managed_service,
     _create_cloud_ec2_service,
     _create_cloud_modal_service,
     _create_numerai_client,
     _default_dataset_dest_path,
 )
-from numereng.api.health import get_health, run_bootstrap_check
-from numereng.api.hpo import hpo_create, hpo_get, hpo_list, hpo_trials
-from numereng.api.neutralization import neutralize_apply
-from numereng.api.numerai import (
+from numereng.api._health import get_health, run_bootstrap_check
+from numereng.api._hpo import hpo_create, hpo_get, hpo_list, hpo_trials
+from numereng.api._neutralization import neutralize_apply
+from numereng.api._numerai import (
     NumeraiForumScrapeResponse,
     download_numerai_dataset,
     get_numerai_current_round,
@@ -124,8 +124,8 @@ from numereng.api.numerai import (
     list_numerai_models,
     scrape_numerai_forum,
 )
-from numereng.api.run import run_training, score_run, submit_predictions
-from numereng.api.store import store_doctor, store_index_run, store_init, store_rebuild
+from numereng.api._run import run_training, score_run, submit_predictions
+from numereng.api._store import store_doctor, store_index_run, store_init, store_rebuild
 from numereng.features.cloud.aws import (
     AwsImageBuildPushRequest,
     AwsTrainCancelRequest,

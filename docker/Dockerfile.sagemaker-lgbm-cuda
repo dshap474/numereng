@@ -1,0 +1,28 @@
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update -yqq && apt-get install -yqq --no-install-recommends \
+    python3.11 \
+    python3.11-dev \
+    python3-pip \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.11 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+RUN python3.11 -m pip install --no-cache-dir ".[training]" \
+    && CMAKE_ARGS="-DUSE_CUDA=ON" python3.11 -m pip install --no-cache-dir --force-reinstall --no-binary lightgbm lightgbm
+
+ENTRYPOINT ["python3.11", "-m", "numereng.features.cloud.aws.sagemaker_entrypoint"]

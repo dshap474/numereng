@@ -1,6 +1,6 @@
 """Cloud API modules."""
 
-from numereng.api.cloud.aws import (
+from numereng.api.cloud._aws import (
     cloud_aws_image_build_push,
     cloud_aws_train_cancel,
     cloud_aws_train_extract,
@@ -9,7 +9,7 @@ from numereng.api.cloud.aws import (
     cloud_aws_train_status,
     cloud_aws_train_submit,
 )
-from numereng.api.cloud.ec2 import (
+from numereng.api.cloud._ec2 import (
     cloud_ec2_config_upload,
     cloud_ec2_init_iam,
     cloud_ec2_install,
@@ -27,7 +27,7 @@ from numereng.api.cloud.ec2 import (
     cloud_ec2_train_poll,
     cloud_ec2_train_start,
 )
-from numereng.api.cloud.modal import (
+from numereng.api.cloud._modal import (
     cloud_modal_data_sync,
     cloud_modal_deploy,
     cloud_modal_train_cancel,

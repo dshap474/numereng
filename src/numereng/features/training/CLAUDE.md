@@ -39,7 +39,8 @@ Not guaranteed by the canonical training pipeline:
 - `artifacts/reports/trials.csv`
 - `artifacts/reports/best_params.json`
 
-Consumers must derive these read-time diagnostics from canonical artifacts when needed.
+Consumers must not derive these diagnostics at request time. Read-only surfaces
+should show them only when the precomputed visualization artifacts exist.
 
 ## Canonical Field Names
 
@@ -47,6 +48,8 @@ Target identity:
 
 - `run.json -> data.target_col` is the canonical run target field.
 - `results.json -> data.target` is the canonical target in results payload.
+- `data.scoring_targets` is optional; when omitted, scoring defaults to the run
+  target plus `target_ender_20`.
 
 Training does not require `target_train` / `target_payout` for single-target runs.
 Consumers must not assume those fields exist.
@@ -56,15 +59,19 @@ Canonical metric aliases (for viz/read APIs):
 - `corr20v2_mean` from `corr.mean`
 - `corr20v2_sharpe` from `corr.sharpe`
 - `mmc_mean` from `mmc.mean`
+- extra scoring-target families may also be present as `corr_<alias>` /
+  `mmc_<alias>` in `metrics.json` and `results.json`
 - `bmc_mean` from `bmc.mean`
-- `cwmm_mean` from `cwmm.mean`
+- `cwmm_mean` from `cwmm.mean` when meta-model overlap exists
+- `feature_exposure_mean` from `feature_exposure.mean`
+- `max_feature_exposure` from `max_feature_exposure.mean`
 - `max_drawdown` from `corr.max_drawdown`
-- `payout_estimate_mean` from `payout_score`, or derived fallback
+- no payout estimate field is emitted by training scoring artifacts
 
-Canonical payout fallback formula:
+Payout semantics:
 
-- `payout_estimate_mean = clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, +/-0.05)`
-- Applies only for `target_ender_20` (Numerai Classic 2026 semantics); non-Ender targets keep `payout_estimate_mean = null`.
+- Training scoring does not emit `payout_estimate` or `payout_estimate_mean`.
+- Numereng does not implement an official expected-payout estimator from validation metrics.
 
 ## Score Provenance Contract
 
@@ -74,15 +81,23 @@ When `score_provenance.json` exists, it must include:
 - `sources`: fingerprinted paths for predictions, meta model, benchmark
 - `joins`: overlap counters (rows, eras)
 
+Feature exposure diagnostics:
+
+- Scoring reuses the canonical `fncv3_features` join path to compute rank-based per-era exposures.
+- `feature_exposure` persists RMS exposure across features as `{mean,std,sharpe,max_drawdown}`.
+- `max_feature_exposure` persists per-era max absolute exposure as `{mean,std,sharpe,max_drawdown}`.
+- Viz/read APIs normalize `max_feature_exposure.mean` to the scalar key `max_feature_exposure`.
+
 Canonical coverage ratio derivation:
 
 - `mmc_coverage_ratio_rows = joins.meta_overlap_rows / joins.predictions_rows`
+- benchmark metrics are computed on the available overlapping window when any strictly era-aligned benchmark overlap exists; meta-model metrics are computed on the available overlapping window when any strictly era-aligned meta overlap exists.
 
 ## Consumer Rules
 
 - Prefer canonical artifacts first (`run.json`, `metrics.json`, `results.json`,
   `score_provenance.json`, predictions parquet).
-- If precomputed visualization tables are absent, derive diagnostics from canonical inputs.
+- If precomputed visualization tables are absent, read-only consumers must surface them as unavailable.
 - Do not infer non-canonical schema fields that training did not write.
 
 ## Anti-Drift Policy

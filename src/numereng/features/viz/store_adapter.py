@@ -43,10 +43,27 @@ _PAYOUT_MMC_WEIGHT = 2.25
 _PAYOUT_CLIP = 0.05
 _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "corr20v2_mean": ("corr20v2_mean", "corr.mean", "corr_mean"),
+    "corr20v2_std": ("corr20v2_std", "corr.std", "corr_std"),
     "corr20v2_sharpe": ("corr20v2_sharpe", "corr.sharpe", "corr_sharpe", "sharpe"),
+    "fnc_mean": ("fnc_mean", "fnc.mean"),
+    "fnc_std": ("fnc_std", "fnc.std"),
+    "fnc_sharpe": ("fnc_sharpe", "fnc.sharpe"),
     "mmc_mean": ("mmc_mean", "mmc.mean"),
+    "mmc_std": ("mmc_std", "mmc.std"),
+    "mmc_sharpe": ("mmc_sharpe", "mmc.sharpe"),
     "payout_estimate_mean": ("payout_estimate_mean", "payout_score"),
     "bmc_mean": ("bmc_mean", "bmc.mean"),
+    "bmc_std": ("bmc_std", "bmc.std"),
+    "bmc_sharpe": ("bmc_sharpe", "bmc.sharpe"),
+    "bmc_last_200_eras_mean": ("bmc_last_200_eras_mean", "bmc_last_200_eras.mean"),
+    "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
+    "cwmm_std": ("cwmm_std", "cwmm.std"),
+    "cwmm_sharpe": ("cwmm_sharpe", "cwmm.sharpe"),
+    "feature_exposure_mean": ("feature_exposure_mean", "feature_exposure.mean"),
+    "feature_exposure_std": ("feature_exposure_std", "feature_exposure.std"),
+    "feature_exposure_sharpe": ("feature_exposure_sharpe", "feature_exposure.sharpe"),
+    "max_feature_exposure": ("max_feature_exposure", "max_feature_exposure.mean"),
+    "max_drawdown": ("max_drawdown", "corr.max_drawdown"),
 }
 _DERIVED_METRIC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "payout_estimate_mean": ("corr20v2_mean", "mmc_mean"),
@@ -472,6 +489,18 @@ def _normalize_round_metrics(
     if corr_n_eras is not None:
         normalized["corr20v2_n_eras"] = int(corr_n_eras)
 
+    fnc_mean = _extract_numeric_metric(normalized, "fnc_mean", "fnc.mean")
+    if fnc_mean is not None:
+        normalized["fnc_mean"] = fnc_mean
+
+    fnc_std = _extract_numeric_metric(normalized, "fnc_std", "fnc.std")
+    if fnc_std is not None:
+        normalized["fnc_std"] = fnc_std
+
+    fnc_sharpe = _extract_numeric_metric(normalized, "fnc_sharpe", "fnc.sharpe")
+    if fnc_sharpe is not None:
+        normalized["fnc_sharpe"] = fnc_sharpe
+
     mmc_mean = _extract_numeric_metric(normalized, "mmc_mean", "mmc.mean")
     if mmc_mean is not None:
         normalized["mmc_mean"] = mmc_mean
@@ -523,6 +552,38 @@ def _normalize_round_metrics(
     cwmm_sharpe = _extract_numeric_metric(normalized, "cwmm_sharpe", "cwmm.sharpe")
     if cwmm_sharpe is not None:
         normalized["cwmm_sharpe"] = cwmm_sharpe
+
+    feature_exposure_mean = _extract_numeric_metric(
+        normalized,
+        "feature_exposure_mean",
+        "feature_exposure.mean",
+    )
+    if feature_exposure_mean is not None:
+        normalized["feature_exposure_mean"] = feature_exposure_mean
+
+    feature_exposure_std = _extract_numeric_metric(
+        normalized,
+        "feature_exposure_std",
+        "feature_exposure.std",
+    )
+    if feature_exposure_std is not None:
+        normalized["feature_exposure_std"] = feature_exposure_std
+
+    feature_exposure_sharpe = _extract_numeric_metric(
+        normalized,
+        "feature_exposure_sharpe",
+        "feature_exposure.sharpe",
+    )
+    if feature_exposure_sharpe is not None:
+        normalized["feature_exposure_sharpe"] = feature_exposure_sharpe
+
+    max_feature_exposure = _extract_numeric_metric(
+        normalized,
+        "max_feature_exposure",
+        "max_feature_exposure.mean",
+    )
+    if max_feature_exposure is not None:
+        normalized["max_feature_exposure"] = max_feature_exposure
 
     payout = _extract_numeric_metric(normalized, "payout_estimate_mean", "payout_score")
     payout_key_present = any(
@@ -1617,10 +1678,7 @@ class VizStoreAdapter:
         run_dir = self._resolve_run_dir(run_id)
         parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet"
         csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv"
-        from_artifact = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
-        if from_artifact is not None:
-            return from_artifact
-        return self._derive_per_era_corr_fallback(run_id, run_dir)
+        return self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
 
     def _derive_per_era_payout_map_fallback(self, run_id: str, run_dir: Path) -> list[dict[str, Any]] | None:
         correlation_contribution, numerai_corr = _load_scoring_functions()
@@ -1713,10 +1771,7 @@ class VizStoreAdapter:
             return None
         parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.parquet"
         csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.csv"
-        from_artifact = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
-        if from_artifact is not None:
-            return from_artifact
-        return self._derive_per_era_payout_map_fallback(run_id, run_dir)
+        return self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
 
     def get_feature_importance(self, run_id: str, top_n: int) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")

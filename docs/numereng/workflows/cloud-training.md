@@ -56,9 +56,48 @@ uv run numereng cloud aws train extract --run-id <run_id>
 
 - `cloud aws train submit --backend` supports only `sagemaker|batch`.
 - `--spot` and `--on-demand` are mutually exclusive.
+- SageMaker CUDA requires a config that resolves to `model.device=cuda`, `cloud aws image build-push --runtime-profile lgbm-cuda`, and a GPU instance type such as `ml.g5.*` or `ml.p*`.
+- `runtime_profile` selects packaging only; it does not override the training config device.
 - `cloud aws train extract` only promotes `runs/<run_id>/*` artifacts from pulled tarballs.
 - Archive extraction hard-fails on unsafe members (absolute paths, traversal, links, invalid run ids) and run-dir hash conflicts.
 - Managed `--state-path` must resolve under `<store_root>/cloud/*.json`.
+
+### SageMaker CUDA LightGBM
+
+```bash
+# Build the CUDA-specific SageMaker image
+uv run numereng cloud aws image build-push \
+  --context-dir . \
+  --runtime-profile lgbm-cuda
+
+# Submit with a CUDA config and GPU instance type
+uv run numereng cloud aws train submit \
+  --backend sagemaker \
+  --config configs/run-cuda.json \
+  --runtime-profile lgbm-cuda \
+  --instance-type ml.g5.2xlarge
+```
+
+- The standard SageMaker image uses `docker/Dockerfile.sagemaker`.
+- The CUDA image uses `docker/Dockerfile.sagemaker-lgbm-cuda`.
+- SageMaker submit rejects CUDA configs unless the runtime profile and instance type are CUDA-compatible.
+- Batch is not currently accepted for CUDA-configured LightGBM runs.
+
+### EC2 CUDA LightGBM
+
+```bash
+# Provision a GPU tier first
+uv run numereng cloud ec2 provision --run-id run-0001 --tier gpu --state-path .numereng/cloud/run-0001.json
+
+# Install the CUDA LightGBM runtime on that worker
+uv run numereng cloud ec2 install \
+  --instance-id i-abc123 \
+  --runtime-profile lgbm-cuda \
+  --state-path .numereng/cloud/run-0001.json
+```
+
+- EC2 CUDA install requires GPU instance state and fails fast on CPU workers.
+- The remote install reinstalls `lightgbm` with CUDA build flags instead of relying on the default CPU wheel.
 
 ## Modal Workflow
 

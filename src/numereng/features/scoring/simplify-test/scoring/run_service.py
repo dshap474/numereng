@@ -24,20 +24,16 @@ from numereng.features.training.repo import (
     save_score_provenance,
 )
 from numereng.features.training.run_log import log_error, log_info, resolve_run_log_path
-from numereng.features.training.scoring.models import (
+from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     ResolvedScoringPolicy,
 )
-from numereng.features.training.scoring.service import run_post_training_scoring
+from numereng.features.scoring.service import run_post_training_scoring
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
 _DEFAULT_DATASET_SCOPE = "train_plus_validation"
 _DEFAULT_SCORING_MODE = "materialized"
-_CLASSIC_PAYOUT_TARGET = "target_ender_20"
-_PAYOUT_CORR_WEIGHT = 0.75
-_PAYOUT_MMC_WEIGHT = 2.25
-_PAYOUT_CLIP = 0.05
 
 
 def score_run(
@@ -102,6 +98,7 @@ def score_run(
         predictions_path=predictions_path,
         pred_cols=("prediction",),
         target_col=target_col,
+        scoring_target_cols=_resolve_scoring_target_cols(data_config=data_config, target_col=target_col),
         data_version=data_version,
         dataset_variant=str(data_config.get("dataset_variant", _DEFAULT_DATASET_VARIANT)),
         feature_set=feature_set,
@@ -136,7 +133,6 @@ def score_run(
 
     metrics_payload = _metrics_payload_from_summaries(
         scoring_result.summaries,
-        target_col=target_col,
     )
     metrics_path = resolve_metrics_path(run_dir)
     score_provenance_path = resolve_score_provenance_path(run_dir)
@@ -248,33 +244,16 @@ def _resolve_predictions_path(
 
 def _metrics_payload_from_summaries(
     summaries: dict[str, pd.DataFrame],
-    *,
-    target_col: str,
 ) -> dict[str, object]:
-    metrics_corr = summaries["corr"].loc["prediction"].to_dict()
-    metrics_fnc = summaries["fnc"].loc["prediction"].to_dict()
-    metrics_mmc = summaries["mmc"].loc["prediction"].to_dict()
-    metrics_cwmm = summaries["cwmm"].loc["prediction"].to_dict()
-    metrics_bmc = summaries["bmc"].loc["prediction"].to_dict()
-    metrics_bmc_200 = summaries["bmc_last_200_eras"].loc["prediction"].to_dict()
-    payout_estimate_mean = (
-        _clip_payout_estimate_mean(
-            corr_mean=_coerce_finite_float(metrics_corr.get("mean")),
-            mmc_mean=_coerce_finite_float(metrics_mmc.get("mean")),
-        )
-        if _is_classic_payout_target(target_col)
-        else None
-    )
-    return {
-        "corr": metrics_corr,
-        "fnc": metrics_fnc,
-        "mmc": metrics_mmc,
-        "cwmm": metrics_cwmm,
-        "bmc": metrics_bmc,
-        "bmc_last_200_eras": metrics_bmc_200,
-        "payout_estimate": {"mean": payout_estimate_mean},
-        "payout_estimate_mean": payout_estimate_mean,
-    }
+    payload: dict[str, object] = {}
+    for metric_name, summary in summaries.items():
+        if "prediction" in summary.index:
+            payload[metric_name] = summary.loc["prediction"].to_dict()
+            continue
+        if len(summary.index) != 1:
+            raise TrainingError(f"training_score_metric_row_missing_prediction:{metric_name}")
+        payload[metric_name] = summary.iloc[0].to_dict()
+    return payload
 
 
 def _updated_scoring_payload(
@@ -291,31 +270,10 @@ def _updated_scoring_payload(
     payload["effective_backend"] = effective_backend
     payload["policy"] = {
         "fnc_feature_set": policy.fnc_feature_set,
-        "benchmark_overlap_policy": policy.benchmark_overlap_policy,
-        "meta_overlap_policy": policy.meta_overlap_policy,
+        "benchmark_min_overlap_ratio": policy.benchmark_min_overlap_ratio,
+        "meta_min_overlap_ratio": policy.meta_min_overlap_ratio,
     }
     return payload
-
-
-def _clip_payout_estimate_mean(*, corr_mean: float | None, mmc_mean: float | None) -> float | None:
-    if corr_mean is None or mmc_mean is None:
-        return None
-    payout_mean = (_PAYOUT_CORR_WEIGHT * corr_mean) + (_PAYOUT_MMC_WEIGHT * mmc_mean)
-    return max(min(payout_mean, _PAYOUT_CLIP), -_PAYOUT_CLIP)
-
-
-def _is_classic_payout_target(target_col: str) -> bool:
-    return target_col == _CLASSIC_PAYOUT_TARGET
-
-
-def _coerce_finite_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        casted = float(value)
-        return casted if pd.notna(casted) else None
-    return None
-
 
 def _resolve_scoring_mode(value: object) -> str:
     if value is None:
@@ -360,3 +318,26 @@ def _coerce_required_str(*, value: object, error_code: str) -> str:
         if candidate:
             return candidate
     raise TrainingError(error_code)
+
+
+def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: str) -> tuple[str, ...]:
+    raw = data_config.get("scoring_targets")
+    if raw is None:
+        return tuple(_dedupe_preserve_order([target_col, "target_ender_20"]))
+    if not isinstance(raw, list) or not raw:
+        raise TrainingConfigError("training_scoring_targets_invalid")
+    resolved = [str(item).strip() for item in raw]
+    if any(not item for item in resolved):
+        raise TrainingConfigError("training_scoring_targets_invalid")
+    return tuple(_dedupe_preserve_order(resolved))
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered

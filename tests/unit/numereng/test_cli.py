@@ -116,8 +116,6 @@ def test_cli_run_submit_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exit_code == 2
     assert "missing required argument: --model-name" in captured.err
-
-
 def test_cli_run_submit_boundary_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1343,6 +1341,7 @@ def test_cli_cloud_aws_image_build_push_success(
     ) -> api_module.CloudAwsResponse:
         assert request.run_id == "run-1"
         assert request.repository == "numereng-training"
+        assert request.runtime_profile == "lgbm-cuda"
         return api_module.CloudAwsResponse(
             action="cloud.aws.image.build-push",
             message="image pushed",
@@ -1361,6 +1360,8 @@ def test_cli_cloud_aws_image_build_push_success(
             "run-1",
             "--repository",
             "numereng-training",
+            "--runtime-profile",
+            "lgbm-cuda",
         ]
     )
     payload = _parse_stdout_json(capsys.readouterr().out)
@@ -1376,6 +1377,7 @@ def test_cli_cloud_aws_train_submit_success(
     def fake_cloud_aws_train_submit(request: api_module.AwsTrainSubmitRequest) -> api_module.CloudAwsResponse:
         assert request.run_id == "run-2"
         assert request.backend == "sagemaker"
+        assert request.runtime_profile == "lgbm-cuda"
         assert request.use_spot is False
         return api_module.CloudAwsResponse(
             action="cloud.aws.train.submit",
@@ -1397,6 +1399,8 @@ def test_cli_cloud_aws_train_submit_success(
             "configs/train.json",
             "--image-uri",
             "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+            "--runtime-profile",
+            "lgbm-cuda",
             "--role-arn",
             "arn:aws:iam::123456789012:role/numereng-sagemaker",
             "--on-demand",

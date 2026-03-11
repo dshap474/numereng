@@ -14,6 +14,7 @@ DatasetScope = Literal["train_only", "train_plus_validation"]
 DatasetVariant = Literal["non_downsampled", "downsampled"]
 ParallelBackend = Literal["joblib"]
 CacheMode = Literal["deterministic"]
+ModelDevice = Literal["cpu", "cuda"]
 
 
 class _StrictConfigModel(BaseModel):
@@ -28,6 +29,7 @@ class DataLoadingConfig(_StrictConfigModel):
     mode: DataLoadingMode = "materialized"
     scoring_mode: ScoringMode = "materialized"
     era_chunk_size: int = Field(default=64, ge=1)
+    include_feature_neutral_metrics: bool = True
 
 
 class DataConfig(_StrictConfigModel):
@@ -37,6 +39,7 @@ class DataConfig(_StrictConfigModel):
     dataset_variant: DatasetVariant
     feature_set: str = "small"
     target_col: str = "target"
+    scoring_targets: list[str] | None = None
     target_horizon: Literal["20d", "60d"] | None = None
     era_col: str = "era"
     id_col: str = "id"
@@ -71,6 +74,7 @@ class ModelConfig(_StrictConfigModel):
 
     type: str
     params: dict[str, object]
+    device: ModelDevice | None = None
     x_groups: list[str] | None = None
     data_needed: list[str] | None = None
     module_path: str | None = None
@@ -90,6 +94,29 @@ class ModelConfig(_StrictConfigModel):
             if item in {"benchmark", "benchmarks", "benchmark_models"}:
                 raise ValueError("training_model_x_groups_benchmark_not_supported")
         return normalized
+
+    @field_validator("device", mode="before")
+    @classmethod
+    def _normalize_device(cls, value: object) -> object:
+        if value is None:
+            return value
+        normalized = str(value).strip().lower()
+        if normalized not in {"cpu", "cuda"}:
+            raise ValueError("training_model_device_invalid")
+        return normalized
+
+    @field_validator("params", mode="after")
+    @classmethod
+    def _validate_params_mapping(cls, value: dict[str, object]) -> dict[str, object]:
+        raw_device = value.get("device_type")
+        if raw_device is None:
+            return value
+        normalized = str(raw_device).strip().lower()
+        if normalized not in {"cpu", "gpu", "cuda"}:
+            raise ValueError("training_model_params_device_type_invalid")
+        resolved = dict(value)
+        resolved["device_type"] = normalized
+        return resolved
 
 
 class TrainingEngineConfig(_StrictConfigModel):
@@ -163,6 +190,7 @@ __all__ = [
     "DataLoadingMode",
     "DatasetScope",
     "DatasetVariant",
+    "ModelDevice",
     "ModelBaselineConfig",
     "ModelConfig",
     "OutputConfig",

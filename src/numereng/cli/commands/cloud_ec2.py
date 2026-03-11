@@ -509,7 +509,7 @@ def handle_cloud_ec2_command(args: Sequence[str]) -> int:
     if args[0] == "install":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--instance-id", "--run-id", "--region", "--state-path"},
+            value_flags={"--instance-id", "--run-id", "--region", "--runtime-profile", "--state-path"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -523,6 +523,7 @@ def handle_cloud_ec2_command(args: Sequence[str]) -> int:
                 instance_id=values.get("--instance-id"),
                 run_id=values.get("--run-id"),
                 region=values.get("--region"),
+                runtime_profile=values.get("--runtime-profile"),
                 state_path=values.get("--state-path"),
             )
         except ValidationError as exc:

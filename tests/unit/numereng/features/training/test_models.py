@@ -73,6 +73,32 @@ def test_build_model_data_loader_loads_subset() -> None:
     assert batch.id.tolist() == ["c", "d"]
 
 
+def test_build_model_data_loader_loads_subset_when_id_is_index() -> None:
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "target": [0.1, 0.2, 0.3, 0.4],
+            "feature_1": [1.0, 2.0, 3.0, 4.0],
+        }
+    ).set_index("id")
+    full.index.name = "id"
+
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    batch = loader.load(["era2"])
+    assert batch.X.shape == (2, 1)
+    assert batch.y.tolist() == [0.3, 0.4]
+    assert batch.id is not None
+    assert batch.id.tolist() == ["c", "d"]
+
+
 def test_build_lazy_parquet_data_loader_loads_and_joins_sources(tmp_path: Path) -> None:
     train_path = tmp_path / "train.parquet"
     validation_path = tmp_path / "validation.parquet"

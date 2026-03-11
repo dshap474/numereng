@@ -18,6 +18,7 @@ from numereng.features.feature_neutralization import (
     NeutralizationValidationError,
 )
 from numereng.features.submission import (
+    SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsFileNotFoundError,
     SubmissionPredictionsReadError,
@@ -88,6 +89,8 @@ def submit_predictions(request: SubmissionRequest) -> SubmissionResponse:
         raise PackageError("submission_run_predictions_not_found") from exc
     except SubmissionRunPredictionsNotLiveEligibleError as exc:
         raise PackageError("submission_run_predictions_not_live_eligible") from exc
+    except SubmissionLiveUniverseUnavailableError as exc:
+        raise PackageError("submission_live_universe_unavailable") from exc
     except (NeutralizationValidationError, NeutralizationDataError, NeutralizationExecutionError) as exc:
         raise PackageError(str(exc)) from exc
     except ValueError as exc:
@@ -157,6 +160,9 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
         raise PackageError(str(exc)) from exc
     except Exception as exc:
         raise PackageError(f"training_unexpected_error:{exc.__class__.__name__}") from exc
+
+    if isinstance(result, TrainRunResponse):
+        return result
 
     return TrainRunResponse(
         run_id=result.run_id,

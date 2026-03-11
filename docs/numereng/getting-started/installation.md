@@ -70,7 +70,10 @@ uv run numereng cloud ec2 setup-data --data-version v5.2
 
 ```bash
 uv run numereng cloud aws image build-push --context-dir .
+uv run numereng cloud aws image build-push --context-dir . --runtime-profile lgbm-cuda
 ```
+
+The managed AWS image definitions live under `docker/`.
 
 ### Modal
 

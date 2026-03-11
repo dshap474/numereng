@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, cast
 
+from numereng.config.training import TrainingConfigLoaderError, load_training_config_json
 from numereng.features.cloud.aws.adapters import (
     BatchAdapter,
     BatchJobSpec,
@@ -42,10 +43,12 @@ from numereng.features.cloud.aws.managed_contracts import (
     CloudAwsRequestBase,
     CloudAwsResponse,
     CloudAwsState,
+    CloudRuntimeProfile,
 )
 from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
 from numereng.features.store import StoreCloudJobUpsert, StoreError, index_run, upsert_cloud_job
 from numereng.features.store.layout import ensure_allowed_store_target
+from numereng.features.training.service import resolve_model_config
 
 
 class CloudAwsError(Exception):
@@ -61,6 +64,10 @@ DEFAULT_SAGEMAKER_ROLE_ARN = os.getenv("NUMERENG_AWS_SAGEMAKER_ROLE_ARN", "")
 DEFAULT_BATCH_JOB_QUEUE = os.getenv("NUMERENG_AWS_BATCH_JOB_QUEUE", "")
 DEFAULT_BATCH_JOB_DEFINITION = os.getenv("NUMERENG_AWS_BATCH_JOB_DEFINITION", "")
 DEFAULT_INSTANCE_TYPE = os.getenv("NUMERENG_AWS_SAGEMAKER_INSTANCE_TYPE", "ml.m5.2xlarge") or "ml.m5.2xlarge"
+DEFAULT_RUNTIME_PROFILE: CloudRuntimeProfile = "standard"
+CUDA_RUNTIME_PROFILE: CloudRuntimeProfile = "lgbm-cuda"
+STANDARD_SAGEMAKER_DOCKERFILE = "docker/Dockerfile.sagemaker"
+CUDA_SAGEMAKER_DOCKERFILE = "docker/Dockerfile.sagemaker-lgbm-cuda"
 _DEFAULT_JOB_NAME_PREFIX = "numereng"
 _SAFE_TOKEN = re.compile(r"[^a-zA-Z0-9-]+")
 _SAFE_RUN_ID = re.compile(r"^[\w\-.]+$")
@@ -137,6 +144,62 @@ class CloudAwsManagedService:
             return state.bucket
         return DEFAULT_BUCKET
 
+    def _resolve_runtime_profile(
+        self,
+        explicit: CloudRuntimeProfile | None,
+        state: CloudAwsState | None = None,
+    ) -> CloudRuntimeProfile:
+        if explicit is not None:
+            return explicit
+        if state is not None:
+            return state.runtime_profile
+        return DEFAULT_RUNTIME_PROFILE
+
+    def _default_dockerfile_for_profile(self, context_dir: Path, runtime_profile: CloudRuntimeProfile) -> Path | None:
+        dockerfile_name = (
+            CUDA_SAGEMAKER_DOCKERFILE if runtime_profile == CUDA_RUNTIME_PROFILE else STANDARD_SAGEMAKER_DOCKERFILE
+        )
+        dockerfile_path = context_dir / dockerfile_name
+        if not dockerfile_path.is_file():
+            raise CloudAwsError(f"dockerfile path does not exist: {dockerfile_path}")
+        return dockerfile_path
+
+    def _resolve_config_device(self, request: AwsTrainSubmitRequest) -> str | None:
+        if request.config_path is None:
+            return None
+        try:
+            payload = load_training_config_json(Path(request.config_path))
+        except TrainingConfigLoaderError as exc:
+            raise CloudAwsError(str(exc)) from exc
+        model_payload = payload.get("model")
+        if not isinstance(model_payload, dict):
+            raise CloudAwsError("training_config_model_missing")
+        model_type, model_params = resolve_model_config(model_payload)
+        if model_type != "LGBMRegressor":
+            return None
+        device_type = model_params.get("device_type")
+        if not isinstance(device_type, str):
+            return None
+        return device_type
+
+    def _validate_runtime_profile_for_submit(
+        self,
+        *,
+        backend: Literal["sagemaker", "batch"],
+        runtime_profile: CloudRuntimeProfile,
+        instance_type: str,
+        config_device: str | None,
+    ) -> None:
+        if config_device != "cuda" and runtime_profile == CUDA_RUNTIME_PROFILE:
+            raise CloudAwsError("aws_runtime_profile_requires_cuda_config")
+        if config_device == "cuda":
+            if backend != "sagemaker":
+                raise CloudAwsError("aws_cuda_requires_sagemaker_backend")
+            if runtime_profile != CUDA_RUNTIME_PROFILE:
+                raise CloudAwsError("aws_cuda_requires_runtime_profile_lgbm_cuda")
+            if not instance_type.startswith(("ml.g", "ml.p")):
+                raise CloudAwsError(f"aws_cuda_requires_gpu_instance_type:{instance_type}")
+
     def _require(self, value: str | None, field_name: str) -> str:
         if value is None or not value:
             raise CloudAwsError(f"missing required value: {field_name}")
@@ -164,12 +227,13 @@ class CloudAwsManagedService:
         run_id = request.run_id or state.run_id or self._generated_run_id()
         repository = request.repository or state.repository or DEFAULT_ECR_REPOSITORY
         image_tag = request.image_tag or state.image_tag or _slug_token(run_id)
+        runtime_profile = self._resolve_runtime_profile(request.runtime_profile, state)
 
         context_dir = Path(request.context_dir).expanduser().resolve()
         if not context_dir.is_dir():
             raise CloudAwsError(f"docker build context does not exist: {context_dir}")
 
-        dockerfile_path: Path | None = None
+        dockerfile_path = self._default_dockerfile_for_profile(context_dir, runtime_profile)
         if request.dockerfile is not None:
             dockerfile_path = Path(request.dockerfile).expanduser().resolve()
             if not dockerfile_path.is_file():
@@ -206,6 +270,7 @@ class CloudAwsManagedService:
                 "repository": repository,
                 "image_tag": image_tag,
                 "image_uri": image_uri,
+                "runtime_profile": runtime_profile,
                 "status": "image_pushed",
                 "artifacts": next_artifacts,
             },
@@ -237,6 +302,7 @@ class CloudAwsManagedService:
                 "repository": repository,
                 "image_tag": image_tag,
                 "image_uri": image_uri,
+                "runtime_profile": runtime_profile,
                 "image_digest": digest,
             },
         )
@@ -248,6 +314,15 @@ class CloudAwsManagedService:
         bucket = self._resolve_bucket(request.bucket, state)
         run_id = request.run_id or state.run_id
         run_id = self._require(run_id, "run_id")
+        runtime_profile = self._resolve_runtime_profile(request.runtime_profile, state)
+        config_device = self._resolve_config_device(request)
+        instance_type = request.instance_type or DEFAULT_INSTANCE_TYPE
+        self._validate_runtime_profile_for_submit(
+            backend=backend,
+            runtime_profile=runtime_profile,
+            instance_type=instance_type,
+            config_device=config_device,
+        )
 
         config_uri = self._resolve_config_uri(request=request, run_id=run_id, region=region, bucket=bucket)
         image_uri = request.image_uri or state.image_uri
@@ -285,7 +360,7 @@ class CloudAwsManagedService:
                 input_config_uri=config_uri,
                 output_s3_uri=output_s3_uri,
                 checkpoint_s3_uri=checkpoint_s3_uri,
-                instance_type=request.instance_type or DEFAULT_INSTANCE_TYPE,
+                instance_type=instance_type,
                 instance_count=request.instance_count,
                 volume_size_gb=request.volume_size_gb,
                 max_runtime_seconds=request.max_runtime_seconds,
@@ -309,6 +384,7 @@ class CloudAwsManagedService:
                     "region": region,
                     "bucket": bucket,
                     "image_uri": image_uri,
+                    "runtime_profile": runtime_profile,
                     "training_job_name": training_status.job_name,
                     "training_job_arn": training_status.job_arn,
                     "status": training_status.status,
@@ -346,6 +422,7 @@ class CloudAwsManagedService:
                     "output_s3_uri": output_s3_uri,
                     "checkpoint_s3_uri": checkpoint_s3_uri,
                     "image_uri": image_uri,
+                    "runtime_profile": runtime_profile,
                 },
             )
 
@@ -393,6 +470,7 @@ class CloudAwsManagedService:
                     "region": region,
                     "bucket": bucket,
                     "image_uri": image_uri,
+                    "runtime_profile": runtime_profile,
                     "batch_job_id": batch_job_id,
                     "status": "SUBMITTED",
                     "artifacts": next_artifacts,
@@ -428,6 +506,7 @@ class CloudAwsManagedService:
                     "output_s3_uri": output_s3_uri,
                     "checkpoint_s3_uri": checkpoint_s3_uri,
                     "image_uri": image_uri,
+                    "runtime_profile": runtime_profile,
                 },
             )
 

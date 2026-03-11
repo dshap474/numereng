@@ -163,6 +163,7 @@ class _FakeLogs(CloudWatchLogsAdapter):
 class _FakeDocker(DockerAdapter):
     def __init__(self) -> None:
         self.built: list[str] = []
+        self.dockerfiles: list[Path | None] = []
         self.tagged: list[tuple[str, str]] = []
         self.pushed: list[str] = []
 
@@ -177,6 +178,7 @@ class _FakeDocker(DockerAdapter):
     ) -> None:
         _ = (context_dir, dockerfile, build_args, platform)
         self.built.append(tag)
+        self.dockerfiles.append(dockerfile)
 
     def tag_image(self, *, source_tag: str, target_tag: str) -> None:
         self.tagged.append((source_tag, target_tag))
@@ -220,6 +222,9 @@ def _state_path(tmp_path: Path, name: str = "state.json") -> Path:
 
 def test_image_build_push_happy_path(tmp_path: Path) -> None:
     service, _ecr, _s3, _sm, _batch, _logs, docker = _build_service()
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "Dockerfile.sagemaker").write_text("FROM scratch\n", encoding="utf-8")
 
     response = service.image_build_push(
         AwsImageBuildPushRequest(
@@ -238,11 +243,37 @@ def test_image_build_push_happy_path(tmp_path: Path) -> None:
     assert docker.pushed
 
 
+def test_image_build_push_cuda_profile_uses_cuda_dockerfile(tmp_path: Path) -> None:
+    service, _ecr, _s3, _sm, _batch, _logs, docker = _build_service()
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "Dockerfile.sagemaker").write_text("FROM scratch\n", encoding="utf-8")
+    (docker_dir / "Dockerfile.sagemaker-lgbm-cuda").write_text("FROM scratch\n", encoding="utf-8")
+
+    response = service.image_build_push(
+        AwsImageBuildPushRequest(
+            run_id="run-cuda",
+            context_dir=str(tmp_path),
+            repository="numereng-training",
+            image_tag="cuda",
+            runtime_profile="lgbm-cuda",
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    assert response.state is not None
+    assert response.state.runtime_profile == "lgbm-cuda"
+    assert docker.dockerfiles[-1] == tmp_path / "docker" / "Dockerfile.sagemaker-lgbm-cuda"
+
+
 def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     service, _ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
     config_path = tmp_path / "train.json"
     config_path.write_text(
-        '{"data": {"data_version": "v5.2"}, "model": {"type": "LGBMRegressor", "params": {}}, "training": {}}',
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
         encoding="utf-8",
     )
 
@@ -270,6 +301,83 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     )
     assert status.action == "cloud.aws.train.status"
     assert status.result["status"] == "Completed"
+
+
+def test_train_submit_cuda_requires_cuda_runtime_profile(tmp_path: Path) -> None:
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "device": "cuda", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CloudAwsError, match="aws_cuda_requires_runtime_profile_lgbm_cuda"):
+        service.train_submit(
+            AwsTrainSubmitRequest(
+                run_id="run-cuda",
+                backend="sagemaker",
+                config_path=str(config_path),
+                image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+                role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+                instance_type="ml.g5.2xlarge",
+                store_root=str(tmp_path / ".numereng"),
+            )
+        )
+
+
+def test_train_submit_cuda_rejects_cpu_instance_type(tmp_path: Path) -> None:
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "device": "cuda", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CloudAwsError, match="aws_cuda_requires_gpu_instance_type:ml.m5.2xlarge"):
+        service.train_submit(
+            AwsTrainSubmitRequest(
+                run_id="run-cuda",
+                backend="sagemaker",
+                config_path=str(config_path),
+                image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+                runtime_profile="lgbm-cuda",
+                role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+                instance_type="ml.m5.2xlarge",
+                store_root=str(tmp_path / ".numereng"),
+            )
+        )
+
+
+def test_train_submit_rejects_cuda_runtime_profile_for_cpu_config(tmp_path: Path) -> None:
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CloudAwsError, match="aws_runtime_profile_requires_cuda_config"):
+        service.train_submit(
+            AwsTrainSubmitRequest(
+                run_id="run-cpu",
+                backend="sagemaker",
+                config_path=str(config_path),
+                image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+                runtime_profile="lgbm-cuda",
+                role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+                instance_type="ml.g5.2xlarge",
+                store_root=str(tmp_path / ".numereng"),
+            )
+        )
 
 
 def test_train_logs_and_pull(tmp_path: Path) -> None:

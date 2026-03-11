@@ -10,7 +10,7 @@ from typing import Protocol, runtime_checkable
 import pandas as pd
 
 from numereng.features.training.repo import list_lazy_source_eras, load_fold_data_lazy
-from numereng.features.training.scoring.metrics import attach_benchmark_predictions
+from numereng.features.scoring.metrics import attach_benchmark_predictions
 
 _KNOWN_X_GROUPS = {
     "features",
@@ -45,7 +45,7 @@ class ModelDataLoader:
         X = subset[list(self.x_cols)]
         y = subset[self.target_col]
         era = subset[self.era_col]
-        ids = subset[self.id_col] if self.id_col else None
+        ids = _subset_id_series(subset, self.id_col)
         return ModelDataBatch(X=X, y=y, era=era, id=ids)
 
     def list_eras(self) -> list[object]:
@@ -259,6 +259,16 @@ def _era_sort_key(era: object) -> int | str:
     if isinstance(era, int):
         return era
     return str(era)
+
+
+def _subset_id_series(subset: pd.DataFrame, id_col: str | None) -> pd.Series | None:
+    if not id_col:
+        return None
+    if id_col in subset.columns:
+        return subset[id_col]
+    if subset.index.name == id_col:
+        return subset.index.to_series(index=subset.index, name=id_col)
+    return None
 
 
 def _dedupe_columns(columns: Sequence[str]) -> list[str]:

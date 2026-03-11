@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from numereng.features.models.lgbm import LGBMRegressor
+from numereng.features.training.errors import TrainingModelError
 
 
 class _FakeLGBMError(Exception):
@@ -22,6 +23,11 @@ class _FakeSklearnModel:
 
     def predict(self, *_: object, **__: object) -> list[float]:
         return [0.0]
+
+
+class _FailingCudaModel(_FakeSklearnModel):
+    def fit(self, *_: object, **__: object) -> _FailingCudaModel:
+        raise _FakeLGBMError("CUDA backend unavailable")
 
 
 def _install_fake_lightgbm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,3 +64,15 @@ def test_lgbm_wrapper_keeps_explicit_verbose_alias(monkeypatch: pytest.MonkeyPat
     assert model._params["verbose"] == 1
     assert "verbosity" not in model._model.kwargs
     assert model._model.kwargs["verbose"] == 1
+
+
+def test_lgbm_wrapper_raises_cuda_specific_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_module: Any = types.ModuleType("lightgbm")
+    fake_module.LGBMRegressor = _FailingCudaModel
+    fake_module.basic = types.SimpleNamespace(LightGBMError=_FakeLGBMError)
+    monkeypatch.setitem(sys.modules, "lightgbm", fake_module)
+
+    model = LGBMRegressor(device_type="cuda")
+
+    with pytest.raises(TrainingModelError, match="training_model_cuda_fit_failed"):
+        model.fit(None, None)  # type: ignore[arg-type]

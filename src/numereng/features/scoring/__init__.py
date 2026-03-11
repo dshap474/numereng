@@ -1,11 +1,11 @@
 """Public scoring surface for modular post-training metrics."""
 
-from numereng.features.training.scoring.models import (
+from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
 )
-from numereng.features.training.scoring.service import run_post_training_scoring
+from numereng.features.scoring.service import run_post_training_scoring
 
 __all__ = [
     "PostTrainingScoringRequest",

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pandas.errors import PerformanceWarning
 
-from numereng.features.training.scoring.metrics import attach_fnc_features
+from numereng.features.scoring.metrics import attach_fnc_features
 
 
 def test_attach_fnc_features_does_not_emit_fragmentation_warning() -> None:

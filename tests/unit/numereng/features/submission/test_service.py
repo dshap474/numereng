@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from numereng.features.submission.service import (
+    SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsFileNotFoundError,
     SubmissionPredictionsReadError,
@@ -21,13 +22,39 @@ from numereng.features.submission.service import (
 
 
 class _FakeSubmissionClient:
-    def __init__(self, models: dict[str, str], submission_id: str = "submission-1") -> None:
+    def __init__(
+        self,
+        models: dict[str, str],
+        submission_id: str = "submission-1",
+        *,
+        live_ids: tuple[str, ...] = ("id_1", "id_2"),
+        dataset_names: tuple[str, ...] = ("v5.2/live.parquet",),
+    ) -> None:
         self._models = models
         self._submission_id = submission_id
+        self._live_ids = live_ids
+        self._dataset_names = dataset_names
         self.upload_calls: list[tuple[str, str]] = []
 
     def get_models(self) -> dict[str, str]:
         return dict(self._models)
+
+    def list_datasets(self, round_num: int | None = None) -> list[str]:
+        _ = round_num
+        return list(self._dataset_names)
+
+    def download_dataset(
+        self,
+        filename: str,
+        *,
+        dest_path: str | None = None,
+        round_num: int | None = None,
+    ) -> str:
+        _ = (filename, round_num)
+        if dest_path is None:
+            raise AssertionError("dest_path should always be provided by the service")
+        pd.DataFrame({"id": list(self._live_ids)}).to_parquet(dest_path, index=False)
+        return dest_path
 
     def upload_predictions(self, *, file_path: str, model_id: str) -> str:
         self.upload_calls.append((file_path, model_id))
@@ -58,7 +85,7 @@ def _write_predictions_file(
 
 def test_submit_predictions_file_success(tmp_path: Path) -> None:
     predictions_path = tmp_path / "predictions.csv"
-    predictions_path.write_text("id,prediction\n1,0.1\n", encoding="utf-8")
+    _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"main": "model-1"})
 
     result = submit_predictions_file(
@@ -88,7 +115,7 @@ def test_submit_predictions_file_missing_file(tmp_path: Path) -> None:
 
 def test_submit_predictions_file_missing_model(tmp_path: Path) -> None:
     predictions_path = tmp_path / "predictions.csv"
-    predictions_path.write_text("id,prediction\n1,0.1\n", encoding="utf-8")
+    _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"other": "model-2"})
 
     with pytest.raises(SubmissionModelNotFoundError):
@@ -275,6 +302,47 @@ def test_submit_predictions_file_surfaces_read_failure(tmp_path: Path) -> None:
     client = _FakeSubmissionClient(models={"main": "model-1"})
 
     with pytest.raises(SubmissionPredictionsReadError):
+        submit_predictions_file(
+            predictions_path=predictions_path,
+            model_name="main",
+            client=client,
+        )
+
+
+def test_submit_predictions_file_rejects_predictions_not_in_live_universe(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    pd.DataFrame({"id": ["other_1", "other_2"], "prediction": [0.1, 0.2]}).to_parquet(predictions_path, index=False)
+    client = _FakeSubmissionClient(models={"main": "model-1"})
+
+    with pytest.raises(SubmissionRunPredictionsNotLiveEligibleError):
+        submit_predictions_file(
+            predictions_path=predictions_path,
+            model_name="main",
+            client=client,
+        )
+
+
+def test_submit_predictions_file_allows_non_classic_tournament_without_classic_live_validation(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.csv"
+    _write_predictions_file(predictions_path)
+    client = _FakeSubmissionClient(models={"main": "model-1"}, dataset_names=())
+
+    result = submit_predictions_file(
+        predictions_path=predictions_path,
+        model_name="main",
+        tournament="signals",
+        client=client,
+    )
+
+    assert result.model_id == "model-1"
+
+
+def test_submit_predictions_file_surfaces_live_universe_unavailable(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.csv"
+    _write_predictions_file(predictions_path)
+    client = _FakeSubmissionClient(models={"main": "model-1"}, dataset_names=())
+
+    with pytest.raises(SubmissionLiveUniverseUnavailableError):
         submit_predictions_file(
             predictions_path=predictions_path,
             model_name="main",

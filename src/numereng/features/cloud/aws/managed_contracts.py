@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from numereng.config.training import ensure_json_config_path, ensure_json_config_uri
 
+CloudRuntimeProfile = Literal["standard", "lgbm-cuda"]
+
 
 class CloudAwsState(BaseModel):
     """Serializable state payload for managed AWS command chaining."""
@@ -21,6 +23,7 @@ class CloudAwsState(BaseModel):
     repository: str | None = None
     image_tag: str | None = None
     image_uri: str | None = None
+    runtime_profile: CloudRuntimeProfile = "standard"
     training_job_name: str | None = None
     training_job_arn: str | None = None
     batch_job_id: str | None = None
@@ -65,8 +68,20 @@ class AwsImageBuildPushRequest(CloudAwsRequestBase):
     image_tag: str | None = None
     context_dir: str = "."
     dockerfile: str | None = None
+    runtime_profile: CloudRuntimeProfile = "standard"
     build_args: dict[str, str] = Field(default_factory=dict)
     platform: str | None = None
+
+    @field_validator("runtime_profile", mode="before")
+    @classmethod
+    def _normalize_runtime_profile(cls, value: object) -> object:
+        if value is None:
+            return "standard"
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            if stripped:
+                return stripped
+        return value
 
 
 class AwsTrainSubmitRequest(CloudAwsRequestBase):
@@ -79,6 +94,7 @@ class AwsTrainSubmitRequest(CloudAwsRequestBase):
     config_path: str | None = None
     config_s3_uri: str | None = None
     image_uri: str | None = None
+    runtime_profile: CloudRuntimeProfile | None = None
     role_arn: str | None = None
     instance_type: str = "ml.m5.2xlarge"
     instance_count: int = Field(default=1, ge=1)
@@ -105,6 +121,16 @@ class AwsTrainSubmitRequest(CloudAwsRequestBase):
         if value is None:
             return None
         return ensure_json_config_uri(value, field_name="config_s3_uri")
+
+    @field_validator("runtime_profile", mode="before")
+    @classmethod
+    def _normalize_runtime_profile(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip().lower()
+            return stripped or None
+        return value
 
     @model_validator(mode="after")
     def _validate_payload(self) -> AwsTrainSubmitRequest:

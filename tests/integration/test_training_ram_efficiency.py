@@ -17,7 +17,7 @@ from pandas.testing import assert_frame_equal
 import numereng.api as api_module
 import numereng.features.training.service as training_service_module
 from numereng.api.contracts import TrainRunRequest
-from numereng.features.training.scoring.metrics import summarize_prediction_file_with_scores
+from numereng.features.scoring.metrics import summarize_prediction_file_with_scores
 
 
 @dataclass(frozen=True)
@@ -131,6 +131,7 @@ def _build_training_config(
         "dataset_variant": "non_downsampled",
         "feature_set": "small",
         "target_col": "target",
+        "scoring_targets": ["target"],
         "era_col": "era",
         "id_col": "id",
         "benchmark_data_path": str(dataset.benchmark_path),
@@ -289,6 +290,7 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         predictions_path=predictions_path,
         pred_cols=["prediction"],
         target_col="target",
+        scoring_target_cols=["target"],
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
@@ -307,6 +309,7 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         predictions_path=predictions_path,
         pred_cols=["prediction"],
         target_col="target",
+        scoring_target_cols=["target"],
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
