@@ -9,13 +9,13 @@ import pandas as pd
 import pytest
 
 import numereng.features.training.service as service_module
-from numereng.features.store import StoreError
-from numereng.features.training.errors import TrainingConfigError, TrainingError
 from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
 )
+from numereng.features.store import StoreError
+from numereng.features.training.errors import TrainingConfigError, TrainingError
 from numereng.features.training.strategies.core.protocol import TrainingEnginePlan
 
 

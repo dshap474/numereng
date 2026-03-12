@@ -12,6 +12,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
+from numereng.features.scoring.models import ResolvedScoringPolicy, default_scoring_policy
 from numereng.features.training.client import TrainingDataClient
 from numereng.features.training.errors import TrainingDataError, TrainingMetricsError
 from numereng.features.training.repo import (
@@ -26,7 +27,6 @@ from numereng.features.training.repo import (
     resolve_fold_lazy_source_paths,
     resolve_variant_dataset_filename,
 )
-from numereng.features.scoring.models import ResolvedScoringPolicy, default_scoring_policy
 
 DEFAULT_META_MODEL_COL = "numerai_meta_model"
 

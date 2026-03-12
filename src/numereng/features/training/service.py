@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import logging
 import math
 import os
@@ -12,98 +11,42 @@ from typing import cast
 
 import pandas as pd
 
-from numereng.features.store import StoreError, index_run
-from numereng.features.telemetry import (
-    LocalResourceSampler,
-    LocalRunTelemetrySession,
-    append_log_line,
-    append_resource_sample,
-    begin_local_training_session,
-    capture_local_resource_sample,
-    emit_metric_event,
-    emit_stage_event,
-    get_launch_metadata,
-    mark_job_completed,
-    mark_job_failed,
-    mark_job_running,
-    mark_job_starting,
-    start_local_resource_sampler,
-    stop_local_resource_sampler,
-)
-from numereng.features.training.client import TrainingDataClient, create_training_data_client
-from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions
-from numereng.features.training.errors import TrainingConfigError, TrainingError
-from numereng.features.training.mlflow_tracking import maybe_log_training_run
-from numereng.features.training.models import (
-    FoldJoinColumn,
-    ModelDataLoaderProtocol,
-    TrainingRunResult,
-    build_lazy_parquet_data_loader,
-    build_model_data_loader,
-    build_x_cols,
-    normalize_x_groups,
-)
-from numereng.features.training.repo import (
-    DEFAULT_BENCHMARK_MODEL,
-    DEFAULT_DATASETS_DIR,
-    apply_missing_all_twos_as_nan,
-    ensure_split_dataset_paths,
-    list_lazy_source_eras,
-    load_config,
-    load_features,
-    load_fold_data_lazy,
-    load_full_data,
-    resolve_fold_lazy_source_paths,
-    resolve_metrics_path,
-    resolve_output_locations,
-    resolve_resolved_config_path,
-    resolve_results_path,
-    resolve_run_manifest_path,
-    resolve_score_provenance_path,
-    resolve_variant_dataset_filename,
-    save_metrics,
-    save_predictions,
-    save_resolved_config,
-    save_results,
-    save_run_manifest,
-    save_score_provenance,
-    select_prediction_columns,
-)
-from numereng.features.training.run_lock import (
-    RUN_LOCK_FILENAME,
-    RunLock,
-    acquire_run_lock,
-    build_local_attempt_id,
-    release_run_lock,
-)
-from numereng.features.training.run_log import (
-    initialize_run_log,
-    log_error,
-    log_info,
-    log_stage,
-    resolve_run_log_path,
-)
-from numereng.features.training.run_store import (
-    build_run_manifest,
-    compute_config_hash,
-    compute_run_hash,
-    error_payload,
-    run_id_from_hash,
-)
-from numereng.features.scoring.metrics import (
-    attach_benchmark_predictions,
-    load_custom_benchmark_predictions,
-)
 from numereng.features.scoring.models import (
-    PostTrainingScoringRequest,
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
-from numereng.features.scoring.service import run_post_training_scoring
+from numereng.features.telemetry import (
+    LocalRunTelemetrySession,
+    append_log_line,
+    append_resource_sample,
+    capture_local_resource_sample,
+    emit_metric_event,
+    emit_stage_event,
+    mark_job_completed,
+    mark_job_failed,
+)
+from numereng.features.training.client import TrainingDataClient
+from numereng.features.training.errors import TrainingConfigError, TrainingError
+from numereng.features.training.models import (
+    TrainingRunResult,
+)
+from numereng.features.training.repo import (
+    apply_missing_all_twos_as_nan,
+    load_features,
+    load_full_data,
+    resolve_variant_dataset_filename,
+)
+from numereng.features.training.run_lock import (
+    RUN_LOCK_FILENAME,
+)
+from numereng.features.training.run_log import (
+    log_error,
+    log_info,
+    log_stage,
+)
 from numereng.features.training.strategies import (
     TrainingEnginePlan,
     TrainingProfile,
-    resolve_training_engine,
 )
 
 _MATERIALIZED_LOADING_MODE = "materialized"

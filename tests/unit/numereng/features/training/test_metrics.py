@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from pandas.testing import assert_frame_equal
 from numerai_tools.scoring import (
     correlation_contribution,
     feature_neutral_corr,
@@ -14,9 +13,9 @@ from numerai_tools.scoring import (
     pearson_correlation,
     tie_kept_rank__gaussianize__pow_1_5,
 )
+from pandas.testing import assert_frame_equal
 
 import numereng.features.scoring.metrics as metrics_module
-from numereng.features.training.errors import TrainingDataError, TrainingMetricsError
 from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,
     ensure_full_benchmark_models,
@@ -25,6 +24,7 @@ from numereng.features.scoring.metrics import (
     summarize_prediction_file_with_scores,
     validate_join_source_coverage,
 )
+from numereng.features.training.errors import TrainingDataError, TrainingMetricsError
 
 
 class _FakeClient:

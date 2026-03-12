@@ -9,6 +9,11 @@ from typing import cast
 
 import pandas as pd
 
+from numereng.features.scoring.models import (
+    PostTrainingScoringRequest,
+    ResolvedScoringPolicy,
+)
+from numereng.features.scoring.service import run_post_training_scoring
 from numereng.features.store import StoreError, index_run, resolve_store_root
 from numereng.features.training.client import create_training_data_client
 from numereng.features.training.errors import TrainingConfigError, TrainingError
@@ -24,11 +29,6 @@ from numereng.features.training.repo import (
     save_score_provenance,
 )
 from numereng.features.training.run_log import log_error, log_info, resolve_run_log_path
-from numereng.features.scoring.models import (
-    PostTrainingScoringRequest,
-    ResolvedScoringPolicy,
-)
-from numereng.features.scoring.service import run_post_training_scoring
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
