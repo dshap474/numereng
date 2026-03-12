@@ -27,7 +27,10 @@
     },
     "model.params.boosting_type": {
       "type": "categorical",
-      "choices": ["gbdt", "dart"]
+      "choices": [
+        "gbdt",
+        "dart"
+      ]
     }
   },
   "neutralization": {

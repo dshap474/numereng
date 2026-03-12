@@ -12,6 +12,9 @@ Canonical skill for safe maintenance of numereng local store state.
 Run from:
 - `<repo>`
 
+Use this only after the experiment/runtime contract is clear. For experiment layout, config
+schema, template files, and run artifact expectations, use `numereng-experiment-ops`.
+
 Use this skill when requests involve:
 - store drift diagnosis
 - run/index mismatch repair
@@ -28,6 +31,9 @@ In scope:
 - post-mutation verification
 
 Out of scope:
+- experiment strategy
+- config schema or template authoring
+- experiment directory/bootstrap conventions
 - schema migration authoring
 - cloud archival/backfill strategy
 - product feature implementation in `src/numereng/*`
