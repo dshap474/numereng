@@ -51,7 +51,6 @@ from numereng.features.training.repo import (
     resolve_fold_lazy_source_paths,
     resolve_metrics_path,
     resolve_output_locations,
-    resolve_predictions_path,
     resolve_resolved_config_path,
     resolve_results_path,
     resolve_run_manifest_path,
@@ -80,7 +79,6 @@ from numereng.features.training.run_store import (
 )
 from numereng.features.training.service import (
     _FOLD_LAZY_LOADING_MODE,
-    _FULL_HISTORY_REFIT_PROFILE,
     _MATERIALIZED_LOADING_MODE,
     _SIMPLE_PROFILE,
     _apply_resource_policy,
@@ -465,7 +463,9 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
     else:
         if state.nan_missing_all_twos:
             raise TrainingConfigError("training_data_loading_fold_lazy_disallows_nan_missing_all_twos")
-        state.lazy_include_validation_only = state.full_data_path is None and state.dataset_scope == "train_plus_validation"
+        state.lazy_include_validation_only = (
+            state.full_data_path is None and state.dataset_scope == "train_plus_validation"
+        )
         state.source_paths = resolve_fold_lazy_source_paths(
             cast(TrainingDataClient, state.training_client),
             state.data_version,
@@ -684,7 +684,11 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    state.results_path = resolve_results_path(cast(dict[str, object], state.config), state.config_path, cast(Path, state.results_dir))
+    state.results_path = resolve_results_path(
+        cast(dict[str, object], state.config),
+        state.config_path,
+        cast(Path, state.results_dir),
+    )
     results = build_results_payload(
         model_type=state.model_type,
         model_params=state.model_params,

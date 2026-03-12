@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 def capabilities_payload() -> dict[str, bool]:
     """Return capability flags consumed by the frontend."""
 

@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 import numereng.features.scoring.run_service as run_score_module
-from numereng.features.training.errors import TrainingError
 from numereng.features.scoring.models import PostTrainingScoringResult, ResolvedScoringPolicy
+from numereng.features.training.errors import TrainingError
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:

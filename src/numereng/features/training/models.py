@@ -9,8 +9,8 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from numereng.features.training.repo import list_lazy_source_eras, load_fold_data_lazy
 from numereng.features.scoring.metrics import attach_benchmark_predictions
+from numereng.features.training.repo import list_lazy_source_eras, load_fold_data_lazy
 
 _KNOWN_X_GROUPS = {
     "features",

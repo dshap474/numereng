@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from numereng.features.training.client import TrainingDataClient
 from numereng.features.scoring.metrics import summarize_prediction_file_with_scores
 from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
@@ -12,6 +11,7 @@ from numereng.features.scoring.models import (
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
+from numereng.features.training.client import TrainingDataClient
 
 
 def run_post_training_scoring(
