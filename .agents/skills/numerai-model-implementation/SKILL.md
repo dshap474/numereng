@@ -1,64 +1,91 @@
 ---
 name: numerai-model-implementation
-description: Add a new numereng training model type end-to-end through custom model wrappers or built-in registry wiring, then validate with run/train and unit tests.
+description: "Add a new numereng training model type by copying the tracked template, wiring config correctly, and validating it with the current training pipeline."
 user-invocable: true
 ---
 
 # Numerai Model Implementation
 
-Implement a new training model type for the current numereng architecture.
+Use this skill to add a model that works with the current numereng training pipeline.
 
 Run from:
 - `<repo>`
 
-## Contract Guardrails
+## Use when
+- the user wants to add a new model type to numereng
+- the user needs to know how custom models under `custom_models/` should be written
+- the user needs the correct config and validation path for a new model adapter
 
-- Keep dependency direction: `config -> platform -> features -> api -> cli`.
-- Preferred extension path is plugin modules under:
-  - `src/numereng/features/models/custom_models/`
-- Training config input is JSON-only (`.json`), unknown keys are forbidden.
-- Canonical model inputs are features-only; model wrappers must not depend on `era` or `id` being present in `X`.
-- Keep CLI/API surfaces unchanged unless explicitly requested.
-- Use project-managed env and commands:
-  - `uv sync --extra dev`
-  - `uv run ...`
+## Do not use when
+- the user is choosing experiment rounds or model strategy; use `experiment-design`
+- the user needs experiment layout, config templates, or runtime contracts; use
+  `numereng-experiment-ops`
+- the user is debugging store drift, resets, or cleanup; use `store-ops`
+- the user is preparing submissions or pickle deployment; use `numerai-model-upload`
 
-## Canonical Extension Points
+## Happy Path
 
-- Model wrappers:
-  - built-in: `src/numereng/features/models/lgbm.py`
-  - custom: `src/numereng/features/models/custom_models/*.py`
-- Model dispatch:
+Default path for a new custom model:
+
+1. Copy `src/numereng/features/models/custom_models/template_model.py`.
+2. Rename the class and `MODEL_REGISTRY` key to the real model type.
+3. Replace the placeholder `fit` and `predict` logic with the real estimator.
+4. Add a config with:
+   - `model.type`
+   - `model.params`
+   - optional `model.module_path`
+5. Run:
+   - `uv run numereng run train --config <config.json>`
+6. Run:
+   - `uv run pytest tests/unit/numereng/features/training/test_model_factory.py`
+
+Use the tracked template first. Reach for built-in wiring only when the model should become a
+first-class shared repo default.
+
+## Canonical Files
+
+- Tracked starter template:
+  - `src/numereng/features/models/custom_models/template_model.py`
+- Local optional examples:
+  - `src/numereng/features/models/custom_models/xgboost_model.py`
+  - `src/numereng/features/models/custom_models/catboost_model.py`
+- Plugin discovery and built-in registry:
   - `src/numereng/features/training/model_factory.py`
-- Training model contract:
-  - `src/numereng/config/training/contracts.py` (`model.type`, `model.params`, optional `model.module_path`)
-- Existing tests:
+- Training config contract:
+  - `src/numereng/config/training/contracts.py`
+- Custom-model doc:
+  - `src/numereng/features/models/CUSTOM_MODELS.md`
+- Focused test:
   - `tests/unit/numereng/features/training/test_model_factory.py`
 
 ## Implementation Workflow
 
 1. Choose model integration mode.
-- Default: custom plugin module in `custom_models/` with `MODEL_REGISTRY`.
-- Built-in: only when this model should ship as a first-class package default.
+- Default: custom plugin in `src/numereng/features/models/custom_models/`
+- Built-in: only when the model should ship as shared repo behavior via `_BUILTIN_MODELS`
 
-2. Add/implement model wrapper.
-- Create `src/numereng/features/models/custom_models/<model_name>.py`.
+2. Start from the tracked template.
+- Copy `src/numereng/features/models/custom_models/template_model.py` to a new module file.
 - Wrapper class requirements:
   - `__init__(self, feature_cols: list[str] | None = None, **params)`
   - `fit(self, X, y, **kwargs)`
   - `predict(self, X)`
+- Filter `X` by `feature_cols` when it is provided.
 - Export `MODEL_REGISTRY = {"YourModelType": YourModelClass}`.
-- Raise `TrainingModelError("training_model_backend_missing_<backend>")` when backend dependency import fails.
+- If an optional backend import is required, raise:
+  - `TrainingModelError("training_model_backend_missing_<backend>")`
 
-3. Wire model resolution (only if needed).
+3. Decide whether explicit `module_path` is needed.
 - Plugin path:
-  - no model factory code change needed if `MODEL_REGISTRY` is present and config uses `module_path` or autodiscovery.
+  - no `model_factory.py` change needed if `MODEL_REGISTRY` is present
+  - use `model.module_path` when you want explicit resolution
+  - omit `model.module_path` when discovery from `custom_models/` is sufficient
 - Built-in path:
-  - add wrapper file under `src/numereng/features/models/`
+  - add the wrapper under `src/numereng/features/models/`
   - register model in `_BUILTIN_MODELS` in `src/numereng/features/training/model_factory.py`
-  - add focused tests in `test_model_factory.py`
+  - add focused coverage in `tests/unit/numereng/features/training/test_model_factory.py`
 
-4. Add JSON config using the new model type.
+4. Add a training config.
 - Required keys:
   - `model.type`
   - `model.params`
@@ -76,12 +103,9 @@ Example:
     "target_col": "target"
   },
   "model": {
-    "type": "XGBoostRegressor",
-    "module_path": "src/numereng/features/models/custom_models/xgboost_model.py",
-    "params": {
-      "n_estimators": 500,
-      "learning_rate": 0.05
-    }
+    "type": "YourModelType",
+    "module_path": "src/numereng/features/models/custom_models/your_model.py",
+    "params": {}
   },
   "training": {
     "engine": {
@@ -92,22 +116,27 @@ Example:
 ```
 
 5. Validate end-to-end behavior.
-- Fast unit target:
-  - `uv run pytest tests/unit/numereng/features/training/test_model_factory.py`
 - Train smoke:
   - `uv run numereng run train --config <config.json>`
-- Full fast gate:
+- Focused unit test:
+  - `uv run pytest tests/unit/numereng/features/training/test_model_factory.py`
+- Optional broader gate:
   - `make test`
 
-6. Verify run artifacts and model metadata.
-- Confirm run indexed and artifacts written under:
-  - `.numereng/runs/<run_id>/`
-- Confirm `run.json`/results payload records expected:
+6. Verify numereng output.
+- Confirm the run writes under `.numereng/runs/<run_id>/`.
+- Confirm `run.json` records:
   - `model.type`
   - `model.params`
-  - implemented model extras copied from config (for example `target_transform`, when configured)
+  - any model-specific extras that should survive config resolution
 
-## Error Reference
+## Tracked vs local model files
+
+- `template_model.py` is tracked on purpose so the repo always has one stable reference example.
+- Most files in `custom_models/` remain local by default because the directory is gitignored.
+- Commit a custom model file only when it is intended to become shared repo behavior.
+
+## Troubleshooting
 
 - `training_model_custom_module_not_found:<path>`
 - `training_model_registry_missing_or_invalid:<path>`
@@ -117,9 +146,25 @@ Example:
 - `training_model_backend_missing_xgboost`
 - `training_model_backend_missing_catboost`
 
+Use these errors to decide whether the problem is:
+- path resolution
+- missing `MODEL_REGISTRY`
+- wrong `model.type`
+- invalid wrapper shape
+- missing optional backend dependency
+
+## Output Contract
+
+Return:
+- the chosen integration mode: plugin or built-in
+- the exact file to start from
+- the required config fields
+- the exact smoke-test and unit-test commands
+- the expected numereng artifacts to verify
+
 ## Done Criteria
 
 - New model type can be selected with `model.type` in JSON config.
 - Training succeeds via `uv run numereng run train --config ...`.
-- `test_model_factory.py` covers the new path and error behavior.
+- `tests/unit/numereng/features/training/test_model_factory.py` covers the new path and error behavior.
 - No API/CLI contract regressions.

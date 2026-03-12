@@ -26,6 +26,17 @@ User custom model modules must live under:
 
 The previous path `src/numereng/features/custom_models/` is no longer used.
 
+Golden path:
+
+1. Copy `src/numereng/features/models/custom_models/template_model.py`
+2. Rename the class and `MODEL_REGISTRY` key
+3. Replace the placeholder `fit` / `predict`
+4. Add a config with `model.type` and optional `model.module_path`
+5. Smoke test with `uv run numereng run train --config <config.json>`
+
+Treat `template_model.py` as the tracked reference example. Treat other files in
+`custom_models/` as optional local examples.
+
 ## How Custom Model Discovery Works
 
 Model resolution happens in `features/training/model_factory.py`:
@@ -54,23 +65,26 @@ Each registered model class must:
 - accept `feature_cols=None` and `**params` in `__init__`
 - implement `fit(...)`
 - implement `predict(...)`
+- filter `X` by `feature_cols` when it is provided
 
 Minimal template:
 
 ```python
-class MyModelClass:
+class TemplateModel:
     def __init__(self, feature_cols=None, **params):
         self.feature_cols = feature_cols
         self.params = params
 
     def fit(self, X, y, **kwargs):
+        filtered_X = X if not self.feature_cols else X[self.feature_cols]
         return self
 
     def predict(self, X):
-        return [0.0] * len(X)
+        filtered_X = X if not self.feature_cols else X[self.feature_cols]
+        return [0.0] * len(filtered_X)
 
 
-MODEL_REGISTRY = {"MyModelType": MyModelClass}
+MODEL_REGISTRY = {"TemplateModel": TemplateModel}
 ```
 
 ## Config Example (JSON)
@@ -78,10 +92,9 @@ MODEL_REGISTRY = {"MyModelType": MyModelClass}
 ```json
 {
   "model": {
-    "type": "XGBoostRegressor",
-    "module_path": "src/numereng/features/models/custom_models/xgboost_model.py",
+    "type": "YourModelType",
+    "module_path": "src/numereng/features/models/custom_models/your_model.py",
     "params": {
-      "n_estimators": 500,
       "learning_rate": 0.05
     }
   }
@@ -105,5 +118,5 @@ By default, `.gitignore` ignores this directory:
 
 - `src/numereng/features/models/custom_models/`
 
-Only template scaffolding is tracked by default (`.gitkeep`, `template_model.py`).
-This keeps user-specific model code local unless intentionally committed.
+`template_model.py` is the tracked exception and should remain the canonical reference example.
+User-specific model files stay local by default unless intentionally committed as shared repo code.

@@ -105,9 +105,9 @@ Artifact checklist:
 
 ## Next Experiments
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 ## Repro Commands
 
