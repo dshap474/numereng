@@ -7,15 +7,15 @@
 	interface Run {
 		run_id: string;
 		config_name?: string;
-		corr20v2_mean: number;
+		corr_mean: number;
 		mmc_mean: number;
 		model_type: string;
 		target: string;
 		entity_type?: EntityType;
-		corr20v2_sharpe?: number | null;
-		payout_estimate_mean?: number | null;
+		corr_sharpe?: number | null;
 		mmc_coverage_ratio_rows?: number | null;
 		bmc_mean?: number | null;
+		bmc_last_200_eras_mean?: number | null;
 		max_drawdown?: number | null;
 	}
 
@@ -188,8 +188,8 @@
 		let yMin = Infinity;
 		let yMax = -Infinity;
 		for (const run of runs) {
-			xMin = Math.min(xMin, run.corr20v2_mean);
-			xMax = Math.max(xMax, run.corr20v2_mean);
+			xMin = Math.min(xMin, run.corr_mean);
+			xMax = Math.max(xMax, run.corr_mean);
 			yMin = Math.min(yMin, run.mmc_mean);
 			yMax = Math.max(yMax, run.mmc_mean);
 		}
@@ -232,8 +232,8 @@
 		let yMin = Infinity;
 		let yMax = -Infinity;
 		for (const run of runs) {
-			xMin = Math.min(xMin, run.corr20v2_mean);
-			xMax = Math.max(xMax, run.corr20v2_mean);
+			xMin = Math.min(xMin, run.corr_mean);
+			xMax = Math.max(xMax, run.corr_mean);
 			yMin = Math.min(yMin, run.mmc_mean);
 			yMax = Math.max(yMax, run.mmc_mean);
 		}
@@ -311,7 +311,7 @@
 	{#snippet runTooltip({ context }: { context: any })}
 		{@const d = context.tooltip?.data as Run | undefined}
 		{#if d}
-			{@const rawPayout = corrWeight * d.corr20v2_mean + mmcWeight * d.mmc_mean}
+			{@const proxyScore = corrWeight * d.corr_mean + mmcWeight * d.mmc_mean}
 			<Tooltip.Root {context}>
 				{#snippet children({ data })}
 					<div class="text-xs space-y-1">
@@ -320,21 +320,20 @@
 						</div>
 						<div class="text-[10px] text-muted-foreground font-mono truncate max-w-56" title={d.run_id}>{d.run_id}</div>
 						<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
-							<span class="text-muted-foreground">CORR</span><span class="tabular-nums">{d.corr20v2_mean?.toFixed(5)}</span>
+							<span class="text-muted-foreground">CORR</span><span class="tabular-nums">{d.corr_mean?.toFixed(5)}</span>
 							<span class="text-muted-foreground">MMC</span><span class="tabular-nums">{d.mmc_mean?.toFixed(5)}</span>
-							<span class="text-muted-foreground">Raw Payout</span><span class="tabular-nums">{rawPayout.toFixed(5)}</span>
-							{#if d.payout_estimate_mean != null}
-								<span class="text-muted-foreground">Payout Est</span><span class="tabular-nums">{d.payout_estimate_mean.toFixed(5)}</span>
-								<span class="text-muted-foreground">Raw - Est</span><span class="tabular-nums">{(rawPayout - d.payout_estimate_mean).toFixed(5)}</span>
-							{/if}
+							<span class="text-muted-foreground">Proxy</span><span class="tabular-nums">{proxyScore.toFixed(5)}</span>
 							{#if d.mmc_coverage_ratio_rows != null}
 								<span class="text-muted-foreground">MMC Coverage</span><span class="tabular-nums">{d.mmc_coverage_ratio_rows.toFixed(3)}</span>
 							{/if}
-							{#if d.corr20v2_sharpe != null}
-							<span class="text-muted-foreground">CORR Sharpe</span><span class="tabular-nums">{d.corr20v2_sharpe.toFixed(3)}</span>
+							{#if d.corr_sharpe != null}
+							<span class="text-muted-foreground">CORR Sharpe</span><span class="tabular-nums">{d.corr_sharpe.toFixed(3)}</span>
 						{/if}
 						{#if d.bmc_mean != null}
-							<span class="text-muted-foreground">BMC (Diag)</span><span class="tabular-nums">{d.bmc_mean.toFixed(5)}</span>
+							<span class="text-muted-foreground">BMC Mean</span><span class="tabular-nums">{d.bmc_mean.toFixed(5)}</span>
+						{/if}
+						{#if d.bmc_last_200_eras_mean != null}
+							<span class="text-muted-foreground">BMC Last 200</span><span class="tabular-nums">{d.bmc_last_200_eras_mean.toFixed(5)}</span>
 						{/if}
 						{#if d.max_drawdown != null}
 							<span class="text-muted-foreground">Max DD</span><span class="tabular-nums">{d.max_drawdown.toFixed(4)}</span>
@@ -350,14 +349,14 @@
 		<div class="relative min-h-0 flex-1 min-w-0">
 			{#if showIsoLines && runs.length > 0}
 				<div class="pointer-events-none absolute left-3 top-2 z-10 rounded bg-background/80 px-2 py-1 text-[10px] text-muted-foreground">
-					Iso-lines: raw payout score (unclipped) = {corrWeight.toFixed(2)}*CORR + {mmcWeight.toFixed(2)}*MMC
+					Iso-lines: payout proxy = {corrWeight.toFixed(2)}*CORR + {mmcWeight.toFixed(2)}*MMC
 				</div>
 			{/if}
 		{#if runs.length > 0}
 				{#if seriesConfig}
 					<ScatterChart
 						data={runs}
-						x="corr20v2_mean"
+						x="corr_mean"
 						y="mmc_mean"
 					xDomain={paddedDomains?.xDomain}
 					yDomain={paddedDomains?.yDomain}
@@ -380,7 +379,7 @@
 							{@const op = hl ? (s.key === hl ? 1 : 0.15) : 0.85}
 							{@const r = hl ? (s.key === hl ? 7 : 4) : 5}
 							{#each s.data ?? [] as d (d.run_id)}
-								{@const cx = context.xScale(d.corr20v2_mean)}
+								{@const cx = context.xScale(d.corr_mean)}
 								{@const cy = context.yScale(d.mmc_mean)}
 								<circle {cx} {cy} {r} fill={color} opacity={op} />
 							{/each}
@@ -390,7 +389,7 @@
 				{:else}
 					<ScatterChart
 						data={runs}
-						x="corr20v2_mean"
+						x="corr_mean"
 						y="mmc_mean"
 					xDomain={paddedDomains?.xDomain}
 					yDomain={paddedDomains?.yDomain}
@@ -407,7 +406,7 @@
 					{/snippet}
 						{#snippet marks({ context })}
 							{#each runs as d (d.run_id)}
-								{@const cx = context.xScale(d.corr20v2_mean)}
+								{@const cx = context.xScale(d.corr_mean)}
 								{@const cy = context.yScale(d.mmc_mean)}
 								<circle {cx} {cy} r="5" fill="var(--color-primary)" opacity="0.85" />
 							{/each}

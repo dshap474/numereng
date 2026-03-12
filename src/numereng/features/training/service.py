@@ -518,9 +518,9 @@ def _telemetry_metric_payload(metrics_payload: dict[str, object]) -> dict[str, o
         corr_mean = _coerce_finite_float(corr_obj.get("mean"))
         corr_sharpe = _coerce_finite_float(corr_obj.get("sharpe"))
         if corr_mean is not None:
-            payload["corr20v2_mean"] = corr_mean
+            payload["corr_mean"] = corr_mean
         if corr_sharpe is not None:
-            payload["corr20v2_sharpe"] = corr_sharpe
+            payload["corr_sharpe"] = corr_sharpe
     fnc_obj = metrics_payload.get("fnc")
     if isinstance(fnc_obj, dict):
         fnc_mean = _coerce_finite_float(fnc_obj.get("mean"))
@@ -536,6 +536,11 @@ def _telemetry_metric_payload(metrics_payload: dict[str, object]) -> dict[str, o
         bmc_mean = _coerce_finite_float(bmc_obj.get("mean"))
         if bmc_mean is not None:
             payload["bmc_mean"] = bmc_mean
+    bmc_last_200_obj = metrics_payload.get("bmc_last_200_eras")
+    if isinstance(bmc_last_200_obj, dict):
+        bmc_last_200_mean = _coerce_finite_float(bmc_last_200_obj.get("mean"))
+        if bmc_last_200_mean is not None:
+            payload["bmc_last_200_eras_mean"] = bmc_last_200_mean
     feature_exposure_obj = metrics_payload.get("feature_exposure")
     if isinstance(feature_exposure_obj, dict):
         feature_exposure_mean = _coerce_finite_float(feature_exposure_obj.get("mean"))

@@ -58,9 +58,9 @@
 	const ACTIVE_JOB_STATUSES = new Set(['queued', 'starting', 'running', 'canceling']);
 	const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'canceled', 'stale']);
 
-	let sortColumn = $state('corr20v2_sharpe');
+	let sortColumn = $state('bmc_last_200_eras_mean');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
-	let chartTab = $state<'composite' | 'charts'>('composite');
+	let chartTab = $state<'composite' | 'charts'>('charts');
 	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
 	let runOpsView = $state<'table' | 'chart'>('table');
 	let runOpsMetricMode = $state<'main' | 'all'>('main');
@@ -94,7 +94,6 @@
 
 	type OpType = 'run' | 'hpo' | 'ensemble';
 	let selectedOp = $state<{ id: string; type: OpType } | null>(null);
-	let payoutWeights = $state({ corr_weight: 0.75, mmc_weight: 2.25, clip: 0.05 });
 	let readOnly = $derived(Boolean(data.capabilities?.read_only));
 
 	let monitorTab = $state<'events' | 'logs' | 'resources'>('events');
@@ -206,22 +205,22 @@
 		return sortedOps.find((item) => item.op_id === current.id && item.op_type === current.type) ?? null;
 	});
 
-	let payoutRuns = $derived.by(() => {
+	let bmcRuns = $derived.by(() => {
 		const runPoints = data.runs
-			.filter((r) => metricNumber(r.metrics, 'payout_estimate_mean') != null)
+			.filter((r) => metricNumber(r.metrics, 'bmc_last_200_eras_mean') != null)
 			.map((r) => ({
 				run_id: r.run_id,
 				run_name: r.run_name ?? undefined,
-				composite: metricNumber(r.metrics, 'payout_estimate_mean') ?? 0,
+				composite: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
 				is_champion: r.is_champion
 			}));
 
 		const roundPoints = data.roundResults
-			.filter((r) => metricNumber(r.metrics, 'payout_estimate_mean') != null)
+			.filter((r) => metricNumber(r.metrics, 'bmc_last_200_eras_mean') != null)
 			.map((r) => ({
 				run_id: r.run_id,
 				run_name: r.name,
-				composite: metricNumber(r.metrics, 'payout_estimate_mean') ?? 0,
+				composite: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
 				is_champion: false
 			}));
 
@@ -355,7 +354,7 @@
 		const runPoints = data.runs
 			.filter(
 				(r) =>
-					metricNumber(r.metrics, 'corr20v2_mean') != null &&
+					metricNumber(r.metrics, 'corr_mean') != null &&
 					metricNumber(r.metrics, 'mmc_mean') != null
 			)
 				.map((r) => ({
@@ -364,21 +363,21 @@
 						configNameByRunId.get(r.run_id) ??
 						r.run_name ??
 						`${r.model_type ?? 'unknown'} · ${targetLabel(r)}`,
-					corr20v2_mean: metricNumber(r.metrics, 'corr20v2_mean') ?? 0,
+					corr_mean: metricNumber(r.metrics, 'corr_mean') ?? 0,
 					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
 					model_type: r.model_type ?? 'unknown',
 				target: targetLabel(r),
 				entity_type: hpoBestRunIds.has(r.run_id) ? ('hpo_best' as const) : ('run' as const),
-				payout_estimate_mean: metricNumber(r.metrics, 'payout_estimate_mean'),
 				mmc_coverage_ratio_rows: metricNumber(r.metrics, 'mmc_coverage_ratio_rows'),
 				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
-				corr20v2_sharpe: metricNumber(r.metrics, 'corr20v2_sharpe'),
+				bmc_last_200_eras_mean: metricNumber(r.metrics, 'bmc_last_200_eras_mean'),
+				corr_sharpe: metricNumber(r.metrics, 'corr_sharpe'),
 				max_drawdown: metricNumber(r.metrics, 'max_drawdown')
 			}));
 		const roundPoints = data.roundResults
 			.filter(
 				(r) =>
-					metricNumber(r.metrics, 'corr20v2_mean') != null &&
+					metricNumber(r.metrics, 'corr_mean') != null &&
 					metricNumber(r.metrics, 'mmc_mean') != null
 			)
 				.map((r) => ({
@@ -387,35 +386,35 @@
 						configNameByRunId.get(r.run_id) ??
 						r.name ??
 						`${r.model_type ?? 'derived'} · ${r.target ?? '-'}`,
-					corr20v2_mean: metricNumber(r.metrics, 'corr20v2_mean') ?? 0,
+					corr_mean: metricNumber(r.metrics, 'corr_mean') ?? 0,
 					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
 					model_type: r.model_type ?? 'derived',
 				target: r.target ?? '-',
 				entity_type: 'run' as const,
-				payout_estimate_mean: metricNumber(r.metrics, 'payout_estimate_mean'),
 				mmc_coverage_ratio_rows: metricNumber(r.metrics, 'mmc_coverage_ratio_rows'),
 				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
-				corr20v2_sharpe: metricNumber(r.metrics, 'corr20v2_sharpe'),
+				bmc_last_200_eras_mean: metricNumber(r.metrics, 'bmc_last_200_eras_mean'),
+				corr_sharpe: metricNumber(r.metrics, 'corr_sharpe'),
 				max_drawdown: metricNumber(r.metrics, 'max_drawdown')
 			}));
 		const ensemblePoints = data.ensembles
 			.filter(
 				(e) =>
-					metricNumber(e.metrics, 'corr20v2_mean') != null &&
+					metricNumber(e.metrics, 'corr_mean') != null &&
 					metricNumber(e.metrics, 'mmc_mean') != null
 			)
 				.map((e) => ({
 					run_id: e.ensemble_id,
 					config_name: e.name ?? 'ensemble',
-					corr20v2_mean: metricNumber(e.metrics, 'corr20v2_mean') ?? 0,
+					corr_mean: metricNumber(e.metrics, 'corr_mean') ?? 0,
 					mmc_mean: metricNumber(e.metrics, 'mmc_mean') ?? 0,
 				model_type: e.method ?? 'ensemble',
 				target: 'ensemble',
 				entity_type: 'ensemble' as const,
-				payout_estimate_mean: metricNumber(e.metrics, 'payout_estimate_mean'),
 				mmc_coverage_ratio_rows: metricNumber(e.metrics, 'mmc_coverage_ratio_rows'),
 				bmc_mean: metricNumber(e.metrics, 'bmc_mean'),
-				corr20v2_sharpe: metricNumber(e.metrics, 'corr20v2_sharpe'),
+				bmc_last_200_eras_mean: metricNumber(e.metrics, 'bmc_last_200_eras_mean'),
+				corr_sharpe: metricNumber(e.metrics, 'corr_sharpe'),
 				max_drawdown: metricNumber(e.metrics, 'max_drawdown')
 			}));
 		return [...runPoints, ...roundPoints, ...ensemblePoints];
@@ -462,15 +461,6 @@
 	});
 
 	let telemetryMessage = $derived.by(() => sampleStatusMessage(latestSample));
-
-	$effect(() => {
-		void api
-			.getNumeraiClassicCompat()
-			.then((compat) => {
-				payoutWeights = compat.payout;
-			})
-			.catch(() => {});
-	});
 
 	$effect(() => {
 		const loadedConfigs = data.configs.items ?? [];
@@ -929,7 +919,7 @@
 			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
 				<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
 					<div class="flex gap-0">
-						{#each [['composite', 'Payout Map'], ['charts', 'Charts']] as [key, label] (key)}
+						{#each [['charts', 'BMC Ranking'], ['composite', 'Payout Proxy']] as [key, label] (key)}
 							<button
 								type="button"
 								class="px-3 py-2 text-xs font-medium transition-colors {chartTab === key
@@ -939,45 +929,57 @@
 							>{label}</button>
 						{/each}
 					</div>
-					<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
-						{#each PARETO_COLOR_MODES as mode (mode)}
-							<button
-								type="button"
-								class="px-2 py-0.5 transition-colors {paretoColorMode === mode
-									? 'bg-primary text-primary-foreground'
-									: 'bg-muted/40 text-muted-foreground hover:text-foreground'}"
-								onclick={() => (paretoColorMode = mode)}
-							>{PARETO_COLOR_MODE_LABELS[mode]}</button>
-						{/each}
-					</div>
+					{#if chartTab === 'composite'}
+						<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
+							{#each PARETO_COLOR_MODES as mode (mode)}
+								<button
+									type="button"
+									class="px-2 py-0.5 transition-colors {paretoColorMode === mode
+										? 'bg-primary text-primary-foreground'
+										: 'bg-muted/40 text-muted-foreground hover:text-foreground'}"
+									onclick={() => (paretoColorMode = mode)}
+								>{PARETO_COLOR_MODE_LABELS[mode]}</button>
+							{/each}
+						</div>
+					{/if}
 				</div>
 
 				<div class="flex-1 min-h-0 p-5">
-					{#if chartTab === 'composite'}
-						{#if paretoRuns.length > 0}
-							<ParetoChart
-								runs={paretoRuns}
-								colorMode={paretoColorMode}
-								showIsoLines={true}
-								corrWeight={payoutWeights.corr_weight}
-								mmcWeight={payoutWeights.mmc_weight}
-								class="h-full"
-							/>
-						{:else}
-							<div class="flex h-full items-center justify-center text-muted-foreground text-sm">No CORR/MMC data</div>
-						{/if}
-					{:else}
+					{#if chartTab === 'charts'}
 						<div class="flex flex-col h-full min-h-0">
 							<h3 class="mb-3 text-xs uppercase tracking-wider text-muted-foreground font-medium flex-shrink-0">
-								Payout Estimate by Run
+								BMC Last 200 by Run
 							</h3>
-							{#if payoutRuns.length > 0}
+							{#if bmcRuns.length > 0}
 								<div class="flex-1 min-h-0 overflow-y-auto">
-									<SharpeBarChart runs={payoutRuns} championRunId={data.experiment.champion_run_id} />
+									<SharpeBarChart runs={bmcRuns} championRunId={data.experiment.champion_run_id} />
 								</div>
 							{:else}
 								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
-									No payout estimate data available.
+									No BMC last-200 data available.
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<div class="flex h-full min-h-0 flex-col">
+							<div class="mb-3 flex-shrink-0">
+								<h3 class="text-xs uppercase tracking-wider text-muted-foreground font-medium">
+									Payout Proxy
+								</h3>
+								<p class="mt-1 text-xs text-muted-foreground">
+									Historical proxy from CORR and MMC. Research-only; not a live payout forecast.
+								</p>
+							</div>
+							{#if paretoRuns.length > 0}
+								<ParetoChart
+									runs={paretoRuns}
+									colorMode={paretoColorMode}
+									showIsoLines={true}
+									class="h-full"
+								/>
+							{:else}
+								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
+									No CORR/MMC data available for payout proxy view.
 								</div>
 							{/if}
 						</div>
@@ -1387,10 +1389,10 @@
 								{#if latestMetricEvent}
 									<div class="text-xs text-muted-foreground">
 										Latest metrics:
-										<span class="ml-2 tabular-nums">corr20v2_sharpe {fmt((latestMetricEvent.payload.corr20v2_sharpe as number | undefined) ?? null)}</span>
-										<span class="ml-2 tabular-nums">corr20v2_mean {fmt((latestMetricEvent.payload.corr20v2_mean as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">bmc_last_200_eras_mean {fmt((latestMetricEvent.payload.bmc_last_200_eras_mean as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">corr_sharpe {fmt((latestMetricEvent.payload.corr_sharpe as number | undefined) ?? null)}</span>
+										<span class="ml-2 tabular-nums">corr_mean {fmt((latestMetricEvent.payload.corr_mean as number | undefined) ?? null)}</span>
 										<span class="ml-2 tabular-nums">mmc_mean {fmt((latestMetricEvent.payload.mmc_mean as number | undefined) ?? null)}</span>
-										<span class="ml-2 tabular-nums">payout_estimate_mean {fmt((latestMetricEvent.payload.payout_estimate_mean as number | undefined) ?? null)}</span>
 										<span class="ml-2 tabular-nums">bmc_mean {fmt((latestMetricEvent.payload.bmc_mean as number | undefined) ?? null)}</span>
 									</div>
 								{/if}

@@ -29,7 +29,7 @@ For `purged_walk_forward`:
 
 | Signal | Meaning |
 |--------|---------|
-| High `corr20v2_sharpe` + low `mmc_mean` | Limited meta-model contribution upside |
+| High `corr_sharpe` + low `mmc_mean` | Limited meta-model contribution upside |
 | Proxy metrics far exceed full-history expectations | Possible selection bias |
 | High mean + high std | Unstable era-level performance |
 | Very high sharpe on tiny data slices | Often overfit |

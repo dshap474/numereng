@@ -164,7 +164,7 @@ def test_upsert_ensemble_roundtrip(tmp_path: Path) -> None:
             name="Blend 1",
             method="rank_avg",
             target="target_ender_20",
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             status="completed",
             config_json='{"run_ids":["run-a","run-b"]}',
             artifacts_path=str(store_root / "experiments" / "exp-1" / "ensembles" / "ens-1"),
@@ -182,8 +182,8 @@ def test_upsert_ensemble_roundtrip(tmp_path: Path) -> None:
         store_root=store_root,
         ensemble_id="ens-1",
         metrics=(
-            StoreEnsembleMetricUpsert(ensemble_id="ens-1", name="corr20v2_mean", value=0.11),
-            StoreEnsembleMetricUpsert(ensemble_id="ens-1", name="corr20v2_sharpe", value=1.2),
+            StoreEnsembleMetricUpsert(ensemble_id="ens-1", name="corr_mean", value=0.11),
+            StoreEnsembleMetricUpsert(ensemble_id="ens-1", name="corr_sharpe", value=1.2),
         ),
     )
 
@@ -203,8 +203,8 @@ def test_upsert_ensemble_roundtrip(tmp_path: Path) -> None:
     metrics = list_ensemble_metrics(store_root=store_root, ensemble_id="ens-1")
     assert len(metrics) == 2
     values = {item.name: item.value for item in metrics}
-    assert values["corr20v2_mean"] == 0.11
-    assert values["corr20v2_sharpe"] == 1.2
+    assert values["corr_mean"] == 0.11
+    assert values["corr_sharpe"] == 1.2
 
 
 def test_index_run_upserts_run_metrics_and_artifacts(tmp_path: Path) -> None:

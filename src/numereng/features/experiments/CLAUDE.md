@@ -11,14 +11,13 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Metric canonicalization & queries
 
-- `_normalize_round_metrics` flattens nested metrics (e.g. `{"corr": {"mean": ...}}`) and normalizes aliases to canonical keys: `corr20v2_mean`, `corr20v2_sharpe`, `mmc_mean`, `bmc_mean`, `cwmm_mean`, `payout_estimate_mean`, `max_drawdown`, etc. This keeps the viz schema stable regardless of how training writes the row.
-- `_expand_metric_query_names` lets viz requests use canonical names while the adapter expands down to all known persisted aliases before hitting the `metrics` table (`corr.mean`, `corr_sharpe`, `payout_score`, …). That means experiments must keep writing at least one variant of each metric that downstream features rely on.
+- `_normalize_round_metrics` flattens nested metrics (e.g. `{"corr": {"mean": ...}}`) and emits canonical viz keys: `corr_mean`, `corr_sharpe`, `mmc_mean`, `bmc_mean`, `bmc_last_200_eras_mean`, `cwmm_mean`, `max_drawdown`, and related scalar summaries. This keeps the viz schema stable regardless of how training writes the row.
+- `_expand_metric_query_names` lets viz requests use canonical names while the adapter expands down to known persisted aliases before hitting the `metrics` table (`corr.mean`, `corr_sharpe`, …). That means experiments must keep writing at least one variant of each metric that downstream features rely on.
 - `get_metrics_for_runs` pulls the normalized metrics map and can filter to a subset of canonical names, so experiment promotions with new metrics must either persist them in `metrics` or provide translated keys that `_normalize_round_metrics` handles.
 
 ## Fallback computations viz relies on
 
-- When `payout_estimate_mean` is missing, viz computes `clip(0.75 * corr20v2_mean + 2.25 * mmc_mean, -0.05, +0.05)` to mimic Numerai Classic payout scoring. This fallback applies to `target_ender_20` contexts; non-Ender targets intentionally keep payout estimate unset/null.
-- Per-era CORR (val_per_era_corr20v2) and payout maps are optional persisted visualization artifacts (`artifacts/predictions/val_per_era_*.parquet|csv`). Viz must treat them as read-only inputs: if they are absent, the UI surfaces them as unavailable instead of deriving them from predictions/meta-model artifacts at request time.
+- Per-era CORR (`val_per_era_corr20v2`) is an optional persisted visualization artifact. Viz must treat it as a read-only input and expose rows as `{ era, corr }`; if it is absent, the UI surfaces it as unavailable instead of deriving alternative diagnostics at request time.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
 ## Provenance, diagnostics, and artefact resolution

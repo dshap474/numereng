@@ -102,13 +102,6 @@ export interface PerEraRow {
 	[key: string]: string | number;
 }
 
-export interface PerEraPayoutMapRow {
-	era: string | number;
-	corr20v2: number;
-	mmc: number;
-	payout_estimate: number;
-}
-
 export interface FeatureImportanceRow {
 	[key: string]: string | number;
 }
@@ -131,7 +124,6 @@ export interface RunBundle {
 	metrics: Record<string, number> | null;
 	manifest: RunManifest | null;
 	per_era_corr: PerEraRow[] | null;
-	per_era_payout_map: PerEraPayoutMapRow[] | null;
 	feature_importance: FeatureImportanceRow[] | null;
 	trials: Record<string, unknown>[] | null;
 	best_params: Record<string, unknown> | null;
@@ -183,11 +175,11 @@ export interface GlobalConfig {
 	summary: ExperimentConfigSummary;
 	linked_run_id: string | null;
 	linked_metrics: {
-		corr20v2_sharpe?: number | null;
-		corr20v2_mean?: number | null;
-		mmc_mean?: number | null;
-		payout_estimate_mean?: number | null;
+		bmc_last_200_eras_mean?: number | null;
 		bmc_mean?: number | null;
+		corr_sharpe?: number | null;
+		corr_mean?: number | null;
+		mmc_mean?: number | null;
 	} | null;
 }
 
@@ -403,31 +395,6 @@ export interface NumeraiDocTree {
 	sections: Array<{ heading: string; items: NumeraiDocNode[] }>;
 }
 
-export interface NumeraiClassicCompat {
-	spec_id: string;
-	version: string;
-	effective_date: string;
-	verified_at: string;
-	source_precedence: string;
-	targets: {
-		payout_20d: string;
-		payout_60d: string;
-	};
-	payout: {
-		corr_weight: number;
-		mmc_weight: number;
-		clip: number;
-	};
-	validation: {
-		walk_forward: {
-			scheme: string;
-			chunk_size_eras: number;
-			purge_20d: number;
-			purge_60d: number;
-		};
-	};
-}
-
 export interface SystemCapabilities {
 	read_only: boolean;
 	write_controls: boolean;
@@ -556,8 +523,6 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				return data;
 			});
 		},
-		getNumeraiClassicCompat: () =>
-			get<NumeraiClassicCompat>('/system/numerai-classic-compat', fetchFn),
 		getSystemCapabilities: () => get<SystemCapabilities>('/system/capabilities', fetchFn),
 		getExperimentDoc: (id: string, filename: string) =>
 			get<DocResponse>(`/experiments/${id}/docs/${filename}`, fetchFn),

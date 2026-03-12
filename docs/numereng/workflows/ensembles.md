@@ -8,7 +8,7 @@ Build and inspect rank-average ensembles from multiple run predictions.
 uv run numereng ensemble build \
   --run-ids run_a,run_b,run_c \
   --method rank_avg \
-  --metric corr20v2_sharpe \
+  --metric corr_sharpe \
   --target target_ender_20 \
   --selection-note "diversity first" \
   --regime-buckets 4

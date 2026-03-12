@@ -141,10 +141,12 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
     assert saved_results["training"]["scoring"]["effective_backend"] == "materialized"
     assert saved_results["training"]["scoring"]["policy"]["fnc_target_policy"] == "scoring_target"
+    assert saved_results["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
+    assert saved_manifest["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
 
 
 def test_score_run_requires_existing_run(tmp_path: Path) -> None:

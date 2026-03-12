@@ -43,7 +43,7 @@ def per_era_corr_series(
     """Compute one CORR value per era for the provided prediction vector."""
 
     if target_series is None:
-        return pd.Series(dtype=float, name="corr20v2")
+        return pd.Series(dtype=float, name="corr")
 
     frame = pd.DataFrame(
         {
@@ -61,13 +61,13 @@ def per_era_corr_series(
         rows.append((str(era), float(corr)))
 
     if not rows:
-        return pd.Series(dtype=float, name="corr20v2")
+        return pd.Series(dtype=float, name="corr")
 
     payload = pd.Series(
         [value for _, value in rows],
         index=[era for era, _ in rows],
         dtype=float,
-        name="corr20v2",
+        name="corr",
     )
     payload.index.name = "era"
     return payload
@@ -103,8 +103,8 @@ def component_metrics_table(
                 "run_id": run_id,
                 "weight": float(weights[index]),
                 "rank": int(index),
-                "corr20v2_mean": metrics.get("corr20v2_mean"),
-                "corr20v2_sharpe": metrics.get("corr20v2_sharpe"),
+                "corr_mean": metrics.get("corr_mean"),
+                "corr_sharpe": metrics.get("corr_sharpe"),
                 "max_drawdown": metrics.get("max_drawdown"),
             }
         )
@@ -115,12 +115,12 @@ def era_metrics_table(*, per_era_corr: pd.Series) -> pd.DataFrame:
     """Build a canonical per-era metrics table."""
 
     if per_era_corr.empty:
-        return pd.DataFrame(columns=["era", "corr20v2"])
+        return pd.DataFrame(columns=["era", "corr"])
 
     frame = pd.DataFrame(
         {
             "era": per_era_corr.index.astype(str).tolist(),
-            "corr20v2": per_era_corr.to_numpy(dtype=float),
+            "corr": per_era_corr.to_numpy(dtype=float),
         }
     )
     return frame
@@ -137,8 +137,8 @@ def regime_metrics_table(*, per_era_corr: pd.Series, regime_buckets: int) -> pd.
         "start_era",
         "end_era",
         "n_eras",
-        "corr20v2_mean",
-        "corr20v2_sharpe",
+        "corr_mean",
+        "corr_sharpe",
         "max_drawdown",
     ]
     if per_era_corr.empty:
@@ -169,8 +169,8 @@ def regime_metrics_table(*, per_era_corr: pd.Series, regime_buckets: int) -> pd.
                 "start_era": split_eras[0],
                 "end_era": split_eras[-1],
                 "n_eras": int(split.size),
-                "corr20v2_mean": mean,
-                "corr20v2_sharpe": sharpe,
+                "corr_mean": mean,
+                "corr_sharpe": sharpe,
                 "max_drawdown": drawdown,
             }
         )
@@ -195,8 +195,8 @@ def bootstrap_metric_summary(
             "n_resamples": int(n_resamples),
             "seed": int(seed),
             "metrics": {
-                "corr20v2_mean": dict(_EMPTY_METRIC_PAYLOAD),
-                "corr20v2_sharpe": dict(_EMPTY_METRIC_PAYLOAD),
+                "corr_mean": dict(_EMPTY_METRIC_PAYLOAD),
+                "corr_sharpe": dict(_EMPTY_METRIC_PAYLOAD),
                 "max_drawdown": dict(_EMPTY_METRIC_PAYLOAD),
             },
         }
@@ -225,8 +225,8 @@ def bootstrap_metric_summary(
         "n_resamples": int(n_resamples),
         "seed": int(seed),
         "metrics": {
-            "corr20v2_mean": _summarize_array(means),
-            "corr20v2_sharpe": _summarize_array(sharpes),
+            "corr_mean": _summarize_array(means),
+            "corr_sharpe": _summarize_array(sharpes),
             "max_drawdown": _summarize_array(drawdowns),
         },
     }
@@ -256,8 +256,8 @@ def metric_dict(metrics: tuple[EnsembleMetric, ...]) -> dict[str, float | None]:
 def _summarize_from_per_era_corr(per_era: pd.Series) -> tuple[EnsembleMetric, ...]:
     if per_era.empty:
         return (
-            EnsembleMetric(name="corr20v2_mean", value=None),
-            EnsembleMetric(name="corr20v2_sharpe", value=None),
+            EnsembleMetric(name="corr_mean", value=None),
+            EnsembleMetric(name="corr_sharpe", value=None),
             EnsembleMetric(name="max_drawdown", value=None),
         )
 
@@ -269,8 +269,8 @@ def _summarize_from_per_era_corr(per_era: pd.Series) -> tuple[EnsembleMetric, ..
     drawdown = float((running_max - cumsum).max())
 
     return (
-        EnsembleMetric(name="corr20v2_mean", value=corr_mean),
-        EnsembleMetric(name="corr20v2_sharpe", value=corr_sharpe),
+        EnsembleMetric(name="corr_mean", value=corr_mean),
+        EnsembleMetric(name="corr_sharpe", value=corr_sharpe),
         EnsembleMetric(name="max_drawdown", value=drawdown),
     )
 

@@ -23,10 +23,10 @@
 	type MainTab = 'performance' | 'diagnostics' | 'artifacts' | 'timeline';
 	type ArtifactTab = 'config' | 'trials' | 'data' | 'notes';
 	type MetricKey =
-		| 'corr20v2_sharpe'
-		| 'corr20v2_mean'
+		| 'bmc_last_200_eras_mean'
+		| 'corr_sharpe'
+		| 'corr_mean'
 		| 'mmc_mean'
-		| 'payout_estimate_mean'
 		| 'mmc_coverage_ratio_rows'
 		| 'bmc_mean'
 		| 'max_drawdown';
@@ -38,10 +38,10 @@
 	let bundle = $state<RunBundle | null>(null);
 
 	const keyMetrics: MetricKey[] = [
-		'corr20v2_sharpe',
-		'corr20v2_mean',
+		'bmc_last_200_eras_mean',
+		'corr_sharpe',
+		'corr_mean',
 		'mmc_mean',
-		'payout_estimate_mean',
 		'mmc_coverage_ratio_rows',
 		'bmc_mean',
 		'max_drawdown'
@@ -147,18 +147,18 @@
 
 	function metricLabel(key: MetricKey): string {
 		switch (key) {
-			case 'corr20v2_sharpe':
-				return 'CORR20v2 Sharpe';
-			case 'corr20v2_mean':
-				return 'CORR20v2 Mean';
+			case 'bmc_last_200_eras_mean':
+				return 'BMC Mean (Last 200 Eras)';
+			case 'corr_sharpe':
+				return 'CORR Sharpe';
+			case 'corr_mean':
+				return 'CORR Mean';
 			case 'mmc_mean':
 				return 'MMC Mean';
-			case 'payout_estimate_mean':
-				return 'Payout Estimate Mean';
 			case 'mmc_coverage_ratio_rows':
 				return 'MMC Coverage Ratio';
 			case 'bmc_mean':
-				return 'BMC Mean (Diagnostic)';
+				return 'BMC Mean';
 			case 'max_drawdown':
 				return 'Max Drawdown';
 			default:

@@ -57,7 +57,7 @@ def test_build_ensemble_persists_components_metrics_and_artifacts(tmp_path: Path
         request=EnsembleBuildRequest(
             experiment_id="2026-02-22_test-exp",
             run_ids=("run-a", "run-b"),
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             target="target_ender_20",
             optimize_weights=False,
         ),
@@ -69,8 +69,8 @@ def test_build_ensemble_persists_components_metrics_and_artifacts(tmp_path: Path
     assert result.components[1].run_id == "run-b"
 
     metrics = {item.name: item.value for item in result.metrics}
-    assert "corr20v2_mean" in metrics
-    assert "corr20v2_sharpe" in metrics
+    assert "corr_mean" in metrics
+    assert "corr_sharpe" in metrics
 
     artifacts_path = result.artifacts_path
     assert (artifacts_path / "predictions.parquet").is_file()

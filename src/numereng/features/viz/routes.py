@@ -1,4 +1,4 @@
-"""FastAPI routes for the viz compatibility API."""
+"""FastAPI routes for the viz API."""
 
 from __future__ import annotations
 
@@ -9,10 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from numereng.features.viz.contracts import (
-    capabilities_payload,
-    numerai_classic_compat_payload,
-)
+from numereng.features.viz.contracts import capabilities_payload
 from numereng.features.viz.services import VizService
 
 _VALID_EXPERIMENT_DOCS = {"EXPERIMENT.md", "REPORT.md"}
@@ -82,10 +79,6 @@ def create_router(service: VizService) -> APIRouter:
     """Build `/api/*` router for a configured service instance."""
 
     router = APIRouter(prefix="/api")
-
-    @router.get("/system/numerai-classic-compat")
-    def get_numerai_classic_compat() -> JSONResponse:
-        return _cached_response(numerai_classic_compat_payload(), max_age=60)
 
     @router.get("/system/capabilities")
     def get_system_capabilities() -> JSONResponse:
@@ -432,16 +425,6 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Per-era correlation data for run {run_id} not found")
-        return _cached_response(payload)
-
-    @router.get("/runs/{run_id}/per-era-payout-map")
-    def get_per_era_payout_map(run_id: str) -> JSONResponse:
-        try:
-            payload = service.get_per_era_payout_map(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        if payload is None:
-            raise HTTPException(404, f"Per-era payout map data for run {run_id} not found")
         return _cached_response(payload)
 
     @router.get("/runs/{run_id}/feature-importance")

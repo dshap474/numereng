@@ -285,121 +285,14 @@ def test_get_metrics_for_runs_normalizes_store_aliases(tmp_path: Path) -> None:
 
     payload = adapter.get_metrics_for_runs(
         ["run-1"],
-        ["corr20v2_mean", "corr20v2_sharpe", "fnc_mean", "mmc_mean", "payout_estimate_mean", "bmc_mean"],
+        ["corr_mean", "corr_sharpe", "fnc_mean", "mmc_mean", "bmc_mean"],
     )
 
-    assert payload["run-1"]["corr20v2_mean"] == pytest.approx(0.10)
-    assert payload["run-1"]["corr20v2_sharpe"] == pytest.approx(1.25)
+    assert payload["run-1"]["corr_mean"] == pytest.approx(0.10)
+    assert payload["run-1"]["corr_sharpe"] == pytest.approx(1.25)
     assert payload["run-1"]["fnc_mean"] == pytest.approx(0.04)
     assert payload["run-1"]["mmc_mean"] == pytest.approx(0.02)
     assert payload["run-1"]["bmc_mean"] == pytest.approx(0.03)
-    assert payload["run-1"]["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
-
-
-def test_get_metrics_for_runs_derives_payout_when_only_requested_metric(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    store_root.mkdir(parents=True)
-    db_path = store_root / "numereng.db"
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("CREATE TABLE metrics (run_id TEXT, name TEXT, value REAL, value_json TEXT)")
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "corr.mean", 0.10, None),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "mmc.mean", 0.02, None),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
-
-    payload = adapter.get_metrics_for_runs(["run-1"], ["payout_estimate_mean"])
-
-    assert payload["run-1"]["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
-
-
-def test_get_metrics_for_runs_preserves_explicit_null_payout(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    store_root.mkdir(parents=True)
-    db_path = store_root / "numereng.db"
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("CREATE TABLE metrics (run_id TEXT, name TEXT, value REAL, value_json TEXT)")
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "corr.mean", 0.10, None),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "mmc.mean", 0.02, None),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "payout_estimate_mean", None, None),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path,
-        )
-    )
-
-    payload = adapter.get_metrics_for_runs(["run-1"], ["payout_estimate_mean"])
-
-    assert "payout_estimate_mean" in payload["run-1"]
-    assert payload["run-1"]["payout_estimate_mean"] is None
-
-
-def test_get_metrics_for_runs_non_ender_target_does_not_derive_payout(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    store_root.mkdir(parents=True)
-    db_path = store_root / "numereng.db"
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute("CREATE TABLE runs (run_id TEXT, manifest_json TEXT)")
-        conn.execute("CREATE TABLE metrics (run_id TEXT, name TEXT, value REAL, value_json TEXT)")
-        conn.execute(
-            "INSERT INTO runs (run_id, manifest_json) VALUES (?, ?)",
-            (
-                "run-1",
-                '{"run_id":"run-1","data":{"target_col":"target_cyrus_20"}}',
-            ),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "corr.mean", 0.10, None),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "mmc.mean", 0.02, None),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path,
-        )
-    )
-
-    payload = adapter.get_metrics_for_runs(["run-1"], ["payout_estimate_mean"])
-
-    assert payload["run-1"] == {}
 
 
 def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Path) -> None:
@@ -429,8 +322,8 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
     payload = adapter.get_run_metrics("run-1")
 
     assert payload is not None
-    assert payload["corr20v2_mean"] == pytest.approx(0.12)
-    assert payload["corr20v2_sharpe"] == pytest.approx(0.8)
+    assert payload["corr_mean"] == pytest.approx(0.12)
+    assert payload["corr_sharpe"] == pytest.approx(0.8)
     assert payload["fnc_mean"] == pytest.approx(0.06)
     assert payload["fnc_sharpe"] == pytest.approx(2.0)
     assert payload["mmc_mean"] == pytest.approx(0.01)
@@ -439,33 +332,6 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
     assert payload["feature_exposure_sharpe"] == pytest.approx(3.2)
     assert payload["max_feature_exposure"] == pytest.approx(0.31)
     assert payload["max_drawdown"] == pytest.approx(0.9)
-    assert payload["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
-
-
-def test_get_run_metrics_non_ender_target_does_not_derive_payout(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    run_dir = store_root / "runs" / "run-1"
-    run_dir.mkdir(parents=True)
-    (run_dir / "run.json").write_text(
-        '{"run_id":"run-1","data":{"target_col":"target_cyrus_20"}}',
-        encoding="utf-8",
-    )
-    (run_dir / "metrics.json").write_text(
-        '{"corr":{"mean":0.12},"mmc":{"mean":0.01}}',
-        encoding="utf-8",
-    )
-
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path,
-        )
-    )
-
-    payload = adapter.get_run_metrics("run-1")
-
-    assert payload is not None
-    assert "payout_estimate_mean" not in payload
 
 
 def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path) -> None:
@@ -513,8 +379,8 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
     payload = adapter.get_run_metrics("run-1")
 
     assert payload is not None
-    assert payload["corr20v2_mean"] == pytest.approx(0.11)
-    assert payload["corr20v2_sharpe"] == pytest.approx(0.9)
+    assert payload["corr_mean"] == pytest.approx(0.11)
+    assert payload["corr_sharpe"] == pytest.approx(0.9)
     assert payload["fnc_mean"] == pytest.approx(0.05)
     assert payload["fnc_sharpe"] == pytest.approx(2.5)
     assert payload["mmc_mean"] == pytest.approx(0.01)
@@ -523,7 +389,6 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
     assert payload["feature_exposure_sharpe"] == pytest.approx(4.5)
     assert payload["max_feature_exposure"] == pytest.approx(0.27)
     assert payload["max_drawdown"] == pytest.approx(0.7)
-    assert payload["payout_estimate_mean"] == pytest.approx(0.05)  # clipped payout estimate
 
 
 def test_list_experiment_runs_filesystem_uses_target_col(tmp_path: Path) -> None:
@@ -592,7 +457,7 @@ def test_get_run_metrics_enriches_mmc_coverage_ratio_from_provenance(tmp_path: P
     assert payload["mmc_coverage_ratio_rows"] == pytest.approx(0.8)
 
 
-def test_per_era_fallback_derives_corr_and_payout_map(tmp_path: Path) -> None:
+def test_per_era_fallback_derives_corr_rows(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     run_dir = store_root / "runs" / "run-1"
     predictions_dir = run_dir / "artifacts" / "predictions"
@@ -669,35 +534,9 @@ def test_per_era_fallback_derives_corr_and_payout_map(tmp_path: Path) -> None:
     )
 
     per_era_corr = adapter.get_per_era_corr("run-1")
-    assert per_era_corr is None
-
-    payout_map = adapter.get_per_era_payout_map("run-1")
-    assert payout_map is None
-
-
-def test_get_per_era_payout_map_non_ender_target_returns_none(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    run_dir = store_root / "runs" / "run-1"
-    payout_dir = run_dir / "artifacts" / "predictions"
-    payout_dir.mkdir(parents=True)
-
-    (run_dir / "run.json").write_text(
-        '{"run_id":"run-1","data":{"target_col":"target_cyrus_20"}}',
-        encoding="utf-8",
-    )
-    (payout_dir / "val_per_era_payout_map.csv").write_text(
-        "era,corr20v2,mmc,payout_estimate\n1,0.1,0.02,0.05\n",
-        encoding="utf-8",
-    )
-
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path,
-        )
-    )
-
-    assert adapter.get_per_era_payout_map("run-1") is None
+    assert per_era_corr is not None
+    assert [row["era"] for row in per_era_corr] == [1, 2]
+    assert all(float(row["corr"]) > 0.99 for row in per_era_corr)
 
 
 @pytest.mark.parametrize(
@@ -715,7 +554,7 @@ def test_get_per_era_payout_map_non_ender_target_returns_none(tmp_path: Path) ->
         (
             "POST",
             "/api/ensemble-jobs",
-            {"run_ids": ["run-a", "run-b"], "method": "rank_avg", "metric": "corr20v2_sharpe"},
+            {"run_ids": ["run-a", "run-b"], "method": "rank_avg", "metric": "corr_sharpe"},
             404,
         ),
         ("PUT", "/api/experiments/exp-1/docs/EXPERIMENT.md", {"content": "hello"}, 405),
@@ -940,7 +779,7 @@ def test_adapter_rejects_ensemble_artifacts_path_outside_store(tmp_path: Path) -
                 "ens-1",
                 "rank_avg",
                 "target_ender_20",
-                "corr20v2_sharpe",
+                "corr_sharpe",
                 "completed",
                 "{}",
                 str(outside),

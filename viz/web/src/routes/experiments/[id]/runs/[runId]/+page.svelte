@@ -2,7 +2,6 @@
 		import { api, type ExperimentRun } from '$lib/api/client';
 		import PerEraLineChart from '$lib/components/charts/PerEraLineChart.svelte';
 		import CumulativeCorrChart from '$lib/components/charts/CumulativeCorrChart.svelte';
-		import PerEraPayoutMapChart from '$lib/components/charts/PerEraPayoutMapChart.svelte';
 		import FeatureImportanceChart from '$lib/components/charts/FeatureImportanceChart.svelte';
 		import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
 		import { fmt, fmtPercent, fmtGb } from '$lib/utils';
@@ -12,10 +11,10 @@
 	type MainTab = 'performance' | 'diagnostics' | 'artifacts' | 'timeline';
 	type ArtifactTab = 'config' | 'trials' | 'data' | 'notes';
 	type MetricKey =
-		| 'corr20v2_sharpe'
-		| 'corr20v2_mean'
+		| 'bmc_last_200_eras_mean'
+		| 'corr_sharpe'
+		| 'corr_mean'
 		| 'mmc_mean'
-		| 'payout_estimate_mean'
 		| 'mmc_coverage_ratio_rows'
 		| 'bmc_mean'
 		| 'max_drawdown';
@@ -23,13 +22,12 @@
 		let mainTab = $state<MainTab>('performance');
 		let artifactTab = $state<ArtifactTab>('config');
 		let copyState = $state<'idle' | 'copied' | 'error'>('idle');
-		let payoutWeights = $state({ corr_weight: 0.75, mmc_weight: 2.25, clip: 0.05 });
 
 	const keyMetrics: MetricKey[] = [
-		'corr20v2_sharpe',
-		'corr20v2_mean',
+		'bmc_last_200_eras_mean',
+		'corr_sharpe',
+		'corr_mean',
 		'mmc_mean',
-		'payout_estimate_mean',
 		'mmc_coverage_ratio_rows',
 		'bmc_mean',
 		'max_drawdown'
@@ -41,7 +39,6 @@
 		let metrics = $derived(bundle.metrics ?? null);
 		let manifest = $derived(bundle.manifest ?? null);
 		let perEraCorr = $derived(bundle.per_era_corr ?? null);
-		let perEraPayoutMap = $derived(bundle.per_era_payout_map ?? null);
 		let featureImportance = $derived(bundle.feature_importance ?? null);
 		let trials = $derived(bundle.trials ?? null);
 		let bestParams = $derived(bundle.best_params ?? null);
@@ -113,56 +110,6 @@
 		});
 		let readOnly = $derived(Boolean(data.capabilities?.read_only));
 
-		let payoutMapDiagnostics = $derived.by(() => {
-			if (!perEraPayoutMap || perEraPayoutMap.length === 0) return null;
-			const wC = payoutWeights.corr_weight;
-			const wM = payoutWeights.mmc_weight;
-			const clip = payoutWeights.clip;
-
-			let rawSum = 0;
-			let clippedSum = 0;
-			let clipHits = 0;
-			let posClipHits = 0;
-			let negClipHits = 0;
-			const eps = 1e-12;
-
-			for (const row of perEraPayoutMap) {
-				const corr = Number(row.corr20v2) || 0;
-				const mmc = Number(row.mmc) || 0;
-				const payout = Number(row.payout_estimate) || 0;
-				const raw = wC * corr + wM * mmc;
-				rawSum += raw;
-				clippedSum += payout;
-				if (Number.isFinite(clip) && clip > 0 && Math.abs(payout) >= clip - eps) {
-					clipHits += 1;
-					if (payout >= clip - eps) posClipHits += 1;
-					if (payout <= -clip + eps) negClipHits += 1;
-				}
-			}
-
-			const n = perEraPayoutMap.length;
-			const rawMean = rawSum / n;
-			const clippedMean = clippedSum / n;
-			return {
-				n,
-				raw_mean: rawMean,
-				clipped_mean: clippedMean,
-				gap_raw_minus_clipped: rawMean - clippedMean,
-				clip_hit_rate_pct: (100 * clipHits) / n,
-				pos_clip_rate_pct: (100 * posClipHits) / n,
-				neg_clip_rate_pct: (100 * negClipHits) / n
-			};
-		});
-
-		$effect(() => {
-			void api
-				.getNumeraiClassicCompat()
-				.then((compat) => {
-					payoutWeights = compat.payout;
-				})
-				.catch(() => {});
-		});
-
 		function metricValue(run: ExperimentRun | null | undefined, key: MetricKey): number | null {
 			if (!run?.metrics) return null;
 			const value = run.metrics[key];
@@ -171,18 +118,18 @@
 
 	function metricLabel(key: MetricKey): string {
 		switch (key) {
-			case 'corr20v2_sharpe':
-				return 'CORR20v2 Sharpe';
-			case 'corr20v2_mean':
-				return 'CORR20v2 Mean';
+			case 'bmc_last_200_eras_mean':
+				return 'BMC Mean (Last 200 Eras)';
+			case 'corr_sharpe':
+				return 'CORR Sharpe';
+			case 'corr_mean':
+				return 'CORR Mean';
 			case 'mmc_mean':
 				return 'MMC Mean';
-			case 'payout_estimate_mean':
-				return 'Payout Estimate Mean';
 			case 'mmc_coverage_ratio_rows':
 				return 'MMC Coverage Ratio';
 			case 'bmc_mean':
-				return 'BMC Mean (Diagnostic)';
+				return 'BMC Mean';
 			case 'max_drawdown':
 				return 'Max Drawdown';
 			default:
@@ -403,52 +350,6 @@
 						</div>
 					</dl>
 				</div>
-				</div>
-
-				<div class="bg-card border border-border rounded-lg p-5">
-					<div class="flex items-center justify-between gap-2 mb-3">
-						<h3 class="text-sm font-semibold">Per-Era Payout Map</h3>
-						<p class="text-xs text-muted-foreground">CORR vs MMC per era (colored by clipped payout)</p>
-					</div>
-					{#if perEraPayoutMap}
-						<PerEraPayoutMapChart
-							data={perEraPayoutMap}
-							corrWeight={payoutWeights.corr_weight}
-							mmcWeight={payoutWeights.mmc_weight}
-							clip={payoutWeights.clip}
-							height="360px"
-						/>
-						{#if payoutMapDiagnostics}
-							<div class="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Eras</p>
-									<p class="font-medium tabular-nums">{payoutMapDiagnostics.n}</p>
-								</div>
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Clip hit-rate</p>
-									<p class="font-medium tabular-nums">{fmtPercent(payoutMapDiagnostics.clip_hit_rate_pct)}</p>
-								</div>
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Pos/Neg clip</p>
-									<p class="font-medium tabular-nums">{fmtPercent(payoutMapDiagnostics.pos_clip_rate_pct)} / {fmtPercent(payoutMapDiagnostics.neg_clip_rate_pct)}</p>
-								</div>
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Raw mean</p>
-									<p class="font-medium tabular-nums">{fmt(payoutMapDiagnostics.raw_mean)}</p>
-								</div>
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Clipped mean</p>
-									<p class="font-medium tabular-nums">{fmt(payoutMapDiagnostics.clipped_mean)}</p>
-								</div>
-								<div class="rounded-md border border-border/60 bg-background/40 px-3 py-2">
-									<p class="text-muted-foreground">Raw - clipped</p>
-									<p class="font-medium tabular-nums">{fmt(payoutMapDiagnostics.gap_raw_minus_clipped)}</p>
-								</div>
-							</div>
-						{/if}
-					{:else}
-						<p class="text-sm text-muted-foreground">No per-era payout map available.</p>
-					{/if}
 				</div>
 
 				<div class="bg-card border border-border rounded-lg p-5">

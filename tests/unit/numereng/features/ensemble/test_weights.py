@@ -40,7 +40,7 @@ def test_optimize_weights_rejects_empty_prediction_frame() -> None:
             ranked_predictions=pd.DataFrame(),
             era_series=pd.Series(dtype=str),
             target_series=pd.Series(dtype=float),
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             initial_weights=(0.5, 0.5),
         )
 
@@ -67,7 +67,7 @@ def test_optimize_weights_rejects_optimizer_failure(monkeypatch: pytest.MonkeyPa
             ranked_predictions=ranked,
             era_series=eras,
             target_series=targets,
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             initial_weights=(0.5, 0.5),
         )
 
@@ -93,7 +93,7 @@ def test_optimize_weights_returns_normalized_optimized_weights(monkeypatch: pyte
         ranked_predictions=ranked,
         era_series=eras,
         target_series=targets,
-        metric="corr20v2_sharpe",
+        metric="corr_sharpe",
         initial_weights=(0.5, 0.5),
     )
     assert optimized == pytest.approx((2.0 / 3.0, 1.0 / 3.0))

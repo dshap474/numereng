@@ -128,7 +128,9 @@ Viz/frontend topology:
 - Experiment page contains Analysis + Run Ops tabs; Run Ops is monitor-only (configs list + run queue + live monitor).
 - Run launch/control is CLI/API-only.
 - Backend still exposes read-only catalog/query endpoints (`/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
-- Run detail/chart APIs are read-only over persisted artifacts; when optional per-era visualization files are absent, viz returns unavailable/null instead of deriving them on demand.
+- Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
+- Viz does not expose payout metrics or payout-specific routes.
+- Run detail/chart APIs are read-only over persisted artifacts; when optional per-era visualization files are absent, viz returns unavailable/null instead of deriving payout-style diagnostics on demand.
 
 Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
@@ -148,6 +150,7 @@ Critical invariants:
 - Post-run scoring persists `corr`, `fnc`, `feature_exposure`, `max_feature_exposure`, `bmc`, `bmc_last_200_eras`, and `score_provenance.json`; `mmc` and `cwmm` are additionally persisted when meta-model overlap exists.
 - `corr`, `fnc`, and `mmc` delegate directly to `numerai_tools`; `cwmm` uses the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
+- Viz defaults rank/sort experiment views by `bmc_last_200_eras_mean`.
 - Feature exposure diagnostics are informational only: scoring computes rank-based exposures against `fncv3_features`, persists nested summaries for `feature_exposure` and `max_feature_exposure`, and viz normalizes `feature_exposure_mean` plus scalar `max_feature_exposure`.
 - Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
 - `features.scoring.run_service.score_run` can recompute the same scoring artifacts for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows.

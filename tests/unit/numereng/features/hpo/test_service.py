@@ -388,7 +388,7 @@ def test_create_study_translates_optuna_dependency_error(monkeypatch: pytest.Mon
 
 def test_extract_metric_value_raises_for_missing_metric(tmp_path: Path) -> None:
     results_path = tmp_path / "results.json"
-    results_path.write_text(json.dumps({"metrics": {"corr20v2_mean": 0.12}}), encoding="utf-8")
+    results_path.write_text(json.dumps({"metrics": {"corr_mean": 0.12}}), encoding="utf-8")
 
     with pytest.raises(service_module.HpoExecutionError, match="hpo_metric_not_found"):
         service_module._extract_metric_value(results_path=results_path, metric="bmc_last_200_eras.mean")
