@@ -33,7 +33,7 @@ def _insert_raw_ensemble_row(
                 "blend-a",
                 method,
                 "target_ender_20",
-                "corr20v2_sharpe",
+                "corr_sharpe",
                 status,
                 "{}",
                 str(store_root / "experiments" / "exp-1" / "ensembles" / ensemble_id),

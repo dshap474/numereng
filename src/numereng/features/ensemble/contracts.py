@@ -18,7 +18,7 @@ class EnsembleBuildRequest:
     run_ids: tuple[str, ...]
     experiment_id: str | None = None
     method: EnsembleMethod = "rank_avg"
-    metric: str = "corr20v2_sharpe"
+    metric: str = "corr_sharpe"
     target: str = "target_ender_20"
     name: str | None = None
     ensemble_id: str | None = None

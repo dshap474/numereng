@@ -1,8 +1,13 @@
 export const CANONICAL_METRIC_KEYS = [
-	'corr20v2_mean',
-	'corr20v2_std',
-	'corr20v2_sharpe',
-	'corr20v2_n_eras',
+	'bmc_last_200_eras_mean',
+	'bmc_mean',
+	'bmc_std',
+	'bmc_sharpe',
+	'bmc_n_eras',
+	'corr_mean',
+	'corr_std',
+	'corr_sharpe',
+	'corr_n_eras',
 	'fnc_mean',
 	'fnc_std',
 	'fnc_sharpe',
@@ -14,17 +19,6 @@ export const CANONICAL_METRIC_KEYS = [
 	'mmc_coverage_eras',
 	'mmc_coverage_ratio_rows',
 	'mmc_coverage_ratio_eras',
-	'payout_estimate_mean',
-	'payout_estimate_std',
-	'payout_estimate_sharpe',
-	'payout_estimate_n_eras',
-	'bmc_mean',
-	'bmc_std',
-	'bmc_sharpe',
-	'bmc_n_eras',
-	'bmc_coverage_ratio_rows',
-	'bmc_coverage_ratio_eras',
-	'bmc_last_200_eras_mean',
 	'cwmm_mean',
 	'cwmm_std',
 	'cwmm_sharpe',
@@ -36,32 +30,33 @@ export const CANONICAL_METRIC_KEYS = [
 ] as const;
 
 export const RUNOPS_MAIN_METRICS = [
-	'corr20v2_sharpe',
-	'corr20v2_mean',
+	'bmc_last_200_eras_mean',
+	'bmc_mean',
+	'corr_sharpe',
+	'corr_mean',
 	'fnc_mean',
 	'mmc_mean',
-	'payout_estimate_mean',
-	'bmc_mean',
+	'cwmm_mean',
 	'feature_exposure_mean',
 	'max_feature_exposure',
 	'max_drawdown'
 ] as const;
 
 export const RUNOPS_ALL_SCORING_METRICS = [
-	'corr20v2_mean',
-	'corr20v2_std',
-	'corr20v2_sharpe',
+	'bmc_last_200_eras_mean',
+	'bmc_mean',
+	'bmc_std',
+	'bmc_sharpe',
+	'corr_mean',
+	'corr_std',
+	'corr_sharpe',
 	'fnc_mean',
 	'fnc_std',
 	'fnc_sharpe',
 	'mmc_mean',
 	'mmc_std',
 	'mmc_sharpe',
-	'payout_estimate_mean',
-	'bmc_mean',
-	'bmc_std',
-	'bmc_sharpe',
-	'bmc_last_200_eras_mean',
+	'mmc_coverage_ratio_rows',
 	'cwmm_mean',
 	'cwmm_std',
 	'cwmm_sharpe',
@@ -73,12 +68,12 @@ export const RUNOPS_ALL_SCORING_METRICS = [
 ] as const;
 
 export const DASHBOARD_KEY_METRICS = [
-	'corr20v2_sharpe',
-	'corr20v2_mean',
+	'bmc_last_200_eras_mean',
+	'bmc_mean',
+	'corr_sharpe',
+	'corr_mean',
 	'mmc_mean',
-	'payout_estimate_mean',
-	'mmc_coverage_ratio_rows',
-	'bmc_mean'
+	'mmc_coverage_ratio_rows'
 ] as const;
 
 export type CanonicalMetricKey =
@@ -97,12 +92,20 @@ export function metricNumber(
 
 export function metricLabel(key: string): string {
 	switch (key) {
-		case 'corr20v2_mean':
-			return 'CORR20v2 Mean';
-		case 'corr20v2_std':
-			return 'CORR20v2 Std';
-		case 'corr20v2_sharpe':
-			return 'CORR20v2 Sharpe';
+		case 'bmc_last_200_eras_mean':
+			return 'BMC Mean (Last 200 Eras)';
+		case 'bmc_mean':
+			return 'BMC Mean';
+		case 'bmc_std':
+			return 'BMC Std';
+		case 'bmc_sharpe':
+			return 'BMC Sharpe';
+		case 'corr_mean':
+			return 'CORR Mean';
+		case 'corr_std':
+			return 'CORR Std';
+		case 'corr_sharpe':
+			return 'CORR Sharpe';
 		case 'fnc_mean':
 			return 'FNC Mean';
 		case 'fnc_std':
@@ -115,22 +118,8 @@ export function metricLabel(key: string): string {
 			return 'MMC Std';
 		case 'mmc_sharpe':
 			return 'MMC Sharpe';
-		case 'payout_estimate_mean':
-			return 'Payout Estimate Mean';
-		case 'payout_estimate_std':
-			return 'Payout Estimate Std';
-		case 'payout_estimate_sharpe':
-			return 'Payout Estimate Sharpe';
 		case 'mmc_coverage_ratio_rows':
 			return 'MMC Coverage Rows';
-		case 'bmc_mean':
-			return 'BMC Mean (Diagnostic)';
-		case 'bmc_std':
-			return 'BMC Std';
-		case 'bmc_sharpe':
-			return 'BMC Sharpe';
-		case 'bmc_last_200_eras_mean':
-			return 'BMC Mean (Last 200 Eras)';
 		case 'cwmm_mean':
 			return 'CWMM Mean';
 		case 'cwmm_std':

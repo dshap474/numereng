@@ -116,7 +116,7 @@ def test_local_telemetry_lifecycle_transitions_to_completed(tmp_path: Path) -> N
         current_stage="persist_artifacts",
         completed_stages=["initializing", "load_data"],
     )
-    emit_metric_event(session, metrics={"corr20v2_sharpe": 1.23, "mmc_mean": 0.01})
+    emit_metric_event(session, metrics={"corr_sharpe": 1.23, "mmc_mean": 0.01})
     append_log_line(session, stream="stdout", line="model fit complete")
     append_resource_sample(
         session,
@@ -215,4 +215,4 @@ def test_telemetry_helpers_fail_open_on_sql_error(monkeypatch: pytest.MonkeyPatc
     mark_job_starting(session, pid=100)
     mark_job_running(session)
     append_log_line(session, stream="stdout", line="still running")
-    emit_metric_event(session, metrics={"corr20v2_sharpe": 1.0})
+    emit_metric_event(session, metrics={"corr_sharpe": 1.0})

@@ -229,7 +229,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
                     run_ids=run_ids,
                     experiment_id=values.get("--experiment-id"),
                     method=method,
-                    metric=values.get("--metric", "corr20v2_sharpe"),
+                    metric=values.get("--metric", "corr_sharpe"),
                     target=values.get("--target", "target_ender_20"),
                     name=values.get("--name"),
                     ensemble_id=values.get("--ensemble-id"),

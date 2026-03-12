@@ -1,4 +1,4 @@
-"""Store adapter for the viz compatibility API.
+"""Store adapter for the viz API.
 
 The adapter isolates all access to `.numereng` filesystem and SQLite state so the
 HTTP layer is path-agnostic and easy to rewire when store layout evolves.
@@ -37,24 +37,22 @@ _FORUM_POSTS_RELATIVE_PATH = "forum/posts"
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled", "stale"}
 _ACTIVE_JOB_STATUSES = {"queued", "starting", "running", "canceling"}
 _HIDDEN_NOTE_STEMS = {"CLAUDE", "AGENTS"}
-_CLASSIC_PAYOUT_TARGET = "target_ender_20"
-_PAYOUT_CORR_WEIGHT = 0.75
-_PAYOUT_MMC_WEIGHT = 2.25
-_PAYOUT_CLIP = 0.05
 _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
-    "corr20v2_mean": ("corr20v2_mean", "corr.mean", "corr_mean"),
-    "corr20v2_std": ("corr20v2_std", "corr.std", "corr_std"),
-    "corr20v2_sharpe": ("corr20v2_sharpe", "corr.sharpe", "corr_sharpe", "sharpe"),
+    "corr_mean": ("corr_mean", "corr.mean"),
+    "corr_std": ("corr_std", "corr.std"),
+    "corr_sharpe": ("corr_sharpe", "corr.sharpe", "sharpe"),
+    "corr_n_eras": ("corr_n_eras", "corr.n_eras", "n_eras"),
     "fnc_mean": ("fnc_mean", "fnc.mean"),
     "fnc_std": ("fnc_std", "fnc.std"),
     "fnc_sharpe": ("fnc_sharpe", "fnc.sharpe"),
     "mmc_mean": ("mmc_mean", "mmc.mean"),
     "mmc_std": ("mmc_std", "mmc.std"),
     "mmc_sharpe": ("mmc_sharpe", "mmc.sharpe"),
-    "payout_estimate_mean": ("payout_estimate_mean", "payout_score"),
+    "mmc_n_eras": ("mmc_n_eras", "mmc.n_eras"),
     "bmc_mean": ("bmc_mean", "bmc.mean"),
     "bmc_std": ("bmc_std", "bmc.std"),
     "bmc_sharpe": ("bmc_sharpe", "bmc.sharpe"),
+    "bmc_n_eras": ("bmc_n_eras", "bmc.n_eras"),
     "bmc_last_200_eras_mean": ("bmc_last_200_eras_mean", "bmc_last_200_eras.mean"),
     "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
     "cwmm_std": ("cwmm_std", "cwmm.std"),
@@ -65,13 +63,6 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "max_feature_exposure": ("max_feature_exposure", "max_feature_exposure.mean"),
     "max_drawdown": ("max_drawdown", "corr.max_drawdown"),
 }
-_DERIVED_METRIC_DEPENDENCIES: dict[str, tuple[str, ...]] = {
-    "payout_estimate_mean": ("corr20v2_mean", "mmc_mean"),
-}
-
-
-def _is_classic_payout_target(target_col: str | None) -> bool:
-    return target_col == _CLASSIC_PAYOUT_TARGET
 
 
 @lru_cache(maxsize=512)
@@ -295,7 +286,7 @@ def _metric_row_value(value: Any, value_json: Any) -> Any:
 
 
 def _flatten_metrics(metrics: dict[str, Any], *, prefix: str = "") -> dict[str, Any]:
-    """Flatten nested metric payloads into dotted keys for lookup compatibility."""
+    """Flatten nested metric payloads into dotted keys for canonical lookup."""
 
     flattened: dict[str, Any] = {}
     for key_raw, value in metrics.items():
@@ -311,21 +302,9 @@ def _flatten_metrics(metrics: dict[str, Any], *, prefix: str = "") -> dict[str, 
 def _expand_metric_query_names(metric_names: list[str]) -> list[str]:
     """Expand canonical metric names into all known persisted aliases."""
 
-    requested: list[str] = []
-    requested_seen: set[str] = set()
-    for name in metric_names:
-        if name not in requested_seen:
-            requested_seen.add(name)
-            requested.append(name)
-        for dependency in _DERIVED_METRIC_DEPENDENCIES.get(name, ()):
-            if dependency in requested_seen:
-                continue
-            requested_seen.add(dependency)
-            requested.append(dependency)
-
     expanded: list[str] = []
     seen: set[str] = set()
-    for name in requested:
+    for name in metric_names:
         aliases = _METRIC_QUERY_ALIASES.get(name, (name,))
         for alias in aliases:
             if alias in seen:
@@ -468,145 +447,42 @@ def _normalize_round_metrics(
     *,
     target_col: str | None = None,
 ) -> dict[str, Any]:
-    normalized: dict[str, Any] = _sanitize_metrics(metrics)
-    flattened = _flatten_metrics(normalized)
-    for key, value in flattened.items():
-        normalized.setdefault(key, value)
+    _ = target_col
+    flattened = _flatten_metrics(_sanitize_metrics(metrics))
+    normalized: dict[str, Any] = {}
 
-    corr_mean = _extract_numeric_metric(normalized, "corr20v2_mean", "corr.mean", "corr_mean")
-    if corr_mean is not None:
-        normalized["corr20v2_mean"] = corr_mean
-
-    corr_std = _extract_numeric_metric(normalized, "corr20v2_std", "corr.std", "corr_std")
-    if corr_std is not None:
-        normalized["corr20v2_std"] = corr_std
-
-    corr_sharpe = _extract_numeric_metric(normalized, "corr20v2_sharpe", "corr.sharpe", "corr_sharpe", "sharpe")
-    if corr_sharpe is not None:
-        normalized["corr20v2_sharpe"] = corr_sharpe
-
-    corr_n_eras = _extract_numeric_metric(normalized, "corr20v2_n_eras", "corr.n_eras", "n_eras")
-    if corr_n_eras is not None:
-        normalized["corr20v2_n_eras"] = int(corr_n_eras)
-
-    fnc_mean = _extract_numeric_metric(normalized, "fnc_mean", "fnc.mean")
-    if fnc_mean is not None:
-        normalized["fnc_mean"] = fnc_mean
-
-    fnc_std = _extract_numeric_metric(normalized, "fnc_std", "fnc.std")
-    if fnc_std is not None:
-        normalized["fnc_std"] = fnc_std
-
-    fnc_sharpe = _extract_numeric_metric(normalized, "fnc_sharpe", "fnc.sharpe")
-    if fnc_sharpe is not None:
-        normalized["fnc_sharpe"] = fnc_sharpe
-
-    mmc_mean = _extract_numeric_metric(normalized, "mmc_mean", "mmc.mean")
-    if mmc_mean is not None:
-        normalized["mmc_mean"] = mmc_mean
-
-    mmc_std = _extract_numeric_metric(normalized, "mmc_std", "mmc.std")
-    if mmc_std is not None:
-        normalized["mmc_std"] = mmc_std
-
-    mmc_sharpe = _extract_numeric_metric(normalized, "mmc_sharpe", "mmc.sharpe")
-    if mmc_sharpe is not None:
-        normalized["mmc_sharpe"] = mmc_sharpe
-
-    mmc_n_eras = _extract_numeric_metric(normalized, "mmc_n_eras", "mmc.n_eras")
-    if mmc_n_eras is not None:
-        normalized["mmc_n_eras"] = int(mmc_n_eras)
-
-    bmc_mean = _extract_numeric_metric(normalized, "bmc_mean", "bmc.mean")
-    if bmc_mean is not None:
-        normalized["bmc_mean"] = bmc_mean
-
-    bmc_std = _extract_numeric_metric(normalized, "bmc_std", "bmc.std")
-    if bmc_std is not None:
-        normalized["bmc_std"] = bmc_std
-
-    bmc_sharpe = _extract_numeric_metric(normalized, "bmc_sharpe", "bmc.sharpe")
-    if bmc_sharpe is not None:
-        normalized["bmc_sharpe"] = bmc_sharpe
-
-    bmc_n_eras = _extract_numeric_metric(normalized, "bmc_n_eras", "bmc.n_eras")
-    if bmc_n_eras is not None:
-        normalized["bmc_n_eras"] = int(bmc_n_eras)
-
-    bmc_last_200_eras_mean = _extract_numeric_metric(
-        normalized,
-        "bmc_last_200_eras_mean",
-        "bmc_last_200_eras.mean",
+    scalar_metrics: tuple[tuple[str, tuple[str, ...], bool], ...] = (
+        ("corr_mean", ("corr.mean", "corr_mean", "corr20v2_mean"), False),
+        ("corr_std", ("corr.std", "corr_std", "corr20v2_std"), False),
+        ("corr_sharpe", ("corr.sharpe", "corr_sharpe", "corr20v2_sharpe", "sharpe"), False),
+        ("corr_n_eras", ("corr.n_eras", "corr_n_eras", "corr20v2_n_eras", "n_eras"), True),
+        ("fnc_mean", ("fnc.mean", "fnc_mean"), False),
+        ("fnc_std", ("fnc.std", "fnc_std"), False),
+        ("fnc_sharpe", ("fnc.sharpe", "fnc_sharpe"), False),
+        ("mmc_mean", ("mmc.mean", "mmc_mean"), False),
+        ("mmc_std", ("mmc.std", "mmc_std"), False),
+        ("mmc_sharpe", ("mmc.sharpe", "mmc_sharpe"), False),
+        ("mmc_n_eras", ("mmc.n_eras", "mmc_n_eras"), True),
+        ("bmc_mean", ("bmc.mean", "bmc_mean"), False),
+        ("bmc_std", ("bmc.std", "bmc_std"), False),
+        ("bmc_sharpe", ("bmc.sharpe", "bmc_sharpe"), False),
+        ("bmc_n_eras", ("bmc.n_eras", "bmc_n_eras"), True),
+        ("bmc_last_200_eras_mean", ("bmc_last_200_eras.mean", "bmc_last_200_eras_mean"), False),
+        ("cwmm_mean", ("cwmm.mean", "cwmm_mean"), False),
+        ("cwmm_std", ("cwmm.std", "cwmm_std"), False),
+        ("cwmm_sharpe", ("cwmm.sharpe", "cwmm_sharpe"), False),
+        ("feature_exposure_mean", ("feature_exposure.mean", "feature_exposure_mean"), False),
+        ("feature_exposure_std", ("feature_exposure.std", "feature_exposure_std"), False),
+        ("feature_exposure_sharpe", ("feature_exposure.sharpe", "feature_exposure_sharpe"), False),
+        ("max_feature_exposure", ("max_feature_exposure.mean", "max_feature_exposure"), False),
+        ("max_drawdown", ("corr.max_drawdown", "max_drawdown"), False),
     )
-    if bmc_last_200_eras_mean is not None:
-        normalized["bmc_last_200_eras_mean"] = bmc_last_200_eras_mean
 
-    cwmm_mean = _extract_numeric_metric(normalized, "cwmm_mean", "cwmm.mean")
-    if cwmm_mean is not None:
-        normalized["cwmm_mean"] = cwmm_mean
-
-    cwmm_std = _extract_numeric_metric(normalized, "cwmm_std", "cwmm.std")
-    if cwmm_std is not None:
-        normalized["cwmm_std"] = cwmm_std
-
-    cwmm_sharpe = _extract_numeric_metric(normalized, "cwmm_sharpe", "cwmm.sharpe")
-    if cwmm_sharpe is not None:
-        normalized["cwmm_sharpe"] = cwmm_sharpe
-
-    feature_exposure_mean = _extract_numeric_metric(
-        normalized,
-        "feature_exposure_mean",
-        "feature_exposure.mean",
-    )
-    if feature_exposure_mean is not None:
-        normalized["feature_exposure_mean"] = feature_exposure_mean
-
-    feature_exposure_std = _extract_numeric_metric(
-        normalized,
-        "feature_exposure_std",
-        "feature_exposure.std",
-    )
-    if feature_exposure_std is not None:
-        normalized["feature_exposure_std"] = feature_exposure_std
-
-    feature_exposure_sharpe = _extract_numeric_metric(
-        normalized,
-        "feature_exposure_sharpe",
-        "feature_exposure.sharpe",
-    )
-    if feature_exposure_sharpe is not None:
-        normalized["feature_exposure_sharpe"] = feature_exposure_sharpe
-
-    max_feature_exposure = _extract_numeric_metric(
-        normalized,
-        "max_feature_exposure",
-        "max_feature_exposure.mean",
-    )
-    if max_feature_exposure is not None:
-        normalized["max_feature_exposure"] = max_feature_exposure
-
-    payout = _extract_numeric_metric(normalized, "payout_estimate_mean", "payout_score")
-    payout_key_present = any(
-        key in normalized for key in ("payout_estimate_mean", "payout_score", "payout_estimate", "payout_estimate.mean")
-    )
-    can_derive_payout = target_col is None or _is_classic_payout_target(target_col)
-    if (
-        payout is None
-        and not payout_key_present
-        and can_derive_payout
-        and corr_mean is not None
-        and mmc_mean is not None
-    ):
-        payout_raw = (_PAYOUT_CORR_WEIGHT * corr_mean) + (_PAYOUT_MMC_WEIGHT * mmc_mean)
-        payout = max(-_PAYOUT_CLIP, min(_PAYOUT_CLIP, payout_raw))
-    if payout is not None:
-        normalized["payout_estimate_mean"] = payout
-    elif payout_key_present:
-        normalized.setdefault("payout_estimate_mean", None)
-
-    max_drawdown = _extract_numeric_metric(normalized, "max_drawdown", "corr.max_drawdown")
-    if max_drawdown is not None:
-        normalized["max_drawdown"] = max_drawdown
+    for output_key, aliases, cast_int in scalar_metrics:
+        value = _extract_numeric_metric(flattened, *aliases)
+        if value is None:
+            continue
+        normalized[output_key] = int(value) if cast_int else value
 
     return normalized
 
@@ -628,6 +504,23 @@ def _coverage_ratio_from_provenance(score_provenance: dict[str, Any]) -> float |
         return None
     ratio = overlap / total
     return ratio if math.isfinite(ratio) else None
+
+
+def _normalize_per_era_corr_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize persisted per-era correlation rows to canonical field names."""
+
+    normalized: list[dict[str, Any]] = []
+    for row in records:
+        corr = _extract_numeric_metric(row, "corr", "corr20v2")
+        if corr is None:
+            continue
+        normalized.append(
+            {
+                "era": row.get("era"),
+                "corr": corr,
+            }
+        )
+    return _sort_records_by_era(normalized)
 
 
 def _resolve_series_value(value: Any, preferred_key: str | None = None) -> float | None:
@@ -1668,7 +1561,7 @@ class VizStoreAdapter:
             records.append(
                 {
                     "era": _coerce_json_value(era),
-                    "corr20v2": score,
+                    "corr": score,
                 }
             )
         return _sort_records_by_era(records) if records else None
@@ -1678,100 +1571,17 @@ class VizStoreAdapter:
         run_dir = self._resolve_run_dir(run_id)
         parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet"
         csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv"
-        return self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
-
-    def _derive_per_era_payout_map_fallback(self, run_id: str, run_dir: Path) -> list[dict[str, Any]] | None:
-        correlation_contribution, numerai_corr = _load_scoring_functions()
-        if correlation_contribution is None or numerai_corr is None:
-            return None
-
-        loaded = self._scoring_context(run_id, run_dir)
-        if loaded is None:
-            return None
-        frame, context = loaded
-        era_col = str(context["era_col"])
-        target_col = str(context["target_col"])
-        if not _is_classic_payout_target(target_col):
-            return None
-        prediction_col = str(context["prediction_col"])
-        id_col_raw = context.get("id_col")
-        if not isinstance(id_col_raw, str) or id_col_raw not in frame.columns:
-            return None
-        id_col = id_col_raw
-
-        score_provenance = context["score_provenance"]
-        manifest = context["manifest"]
-        meta_model_col = str(context["meta_model_col"])
-        meta_model_path = self._resolve_meta_model_artifact_path(run_dir, manifest, score_provenance)
-        if meta_model_path is None:
-            return None
-
-        meta_columns = tuple(dict.fromkeys([id_col, meta_model_col, era_col]))
-        meta_frame = self._read_table_frame(meta_model_path, columns=meta_columns)
-        if meta_frame is None:
-            # Some meta model snapshots do not include era; retry with id + meta column only.
-            meta_frame = self._read_table_frame(meta_model_path, columns=(id_col, meta_model_col))
-        if meta_frame is None or meta_frame.empty:
-            return None
-        if meta_model_col not in meta_frame.columns:
-            fallback = [str(col) for col in meta_frame.columns if str(col) not in {id_col, era_col, "data_type"}]
-            if not fallback:
-                return None
-            meta_model_col = fallback[0]
-
-        if id_col not in meta_frame.columns:
-            if meta_frame.index.name == id_col:
-                meta_frame = meta_frame.reset_index()
-            elif meta_frame.index.name is None and not isinstance(meta_frame.index, pd.RangeIndex):
-                meta_frame = meta_frame.reset_index().rename(columns={"index": id_col})
-        if id_col not in meta_frame.columns:
-            return None
-
-        filtered_preds = frame.dropna(subset=[era_col, id_col, target_col, prediction_col])
-        if filtered_preds.empty:
-            return None
-
-        merge_keys = [id_col]
-        if era_col in meta_frame.columns:
-            merge_keys.append(era_col)
-        meta_keep = [id_col, meta_model_col]
-        if era_col in meta_frame.columns:
-            meta_keep.append(era_col)
-        merged = filtered_preds.merge(meta_frame[meta_keep], on=merge_keys, how="inner")
-        merged = merged.dropna(subset=[era_col, target_col, prediction_col, meta_model_col])
-        if merged.empty:
-            return None
-
-        records: list[dict[str, Any]] = []
-        for era, group in merged.groupby(era_col):
-            corr_raw = numerai_corr(group[[prediction_col]], group[target_col])
-            mmc_raw = correlation_contribution(group[[prediction_col]], group[meta_model_col], group[target_col])
-            corr = _resolve_series_value(corr_raw, prediction_col)
-            mmc = _resolve_series_value(mmc_raw, prediction_col)
-            if corr is None or mmc is None:
-                continue
-            payout_raw = (_PAYOUT_CORR_WEIGHT * corr) + (_PAYOUT_MMC_WEIGHT * mmc)
-            payout = max(-_PAYOUT_CLIP, min(_PAYOUT_CLIP, payout_raw))
-            records.append(
-                {
-                    "era": _coerce_json_value(era),
-                    "corr20v2": corr,
-                    "mmc": mmc,
-                    "payout_estimate": payout,
-                }
-            )
-        return _sort_records_by_era(records) if records else None
-
-    def get_per_era_payout_map(self, run_id: str) -> list[dict[str, Any]] | None:
-        _ensure_safe_id(run_id, label="run_id")
-        run_dir = self._resolve_run_dir(run_id)
-        manifest = self.get_run_manifest(run_id) or _read_json_dict(run_dir / "run.json")
-        target_train, _, _ = _resolve_run_targets(manifest)
-        if not _is_classic_payout_target(target_train):
-            return None
-        parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.parquet"
-        csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_payout_map.csv"
-        return self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
+        records = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
+        if records is None:
+            return self._derive_per_era_corr_fallback(run_id, run_dir)
+        normalized: list[dict[str, Any]] = []
+        for row in records:
+            item = dict(row)
+            if "corr" not in item and "corr20v2" in item:
+                item["corr"] = item["corr20v2"]
+            item.pop("corr20v2", None)
+            normalized.append(item)
+        return normalized
 
     def get_feature_importance(self, run_id: str, top_n: int) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")

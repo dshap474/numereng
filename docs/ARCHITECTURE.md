@@ -455,6 +455,11 @@ Live monitor streaming route:
 - `/api/run-jobs/{job_id}/stream` (SSE)
 - multiplexes events/logs/samples with periodic heartbeat
 
+Viz scoring contract:
+- Public viz metrics are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, `feature_exposure_*`, `max_feature_exposure`, `max_drawdown`, and `mmc_coverage_ratio_rows`.
+- Viz does not expose payout-derived metrics or payout-specific routes.
+- Per-era correlation payloads use `{ era, corr }`.
+
 ### 9.2 Frontend route topology (`viz/web`)
 Current frontend routes:
 - `/docs`
@@ -467,6 +472,7 @@ Important UI contract:
 - There are no standalone `/run-ops` or `/configs` frontend pages.
 - Run Ops UI is embedded on experiment detail (`/experiments/[id]`) and is monitor-only.
 - Launch/control actions are CLI/API-only by design.
+- Experiment ranking defaults to `bmc_last_200_eras_mean`.
 - Run detail/chart reads are artifact-backed only; when optional per-era visualization files are absent, viz surfaces them as unavailable instead of recomputing them during requests.
 
 ### 9.3 Run monitor data flow

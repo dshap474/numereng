@@ -15,8 +15,8 @@ def test_summarize_metrics_returns_none_values_without_target_series() -> None:
     )
     by_name = {metric.name: metric.value for metric in metrics}
     assert by_name == {
-        "corr20v2_mean": None,
-        "corr20v2_sharpe": None,
+        "corr_mean": None,
+        "corr_sharpe": None,
         "max_drawdown": None,
     }
 
@@ -28,8 +28,8 @@ def test_summarize_metrics_sets_sharpe_none_when_per_era_std_zero() -> None:
         target_series=pd.Series([0.0, 1.0, 0.0, 1.0], dtype=float),
     )
     by_name = {metric.name: metric.value for metric in metrics}
-    assert by_name["corr20v2_mean"] == pytest.approx(1.0)
-    assert by_name["corr20v2_sharpe"] is None
+    assert by_name["corr_mean"] == pytest.approx(1.0)
+    assert by_name["corr_sharpe"] is None
     assert by_name["max_drawdown"] == pytest.approx(0.0)
 
 
@@ -46,7 +46,7 @@ def test_metric_dict_maps_metric_rows_by_name() -> None:
         target_series=None,
     )
     payload = metrics_module.metric_dict(metrics)
-    assert set(payload.keys()) == {"corr20v2_mean", "corr20v2_sharpe", "max_drawdown"}
+    assert set(payload.keys()) == {"corr_mean", "corr_sharpe", "max_drawdown"}
 
 
 def test_regime_metrics_table_rejects_invalid_bucket_count() -> None:
@@ -78,4 +78,4 @@ def test_bootstrap_metric_summary_empty_input_returns_null_payload() -> None:
     assert payload["n_eras"] == 0
     assert payload["n_resamples"] == 8
     assert payload["seed"] == 7
-    assert payload["metrics"]["corr20v2_mean"]["mean"] is None
+    assert payload["metrics"]["corr_mean"]["mean"] is None

@@ -272,6 +272,7 @@ def _updated_scoring_payload(
         "fnc_feature_set": policy.fnc_feature_set,
         "fnc_target_policy": policy.fnc_target_policy,
         "benchmark_min_overlap_ratio": policy.benchmark_min_overlap_ratio,
+        "include_feature_neutral_metrics": policy.include_feature_neutral_metrics,
     }
     return payload
 

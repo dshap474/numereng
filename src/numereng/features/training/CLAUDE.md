@@ -33,8 +33,6 @@ Not guaranteed by the canonical training pipeline:
 
 - `artifacts/predictions/val_per_era_corr20v2.parquet`
 - `artifacts/predictions/val_per_era_corr20v2.csv`
-- `artifacts/predictions/val_per_era_payout_map.parquet`
-- `artifacts/predictions/val_per_era_payout_map.csv`
 - `artifacts/eval/feature_importance.csv`
 - `artifacts/reports/trials.csv`
 - `artifacts/reports/best_params.json`
@@ -54,24 +52,20 @@ Target identity:
 Training does not require `target_train` / `target_payout` for single-target runs.
 Consumers must not assume those fields exist.
 
-Canonical metric aliases (for viz/read APIs):
+Canonical viz/read metric names:
 
-- `corr20v2_mean` from `corr.mean`
-- `corr20v2_sharpe` from `corr.sharpe`
+- `corr_mean` from `corr.mean`
+- `corr_sharpe` from `corr.sharpe`
 - `mmc_mean` from `mmc.mean`
 - extra scoring-target families may also be present as `corr_<alias>` /
   `mmc_<alias>` in `metrics.json` and `results.json`
 - `bmc_mean` from `bmc.mean`
+- `bmc_last_200_eras_mean` from `bmc_last_200_eras.mean`
 - `cwmm_mean` from `cwmm.mean` when meta-model overlap exists
 - `feature_exposure_mean` from `feature_exposure.mean`
 - `max_feature_exposure` from `max_feature_exposure.mean`
 - `max_drawdown` from `corr.max_drawdown`
-- no payout estimate field is emitted by training scoring artifacts
-
-Payout semantics:
-
-- Training scoring does not emit `payout_estimate` or `payout_estimate_mean`.
-- Numereng does not implement an official expected-payout estimator from validation metrics.
+- no payout estimate field is emitted by training scoring artifacts or viz APIs
 
 ## Score Provenance Contract
 

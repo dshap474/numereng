@@ -189,7 +189,7 @@ def test_ensemble_slow_large_matrix_optimize_smoke(tmp_path: Path) -> None:
         api_module.EnsembleBuildRequest(
             run_ids=[f"run-{idx}" for idx in range(4)],
             experiment_id="exp-slow",
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             target="target_ender_20",
             optimize_weights=True,
             store_root=str(store_root),

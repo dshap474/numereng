@@ -332,7 +332,7 @@ def test_ensemble_api_roundtrip_smoke(tmp_path: Path) -> None:
         api_module.EnsembleBuildRequest(
             run_ids=["run-a", "run-b"],
             experiment_id="exp-smoke",
-            metric="corr20v2_sharpe",
+            metric="corr_sharpe",
             target="target_ender_20",
             store_root=str(store_root),
         )

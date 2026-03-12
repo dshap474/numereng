@@ -9,11 +9,11 @@ from typing import Any
 from numereng.features.viz.store_adapter import VizStoreAdapter
 
 TOP_METRIC_NAMES = [
-    "corr20v2_sharpe",
-    "corr20v2_mean",
-    "mmc_mean",
-    "payout_estimate_mean",
+    "bmc_last_200_eras_mean",
     "bmc_mean",
+    "corr_sharpe",
+    "corr_mean",
+    "mmc_mean",
 ]
 
 
@@ -209,9 +209,6 @@ class VizService:
     def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
         return self.adapter.get_per_era_corr(run_id)
 
-    def get_per_era_payout_map(self, run_id: str) -> list[dict[str, Any]] | None:
-        return self.adapter.get_per_era_payout_map(run_id)
-
     def get_feature_importance(self, run_id: str, *, top_n: int) -> list[dict[str, Any]] | None:
         return self.adapter.get_feature_importance(run_id, top_n=top_n)
 
@@ -232,7 +229,6 @@ class VizService:
         events_task = asyncio.to_thread(self.adapter.list_run_events, run_id, limit=50)
         resources_task = asyncio.to_thread(self.adapter.list_run_resources, run_id, limit=50)
         corr_task = asyncio.to_thread(self.adapter.get_per_era_corr, run_id)
-        payout_task = asyncio.to_thread(self.adapter.get_per_era_payout_map, run_id)
         fi_task = asyncio.to_thread(self.adapter.get_feature_importance, run_id, top_n=30)
         trials_task = asyncio.to_thread(self.adapter.get_trials, run_id)
         params_task = asyncio.to_thread(self.adapter.get_best_params, run_id)
@@ -245,7 +241,6 @@ class VizService:
             events,
             resources,
             per_era_corr,
-            per_era_payout_map,
             feature_importance,
             trials,
             best_params,
@@ -257,7 +252,6 @@ class VizService:
             events_task,
             resources_task,
             corr_task,
-            payout_task,
             fi_task,
             trials_task,
             params_task,
@@ -269,7 +263,6 @@ class VizService:
             "metrics": metrics,
             "manifest": manifest,
             "per_era_corr": per_era_corr,
-            "per_era_payout_map": per_era_payout_map,
             "feature_importance": feature_importance,
             "trials": trials,
             "best_params": best_params,
