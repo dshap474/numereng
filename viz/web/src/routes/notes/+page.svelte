@@ -220,7 +220,6 @@
 		</div>
 
 		<div class="pt-3 border-t border-border/50 flex-shrink-0">
-			<p class="text-[11px] text-amber-300 px-2">Read-only mode: notes are view-only in the dashboard.</p>
 		</div>
 	</nav>
 
@@ -239,7 +238,6 @@
 		{:else}
 			<div class="flex items-center gap-2 mb-4">
 				<span class="text-sm text-muted-foreground font-mono">{selectedPath}</span>
-				<span class="text-[11px] text-amber-300">Read-only</span>
 			</div>
 			<div class="prose-dark text-sm">
 				{@html rendered}

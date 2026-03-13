@@ -107,9 +107,7 @@
 					</button>
 				{/each}
 			</div>
-			{#if readOnly}
-				<span class="px-2.5 py-1 rounded border border-border text-[11px] text-muted-foreground">Read-only</span>
-			{:else}
+			{#if !readOnly}
 				<div class="flex gap-2">
 					{#if editing}
 						<button

@@ -1,8 +1,8 @@
+![Numereng](docs/assets/numereng-banner.png)
+
 # numereng
 
-![Numereng](docs/assets/NUMERENG.png)
-
-`numereng` is a package-first Numerai workflow system for training, scoring, submissions, experiments, HPO, ensembles, cloud execution, and read-only monitoring.
+`numereng` is a package-first Numerai agentic development engine for training, scoring, submissions, experiments, HPO, ensembles, cloud execution, and read-only monitoring.
 
 Stable public interfaces:
 

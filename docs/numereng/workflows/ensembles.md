@@ -1,6 +1,6 @@
 # Ensembles
 
-Build and inspect rank-average ensembles from multiple run predictions.
+Numereng builds rank-average ensembles from multiple scored runs.
 
 ## Build
 
@@ -16,7 +16,7 @@ uv run numereng ensemble build \
 
 Optional weighting controls:
 
-- `--weights 0.5,0.3,0.2` (must match component count)
+- `--weights <w1,w2,...>`
 - `--optimize-weights`
 
 Optional neutralization stages:
@@ -29,7 +29,7 @@ Optional neutralization stages:
 - `--neutralizer-cols <csv>`
 - `--no-neutralization-rank`
 
-Optional diagnostics:
+Optional heavy diagnostics:
 
 - `--include-heavy-artifacts`
 
@@ -40,19 +40,19 @@ uv run numereng ensemble list
 uv run numereng ensemble details --ensemble-id <ensemble_id>
 ```
 
-## Artifacts
+## Artifact Locations
 
-Ensemble artifacts are persisted under either:
+Ensembles are stored either:
 
-- `.numereng/ensembles/<ensemble_id>/`
-- `.numereng/experiments/<experiment_id>/ensembles/<ensemble_id>/`
+- globally under `.numereng/ensembles/<ensemble_id>/`
+- under an experiment at `.numereng/experiments/<experiment_id>/ensembles/<ensemble_id>/`
 
 Canonical files include:
 
 - `predictions.parquet`
-- `correlation_matrix.csv`
 - `metrics.json`
 - `weights.csv`
+- `correlation_matrix.csv`
 - `component_metrics.csv`
 - `era_metrics.csv`
 - `regime_metrics.csv`
@@ -60,12 +60,13 @@ Canonical files include:
 
 Optional files:
 
-- `component_predictions.parquet` (heavy)
-- `bootstrap_metrics.json` (heavy)
-- `predictions_pre_neutralization.parquet` (when `--neutralize-final`)
+- `component_predictions.parquet`
+- `bootstrap_metrics.json`
+- `predictions_pre_neutralization.parquet`
 
 ## High-Risk Gotchas
 
-- `--run-ids` must contain at least two run IDs.
-- `--method` currently only supports `rank_avg`.
-- `--weights` length must match number of components.
+- `--run-ids` must contain at least two run IDs
+- `--method` currently supports `rank_avg`
+- `--weights` length must match the component count
+- use `--optimize-weights` or explicit `--weights`, not conflicting weighting assumptions

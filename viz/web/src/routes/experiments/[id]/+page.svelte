@@ -63,7 +63,6 @@
 	let chartTab = $state<'composite' | 'charts'>('charts');
 	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
 	let runOpsView = $state<'table' | 'chart'>('table');
-	let runOpsMetricMode = $state<'main' | 'all'>('main');
 	let launchSectionOpen = $state(true);
 	let queueSectionOpen = $state(true);
 	let monitorSectionOpen = $state(true);
@@ -125,10 +124,24 @@
 		return keys;
 	});
 
+	let runOpsMainMetricColumns = $derived.by(() => {
+		return RUNOPS_MAIN_METRICS.filter((key) => runOpsAvailableMetricKeys.has(key));
+	});
+
 	let metricColumns = $derived.by(() => {
-		const preferred =
-			runOpsMetricMode === 'main' ? RUNOPS_MAIN_METRICS : RUNOPS_ALL_SCORING_METRICS;
-		return preferred.filter((key) => runOpsAvailableMetricKeys.has(key));
+		const ordered: string[] = [];
+		const seen = new Set<string>();
+		for (const key of [...RUNOPS_MAIN_METRICS, ...RUNOPS_ALL_SCORING_METRICS]) {
+			if (!runOpsAvailableMetricKeys.has(key) || seen.has(key)) continue;
+			ordered.push(key);
+			seen.add(key);
+		}
+		return ordered;
+	});
+
+	let runOpsMetricDividerColumn = $derived.by(() => {
+		if (runOpsMainMetricColumns.length === 0) return null;
+		return runOpsMainMetricColumns[runOpsMainMetricColumns.length - 1];
 	});
 
 	interface Operation {
@@ -854,40 +867,131 @@
 
 {#snippet opsTable()}
 	<div class="border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" aria-label="Operations table">
-		<div class="flex items-center justify-end border-b border-border px-4 py-2.5">
-			<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
-				{#each [['main', 'Main'], ['all', 'All Metrics']] as [mode, label] (mode)}
-					<button
-						type="button"
-						class="px-2.5 py-1 rounded text-[11px] transition-colors {runOpsMetricMode === mode ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-						onclick={() => (runOpsMetricMode = mode as 'main' | 'all')}
-					>{label}</button>
-				{/each}
-			</div>
-		</div>
 		<div class="overflow-auto flex-1 min-h-0">
-				<table class="w-full text-sm leading-[1.35]">
-					<thead class="sticky top-0 z-10 bg-background">
-						<tr class="h-[92px] border-b border-border bg-muted/40 text-left align-middle">
-							{#each metricColumns as col (col)}
-								<th
-									scope="col"
-									class="px-3 py-2.5 align-middle font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none"
-									onclick={() => toggleSort(col)}
-								>{col}{sortIndicator(col)}</th>
-							{/each}
-						</tr>
+			<table class="w-max min-w-full text-sm leading-[1.35] border-separate border-spacing-0">
+				<thead>
+					<tr class="h-[92px] text-left align-middle">
+						<th
+							scope="col"
+							class="sticky left-0 top-0 z-30 w-[320px] min-w-[320px] border-b border-r border-border bg-background px-4 py-3 align-middle"
+						>
+							<div class="flex items-start justify-between gap-3">
+								<div>
+									<h2 class="text-sm font-semibold">Ops</h2>
+									<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
+								</div>
+								<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+									{#each ['table', 'chart'] as view (view)}
+										<button
+											type="button"
+											class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+											onclick={() => (runOpsView = view as 'table' | 'chart')}
+										>{view}</button>
+									{/each}
+								</div>
+							</div>
+						</th>
+						{#each metricColumns as col (col)}
+							<th
+								scope="col"
+								class="sticky top-0 z-20 min-w-[128px] border-b border-border bg-background px-3 py-2.5 align-middle font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none {runOpsMetricDividerColumn === col ? 'border-r border-border/80' : ''}"
+								onclick={() => toggleSort(col)}
+							>{col}{sortIndicator(col)}</th>
+						{/each}
+					</tr>
 				</thead>
 				<tbody class="divide-y divide-border">
 					{#each sortedOps as op (op.op_id)}
-						<tr class="h-[88px] hover:bg-muted/30 transition-colors">
+						<tr
+							class="group h-[88px] cursor-pointer transition-colors"
+							onclick={() => selectOperation(op)}
+						>
+							<td
+								class="sticky left-0 z-10 w-[320px] min-w-[320px] border-b border-r border-border px-4 py-3 text-left {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-primary/10 shadow-[inset_2px_0_0_0_var(--color-primary)]' : 'bg-background group-hover:bg-muted/20'}"
+							>
+								<div class="flex items-start gap-2">
+									<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
+										{opTypeLabel(op.op_type)}
+									</span>
+									<div class="min-w-0 flex-1">
+										<div class="truncate text-[12px] font-medium">{op.name}</div>
+										<div class="mt-1 text-[10px] text-muted-foreground">
+											{op.model_type} · {op.target} · {op.feature_set}
+										</div>
+										<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
+									</div>
+								</div>
+							</td>
 							{#each metricColumns as col (col)}
-								<td class="px-3 py-0 text-right tabular-nums align-middle">{fmt(opMetricValue(op, col))}</td>
+								<td
+									class="min-w-[128px] border-b border-border px-3 py-0 text-right tabular-nums align-middle {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-primary/10' : 'bg-transparent group-hover:bg-muted/20'} {runOpsMetricDividerColumn === col ? 'border-r border-border/80' : ''}"
+								>{fmt(opMetricValue(op, col))}</td>
 							{/each}
+						</tr>
+					{:else}
+						<tr>
+							<td
+								colspan={metricColumns.length + 1}
+								class="px-4 py-6 text-center text-sm text-muted-foreground"
+							>
+								No ops available.
+							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
+		</div>
+	</div>
+{/snippet}
+
+{#snippet opsRail()}
+	<div class="w-[320px] flex-shrink-0 flex flex-col rounded-lg border border-border bg-card overflow-hidden">
+		<div class="h-[92px] border-b border-border px-4 py-3">
+			<div class="flex items-center justify-between gap-3">
+				<div>
+					<h2 class="text-sm font-semibold">Ops</h2>
+					<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
+				</div>
+				<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+					{#each ['table', 'chart'] as view (view)}
+						<button
+							type="button"
+							class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+							onclick={() => (runOpsView = view as 'table' | 'chart')}
+						>{view}</button>
+					{/each}
+				</div>
+			</div>
+			{#if runOpsView === 'chart' && selectedOperationItem}
+				<p class="mt-2 text-[11px] text-muted-foreground">
+					Selected: {selectedOperationItem.name}
+				</p>
+			{/if}
+		</div>
+
+		<div class="flex-1 min-h-0 overflow-auto divide-y divide-border/50">
+			{#each sortedOps as op (op.op_id)}
+				<button
+					type="button"
+					class="h-[88px] w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
+					onclick={() => selectOperation(op)}
+				>
+					<div class="flex items-start gap-2">
+						<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
+							{opTypeLabel(op.op_type)}
+						</span>
+						<div class="min-w-0 flex-1">
+							<div class="truncate text-[12px] font-medium">{op.name}</div>
+							<div class="mt-1 text-[10px] text-muted-foreground">
+								{op.model_type} · {op.target} · {op.feature_set}
+							</div>
+							<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
+						</div>
+					</div>
+				</button>
+			{:else}
+				<div class="px-4 py-6 text-sm text-muted-foreground">No ops available.</div>
+			{/each}
 		</div>
 	</div>
 {/snippet}
@@ -1504,58 +1608,10 @@
 			</div>
 			{/if}
 
-			<div class="w-[320px] flex-shrink-0 flex flex-col rounded-lg border border-border bg-card overflow-hidden">
-				<div class="h-[92px] border-b border-border px-4 py-3">
-					<div class="flex items-center justify-between gap-3">
-						<div>
-							<h2 class="text-sm font-semibold">Ops</h2>
-							<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
-						</div>
-						<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
-							{#each ['table', 'chart'] as view (view)}
-								<button
-									type="button"
-									class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
-									onclick={() => (runOpsView = view as 'table' | 'chart')}
-								>{view}</button>
-							{/each}
-						</div>
-					</div>
-					{#if runOpsView === 'chart' && selectedOperationItem}
-						<p class="mt-2 text-[11px] text-muted-foreground">
-							Selected: {selectedOperationItem.name}
-						</p>
-					{/if}
-				</div>
+			{#if runOpsView === 'chart'}
+				{@render opsRail()}
 
-				<div class="flex-1 min-h-0 overflow-auto divide-y divide-border/50">
-					{#each sortedOps as op (op.op_id)}
-						<button
-							type="button"
-							class="h-[88px] w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
-							onclick={() => selectOperation(op)}
-						>
-							<div class="flex items-start gap-2">
-								<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
-									{opTypeLabel(op.op_type)}
-								</span>
-								<div class="min-w-0 flex-1">
-									<div class="truncate text-[12px] font-medium">{op.name}</div>
-									<div class="mt-1 text-[10px] text-muted-foreground">
-										{op.model_type} · {op.target} · {op.feature_set}
-									</div>
-									<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
-								</div>
-							</div>
-						</button>
-					{:else}
-						<div class="px-4 py-6 text-sm text-muted-foreground">No ops available.</div>
-					{/each}
-				</div>
-			</div>
-
-			<div class="flex-1 min-w-0 flex flex-col min-h-0">
-				{#if runOpsView === 'chart'}
+				<div class="flex-1 min-w-0 flex flex-col min-h-0">
 					{#if selectedOp?.type === 'run'}
 						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
 							<RunDetailPanel
@@ -1587,10 +1643,12 @@
 							Select an op from the left to inspect it.
 						</div>
 					{/if}
-				{:else}
+				</div>
+			{:else}
+				<div class="flex-1 min-w-0 flex flex-col min-h-0">
 					{@render opsTable()}
-				{/if}
-			</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
