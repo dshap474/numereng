@@ -9,6 +9,8 @@ USAGE = (
     "  numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]\n"
+    "  numereng experiment archive --id <id> [--store-root <path>]\n"
+    "  numereng experiment unarchive --id <id> [--store-root <path>]\n"
     "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501

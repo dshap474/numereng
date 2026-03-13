@@ -1067,11 +1067,11 @@
 					{:else}
 						<div class="flex h-full min-h-0 flex-col">
 							<div class="mb-3 flex-shrink-0">
-								<h3 class="text-xs uppercase tracking-wider text-muted-foreground font-medium">
-									Payout Proxy
-								</h3>
-								<p class="mt-1 text-xs text-muted-foreground">
+								<p class="text-xs text-muted-foreground">
 									Historical proxy from CORR and MMC. Research-only; not a live payout forecast.
+								</p>
+								<p class="mt-1 text-xs text-muted-foreground font-mono">
+									Iso-lines: payout proxy = 0.75*CORR + 2.25*MMC
 								</p>
 							</div>
 							{#if paretoRuns.length > 0}

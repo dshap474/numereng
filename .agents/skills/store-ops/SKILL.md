@@ -34,6 +34,7 @@ Out of scope:
 - experiment strategy
 - config schema or template authoring
 - experiment directory/bootstrap conventions
+- experiment archive/unarchive lifecycle changes
 - schema migration authoring
 - cloud archival/backfill strategy
 - product feature implementation in `src/numereng/*`
@@ -43,6 +44,8 @@ Out of scope:
 - Prefer package CLI entrypoints and explicit commands:
   - `uv run numereng store init|index|rebuild|doctor ...`
   - `uv run numereng experiment details|report ...`
+- Archive/unarchive is an experiment lifecycle workflow, not a store-reset workflow.
+- Use `uv run numereng experiment archive|unarchive ...` for archive state changes.
 - Use SQLite inspection only when needed to explain or repair index drift.
 - Destructive operations must follow two-step confirmation:
   1. run dry-run impact summary

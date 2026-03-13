@@ -21,6 +21,8 @@ from numereng.api import (
     CloudAwsResponse,
     CloudEc2Response,
     CloudModalResponse,
+    ExperimentArchiveRequest,
+    ExperimentArchiveResponse,
     ExperimentCreateRequest,
     ExperimentGetRequest,
     ExperimentListRequest,
@@ -65,11 +67,13 @@ from numereng.api import (
     TrainRunResponse,
     download_numerai_dataset,
     experiment_create,
+    experiment_archive,
     experiment_get,
     experiment_list,
     experiment_promote,
     experiment_report,
     experiment_train,
+    experiment_unarchive,
     get_health,
     get_numerai_current_round,
     list_numerai_datasets,
@@ -86,6 +90,7 @@ from numereng.api import (
 from numereng.features.cloud.aws import CloudAwsError, CloudEc2Error
 from numereng.features.cloud.modal import CloudModalError
 from numereng.features.experiments import (
+    ExperimentArchiveResult,
     ExperimentNotFoundError,
     ExperimentPromotionResult,
     ExperimentRecord,
@@ -1276,6 +1281,41 @@ def test_experiment_list_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(response, ExperimentListResponse)
     assert len(response.experiments) == 1
     assert response.experiments[0].experiment_id == "2026-02-22_test-exp"
+
+
+def test_experiment_archive_and_unarchive_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_archive_experiment(*, store_root: str, experiment_id: str) -> ExperimentArchiveResult:
+        assert store_root == ".numereng"
+        assert experiment_id == "2026-02-22_test-exp"
+        return ExperimentArchiveResult(
+            experiment_id=experiment_id,
+            status="archived",
+            manifest_path=Path("/tmp/.numereng/experiments/_archive/2026-02-22_test-exp/experiment.json"),
+            archived=True,
+        )
+
+    def fake_unarchive_experiment(*, store_root: str, experiment_id: str) -> ExperimentArchiveResult:
+        assert store_root == ".numereng"
+        assert experiment_id == "2026-02-22_test-exp"
+        return ExperimentArchiveResult(
+            experiment_id=experiment_id,
+            status="active",
+            manifest_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json"),
+            archived=False,
+        )
+
+    monkeypatch.setattr(api_module, "archive_experiment_record", fake_archive_experiment)
+    monkeypatch.setattr(api_module, "unarchive_experiment_record", fake_unarchive_experiment)
+
+    archived = experiment_archive(ExperimentArchiveRequest(experiment_id="2026-02-22_test-exp"))
+    restored = experiment_unarchive(ExperimentArchiveRequest(experiment_id="2026-02-22_test-exp"))
+
+    assert isinstance(archived, ExperimentArchiveResponse)
+    assert archived.archived is True
+    assert archived.status == "archived"
+    assert isinstance(restored, ExperimentArchiveResponse)
+    assert restored.archived is False
+    assert restored.status == "active"
 
 
 def test_experiment_train_success(monkeypatch: pytest.MonkeyPatch) -> None:

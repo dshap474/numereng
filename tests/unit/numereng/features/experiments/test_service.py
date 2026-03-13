@@ -288,3 +288,96 @@ def test_list_and_get_experiment_success(tmp_path: Path) -> None:
     record = service_module.get_experiment(store_root=store_root, experiment_id="2026-02-22_alpha")
     assert record.experiment_id == "2026-02-22_alpha"
     assert record.name == "Alpha"
+
+
+def test_archive_and_unarchive_experiment_round_trip(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id, name="Alpha")
+    exp_dir = store_root / "experiments" / experiment_id
+    (exp_dir / "configs" / "base.json").write_text("{}")
+    (exp_dir / "run_plan.csv").write_text("target,horizon,seed,config_path\n")
+    manifest_path = exp_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["status"] = "complete"
+    manifest["metadata"] = {"note": "keep-me"}
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    service_module._index_experiment_manifest(store_root, manifest)
+
+    archived = service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
+    archived_dir = store_root / "experiments" / "_archive" / experiment_id
+    assert archived.archived is True
+    assert archived.status == "archived"
+    assert archived_dir.is_dir()
+    assert not exp_dir.exists()
+
+    archived_manifest = json.loads((archived_dir / "experiment.json").read_text())
+    assert archived_manifest["status"] == "archived"
+    assert archived_manifest["metadata"]["pre_archive_status"] == "complete"
+    assert (archived_dir / "configs" / "base.json").is_file()
+    assert (archived_dir / "run_plan.csv").is_file()
+
+    restored = service_module.unarchive_experiment(store_root=store_root, experiment_id=experiment_id)
+    assert restored.archived is False
+    assert restored.status == "complete"
+    assert exp_dir.is_dir()
+    assert not archived_dir.exists()
+
+    restored_manifest = json.loads((exp_dir / "experiment.json").read_text())
+    assert restored_manifest["status"] == "complete"
+    assert restored_manifest["metadata"] == {"note": "keep-me"}
+
+    with sqlite3.connect(store_root / "numereng.db") as conn:
+        row = conn.execute(
+            "SELECT status FROM experiments WHERE experiment_id = ?",
+            (experiment_id,),
+        ).fetchone()
+    assert row == ("complete",)
+
+
+def test_train_and_promote_reject_archived_experiment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    config_path = tmp_path / "run.json"
+    config_path.write_text("{}")
+    service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    monkeypatch.setattr(
+        service_module,
+        "run_training",
+        lambda **kwargs: TrainingRunResult(
+            run_id="run-123",
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+        ),
+    )
+
+    with pytest.raises(ExperimentValidationError, match="experiment_archived_read_only"):
+        service_module.train_experiment(
+            store_root=store_root,
+            experiment_id=experiment_id,
+            config_path=config_path,
+        )
+
+    with pytest.raises(ExperimentValidationError, match="experiment_archived_read_only"):
+        service_module.promote_experiment(
+            store_root=store_root,
+            experiment_id=experiment_id,
+        )
+
+
+def test_list_experiments_excludes_archived_by_default(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_alpha")
+    service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_beta")
+    service_module.archive_experiment(store_root=store_root, experiment_id="2026-02-22_beta")
+
+    default_listing = service_module.list_experiments(store_root=store_root)
+    archived_listing = service_module.list_experiments(store_root=store_root, status="archived")
+
+    assert [item.experiment_id for item in default_listing] == ["2026-02-22_alpha"]
+    assert [item.experiment_id for item in archived_listing] == ["2026-02-22_beta"]

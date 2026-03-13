@@ -5,12 +5,14 @@ from __future__ import annotations
 from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
 from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
 from numereng.api._experiment import (
+    experiment_archive,
     experiment_create,
     experiment_get,
     experiment_list,
     experiment_promote,
     experiment_report,
     experiment_train,
+    experiment_unarchive,
 )
 from numereng.api._factories import (
     _create_cloud_aws_managed_service,
@@ -75,6 +77,8 @@ from numereng.api.contracts import (
     EnsembleMetricResponse,
     EnsembleResponse,
     ExperimentCreateRequest,
+    ExperimentArchiveRequest,
+    ExperimentArchiveResponse,
     ExperimentGetRequest,
     ExperimentListRequest,
     ExperimentListResponse,
@@ -169,11 +173,13 @@ from numereng.features.ensemble import build_ensemble as build_ensemble_record
 from numereng.features.ensemble import get_ensemble_view as get_ensemble_record_api
 from numereng.features.ensemble import list_ensembles_view as list_ensemble_records_api
 from numereng.features.experiments import create_experiment as create_experiment_record
+from numereng.features.experiments import archive_experiment as archive_experiment_record
 from numereng.features.experiments import get_experiment as get_experiment_record
 from numereng.features.experiments import list_experiments as list_experiment_records
 from numereng.features.experiments import promote_experiment as promote_experiment_record
 from numereng.features.experiments import report_experiment as report_experiment_record
 from numereng.features.experiments import train_experiment as train_experiment_record
+from numereng.features.experiments import unarchive_experiment as unarchive_experiment_record
 from numereng.features.feature_neutralization import neutralize_predictions_file as neutralize_prediction_artifact
 from numereng.features.feature_neutralization import neutralize_run_predictions as neutralize_run_prediction_artifact
 from numereng.features.hpo import create_study as hpo_create_study
@@ -194,12 +200,14 @@ _COMPAT_EXPORTS = (
     _create_cloud_modal_service,
     _create_numerai_client,
     _default_dataset_dest_path,
+    archive_experiment_record,
     create_experiment_record,
     get_experiment_record,
     list_experiment_records,
     promote_experiment_record,
     report_experiment_record,
     train_experiment_record,
+    unarchive_experiment_record,
     build_ensemble_record,
     get_ensemble_record_api,
     list_ensemble_records_api,
@@ -228,6 +236,8 @@ __all__ = [
     "AwsTrainPullRequest",
     "AwsTrainStatusRequest",
     "AwsTrainSubmitRequest",
+    "ExperimentArchiveRequest",
+    "ExperimentArchiveResponse",
     "CloudAwsResponse",
     "CloudEc2Response",
     "CloudModalResponse",
@@ -353,6 +363,7 @@ __all__ = [
     "_create_cloud_modal_service",
     "_create_numerai_client",
     "_default_dataset_dest_path",
+    "archive_experiment_record",
     "create_experiment_record",
     "dataset_tools_build_downsampled_full",
     "doctor_store",
@@ -360,12 +371,14 @@ __all__ = [
     "ensemble_build",
     "ensemble_get",
     "ensemble_list",
+    "experiment_archive",
     "experiment_create",
     "experiment_get",
     "experiment_list",
     "experiment_promote",
     "experiment_report",
     "experiment_train",
+    "experiment_unarchive",
     "get_experiment_record",
     "get_health",
     "get_numerai_current_round",
@@ -406,4 +419,5 @@ __all__ = [
     "submit_predictions",
     "submit_run_predictions",
     "train_experiment_record",
+    "unarchive_experiment_record",
 ]

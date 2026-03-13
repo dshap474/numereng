@@ -149,7 +149,7 @@ Boundary behavior:
 
 Command families:
 - `run`: `train`, `submit`
-- `experiment`: `create`, `list`, `details`, `train`, `promote`, `report`
+- `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `promote`, `report`
 - `hpo`: `create`, `list`, `details`, `trials`
 - `ensemble`: `build`, `list`, `details`
 - `neutralize`: `apply`
@@ -197,6 +197,11 @@ Dynamic top-level dirs may also appear:
       experiment.json
       EXPERIMENT.md
       configs/*.json
+    _archive/
+      <experiment_id>/
+        experiment.json
+        EXPERIMENT.md
+        configs/*.json
       hpo/<study_id>/...
       ensembles/<ensemble_id>/...
 
@@ -211,6 +216,7 @@ Data model split:
 - Filesystem holds canonical run/experiment artifacts.
 - sqlite indexes query surfaces for runs/metrics/experiments/HPO/ensembles/telemetry.
 - `store rebuild` re-derives index state from filesystem artifacts.
+- Archived experiments keep the same experiment ID, but their experiment-local files move under `.numereng/experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
 
 ## 7. Core Execution Flows
 
@@ -306,12 +312,27 @@ cli experiment train
       (default metadata source=api.experiment.train only when unbound)
   -> features.experiments.train_experiment
       - validate experiment manifest
+      - reject archived experiments as read-only
       - enforce output_dir == store_root (or default)
       - run training with experiment_id
       - link run into experiment manifest/store
 ```
 
-### 7.4 HPO
+### 7.4 Experiment Archive / Unarchive
+```text
+cli experiment archive|unarchive
+  -> parse/validate args
+  -> api.experiment_archive|api.experiment_unarchive
+  -> features.experiments.archive_experiment|unarchive_experiment
+      - resolve experiment from live or archived root
+      - mutate manifest status (`archived` or restored pre-archive status)
+      - move experiment dir between:
+          .numereng/experiments/<id>
+          .numereng/experiments/_archive/<id>
+      - upsert experiment index row so viz reflects the change immediately
+```
+
+### 7.5 HPO
 ```text
 cli hpo create
   -> api.hpo_create
@@ -327,7 +348,7 @@ Metadata behavior in HPO:
 - If launch metadata is already bound, HPO reuses it.
 - Otherwise HPO sets default source `api.hpo.create` for trial runs.
 
-### 7.5 Ensemble
+### 7.6 Ensemble
 ```text
 cli ensemble build
   -> api.ensemble_build
@@ -474,6 +495,8 @@ Important UI contract:
 - Launch/control actions are CLI/API-only by design.
 - Experiment ranking defaults to `bmc_last_200_eras_mean`.
 - Run detail/chart reads are artifact-backed only; when optional per-era visualization files are absent, viz surfaces them as unavailable instead of recomputing them during requests.
+- Normal experiment/config catalogs exclude archived experiments by default.
+- Direct experiment lookups remain archive-aware, so `/experiments/[id]` can still render an archived experiment when addressed directly.
 
 ### 9.3 Run monitor data flow
 ```text
@@ -538,12 +561,14 @@ success/help
 32. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
 33. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
 34. Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
-35. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
-36. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
-37. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
-38. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
-39. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
-40. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
+35. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
+36. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
+37. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
+38. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
+39. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
+40. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
+41. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
+42. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
 
 ## 12. Testing + Verification
 Primary checks:
