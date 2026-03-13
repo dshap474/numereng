@@ -335,6 +335,41 @@ def test_archive_and_unarchive_experiment_round_trip(tmp_path: Path) -> None:
     assert row == ("complete",)
 
 
+def test_archive_destination_conflict_does_not_mutate_live_manifest(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    live_manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    archive_dir = store_root / "experiments" / "_archive" / experiment_id
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "placeholder.txt").write_text("occupied")
+
+    with pytest.raises(ExperimentValidationError, match="experiment_archive_destination_exists"):
+        service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    live_manifest = json.loads(live_manifest_path.read_text())
+    assert live_manifest["status"] == "draft"
+    assert live_manifest["metadata"] == {}
+
+
+def test_unarchive_destination_conflict_does_not_mutate_archived_manifest(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
+    archived_manifest_path = store_root / "experiments" / "_archive" / experiment_id / "experiment.json"
+    live_dir = store_root / "experiments" / experiment_id
+    live_dir.mkdir(parents=True)
+    (live_dir / "placeholder.txt").write_text("occupied")
+
+    with pytest.raises(ExperimentValidationError, match="experiment_unarchive_destination_exists"):
+        service_module.unarchive_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    archived_manifest = json.loads(archived_manifest_path.read_text())
+    assert archived_manifest["status"] == "archived"
+    assert archived_manifest["metadata"]["pre_archive_status"] == "draft"
+
+
 def test_train_and_promote_reject_archived_experiment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -381,3 +416,15 @@ def test_list_experiments_excludes_archived_by_default(tmp_path: Path) -> None:
 
     assert [item.experiment_id for item in default_listing] == ["2026-02-22_alpha"]
     assert [item.experiment_id for item in archived_listing] == ["2026-02-22_beta"]
+
+
+def test_list_experiments_ignores_bad_archived_manifest_by_default(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_alpha")
+    archived_dir = store_root / "experiments" / "_archive" / "2026-02-22_beta"
+    archived_dir.mkdir(parents=True)
+    (archived_dir / "experiment.json").write_text("{not-json")
+
+    listing = service_module.list_experiments(store_root=store_root)
+
+    assert [item.experiment_id for item in listing] == ["2026-02-22_alpha"]

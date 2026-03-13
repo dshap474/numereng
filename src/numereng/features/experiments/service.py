@@ -111,7 +111,8 @@ def list_experiments(
 
     root = resolve_store_root(store_root)
     items: list[ExperimentRecord] = []
-    for manifest_path in _iter_experiment_manifest_paths(root):
+    include_archived = status == "archived"
+    for manifest_path in _iter_experiment_manifest_paths(root, include_archived=include_archived):
         manifest = _load_manifest(manifest_path)
         record = _manifest_to_record(manifest_path, manifest)
         if status is None:
@@ -327,6 +328,9 @@ def archive_experiment(
         raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
     if paths.is_archived:
         raise ExperimentValidationError(f"experiment_already_archived:{safe_experiment_id}")
+    if paths.archived_dir.exists():
+        raise ExperimentValidationError(f"experiment_archive_destination_exists:{safe_experiment_id}")
+    paths.archived_dir.parent.mkdir(parents=True, exist_ok=True)
 
     manifest_path = paths.live_dir / "experiment.json"
     manifest = _load_manifest(manifest_path)
@@ -338,9 +342,6 @@ def archive_experiment(
     manifest["updated_at"] = _utc_now_iso()
     _save_manifest(manifest_path, manifest)
 
-    paths.archived_dir.parent.mkdir(parents=True, exist_ok=True)
-    if paths.archived_dir.exists():
-        raise ExperimentValidationError(f"experiment_archive_destination_exists:{safe_experiment_id}")
     shutil.move(str(paths.live_dir), str(paths.archived_dir))
 
     archived_manifest_path = paths.archived_dir / "experiment.json"
@@ -368,6 +369,9 @@ def unarchive_experiment(
         raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
     if not paths.is_archived:
         raise ExperimentValidationError(f"experiment_not_archived:{safe_experiment_id}")
+    if paths.live_dir.exists():
+        raise ExperimentValidationError(f"experiment_unarchive_destination_exists:{safe_experiment_id}")
+    paths.live_dir.parent.mkdir(parents=True, exist_ok=True)
 
     manifest_path = paths.archived_dir / "experiment.json"
     manifest = _load_manifest(manifest_path)
@@ -380,9 +384,6 @@ def unarchive_experiment(
     manifest["updated_at"] = _utc_now_iso()
     _save_manifest(manifest_path, manifest)
 
-    if paths.live_dir.exists():
-        raise ExperimentValidationError(f"experiment_unarchive_destination_exists:{safe_experiment_id}")
-    paths.live_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(paths.archived_dir), str(paths.live_dir))
 
     live_manifest = _load_manifest(paths.live_dir / "experiment.json")
@@ -440,7 +441,7 @@ def _resolved_manifest_path(root: Path, experiment_id: str) -> Path:
     return paths.active_dir / "experiment.json"
 
 
-def _iter_experiment_manifest_paths(root: Path) -> tuple[Path, ...]:
+def _iter_experiment_manifest_paths(root: Path, *, include_archived: bool = False) -> tuple[Path, ...]:
     manifest_paths: list[Path] = []
     live_root = root / "experiments"
     if live_root.is_dir():
@@ -450,14 +451,15 @@ def _iter_experiment_manifest_paths(root: Path) -> tuple[Path, ...]:
             manifest_path = experiment_dir / "experiment.json"
             if manifest_path.is_file():
                 manifest_paths.append(manifest_path)
-    archive_root = live_root / _ARCHIVE_DIRNAME
-    if archive_root.is_dir():
-        for experiment_dir in sorted(archive_root.iterdir(), key=lambda path: path.name):
-            if not experiment_dir.is_dir():
-                continue
-            manifest_path = experiment_dir / "experiment.json"
-            if manifest_path.is_file():
-                manifest_paths.append(manifest_path)
+    if include_archived:
+        archive_root = live_root / _ARCHIVE_DIRNAME
+        if archive_root.is_dir():
+            for experiment_dir in sorted(archive_root.iterdir(), key=lambda path: path.name):
+                if not experiment_dir.is_dir():
+                    continue
+                manifest_path = experiment_dir / "experiment.json"
+                if manifest_path.is_file():
+                    manifest_paths.append(manifest_path)
     return tuple(manifest_paths)
 
 

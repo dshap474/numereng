@@ -76,6 +76,8 @@
 		model: 'Op',
 		target: 'Target'
 	};
+	const PARETO_CORR_WEIGHT = 0.75;
+	const PARETO_MMC_WEIGHT = 2.25;
 	let paretoColorMode = $state<ParetoColorMode>('default');
 
 	let configItems = $state<ExperimentConfig[]>([]);
@@ -1071,13 +1073,15 @@
 									Historical proxy from CORR and MMC. Research-only; not a live payout forecast.
 								</p>
 								<p class="mt-1 text-xs text-muted-foreground font-mono">
-									Iso-lines: payout proxy = 0.75*CORR + 2.25*MMC
+									Iso-lines: payout proxy = {PARETO_CORR_WEIGHT.toFixed(2)}*CORR + {PARETO_MMC_WEIGHT.toFixed(2)}*MMC
 								</p>
 							</div>
 							{#if paretoRuns.length > 0}
 								<ParetoChart
 									runs={paretoRuns}
 									colorMode={paretoColorMode}
+									corrWeight={PARETO_CORR_WEIGHT}
+									mmcWeight={PARETO_MMC_WEIGHT}
 									showIsoLines={true}
 									class="h-full"
 								/>
