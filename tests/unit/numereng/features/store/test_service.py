@@ -400,6 +400,56 @@ def test_materialize_viz_artifacts_requires_exactly_one_scope(tmp_path: Path) ->
         )
 
 
+def test_materialize_viz_artifacts_missing_run_id_raises(tmp_path: Path) -> None:
+    with pytest.raises(StoreError, match="store_run_not_found:run-missing"):
+        materialize_viz_artifacts(
+            store_root=tmp_path / ".numereng",
+            kind="per-era-corr",
+            run_id="run-missing",
+        )
+
+
+def test_materialize_viz_artifacts_experiment_scope_skips_unreadable_unrelated_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    target_run_dir = store_root / "runs" / "run-target"
+    target_predictions_dir = target_run_dir / "artifacts" / "predictions"
+    target_predictions_dir.mkdir(parents=True)
+    (target_predictions_dir / "preds.parquet").write_bytes(b"PAR1")
+
+    _write_run_manifest(target_run_dir)
+    target_manifest = json.loads((target_run_dir / "run.json").read_text(encoding="utf-8"))
+    target_manifest["experiment_id"] = "exp-1"
+    target_manifest["data"] = {"target_col": "target", "era_col": "era"}
+    (target_run_dir / "run.json").write_text(json.dumps(target_manifest, indent=2, sort_keys=True), encoding="utf-8")
+    (target_run_dir / "resolved.json").write_text("{}")
+    (target_run_dir / "results.json").write_text("{}")
+    (target_run_dir / "metrics.json").write_text("{}")
+
+    unrelated_run_dir = store_root / "runs" / "run-bad"
+    unrelated_run_dir.mkdir(parents=True)
+    (unrelated_run_dir / "run.json").write_text("{bad json", encoding="utf-8")
+
+    monkeypatch.setattr(
+        store_service,
+        "_build_primary_per_era_corr_frame",
+        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+    )
+
+    result = materialize_viz_artifacts(
+        store_root=store_root,
+        kind="per-era-corr",
+        experiment_id="exp-1",
+    )
+
+    assert result.scoped_run_count == 1
+    assert result.created_count == 1
+    assert result.skipped_count == 0
+    assert result.failed_count == 0
+
+
 def test_upsert_cloud_job_writes_and_updates_rows(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     upsert_cloud_job(

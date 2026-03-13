@@ -141,7 +141,7 @@ Viz/frontend topology:
 - Viz also exposes payout-target aliases `corr_payout_mean` and `mmc_payout_mean`, currently normalized from Ender20-backed scoring fields (`corr_ender20`, `mmc_ender20`) without overwriting native `corr_mean` / `mmc_mean`.
 - Run detail/chart APIs are read-only over persisted artifacts and section endpoints; the frontend no longer uses `/api/runs/{run_id}/bundle` as its primary path.
 - Training and `run score` persist canonical per-era CORR artifacts at `artifacts/predictions/val_per_era_corr20v2.parquet` and `.csv`.
-- Viz prefers persisted per-era CORR artifacts, and legacy runs can be backfilled via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; request-time fallback is write-through and persists the artifact on first miss.
+- Viz prefers persisted per-era CORR artifacts, and legacy runs can be backfilled via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Request-time fallback is write-through and persists the artifact on first miss.
 
 Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.

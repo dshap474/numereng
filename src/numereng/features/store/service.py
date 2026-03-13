@@ -895,6 +895,8 @@ def materialize_viz_artifacts(
     resolved_store_root = resolve_store_root(store_root)
     runs_dir = resolved_store_root / "runs"
     if not runs_dir.is_dir():
+        if run_id is not None:
+            raise StoreError(f"store_run_not_found:{_ensure_safe_run_id(run_id)}")
         return StoreMaterializeVizArtifactsResult(
             store_root=resolved_store_root,
             kind=resolved_kind,
@@ -925,12 +927,14 @@ def materialize_viz_artifacts(
         if target_experiment_id is not None:
             try:
                 manifest = _load_run_manifest_for_materialize(run_dir)
-            except StoreError as exc:
-                failures.append(StoreMaterializeVizArtifactsFailure(run_id=candidate_run_id, error=str(exc)))
+            except StoreError:
                 continue
             if _as_nonempty_str(manifest.get("experiment_id")) != target_experiment_id:
                 continue
         selected_runs.append(candidate_run_id)
+
+    if target_run_id is not None and not selected_runs:
+        raise StoreError(f"store_run_not_found:{target_run_id}")
 
     for candidate_run_id in selected_runs:
         run_dir = runs_dir / candidate_run_id

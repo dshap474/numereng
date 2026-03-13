@@ -300,12 +300,12 @@
 		const sourceItems = configItems.length > 0 ? configItems : (data.configs.items ?? []);
 		return sourceItems.map((item): ProgressRow => {
 			const latestJob = latestJobByConfigId.get(item.config_id) ?? null;
-			const linkedRunId = item.summary.run_id ?? latestJob?.canonical_run_id ?? null;
+			const linkedRunId = latestJob?.canonical_run_id ?? item.summary.run_id ?? null;
 			const linkedRun = linkedRunId ? runById.get(linkedRunId) ?? null : null;
 			let status: ProgressState = 'not_started';
 			if (latestJob && ACTIVE_JOB_STATUSES.has(latestJob.status)) {
 				status = 'running';
-			} else if (linkedRunId || linkedRun?.status === 'FINISHED') {
+			} else if (linkedRun || latestJob?.status === 'completed') {
 				status = 'finished';
 			} else if (latestJob && TERMINAL_JOB_STATUSES.has(latestJob.status)) {
 				status = latestJob.status === 'completed' ? 'finished' : 'failed';

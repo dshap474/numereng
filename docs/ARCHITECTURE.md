@@ -387,6 +387,8 @@ cli store materialize-viz-artifacts --kind per-era-corr (--run-id <id> | --exper
   -> api.store_materialize_viz_artifacts
   -> features.store.materialize_viz_artifacts
       - derive canonical per-era CORR for historical runs
+      - explicit `--run-id` hard-fails with `store_run_not_found:<id>` when the target run does not exist
+      - `--experiment-id` scope skips unreadable unrelated run manifests while continuing to backfill matching readable runs
       - write-through `val_per_era_corr20v2.parquet` and `.csv`
       - refresh run manifest artifact links
 ```
