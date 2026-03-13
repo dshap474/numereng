@@ -9,6 +9,7 @@ from numereng.api._experiment import (
     experiment_create,
     experiment_get,
     experiment_list,
+    experiment_pack,
     experiment_promote,
     experiment_report,
     experiment_train,
@@ -33,7 +34,13 @@ from numereng.api._numerai import (
     scrape_numerai_forum,
 )
 from numereng.api._run import run_training, score_run, submit_predictions
-from numereng.api._store import store_doctor, store_index_run, store_init, store_rebuild
+from numereng.api._store import (
+    store_doctor,
+    store_index_run,
+    store_init,
+    store_materialize_viz_artifacts,
+    store_rebuild,
+)
 from numereng.api.cloud import (
     cloud_aws_image_build_push,
     cloud_aws_train_cancel,
@@ -76,12 +83,14 @@ from numereng.api.contracts import (
     EnsembleListResponse,
     EnsembleMetricResponse,
     EnsembleResponse,
-    ExperimentCreateRequest,
     ExperimentArchiveRequest,
     ExperimentArchiveResponse,
+    ExperimentCreateRequest,
     ExperimentGetRequest,
     ExperimentListRequest,
     ExperimentListResponse,
+    ExperimentPackRequest,
+    ExperimentPackResponse,
     ExperimentPromoteRequest,
     ExperimentPromoteResponse,
     ExperimentReportRequest,
@@ -120,6 +129,9 @@ from numereng.api.contracts import (
     StoreIndexResponse,
     StoreInitRequest,
     StoreInitResponse,
+    StoreMaterializeVizArtifactsFailureResponse,
+    StoreMaterializeVizArtifactsRequest,
+    StoreMaterializeVizArtifactsResponse,
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
@@ -172,10 +184,11 @@ from numereng.features.cloud.modal import (
 from numereng.features.ensemble import build_ensemble as build_ensemble_record
 from numereng.features.ensemble import get_ensemble_view as get_ensemble_record_api
 from numereng.features.ensemble import list_ensembles_view as list_ensemble_records_api
-from numereng.features.experiments import create_experiment as create_experiment_record
 from numereng.features.experiments import archive_experiment as archive_experiment_record
+from numereng.features.experiments import create_experiment as create_experiment_record
 from numereng.features.experiments import get_experiment as get_experiment_record
 from numereng.features.experiments import list_experiments as list_experiment_records
+from numereng.features.experiments import pack_experiment as pack_experiment_record
 from numereng.features.experiments import promote_experiment as promote_experiment_record
 from numereng.features.experiments import report_experiment as report_experiment_record
 from numereng.features.experiments import train_experiment as train_experiment_record
@@ -186,7 +199,7 @@ from numereng.features.hpo import create_study as hpo_create_study
 from numereng.features.hpo import get_study_trials_view as hpo_get_study_trials
 from numereng.features.hpo import get_study_view as hpo_get_study
 from numereng.features.hpo import list_studies_view as hpo_list_studies
-from numereng.features.store import doctor_store, index_run, init_store_db, rebuild_run_index
+from numereng.features.store import doctor_store, index_run, init_store_db, materialize_viz_artifacts, rebuild_run_index
 from numereng.features.submission import submit_predictions_file, submit_run_predictions
 from numereng.features.training import run_training as run_training_pipeline
 from numereng.features.training import score_run as score_run_pipeline
@@ -204,6 +217,7 @@ _COMPAT_EXPORTS = (
     create_experiment_record,
     get_experiment_record,
     list_experiment_records,
+    pack_experiment_record,
     promote_experiment_record,
     report_experiment_record,
     train_experiment_record,
@@ -254,6 +268,8 @@ __all__ = [
     "ExperimentGetRequest",
     "ExperimentListRequest",
     "ExperimentListResponse",
+    "ExperimentPackRequest",
+    "ExperimentPackResponse",
     "ExperimentPromoteRequest",
     "ExperimentPromoteResponse",
     "ExperimentReportRequest",
@@ -321,6 +337,9 @@ __all__ = [
     "StoreIndexResponse",
     "StoreInitRequest",
     "StoreInitResponse",
+    "StoreMaterializeVizArtifactsFailureResponse",
+    "StoreMaterializeVizArtifactsRequest",
+    "StoreMaterializeVizArtifactsResponse",
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
@@ -375,6 +394,7 @@ __all__ = [
     "experiment_create",
     "experiment_get",
     "experiment_list",
+    "experiment_pack",
     "experiment_promote",
     "experiment_report",
     "experiment_train",
@@ -402,6 +422,7 @@ __all__ = [
     "scrape_forum_posts",
     "scrape_numerai_forum",
     "promote_experiment_record",
+    "pack_experiment_record",
     "rebuild_run_index",
     "report_experiment_record",
     "score_run_pipeline",
@@ -410,6 +431,7 @@ __all__ = [
     "store_doctor",
     "store_index_run",
     "store_init",
+    "store_materialize_viz_artifacts",
     "store_rebuild",
     "run_training",
     "run_bootstrap_check",
@@ -418,6 +440,7 @@ __all__ = [
     "submit_predictions_file",
     "submit_predictions",
     "submit_run_predictions",
+    "materialize_viz_artifacts",
     "train_experiment_record",
     "unarchive_experiment_record",
 ]

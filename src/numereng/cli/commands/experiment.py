@@ -430,6 +430,40 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             _print_experiment_report_table(report_payload)
         return 0
 
+    if args[0] == "pack":
+        values, _, parse_error = _parse_simple_options(
+            args[1:],
+            value_flags={"--id", "--store-root"},
+        )
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        experiment_id = values.get("--id")
+        if experiment_id is None:
+            print("missing required argument: --id", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        try:
+            pack_payload = api.experiment_pack(
+                api.ExperimentPackRequest(
+                    experiment_id=experiment_id,
+                    store_root=values.get("--store-root", ".numereng"),
+                )
+            )
+        except ValidationError as exc:
+            print(_validation_error_message(exc), file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(pack_payload.model_dump_json())
+        return 0
+
     print(f"unknown arguments: experiment {' '.join(args)}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2

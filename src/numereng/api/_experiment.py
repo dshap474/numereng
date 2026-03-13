@@ -11,6 +11,8 @@ from numereng.api.contracts import (
     ExperimentGetRequest,
     ExperimentListRequest,
     ExperimentListResponse,
+    ExperimentPackRequest,
+    ExperimentPackResponse,
     ExperimentPromoteRequest,
     ExperimentPromoteResponse,
     ExperimentReportRequest,
@@ -287,11 +289,34 @@ def experiment_report(request: ExperimentReportRequest) -> ExperimentReportRespo
     )
 
 
+def experiment_pack(request: ExperimentPackRequest) -> ExperimentPackResponse:
+    """Write one experiment markdown pack artifact."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.pack_experiment_record(
+            store_root=request.store_root,
+            experiment_id=request.experiment_id,
+        )
+    except (ExperimentNotFoundError, ExperimentValidationError, ExperimentError) as exc:
+        raise PackageError(str(exc)) from exc
+
+    return ExperimentPackResponse(
+        experiment_id=result.experiment_id,
+        output_path=str(result.output_path),
+        experiment_path=str(result.experiment_path),
+        source_markdown_path=str(result.source_markdown_path),
+        run_count=result.run_count,
+        packed_at=result.packed_at,
+    )
+
+
 __all__ = [
     "experiment_archive",
     "experiment_create",
     "experiment_get",
     "experiment_list",
+    "experiment_pack",
     "experiment_promote",
     "experiment_report",
     "experiment_train",

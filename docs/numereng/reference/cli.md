@@ -17,6 +17,7 @@ Notes:
 
 - `full_history_refit` is final-fit only and emits no validation metrics
 - `run score` recomputes metrics from saved predictions and refreshes `results.json`, `metrics.json`, `score_provenance.json`, and store index rows
+- `run score` also refreshes canonical per-era CORR artifacts at `artifacts/predictions/val_per_era_corr20v2.parquet` and `.csv`
 
 ## `experiment`
 
@@ -28,6 +29,7 @@ Notes:
 - `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]`
 - `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]`
 - `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]`
+- `numereng experiment pack --id <id> [--store-root <path>]`
 
 Notes:
 
@@ -35,6 +37,7 @@ Notes:
 - `archive` moves `.numereng/experiments/<id>` to `.numereng/experiments/_archive/<id>` and updates indexed experiment status to `archived`
 - `unarchive` moves the directory back to the live root and restores the pre-archive status when recorded
 - archived experiments are read-only; `experiment train` and `experiment promote` hard-fail until the experiment is unarchived
+- `pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` with the current `EXPERIMENT.md` body plus one dashboard-aligned scalar metrics table across manifest-listed runs
 
 ## `hpo`
 
@@ -63,6 +66,13 @@ Notes:
 - `numereng store index --run-id <id> [--store-root <path>]`
 - `numereng store rebuild [--store-root <path>]`
 - `numereng store doctor [--store-root <path>] [--fix-strays]`
+- `numereng store materialize-viz-artifacts --kind <per-era-corr> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]`
+
+Notes:
+
+- `materialize-viz-artifacts` backfills persisted viz artifacts for historical runs without retraining
+- `--kind per-era-corr` derives canonical per-era CORR and writes `val_per_era_corr20v2.parquet` plus `.csv`
+- the command is idempotent and refreshes run-manifest artifact links when it materializes a missing file
 
 ## `cloud`
 

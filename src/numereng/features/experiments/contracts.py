@@ -82,3 +82,15 @@ class ExperimentReport:
     total_runs: int
     champion_run_id: str | None
     rows: tuple[ExperimentReportRow, ...]
+
+
+@dataclass(frozen=True)
+class ExperimentPackResult:
+    """Generated markdown bundle for one experiment."""
+
+    experiment_id: str
+    output_path: Path
+    experiment_path: Path
+    source_markdown_path: Path
+    run_count: int
+    packed_at: str

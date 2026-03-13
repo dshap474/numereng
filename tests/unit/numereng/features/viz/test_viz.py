@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import cast
@@ -12,7 +13,12 @@ from fastapi.testclient import TestClient
 from numereng.features.viz.contracts import capabilities_payload
 from numereng.features.viz.routes import create_router
 from numereng.features.viz.services import VizService
-from numereng.features.viz.store_adapter import VizStoreAdapter, VizStoreConfig, resolve_store_root
+from numereng.features.viz.store_adapter import (
+    VizStoreAdapter,
+    VizStoreConfig,
+    _normalize_round_metrics,
+    resolve_store_root,
+)
 
 
 def test_resolve_store_root_prefers_explicit(tmp_path: Path) -> None:
@@ -121,6 +127,94 @@ def test_list_experiments_hides_archived_but_archived_detail_paths_still_resolve
 
     archived_round_results = adapter.list_experiment_round_results("exp-archived")
     assert len(archived_round_results) == 1
+
+
+def test_normalize_round_metrics_adds_payout_aliases_without_overwriting_native_metrics() -> None:
+    payload = _normalize_round_metrics(
+        {
+            "corr": {"mean": 0.11},
+            "mmc": {"mean": 0.01},
+            "corr_ender20": {"mean": 0.21},
+            "mmc_ender20": {"mean": 0.02},
+        }
+    )
+
+    assert payload["corr_mean"] == 0.11
+    assert payload["mmc_mean"] == 0.01
+    assert payload["corr_payout_mean"] == 0.21
+    assert payload["mmc_payout_mean"] == 0.02
+
+
+def test_normalize_round_metrics_omits_payout_aliases_when_payout_metrics_are_missing() -> None:
+    payload = _normalize_round_metrics(
+        {
+            "corr": {"mean": 0.11},
+            "mmc": {"mean": 0.01},
+        }
+    )
+
+    assert payload["corr_mean"] == 0.11
+    assert payload["mmc_mean"] == 0.01
+    assert "corr_payout_mean" not in payload
+    assert "mmc_payout_mean" not in payload
+
+
+def test_get_run_metrics_uses_shared_scalar_metric_normalization(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "FINISHED",
+                "created_at": "2026-02-22T00:00:00+00:00",
+                "data": {"target_col": "target_20"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "corr": {"mean": 0.11, "sharpe": 1.2, "max_drawdown": -0.03},
+                "mmc": {"mean": 0.02},
+                "cwmm": {"mean": 0.03},
+                "fnc": {"mean": 0.04},
+                "bmc": {"mean": 0.05},
+                "bmc_last_200_eras": {"mean": 0.06},
+                "feature_exposure": {"mean": 0.07},
+                "max_feature_exposure": {"mean": 0.08},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "score_provenance.json").write_text(
+        json.dumps({"joins": {"predictions_rows": 8, "meta_overlap_rows": 2}}),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.get_run_metrics("run-1")
+
+    assert payload is not None
+    assert payload["bmc_last_200_eras_mean"] == 0.06
+    assert payload["bmc_mean"] == 0.05
+    assert payload["corr_sharpe"] == 1.2
+    assert payload["corr_mean"] == 0.11
+    assert payload["mmc_mean"] == 0.02
+    assert payload["cwmm_mean"] == 0.03
+    assert payload["fnc_mean"] == 0.04
+    assert payload["feature_exposure_mean"] == 0.07
+    assert payload["max_feature_exposure"] == 0.08
+    assert payload["max_drawdown"] == -0.03
+    assert payload["mmc_coverage_ratio_rows"] == 0.25
 
 
 def _make_readonly_client(*, repo_root: Path, store_root: Path) -> TestClient:
@@ -453,6 +547,17 @@ def test_list_experiment_runs_filesystem_uses_target_col(tmp_path: Path) -> None
         """.strip(),
         encoding="utf-8",
     )
+    (run_dir / "resolved.json").write_text(
+        """
+        {
+          "model": {
+            "type": "LGBMRegressor",
+            "params": {"random_state": 43}
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
 
     adapter = VizStoreAdapter(
         VizStoreConfig(
@@ -466,6 +571,7 @@ def test_list_experiment_runs_filesystem_uses_target_col(tmp_path: Path) -> None
     assert payload[0]["target_train"] == "target_ender_20"
     assert payload[0]["target_col"] == "target_ender_20"
     assert payload[0]["target"] == "target_ender_20"
+    assert payload[0]["seed"] == 43
 
 
 def test_get_run_metrics_enriches_mmc_coverage_ratio_from_provenance(tmp_path: Path) -> None:
@@ -578,10 +684,50 @@ def test_per_era_fallback_derives_corr_rows(tmp_path: Path) -> None:
         )
     )
 
-    per_era_corr = adapter.get_per_era_corr("run-1")
-    assert per_era_corr is not None
-    assert [row["era"] for row in per_era_corr] == [1, 2]
-    assert all(float(row["corr"]) > 0.99 for row in per_era_corr)
+    result = adapter.get_per_era_corr_result("run-1")
+    assert result.payload is not None
+    assert [row["era"] for row in result.payload] == [1, 2]
+    assert all(float(row["corr"]) > 0.99 for row in result.payload)
+    assert result.materialize_ms >= 0
+    assert result.wrote_artifact is True
+    assert (predictions_dir / "val_per_era_corr20v2.parquet").is_file()
+    assert (predictions_dir / "val_per_era_corr20v2.csv").is_file()
+
+
+def test_run_diagnostics_sources_route_returns_payload(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "artifacts": {
+                    "score_provenance": "score_provenance.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "score_provenance.json").write_text(
+        json.dumps(
+            {
+                "columns": {"target_col": "target_ender_20"},
+                "joins": {"predictions_rows": 100},
+                "sources": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = _make_client(repo_root=tmp_path, store_root=store_root)
+    response = client.get("/api/runs/run-1/diagnostics-sources")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["columns"]["target_col"] == "target_ender_20"
+    assert payload["joins"]["predictions_rows"] == 100
 
 
 @pytest.mark.parametrize(

@@ -24,6 +24,7 @@ from numereng.features.training.repo import (
     resolve_run_manifest_path,
     resolve_score_provenance_path,
     save_metrics,
+    save_per_era_corr_artifacts,
     save_results,
     save_run_manifest,
     save_score_provenance,
@@ -141,6 +142,15 @@ def score_run(
 
     save_score_provenance(scoring_result.score_provenance, score_provenance_path)
     save_metrics(metrics_payload, metrics_path)
+    if scoring_result.per_era_corr is not None:
+        _, _, per_era_corr_relative, per_era_corr_csv_relative = save_per_era_corr_artifacts(
+            scoring_result.per_era_corr,
+            predictions_dir=run_dir / "artifacts" / "predictions",
+            output_dir=run_dir,
+        )
+    else:
+        per_era_corr_relative = None
+        per_era_corr_csv_relative = None
 
     results_output = _as_mapping(results.get("output"))
     results_output["output_dir"] = str(run_dir)
@@ -164,6 +174,9 @@ def score_run(
     artifacts["results"] = "results.json"
     artifacts["metrics"] = "metrics.json"
     artifacts["score_provenance"] = str(score_provenance_relative)
+    if per_era_corr_relative is not None and per_era_corr_csv_relative is not None:
+        artifacts["per_era_corr"] = str(per_era_corr_relative)
+        artifacts["per_era_corr_csv"] = str(per_era_corr_csv_relative)
     run_manifest["artifacts"] = artifacts
     run_manifest["metrics_summary"] = metrics_payload
     manifest_training = _as_mapping(run_manifest.get("training"))

@@ -56,6 +56,7 @@ from numereng.features.training.repo import (
     resolve_run_manifest_path,
     resolve_score_provenance_path,
     save_metrics,
+    save_per_era_corr_artifacts,
     save_predictions,
     save_resolved_config,
     save_results,
@@ -835,6 +836,14 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     save_score_provenance(score_provenance, cast(Path, state.score_provenance_path))
     state.score_provenance_relative = cast(Path, state.score_provenance_path).relative_to(cast(Path, state.output_root))
     state.artifacts["score_provenance"] = str(state.score_provenance_relative)
+    if scoring_result.per_era_corr is not None:
+        _, _, per_era_corr_relative, per_era_corr_csv_relative = save_per_era_corr_artifacts(
+            scoring_result.per_era_corr,
+            predictions_dir=cast(Path, state.predictions_dir),
+            output_dir=cast(Path, state.output_root),
+        )
+        state.artifacts["per_era_corr"] = str(per_era_corr_relative)
+        state.artifacts["per_era_corr_csv"] = str(per_era_corr_csv_relative)
     state.metrics_status = None
     log_info(
         state.run_log_path,

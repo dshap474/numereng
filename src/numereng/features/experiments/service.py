@@ -6,13 +6,14 @@ import json
 import math
 import re
 import shutil
-from datetime import UTC, datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from numereng.features.experiments.contracts import (
     ExperimentArchiveResult,
+    ExperimentPackResult,
     ExperimentPromotionResult,
     ExperimentRecord,
     ExperimentReport,
@@ -20,6 +21,7 @@ from numereng.features.experiments.contracts import (
     ExperimentStatus,
     ExperimentTrainResult,
 )
+from numereng.features.scoring.summary_metrics import SHARED_RUN_METRIC_NAMES, normalize_shared_run_metrics
 from numereng.features.store import StoreError, index_run, resolve_store_root, upsert_experiment
 from numereng.features.training import TrainingProfile, run_training
 
@@ -28,6 +30,7 @@ _EXPERIMENT_ID_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9-]*$")
 _DEFAULT_PROMOTION_METRIC = "bmc_last_200_eras.mean"
 _ARCHIVE_DIRNAME = "_archive"
 _PRE_ARCHIVE_STATUS_KEY = "pre_archive_status"
+_PACK_OUTPUT_NAME = "EXPERIMENT.pack.md"
 
 
 @dataclass(frozen=True)
@@ -314,6 +317,53 @@ def report_experiment(
     )
 
 
+def pack_experiment(
+    *,
+    store_root: str | Path = ".numereng",
+    experiment_id: str,
+) -> ExperimentPackResult:
+    """Render one experiment narrative plus run-summary metrics into markdown."""
+
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    root = resolve_store_root(store_root)
+    experiment_dir = _resolved_experiment_dir(root, safe_experiment_id)
+    manifest_path = experiment_dir / "experiment.json"
+    doc_path = experiment_dir / "EXPERIMENT.md"
+    output_path = experiment_dir / _PACK_OUTPUT_NAME
+
+    manifest = _load_manifest(manifest_path)
+    if not doc_path.is_file():
+        raise ExperimentValidationError(f"experiment_doc_missing:{doc_path}")
+    try:
+        notes_body = doc_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ExperimentError(f"experiment_doc_read_failed:{doc_path}") from exc
+
+    champion_run_id = _as_str(manifest.get("champion_run_id"))
+    run_ids = _normalize_run_ids(manifest.get("runs"))
+    packed_at = _utc_now_iso()
+    rendered = _render_packed_experiment_markdown(
+        root=root,
+        experiment_dir=experiment_dir,
+        manifest=manifest,
+        notes_body=notes_body,
+        run_ids=run_ids,
+        champion_run_id=champion_run_id,
+        packed_at=packed_at,
+        output_path=output_path,
+    )
+    output_path.write_text(rendered, encoding="utf-8")
+
+    return ExperimentPackResult(
+        experiment_id=safe_experiment_id,
+        output_path=output_path,
+        experiment_path=experiment_dir,
+        source_markdown_path=doc_path,
+        run_count=len(run_ids),
+        packed_at=packed_at,
+    )
+
+
 def archive_experiment(
     *,
     store_root: str | Path = ".numereng",
@@ -441,6 +491,13 @@ def _resolved_manifest_path(root: Path, experiment_id: str) -> Path:
     return paths.active_dir / "experiment.json"
 
 
+def _resolved_experiment_dir(root: Path, experiment_id: str) -> Path:
+    paths = _experiment_paths(root, experiment_id)
+    if paths.active_dir is None:
+        raise ExperimentNotFoundError(f"experiment_not_found:{experiment_id}")
+    return paths.active_dir
+
+
 def _iter_experiment_manifest_paths(root: Path, *, include_archived: bool = False) -> tuple[Path, ...]:
     manifest_paths: list[Path] = []
     live_root = root / "experiments"
@@ -485,6 +542,13 @@ def _load_json_mapping(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         return {}
     return cast(dict[str, object], payload)
+
+
+def _require_json_mapping(path: Path, *, error_code: str) -> dict[str, object]:
+    payload = _load_json_mapping(path)
+    if payload:
+        return payload
+    raise ExperimentValidationError(f"{error_code}:{path}")
 
 
 def _save_manifest(path: Path, payload: dict[str, object]) -> None:
@@ -663,3 +727,91 @@ def _resolve_experiment_output_dir(*, output_dir: str | Path | None, store_root:
     if output_path != store_root:
         raise ExperimentValidationError("experiment_output_dir_must_match_store_root")
     return output_path
+
+
+def _render_packed_experiment_markdown(
+    *,
+    root: Path,
+    experiment_dir: Path,
+    manifest: dict[str, object],
+    notes_body: str,
+    run_ids: list[str],
+    champion_run_id: str | None,
+    packed_at: str,
+    output_path: Path,
+) -> str:
+    header_lines = [
+        "# Experiment Pack",
+        "",
+        "## Pack Metadata",
+        f"- experiment_id: `{_as_str(manifest.get('experiment_id')) or experiment_dir.name}`",
+        f"- name: {_markdown_inline(_as_str(manifest.get('name')) or experiment_dir.name)}",
+        f"- status: `{_as_str(manifest.get('status')) or 'draft'}`",
+        f"- hypothesis: {_markdown_inline(_as_str(manifest.get('hypothesis')) or 'n/a')}",
+        f"- tags: {_markdown_inline(', '.join(_normalize_tags(manifest.get('tags'))) or 'none')}",
+        f"- champion_run_id: `{champion_run_id or 'none'}`",
+        f"- packed_at: `{packed_at}`",
+        f"- manifest_path: `{manifest_path_relative(experiment_dir, experiment_dir / 'experiment.json')}`",
+        f"- source_markdown_path: `{manifest_path_relative(experiment_dir, experiment_dir / 'EXPERIMENT.md')}`",
+        f"- output_path: `{manifest_path_relative(experiment_dir, output_path)}`",
+        "",
+        "## Experiment Notes",
+        "",
+        notes_body or "_Empty_",
+        "",
+        "## Run Metrics Summary",
+        "",
+    ]
+    header_lines.extend(_render_run_metrics_table(root=root, run_ids=run_ids, champion_run_id=champion_run_id))
+    header_lines.append("")
+    return "\n".join(header_lines)
+
+
+def _render_run_metrics_table(*, root: Path, run_ids: list[str], champion_run_id: str | None) -> list[str]:
+    columns = ("run_id", "status", "created_at", "champion", *SHARED_RUN_METRIC_NAMES)
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join("---" for _ in columns) + " |",
+    ]
+    for run_id in run_ids:
+        run_dir = root / "runs" / run_id
+        run_manifest = _require_json_mapping(run_dir / "run.json", error_code="experiment_pack_run_manifest_invalid")
+        run_metrics = _require_json_mapping(run_dir / "metrics.json", error_code="experiment_pack_run_metrics_invalid")
+        score_provenance = _load_json_mapping(run_dir / "score_provenance.json")
+        normalized = normalize_shared_run_metrics(run_metrics, score_provenance=score_provenance)
+
+        row = [
+            _markdown_cell(run_id),
+            _markdown_cell(_as_str(run_manifest.get("status")) or "n/a"),
+            _markdown_cell(_as_str(run_manifest.get("created_at")) or "n/a"),
+            _markdown_cell("yes" if champion_run_id == run_id else "no"),
+        ]
+        for metric_name in SHARED_RUN_METRIC_NAMES:
+            row.append(_format_metric_cell(normalized.get(metric_name)))
+        lines.append("| " + " | ".join(row) + " |")
+    if len(lines) == 2:
+        lines.append("| _none_ | n/a | n/a | no | " + " | ".join("n/a" for _ in SHARED_RUN_METRIC_NAMES) + " |")
+    return lines
+
+
+def _format_metric_cell(value: object) -> str:
+    number = _coerce_float(value)
+    if number is None:
+        return "n/a"
+    return f"{number:.6f}"
+
+
+def _markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|")
+
+
+def _markdown_inline(value: str) -> str:
+    escaped = value.replace("`", "\\`")
+    return f"`{escaped}`"
+
+
+def manifest_path_relative(experiment_dir: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(experiment_dir))
+    except ValueError:
+        return str(path)

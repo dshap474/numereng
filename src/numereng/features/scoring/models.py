@@ -72,3 +72,4 @@ class PostTrainingScoringResult:
     score_provenance: dict[str, object]
     effective_scoring_backend: str
     policy: ResolvedScoringPolicy
+    per_era_corr: pd.DataFrame | None = None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from numereng.features.scoring.artifacts import build_primary_per_era_corr_frame
 from numereng.features.scoring.metrics import summarize_prediction_file_with_scores
 from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
@@ -67,6 +68,11 @@ def run_post_training_scoring(
         score_provenance=score_provenance,
         effective_scoring_backend=effective_scoring_backend,
         policy=policy,
+        per_era_corr=build_primary_per_era_corr_frame(
+            predictions_path=request.predictions_path,
+            target_col=request.target_col,
+            era_col=request.era_col,
+        ),
     )
 
 

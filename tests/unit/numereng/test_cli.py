@@ -670,6 +670,39 @@ def test_cli_experiment_report_table_success(
     assert "run-1" in captured.out
 
 
+def test_cli_experiment_pack_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_experiment_pack(request: api_module.ExperimentPackRequest) -> api_module.ExperimentPackResponse:
+        assert request.experiment_id == "2026-02-22_test-exp"
+        return api_module.ExperimentPackResponse(
+            experiment_id=request.experiment_id,
+            output_path="/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md",
+            experiment_path="/tmp/.numereng/experiments/2026-02-22_test-exp",
+            source_markdown_path="/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.md",
+            run_count=2,
+            packed_at="2026-02-22T00:05:00+00:00",
+        )
+
+    monkeypatch.setattr(api_module, "experiment_pack", fake_experiment_pack)
+
+    exit_code = cli.main(["experiment", "pack", "--id", "2026-02-22_test-exp"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_count"] == 2
+    assert payload["output_path"].endswith("EXPERIMENT.pack.md")
+
+
+def test_cli_experiment_pack_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["experiment", "pack"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "missing required argument: --id" in captured.err
+
+
 def test_cli_experiment_promote_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["experiment", "promote"])
     captured = capsys.readouterr()
@@ -810,6 +843,46 @@ def test_cli_store_doctor_fix_strays_success(
     assert exit_code == 0
     assert payload["stray_cleanup_applied"] is True
     assert payload["deleted_paths"] == ["/tmp/.numereng/modal_smoke_data"]
+
+
+def test_cli_store_materialize_viz_artifacts_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_materialize(
+        request: api_module.StoreMaterializeVizArtifactsRequest,
+    ) -> api_module.StoreMaterializeVizArtifactsResponse:
+        assert request.kind == "per-era-corr"
+        assert request.experiment_id == "exp-1"
+        assert request.run_id is None
+        assert request.all is False
+        return api_module.StoreMaterializeVizArtifactsResponse(
+            store_root="/tmp/.numereng",
+            kind="per-era-corr",
+            scoped_run_count=2,
+            created_count=1,
+            skipped_count=1,
+            failed_count=0,
+            failures=[],
+        )
+
+    monkeypatch.setattr(api_module, "store_materialize_viz_artifacts", fake_materialize)
+
+    exit_code = cli.main(
+        [
+            "store",
+            "materialize-viz-artifacts",
+            "--kind",
+            "per-era-corr",
+            "--experiment-id",
+            "exp-1",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["created_count"] == 1
+    assert payload["skipped_count"] == 1
 
 
 def test_cli_numerai_datasets_list_success(

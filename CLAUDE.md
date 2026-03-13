@@ -37,15 +37,17 @@ Read order:
 - Submission source is XOR: exactly one of `run_id` or `predictions_path`.
 - Neutralization source is XOR: exactly one of `run_id` or `predictions_path`.
 - Training/HPO config files are JSON-only and reject unknown keys (`extra=forbid`).
-- Training profile allowed only: `simple|purged_walk_forward|submission`; legacy training method flags are hard-fail.
+- Training profile allowed only: `simple|purged_walk_forward|full_history_refit`; legacy `submission` profile references hard-fail with a rename error.
 - Run IDs are deterministic hash-based IDs (12-char prefixes).
 - Training requires successful pre-finalization `index_run`; if it fails, command fails.
 - `experiment train` enforces `output_dir == store_root` (or omit output dir).
+- `experiment pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
 - Telemetry is fail-open and opt-in via launch metadata binding.
 - Launch metadata precedence: explicit outer binding first (CLI/API caller), API defaults only when unbound.
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
+- Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
 - Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.

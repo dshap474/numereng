@@ -209,6 +209,9 @@ class VizService:
     def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
         return self.adapter.get_per_era_corr(run_id)
 
+    def get_per_era_corr_result(self, run_id: str):
+        return self.adapter.get_per_era_corr_result(run_id)
+
     def get_feature_importance(self, run_id: str, *, top_n: int) -> list[dict[str, Any]] | None:
         return self.adapter.get_feature_importance(run_id, top_n=top_n)
 
@@ -220,6 +223,9 @@ class VizService:
 
     def get_resolved_config(self, run_id: str) -> dict[str, Any] | None:
         return self.adapter.get_resolved_config(run_id)
+
+    def get_diagnostics_sources(self, run_id: str) -> dict[str, Any] | None:
+        return self.adapter.get_diagnostics_sources(run_id)
 
     async def get_run_bundle(self, run_id: str) -> dict[str, Any]:
         """Fetch bundle parts concurrently to reduce endpoint latency."""

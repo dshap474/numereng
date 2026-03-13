@@ -11,10 +11,16 @@ from typing import cast
 
 import pandas as pd
 
+from numereng.features.scoring.metrics import (
+    attach_benchmark_predictions,
+    load_custom_benchmark_predictions,
+)
 from numereng.features.scoring.models import (
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
+from numereng.features.scoring.service import run_post_training_scoring
+from numereng.features.store import index_run
 from numereng.features.telemetry import (
     LocalRunTelemetrySession,
     append_log_line,
@@ -25,29 +31,57 @@ from numereng.features.telemetry import (
     mark_job_completed,
     mark_job_failed,
 )
-from numereng.features.training.client import TrainingDataClient
+from numereng.features.training.client import TrainingDataClient, create_training_data_client
 from numereng.features.training.errors import TrainingConfigError, TrainingError
+from numereng.features.training.mlflow_tracking import maybe_log_training_run
 from numereng.features.training.models import (
     TrainingRunResult,
+    build_lazy_parquet_data_loader,
+    build_model_data_loader,
+    build_x_cols,
+    normalize_x_groups,
 )
 from numereng.features.training.repo import (
     apply_missing_all_twos_as_nan,
+    ensure_split_dataset_paths,
+    list_lazy_source_eras,
+    load_config,
     load_features,
+    load_fold_data_lazy,
     load_full_data,
+    resolve_fold_lazy_source_paths,
+    resolve_metrics_path,
+    resolve_output_locations,
+    resolve_resolved_config_path,
+    resolve_results_path,
+    resolve_run_manifest_path,
+    resolve_score_provenance_path,
     resolve_variant_dataset_filename,
+    save_metrics,
+    save_predictions,
+    save_resolved_config,
+    save_results,
+    save_run_manifest,
+    save_score_provenance,
+    select_prediction_columns,
 )
 from numereng.features.training.run_lock import (
     RUN_LOCK_FILENAME,
 )
 from numereng.features.training.run_log import (
+    initialize_run_log,
     log_error,
     log_info,
     log_stage,
+    resolve_run_log_path,
 )
+from numereng.features.training.run_store import compute_config_hash, compute_run_hash
 from numereng.features.training.strategies import (
     TrainingEnginePlan,
     TrainingProfile,
+    resolve_training_engine,
 )
+from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions
 
 _MATERIALIZED_LOADING_MODE = "materialized"
 _FOLD_LAZY_LOADING_MODE = "fold_lazy"

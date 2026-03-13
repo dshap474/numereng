@@ -61,6 +61,11 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
         return {"corr": pd.DataFrame(index=["prediction"])}, {}
 
     monkeypatch.setattr(scoring_service_module, "summarize_prediction_file_with_scores", _fake_summarize)
+    monkeypatch.setattr(
+        scoring_service_module,
+        "build_primary_per_era_corr_frame",
+        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+    )
 
     result = scoring_service_module.run_post_training_scoring(
         request=_request(
@@ -79,6 +84,8 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     assert execution["effective_scoring_mode"] == "materialized"
     assert execution["fallback_reason"] == "external_source_not_parquet"
     assert result.policy.fnc_feature_set == "fncv3_features"
+    assert result.per_era_corr is not None
+    assert list(result.per_era_corr.columns) == ["era", "corr"]
 
 
 def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
@@ -92,6 +99,11 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
         return {"corr": pd.DataFrame(index=["prediction"])}, {}
 
     monkeypatch.setattr(scoring_service_module, "summarize_prediction_file_with_scores", _fake_summarize)
+    monkeypatch.setattr(
+        scoring_service_module,
+        "build_primary_per_era_corr_frame",
+        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.2}]),
+    )
 
     result = scoring_service_module.run_post_training_scoring(
         request=_request(
@@ -111,3 +123,5 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     assert "fallback_reason" not in execution
     assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
     assert result.policy.fnc_target_policy == "scoring_target"
+    assert result.per_era_corr is not None
+    assert result.per_era_corr.iloc[0]["corr"] == pytest.approx(0.2)

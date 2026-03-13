@@ -3,13 +3,17 @@
 
 	type ColorMode = 'default' | 'model' | 'target';
 	type EntityType = 'run' | 'hpo_best' | 'ensemble';
+	type MetricMode = 'payout' | 'native';
 
 	interface Run {
 		run_id: string;
 		config_name?: string;
-		corr_mean: number;
-		mmc_mean: number;
+		corr_mean?: number | null;
+		mmc_mean?: number | null;
+		corr_payout_mean?: number | null;
+		mmc_payout_mean?: number | null;
 		model_type: string;
+		seed?: number | null;
 		target: string;
 		entity_type?: EntityType;
 		corr_sharpe?: number | null;
@@ -23,6 +27,7 @@
 		runs: Run[];
 		height?: number;
 		colorMode?: ColorMode;
+		metricMode?: MetricMode;
 		showIsoLines?: boolean;
 		corrWeight?: number;
 		mmcWeight?: number;
@@ -33,6 +38,7 @@
 		runs,
 		height,
 		colorMode = 'default',
+		metricMode = 'payout',
 		showIsoLines = false,
 		corrWeight = 0.75,
 		mmcWeight = 2.25,
@@ -71,15 +77,50 @@
 
 	function formatLabel(key: string, mode: ColorMode): string {
 		if (mode === 'target') {
-			// "target_agnes_20" → "Agnes 20"
-			const stripped = key.replace(/^target_/, '');
-			const parts = stripped.split('_');
-			const day = parts.pop();
-			const name = parts.join('_');
-			return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${day}`;
+			return formatTargetName(key);
 		}
 		return key;
 	}
+
+	function formatTargetName(value: string): string {
+		const stripped = value.replace(/^target_/, '');
+		const parts = stripped
+			.split(/[_\s-]+/)
+			.map((part) => part.trim())
+			.filter(Boolean);
+		if (parts.length === 0) return value;
+		const maybeDay = parts[parts.length - 1];
+		const hasNumericSuffix = /^\d+$/.test(maybeDay);
+		const nameParts = hasNumericSuffix ? parts.slice(0, -1) : parts;
+		const daySuffix = hasNumericSuffix ? ` ${maybeDay}` : '';
+		const name = nameParts
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+		return `${name}${daySuffix}`.trim();
+	}
+
+	function corrValue(run: Run): number | null {
+		const value = metricMode === 'native' ? run.corr_mean : run.corr_payout_mean;
+		return typeof value === 'number' && Number.isFinite(value) ? value : null;
+	}
+
+	function mmcValue(run: Run): number | null {
+		const value = metricMode === 'native' ? run.mmc_mean : run.mmc_payout_mean;
+		return typeof value === 'number' && Number.isFinite(value) ? value : null;
+	}
+
+	function tooltipTitle(run: Run): string {
+		const base = `${run.model_type} · ${run.target}`;
+		return run.seed == null ? base : `${base} · seed ${run.seed}`;
+	}
+
+	const corrAxisLabel = $derived(metricMode === 'native' ? 'CORR' : 'CORR (Payout Target)');
+	const mmcAxisLabel = $derived(metricMode === 'native' ? 'MMC' : 'MMC (Payout Target)');
+	const corrTooltipLabel = $derived(metricMode === 'native' ? 'CORR' : 'CORR (Payout)');
+	const mmcTooltipLabel = $derived(metricMode === 'native' ? 'MMC' : 'MMC (Payout)');
+	const emptyStateLabel = $derived(
+		metricMode === 'native' ? 'No native CORR/MMC data' : 'No payout-target CORR/MMC data'
+	);
 
 	let seriesConfig = $derived.by(() => {
 		if (colorMode === 'default') return undefined;
@@ -188,10 +229,13 @@
 		let yMin = Infinity;
 		let yMax = -Infinity;
 		for (const run of runs) {
-			xMin = Math.min(xMin, run.corr_mean);
-			xMax = Math.max(xMax, run.corr_mean);
-			yMin = Math.min(yMin, run.mmc_mean);
-			yMax = Math.max(yMax, run.mmc_mean);
+			const corr = corrValue(run);
+			const mmc = mmcValue(run);
+			if (corr == null || mmc == null) continue;
+			xMin = Math.min(xMin, corr);
+			xMax = Math.max(xMax, corr);
+			yMin = Math.min(yMin, mmc);
+			yMax = Math.max(yMax, mmc);
 		}
 		const xRange = xMax - xMin;
 		const yRange = yMax - yMin;
@@ -232,11 +276,15 @@
 		let yMin = Infinity;
 		let yMax = -Infinity;
 		for (const run of runs) {
-			xMin = Math.min(xMin, run.corr_mean);
-			xMax = Math.max(xMax, run.corr_mean);
-			yMin = Math.min(yMin, run.mmc_mean);
-			yMax = Math.max(yMax, run.mmc_mean);
+			const corr = corrValue(run);
+			const mmc = mmcValue(run);
+			if (corr == null || mmc == null) continue;
+			xMin = Math.min(xMin, corr);
+			xMax = Math.max(xMax, corr);
+			yMin = Math.min(yMin, mmc);
+			yMax = Math.max(yMax, mmc);
 		}
+		if (!Number.isFinite(xMin) || !Number.isFinite(yMin)) return null;
 		const xRange = xMax - xMin;
 		const yRange = yMax - yMin;
 		const xPad = Math.max(xRange * 0.08, 0.00035);
@@ -247,22 +295,22 @@
 		};
 	});
 
-	const chartAxisProps = {
+	let chartAxisProps = $derived.by(() => ({
 		xAxis: {
-			label: 'CORR',
+			label: corrAxisLabel,
 			ticks: 8,
 			tickSpacing: 110,
 			tickLabelProps: { fontSize: 11 },
 			labelProps: { fontSize: 12 }
 		},
 		yAxis: {
-			label: 'MMC',
+			label: mmcAxisLabel,
 			ticks: 7,
 			tickSpacing: 70,
 			tickLabelProps: { fontSize: 11 },
 			labelProps: { fontSize: 12 }
 		}
-	};
+	}));
 </script>
 
 {#snippet isoContent(context: any)}
@@ -311,18 +359,26 @@
 	{#snippet runTooltip({ context }: { context: any })}
 		{@const d = context.tooltip?.data as Run | undefined}
 		{#if d}
-			{@const proxyScore = corrWeight * d.corr_mean + mmcWeight * d.mmc_mean}
+			{@const corr = corrValue(d)}
+			{@const mmc = mmcValue(d)}
 			<Tooltip.Root {context}>
 				{#snippet children({ data })}
-					<div class="text-xs space-y-1">
-						<div class="font-medium truncate max-w-56" title={d.config_name ?? `${d.model_type} · ${d.target}`}>
-							{d.config_name ?? `${d.model_type} · ${d.target}`}
+					<div class="min-w-[300px] max-w-[360px] text-xs space-y-2">
+						<div class="font-medium font-mono break-all" title={d.run_id}>
+							{d.run_id}
 						</div>
-						<div class="text-[10px] text-muted-foreground font-mono truncate max-w-56" title={d.run_id}>{d.run_id}</div>
 						<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
-							<span class="text-muted-foreground">CORR</span><span class="tabular-nums">{d.corr_mean?.toFixed(5)}</span>
-							<span class="text-muted-foreground">MMC</span><span class="tabular-nums">{d.mmc_mean?.toFixed(5)}</span>
-							<span class="text-muted-foreground">Proxy</span><span class="tabular-nums">{proxyScore.toFixed(5)}</span>
+							<span class="text-muted-foreground">Model</span><span class="truncate">{d.model_type}</span>
+							<span class="text-muted-foreground">Target</span><span class="truncate">{formatTargetName(d.target)}</span>
+							<span class="text-muted-foreground">Seed</span><span>{d.seed ?? 'n/a'}</span>
+						</div>
+						<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
+							<span class="text-muted-foreground">{corrTooltipLabel}</span><span class="tabular-nums">{corr?.toFixed(5)}</span>
+							<span class="text-muted-foreground">{mmcTooltipLabel}</span><span class="tabular-nums">{mmc?.toFixed(5)}</span>
+							{#if metricMode === 'payout' && corr != null && mmc != null}
+								{@const proxyScore = corrWeight * corr + mmcWeight * mmc}
+								<span class="text-muted-foreground">Proxy</span><span class="tabular-nums">{proxyScore.toFixed(5)}</span>
+							{/if}
 							{#if d.mmc_coverage_ratio_rows != null}
 								<span class="text-muted-foreground">MMC Coverage</span><span class="tabular-nums">{d.mmc_coverage_ratio_rows.toFixed(3)}</span>
 							{/if}
@@ -351,8 +407,8 @@
 				{#if seriesConfig}
 					<ScatterChart
 						data={runs}
-						x="corr_mean"
-						y="mmc_mean"
+						x={metricMode === 'native' ? 'corr_mean' : 'corr_payout_mean'}
+						y={metricMode === 'native' ? 'mmc_mean' : 'mmc_payout_mean'}
 					xDomain={paddedDomains?.xDomain}
 					yDomain={paddedDomains?.yDomain}
 					series={seriesConfig}
@@ -374,9 +430,13 @@
 							{@const op = hl ? (s.key === hl ? 1 : 0.15) : 0.85}
 							{@const r = hl ? (s.key === hl ? 7 : 4) : 5}
 							{#each s.data ?? [] as d (d.run_id)}
-								{@const cx = context.xScale(d.corr_mean)}
-								{@const cy = context.yScale(d.mmc_mean)}
+								{@const corr = corrValue(d)}
+								{@const mmc = mmcValue(d)}
+								{#if corr != null && mmc != null}
+									{@const cx = context.xScale(corr)}
+									{@const cy = context.yScale(mmc)}
 								<circle {cx} {cy} {r} fill={color} opacity={op} />
+								{/if}
 							{/each}
 						{/each}
 					{/snippet}
@@ -384,8 +444,8 @@
 				{:else}
 					<ScatterChart
 						data={runs}
-						x="corr_mean"
-						y="mmc_mean"
+						x={metricMode === 'native' ? 'corr_mean' : 'corr_payout_mean'}
+						y={metricMode === 'native' ? 'mmc_mean' : 'mmc_payout_mean'}
 					xDomain={paddedDomains?.xDomain}
 					yDomain={paddedDomains?.yDomain}
 					padding={{ top: 12, right: 42, bottom: 42, left: 56 }}
@@ -401,15 +461,19 @@
 					{/snippet}
 						{#snippet marks({ context })}
 							{#each runs as d (d.run_id)}
-								{@const cx = context.xScale(d.corr_mean)}
-								{@const cy = context.yScale(d.mmc_mean)}
+								{@const corr = corrValue(d)}
+								{@const mmc = mmcValue(d)}
+								{#if corr != null && mmc != null}
+									{@const cx = context.xScale(corr)}
+									{@const cy = context.yScale(mmc)}
 								<circle {cx} {cy} r="5" fill="var(--color-primary)" opacity="0.85" />
+								{/if}
 							{/each}
 						{/snippet}
 				</ScatterChart>
 			{/if}
 		{:else}
-			<div class="flex h-full items-center justify-center text-muted-foreground">No CORR/MMC data</div>
+			<div class="flex h-full items-center justify-center text-muted-foreground">{emptyStateLabel}</div>
 		{/if}
 	</div>
 	{#if seriesConfig}

@@ -45,7 +45,7 @@ Out of scope:
 ## Hard Rules
 
 - Prefer package CLI entrypoints and explicit commands:
-  - `uv run numereng experiment create|list|details|archive|unarchive|train|promote|report ...`
+  - `uv run numereng experiment create|list|details|archive|unarchive|train|promote|report|pack ...`
   - `uv run numereng run train ...`
   - `uv run numereng ensemble build|list|details ...`
   - `uv run numereng hpo create ...`
@@ -82,6 +82,7 @@ Canonical experiment files:
 
 - `.numereng/experiments/<experiment_id>/experiment.json`
 - `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
+- `.numereng/experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `.numereng/experiments/<experiment_id>/configs/*.json`
 - `.numereng/experiments/<experiment_id>/run_plan.csv` when the experiment is using a planned sweep
 - `.numereng/experiments/_archive/<experiment_id>/...` for archived experiment-local files
@@ -182,6 +183,7 @@ uv run numereng experiment archive --id <id>
 uv run numereng experiment unarchive --id <id>
 uv run numereng experiment train --id <id> --config <config.json>
 uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
+uv run numereng experiment pack --id <id>
 uv run numereng experiment details --id <id> --format json
 uv run numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
 uv run numereng ensemble build --experiment-id <id> --run-ids <run_a,run_b,...> --method rank_avg
@@ -193,6 +195,34 @@ manifest workflow.
 
 Guardrail:
 - if an experiment is archived, unarchive it before running `experiment train` or `experiment promote`
+
+## Pack Completed Experiment
+
+When the user asks to package or pack a completed experiment, run:
+
+```bash
+uv run numereng experiment pack --id <id>
+```
+
+This writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` in the experiment folder.
+
+The packed markdown includes:
+- the current `EXPERIMENT.md` body
+- one run-summary table using dashboard-aligned scalar metrics for every manifest-listed run:
+  - `bmc_last_200_eras_mean`
+  - `bmc_mean`
+  - `corr_sharpe`
+  - `corr_mean`
+  - `mmc_mean`
+  - `cwmm_mean`
+  - `fnc_mean`
+  - `feature_exposure_mean`
+  - `max_feature_exposure`
+  - `max_drawdown`
+  - `mmc_coverage_ratio_rows`
+
+Do not treat the pack file as a replacement for `EXPERIMENT.md`.
+It is a generated snapshot and should not include per-era or other time-series metrics.
 
 ## Run Output Contract
 

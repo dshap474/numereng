@@ -289,6 +289,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 benchmark_min_overlap_ratio=0.0,
                 include_feature_neutral_metrics=True,
             ),
+            per_era_corr=pd.DataFrame([{"era": "era1", "corr": 0.1}]),
         ),
     )
     monkeypatch.setattr(
@@ -367,6 +368,10 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     manifest_artifacts = cast(dict[str, object], run_manifest["artifacts"])
     assert manifest_artifacts["log"] == "run.log"
+    assert manifest_artifacts["per_era_corr"] == "artifacts/predictions/val_per_era_corr20v2.parquet"
+    assert manifest_artifacts["per_era_corr_csv"] == "artifacts/predictions/val_per_era_corr20v2.csv"
+    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet").is_file()
+    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv").is_file()
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_started" in run_log
     assert "stage_update" in run_log

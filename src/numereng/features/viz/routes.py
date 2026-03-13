@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -16,18 +17,34 @@ _VALID_EXPERIMENT_DOCS = {"EXPERIMENT.md", "REPORT.md"}
 _VALID_RUN_DOCS = {"RUN.md"}
 
 
-def _cached_response(data: Any, *, max_age: int = 3600) -> JSONResponse:
+def _server_timing_header(metrics: dict[str, float]) -> str:
+    parts = [f"{name};dur={value:.1f}" for name, value in metrics.items()]
+    return ", ".join(parts)
+
+
+def _cached_response(data: Any, *, max_age: int = 3600, extra_headers: dict[str, str] | None = None) -> JSONResponse:
+    headers = {"Cache-Control": f"public, max-age={max_age}"}
+    if extra_headers:
+        headers.update(extra_headers)
     return JSONResponse(
         content=data,
-        headers={"Cache-Control": f"public, max-age={max_age}"},
+        headers=headers,
     )
 
 
-def _nocache_response(data: Any, *, status_code: int = 200) -> JSONResponse:
+def _nocache_response(
+    data: Any,
+    *,
+    status_code: int = 200,
+    extra_headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    headers = {"Cache-Control": "no-store"}
+    if extra_headers:
+        headers.update(extra_headers)
     return JSONResponse(
         content=data,
         status_code=status_code,
-        headers={"Cache-Control": "no-store"},
+        headers=headers,
     )
 
 
@@ -383,89 +400,152 @@ def create_router(service: VizService) -> APIRouter:
 
     @router.get("/runs/{run_id}/manifest")
     def get_run_manifest(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_run_manifest(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Manifest for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_manifest": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/metrics")
     def get_run_metrics(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_run_metrics(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Metrics for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_metrics": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/events")
     def get_run_events(run_id: str, limit: int = 50) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_run_events(run_id, limit=_bounded_limit(limit, default=50, max_value=5000))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_events": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/resources")
     def get_run_resources(run_id: str, limit: int = 50) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_run_resources(run_id, limit=_bounded_limit(limit, default=50, max_value=5000))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_resources": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/per-era-corr")
     def get_per_era_corr(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
-            payload = service.get_per_era_corr(run_id)
+            result = service.get_per_era_corr_result(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        payload = result.payload
         if payload is None:
             raise HTTPException(404, f"Per-era correlation data for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {
+                        "run_per_era_corr_total": (time.perf_counter() - started_at) * 1000.0,
+                        "run_per_era_corr_read": result.persisted_read_ms,
+                        "run_per_era_corr_materialize": result.materialize_ms,
+                    }
+                )
+            },
+        )
 
     @router.get("/runs/{run_id}/feature-importance")
     def get_feature_importance(run_id: str, top_n: int = 30) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_feature_importance(run_id, top_n=_bounded_limit(top_n, default=30, max_value=500))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Feature importance for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={
+                "Server-Timing": _server_timing_header({"run_feature_importance": (time.perf_counter() - started_at) * 1000.0})
+            },
+        )
 
     @router.get("/runs/{run_id}/trials")
     def get_trials(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_trials(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Trials data for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_trials": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/best-params")
     def get_best_params(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_best_params(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Best params for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_best_params": (time.perf_counter() - started_at) * 1000.0})},
+        )
 
     @router.get("/runs/{run_id}/config")
     def get_resolved_config(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
         try:
             payload = service.get_resolved_config(run_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
             raise HTTPException(404, f"Resolved config for run {run_id} not found")
-        return _cached_response(payload)
+        return _cached_response(
+            payload,
+            extra_headers={"Server-Timing": _server_timing_header({"run_config": (time.perf_counter() - started_at) * 1000.0})},
+        )
+
+    @router.get("/runs/{run_id}/diagnostics-sources")
+    def get_diagnostics_sources(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
+        try:
+            payload = service.get_diagnostics_sources(run_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if payload is None:
+            raise HTTPException(404, f"Diagnostics sources for run {run_id} not found")
+        return _cached_response(
+            payload,
+            extra_headers={
+                "Server-Timing": _server_timing_header({"run_diagnostics_sources": (time.perf_counter() - started_at) * 1000.0})
+            },
+        )
 
     @router.get("/runs/{run_id}/bundle")
     async def get_run_bundle(run_id: str) -> JSONResponse:
