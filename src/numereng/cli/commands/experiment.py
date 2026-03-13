@@ -228,6 +228,48 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             _print_experiment_details_table(details_payload)
         return 0
 
+    if args[0] in {"archive", "unarchive"}:
+        values, _, parse_error = _parse_simple_options(
+            args[1:],
+            value_flags={"--id", "--store-root"},
+        )
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        experiment_id = values.get("--id")
+        if experiment_id is None:
+            print("missing required argument: --id", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        try:
+            if args[0] == "archive":
+                payload = api.experiment_archive(
+                    api.ExperimentArchiveRequest(
+                        experiment_id=experiment_id,
+                        store_root=values.get("--store-root", ".numereng"),
+                    )
+                )
+            else:
+                payload = api.experiment_unarchive(
+                    api.ExperimentArchiveRequest(
+                        experiment_id=experiment_id,
+                        store_root=values.get("--store-root", ".numereng"),
+                    )
+                )
+        except ValidationError as exc:
+            print(_validation_error_message(exc), file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(payload.model_dump_json())
+        return 0
+
     if args[0] == "train":
         values, _, parse_error = _parse_simple_options(
             args[1:],

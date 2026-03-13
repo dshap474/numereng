@@ -37,6 +37,7 @@ _FORUM_POSTS_RELATIVE_PATH = "forum/posts"
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "canceled", "stale"}
 _ACTIVE_JOB_STATUSES = {"queued", "starting", "running", "canceling"}
 _HIDDEN_NOTE_STEMS = {"CLAUDE", "AGENTS"}
+_EXPERIMENT_ARCHIVE_DIRNAME = "_archive"
 _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "corr_mean": ("corr_mean", "corr.mean"),
     "corr_std": ("corr_std", "corr.std"),
@@ -730,15 +731,48 @@ class VizStoreAdapter:
             raise ValueError("Config path escapes store root")
         return path
 
-    def _iter_experiment_ids(self) -> list[str]:
-        experiment_dir = self.store_root / "experiments"
+    def _experiments_root(self) -> Path:
+        return self.store_root / "experiments"
+
+    def _archived_experiments_root(self) -> Path:
+        return self._experiments_root() / _EXPERIMENT_ARCHIVE_DIRNAME
+
+    def _experiment_path_candidates(self, experiment_id: str) -> tuple[Path, Path]:
+        return (
+            self._experiments_root() / experiment_id,
+            self._archived_experiments_root() / experiment_id,
+        )
+
+    def _resolve_experiment_dir(self, experiment_id: str) -> Path:
+        _ensure_safe_id(experiment_id, label="experiment_id")
+        live_dir, archived_dir = self._experiment_path_candidates(experiment_id)
+        live_exists = (live_dir / "experiment.json").is_file()
+        archived_exists = (archived_dir / "experiment.json").is_file()
+        if live_exists and archived_exists:
+            raise ValueError(f"Experiment path conflict: {experiment_id}")
+        if live_exists:
+            return live_dir
+        if archived_exists:
+            return archived_dir
+        return live_dir
+
+    def _iter_experiment_ids(self, *, include_archived: bool) -> list[str]:
+        experiment_dir = self._experiments_root()
         ids: set[str] = set()
         if experiment_dir.exists():
             for child in experiment_dir.iterdir():
+                if child.is_dir() and not child.name.startswith(".") and child.name != _EXPERIMENT_ARCHIVE_DIRNAME:
+                    ids.add(child.name)
+        archive_dir = self._archived_experiments_root()
+        if include_archived and archive_dir.exists():
+            for child in archive_dir.iterdir():
                 if child.is_dir() and not child.name.startswith("."):
                     ids.add(child.name)
         if self._table_exists("experiments"):
-            rows = self._query("SELECT experiment_id FROM experiments")
+            if include_archived:
+                rows = self._query("SELECT experiment_id FROM experiments")
+            else:
+                rows = self._query("SELECT experiment_id FROM experiments WHERE status != 'archived'")
             for row in rows:
                 value = row["experiment_id"]
                 if isinstance(value, str) and value:
@@ -746,7 +780,7 @@ class VizStoreAdapter:
         return sorted(ids)
 
     def _iter_configs(self, experiment_id: str) -> list[Path]:
-        root = self.store_root / "experiments" / experiment_id
+        root = self._resolve_experiment_dir(experiment_id)
         paths: list[Path] = []
         if (root / "configs").exists():
             paths.extend(sorted((root / "configs").glob("*.json")))
@@ -826,7 +860,7 @@ class VizStoreAdapter:
         limit: int = 500,
         offset: int = 0,
     ) -> dict[str, Any]:
-        exp_ids = [experiment_id] if experiment_id else self._iter_experiment_ids()
+        exp_ids = [experiment_id] if experiment_id else self._iter_experiment_ids(include_archived=False)
         items: list[dict[str, Any]] = []
         for exp_id in exp_ids:
             for path in self._iter_configs(exp_id):
@@ -910,8 +944,9 @@ class VizStoreAdapter:
 
         # Filesystem fallback when DB is absent.
         items: list[dict[str, Any]] = []
-        for exp_id in self._iter_experiment_ids():
-            exp_dir = self.store_root / "experiments" / exp_id
+        for exp_id in self._iter_experiment_ids(include_archived=False):
+            exp_dir = self._experiments_root() / exp_id
+            manifest = _read_json_dict(exp_dir / "experiment.json")
             created_at = None
             updated_at = None
             if exp_dir.exists():
@@ -921,16 +956,16 @@ class VizStoreAdapter:
             items.append(
                 {
                     "experiment_id": exp_id,
-                    "name": exp_id,
-                    "status": "draft",
+                    "name": _to_non_empty_str(manifest.get("name")) or exp_id,
+                    "status": _to_non_empty_str(manifest.get("status")) or "draft",
                     "created_at": created_at,
                     "updated_at": updated_at,
                     "preset": None,
-                    "hypothesis": None,
-                    "tags": [],
-                    "champion_run_id": None,
-                    "run_count": 0,
-                    "metadata": {},
+                    "hypothesis": _to_non_empty_str(manifest.get("hypothesis")),
+                    "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else [],
+                    "champion_run_id": _to_non_empty_str(manifest.get("champion_run_id")),
+                    "run_count": len(manifest.get("runs")) if isinstance(manifest.get("runs"), list) else 0,
+                    "metadata": manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {},
                 }
             )
         return items
@@ -959,22 +994,24 @@ class VizStoreAdapter:
                 payload["ensemble_count"] = self.count_ensembles(experiment_id=experiment_id)
                 return payload
 
-        exp_dir = self.store_root / "experiments" / experiment_id
-        if exp_dir.exists() and exp_dir.is_dir():
-            created_at = datetime.fromtimestamp(exp_dir.stat().st_ctime, tz=UTC).isoformat()
-            updated_at = datetime.fromtimestamp(exp_dir.stat().st_mtime, tz=UTC).isoformat()
+        resolved_dir = self._resolve_experiment_dir(experiment_id)
+        manifest_path = resolved_dir / "experiment.json"
+        manifest = _read_json_dict(manifest_path)
+        if resolved_dir.exists() and resolved_dir.is_dir():
+            created_at = datetime.fromtimestamp(resolved_dir.stat().st_ctime, tz=UTC).isoformat()
+            updated_at = datetime.fromtimestamp(resolved_dir.stat().st_mtime, tz=UTC).isoformat()
             return {
                 "experiment_id": experiment_id,
-                "name": experiment_id,
-                "status": "draft",
+                "name": _to_non_empty_str(manifest.get("name")) or experiment_id,
+                "status": _to_non_empty_str(manifest.get("status")) or "draft",
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "preset": None,
-                "hypothesis": None,
-                "tags": [],
-                "champion_run_id": None,
-                "run_count": 0,
-                "metadata": {},
+                "hypothesis": _to_non_empty_str(manifest.get("hypothesis")),
+                "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else [],
+                "champion_run_id": _to_non_empty_str(manifest.get("champion_run_id")),
+                "run_count": len(manifest.get("runs")) if isinstance(manifest.get("runs"), list) else 0,
+                "metadata": manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {},
                 "study_count": 0,
                 "ensemble_count": 0,
             }
@@ -1167,7 +1204,7 @@ class VizStoreAdapter:
 
     def list_experiment_round_results(self, experiment_id: str) -> list[dict[str, Any]]:
         _ensure_safe_id(experiment_id, label="experiment_id")
-        exp_dir = self.store_root / "experiments" / experiment_id
+        exp_dir = self._resolve_experiment_dir(experiment_id)
         results_dir = exp_dir / "results"
         if not results_dir.exists():
             return []
@@ -2687,7 +2724,7 @@ class VizStoreAdapter:
 
     def experiment_doc_path(self, experiment_id: str, filename: str) -> Path:
         _ensure_safe_id(experiment_id, label="experiment_id")
-        return self.store_root / "experiments" / experiment_id / filename
+        return self._resolve_experiment_dir(experiment_id) / filename
 
     def run_doc_path(self, run_id: str, filename: str) -> Path:
         _ensure_safe_id(run_id, label="run_id")

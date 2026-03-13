@@ -45,7 +45,7 @@ Out of scope:
 ## Hard Rules
 
 - Prefer package CLI entrypoints and explicit commands:
-  - `uv run numereng experiment create|list|details|train|promote|report ...`
+  - `uv run numereng experiment create|list|details|archive|unarchive|train|promote|report ...`
   - `uv run numereng run train ...`
   - `uv run numereng ensemble build|list|details ...`
   - `uv run numereng hpo create ...`
@@ -55,7 +55,7 @@ Out of scope:
   - `optimize ...`
   - `baselines ...`
   - `neutralize-sweep ...`
-  - `experiment summarize|show|compare|set-status|conclude|archive|build-ensemble|rebuild-registry`
+  - `experiment summarize|show|compare|set-status|conclude|build-ensemble|rebuild-registry`
   - `db validate|db rebuild`
 - Keep experiment learnings inside the experiment-local `EXPERIMENT.md`.
 - Do not create or rely on a separate `.numereng/knowledge/` workflow from this skill.
@@ -76,6 +76,7 @@ If `downsampled` is used, record the reason in `EXPERIMENT.md`.
 Experiments live under:
 
 - `.numereng/experiments/<experiment_id>/`
+- `.numereng/experiments/_archive/<experiment_id>/` when archived
 
 Canonical experiment files:
 
@@ -83,6 +84,15 @@ Canonical experiment files:
 - `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
 - `.numereng/experiments/<experiment_id>/configs/*.json`
 - `.numereng/experiments/<experiment_id>/run_plan.csv` when the experiment is using a planned sweep
+- `.numereng/experiments/_archive/<experiment_id>/...` for archived experiment-local files
+
+Archive semantics:
+
+- archive moves the full experiment directory from the live root into `_archive/`
+- archive sets `experiment.json.status = "archived"` and preserves the prior status for unarchive
+- archived experiments are hidden from normal experiment/config catalogs
+- archived experiments remain readable by direct experiment ID
+- archived experiments are read-only; do not train or promote them until unarchived
 
 Use one experiment directory for one line of inquiry.
 
@@ -168,6 +178,8 @@ If the schema and template disagree:
 Use these current command families:
 
 ```bash
+uv run numereng experiment archive --id <id>
+uv run numereng experiment unarchive --id <id>
 uv run numereng experiment train --id <id> --config <config.json>
 uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
 uv run numereng experiment details --id <id> --format json
@@ -178,6 +190,9 @@ uv run numereng hpo create --study-config <path.json>
 
 Use `uv run numereng run train ...` only when the task is intentionally outside the experiment
 manifest workflow.
+
+Guardrail:
+- if an experiment is archived, unarchive it before running `experiment train` or `experiment promote`
 
 ## Run Output Contract
 
@@ -202,6 +217,7 @@ Expect `run.json` to carry:
 
 At minimum, artifact paths declared in `run.json` should exist on disk for successful runs.
 Prediction parquet outputs should match the recorded artifact paths.
+Archiving does not move or delete `.numereng/runs/<run_id>/`; only experiment-local files move.
 
 For experiment progress, the manifest in `experiment.json` is the source of truth for run order
 and completion count.
@@ -210,6 +226,16 @@ and completion count.
 
 The store DB at `.numereng/numereng.db` should stay aligned with run directories and experiment
 manifests.
+
+Use `store-ops` when the task stops being normal experiment execution and becomes maintenance or
+repair work.
+
+Typical handoff triggers:
+- interrupted or partial runs that need cleanup/reset
+- experiment manifest vs run-directory vs DB drift
+- missing indexed runs or stale experiment state in sqlite
+- destructive cleanup of experiment-linked run data
+- post-repair verification after store mutation
 
 Primary integrity flow:
 

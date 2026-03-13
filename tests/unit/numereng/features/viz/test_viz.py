@@ -78,6 +78,51 @@ def test_list_experiment_configs_discovers_json_configs(tmp_path: Path) -> None:
     assert payload["items"][0]["summary"]["model_type"] == "LGBMRegressor"
 
 
+def test_list_experiments_hides_archived_but_archived_detail_paths_still_resolve(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    live_dir = store_root / "experiments" / "exp-live"
+    archived_dir = store_root / "experiments" / "_archive" / "exp-archived"
+    (live_dir / "configs").mkdir(parents=True)
+    (archived_dir / "configs").mkdir(parents=True)
+    (live_dir / "experiment.json").write_text('{"experiment_id":"exp-live","name":"Live","status":"active","runs":[]}')
+    (archived_dir / "experiment.json").write_text(
+        '{"experiment_id":"exp-archived","name":"Archived","status":"archived","runs":[]}'
+    )
+    (archived_dir / "EXPERIMENT.md").write_text("# archived\n")
+    (archived_dir / "configs" / "base.json").write_text(
+        '{"model":{"type":"LGBMRegressor"},"data":{"target":"target_20","feature_set":"small"}}'
+    )
+    (archived_dir / "results").mkdir()
+    (archived_dir / "results" / "r1_model_metrics.json").write_text('{"bmc":{"mean":0.1}}')
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    listing = adapter.list_experiments()
+    assert [item["experiment_id"] for item in listing] == ["exp-live"]
+
+    archived = adapter.get_experiment("exp-archived")
+    assert archived is not None
+    assert archived["status"] == "archived"
+
+    archived_configs = adapter.list_experiment_configs("exp-archived", runnable_only=True)
+    assert archived_configs["total"] == 1
+    assert archived_configs["items"][0]["summary"]["model_type"] == "LGBMRegressor"
+
+    all_configs = adapter.list_all_configs(limit=500, offset=0)
+    assert all_configs["total"] == 0
+
+    archived_doc = adapter.get_experiment_doc("exp-archived", "EXPERIMENT.md")
+    assert archived_doc["exists"] is True
+
+    archived_round_results = adapter.list_experiment_round_results("exp-archived")
+    assert len(archived_round_results) == 1
+
+
 def _make_readonly_client(*, repo_root: Path, store_root: Path) -> TestClient:
     return _make_client(repo_root=repo_root, store_root=store_root)
 

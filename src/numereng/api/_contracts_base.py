@@ -183,6 +183,11 @@ class ExperimentGetRequest(BaseModel):
     store_root: str = ".numereng"
 
 
+class ExperimentArchiveRequest(BaseModel):
+    experiment_id: str
+    store_root: str = ".numereng"
+
+
 class ExperimentResponse(BaseModel):
     experiment_id: str
     name: str
@@ -199,6 +204,13 @@ class ExperimentResponse(BaseModel):
 
 class ExperimentListResponse(BaseModel):
     experiments: list[ExperimentResponse]
+
+
+class ExperimentArchiveResponse(BaseModel):
+    experiment_id: str
+    status: ExperimentStatus
+    manifest_path: str
+    archived: bool
 
 
 class ExperimentTrainRequest(BaseModel):
@@ -276,6 +288,8 @@ class ExperimentReportResponse(BaseModel):
 
 __all__ = [
     "ExperimentCreateRequest",
+    "ExperimentArchiveRequest",
+    "ExperimentArchiveResponse",
     "ExperimentGetRequest",
     "ExperimentListRequest",
     "ExperimentListResponse",

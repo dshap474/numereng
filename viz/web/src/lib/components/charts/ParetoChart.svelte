@@ -347,11 +347,6 @@
 
 	<div class={`flex min-h-0 flex-col ${className ?? ''}`} style:height={height ? `${height}px` : '100%'}>
 		<div class="relative min-h-0 flex-1 min-w-0">
-			{#if showIsoLines && runs.length > 0}
-				<div class="pointer-events-none absolute left-3 top-2 z-10 rounded bg-background/80 px-2 py-1 text-[10px] text-muted-foreground">
-					Iso-lines: payout proxy = {corrWeight.toFixed(2)}*CORR + {mmcWeight.toFixed(2)}*MMC
-				</div>
-			{/if}
 		{#if runs.length > 0}
 				{#if seriesConfig}
 					<ScatterChart
