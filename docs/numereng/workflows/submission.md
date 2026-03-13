@@ -2,9 +2,7 @@
 
 Submit predictions to Numerai from a run ID or an explicit predictions file.
 
-## Step 1: Choose Submission Source
-
-### Submit by Run ID
+## Submit By Run ID
 
 ```bash
 uv run numereng run submit \
@@ -12,15 +10,15 @@ uv run numereng run submit \
   --run-id <run_id>
 ```
 
-### Submit by File
+## Submit By File
 
 ```bash
 uv run numereng run submit \
   --model-name MY_MODEL \
-  --predictions predictions/round_XXX.csv
+  --predictions predictions/live.parquet
 ```
 
-## Step 2: Optional Pre-Submit Neutralization
+## Optional Pre-Submit Neutralization
 
 ```bash
 uv run numereng run submit \
@@ -32,32 +30,37 @@ uv run numereng run submit \
   --neutralization-mode era
 ```
 
+Additional controls:
+
+- `--neutralizer-cols <csv>`
+- `--no-neutralization-rank`
+
 ## Submission Contract
 
-- Exactly one of `--run-id` or `--predictions` is required.
-- `--model-name` is required.
-- If `--neutralize` is set, `--neutralizer-path` is required.
-- `--neutralization-proportion` must be `0.0..1.0`.
-- Tournament options: `classic`, `signals`, `crypto`.
+- exactly one of `--run-id` or `--predictions` is required
+- `--model-name` is required
+- `--tournament` defaults to `classic`
+- if `--neutralize` is set, `--neutralizer-path` is required
+- `--allow-non-live-artifact` bypasses the default classic live-artifact eligibility check
 
-## Run Artifact Discovery
+## Run Artifact Resolution
 
-When you submit by run ID, Numereng resolves predictions in this order:
+When submitting by run ID, numereng resolves predictions in this order:
 
-1. `run.json` artifact reference
-2. `artifacts/predictions/` canonical names (`live_predictions.*`, `predictions.*`, `val_predictions.*`)
-3. Single `.csv`/`.parquet` fallback in that directory
+1. the artifact path recorded in `run.json`
+2. canonical files under `artifacts/predictions/`
+3. single-file fallback in that predictions directory
 
-Keep run artifacts under `.numereng/runs/<run_id>/artifacts/predictions/` for deterministic submission behavior.
+Keep run outputs under `.numereng/runs/<run_id>/artifacts/predictions/` for deterministic behavior.
 
 ## Neutralized Outputs
 
-Neutralization writes a sidecar file by default:
+When submission neutralization runs without an explicit `--output-path`, numereng writes sidecar artifacts such as:
 
 - `<original>.neutralized.parquet`
 - `<original>.neutralized.csv`
 
-The output metadata includes source path, neutralizer path, mode, proportion, and matched row counts.
+The response metadata records the source path, neutralizer path, mode, proportion, and row-match counts.
 
 ## Round Awareness
 
@@ -65,4 +68,4 @@ The output metadata includes source path, neutralizer path, mode, proportion, an
 uv run numereng numerai round current
 ```
 
-Use this to check the active round before upload.
+Use this before upload when you want to confirm the active round.

@@ -1,34 +1,59 @@
 # Features
 
-Feature-set selection, model feature plumbing, and prediction-stage neutralization.
+This page covers dataset feature sets, model feature plumbing, custom model expectations, and prediction-stage neutralization.
 
-## Feature Sets
+## Dataset Feature Sets
 
-Numerai feature groups are configured by `data.feature_set`.
+Numerai feature groups are selected with `data.feature_set`.
 
-| Set | Approx. Features | Runtime | Typical Use |
-|-----|-------------------|---------|-------------|
-| `small` | ~300 | Fast | Baselines and iteration |
-| `medium` | ~700 | Moderate | General development |
-| `all` | ~2000+ | Slow | Full-search experiments |
+| Set | Approx. scale | Typical use |
+| --- | --- | --- |
+| `small` | smallest runtime | fast baselines and iteration |
+| `medium` | moderate runtime | general development |
+| `all` | largest runtime | full-search experiments |
+
+The feature set controls which Numerai feature columns are loaded, but it does not change the scoring target contract.
 
 ## Model Feature Plumbing
 
-Feature inputs are controlled through `model` fields:
+Model inputs are controlled through `model` fields:
 
 - `x_groups`
 - `data_needed`
 - `baseline`
 - `benchmark`
 
-If `x_groups` includes `baseline`, ensure `data.id_col` is present.
-If `model.x_groups` or `model.data_needed` is omitted, training uses feature columns only. `era` and `id` are never auto-included and are not valid training input groups.
-`benchmark_models` aliases (`benchmark`, `benchmarks`, `benchmark_models`) are invalid in
-`x_groups` and fail config validation.
+Current rules:
 
-## Neutralization Is Prediction-Stage
+- default model inputs are feature columns only
+- `era` and `id` are never valid training feature groups
+- `era` and `id` are never auto-included as model inputs
+- benchmark aliases such as `benchmark`, `benchmarks`, and `benchmark_models` are not valid `x_groups`
+- if `x_groups` includes `baseline`, `data.id_col` must be available
 
-Neutralization is a separate workflow, not a training config block:
+## Custom Models
+
+Numereng supports plugin models loaded from `src/numereng/features/models/custom_models/`.
+
+The canonical onboarding path is:
+
+1. copy `src/numereng/features/models/custom_models/template_model.py`
+2. rename the class and `MODEL_REGISTRY` key
+3. implement `fit` and `predict`
+4. reference the model with `model.type` and, when needed, `model.module_path`
+
+See [Custom Models](../reference/custom-models.md) for the full contract.
+
+## Neutralization Is A Separate Stage
+
+Neutralization is not a training-config block. It is a prediction-stage workflow that can run:
+
+- directly through `numereng neutralize apply`
+- inline during submission
+- inline during HPO objective scoring
+- inline during ensemble construction
+
+Example:
 
 ```bash
 uv run numereng neutralize apply \
@@ -36,24 +61,25 @@ uv run numereng neutralize apply \
   --neutralizer-path data/neutralizer.parquet
 ```
 
-Also available inline during submit/HPO/ensemble flows via neutralization flags.
+Important constraints:
 
-## `colsample_bytree=0.1`
+- `--neutralizer-cols` must resolve to numeric columns
+- empty neutralizer column selections fail
+- output ranking is enabled by default and can be disabled with `--no-neutralization-rank`
 
-For tree models on correlated Numerai features, low column sampling is a strong default:
+## Dataset Tools
 
-```json
-{
-  "model": {
-    "type": "LGBMRegressor",
-    "params": {
-      "colsample_bytree": 0.1
-    }
-  }
-}
+Official-style full and downsampled full datasets are built with:
+
+```bash
+uv run numereng dataset-tools build-full-datasets --data-version v5.2
 ```
 
-## High-Risk Gotchas
+That workflow materializes:
 
-- There is no `features.neutralization` runtime block in the current schema.
-- `--neutralizer-cols` must resolve to numeric columns; empty selections fail.
+- `full.parquet`
+- `full_benchmark_models.parquet`
+- `downsampled_full.parquet`
+- `downsampled_full_benchmark_models.parquet`
+
+under `.numereng/datasets/<data_version>/`.

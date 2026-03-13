@@ -1,53 +1,66 @@
 # Experiments
 
-Use experiments to group related runs, track champions, and generate reports.
+Experiments group related runs, track champions, and keep experiment-local artifacts together.
 
 ## Create
 
 ```bash
 uv run numereng experiment create \
-  --id 2026-02-22_baseline \
-  --name "Baseline" \
-  --hypothesis "Initial LGBM benchmark" \
+  --id 2026-03-12_lgbm-baseline \
+  --name "LGBM baseline" \
+  --hypothesis "small feature-set baseline before wider sweeps" \
   --tags baseline,lgbm
 ```
 
-## Train Within an Experiment
+This creates `.numereng/experiments/<experiment_id>/` with an `experiment.json` manifest.
+
+## Train Within An Experiment
 
 ```bash
 uv run numereng experiment train \
-  --id 2026-02-22_baseline \
+  --id 2026-03-12_lgbm-baseline \
   --config configs/run.json
 ```
 
-Optional training overrides are the same as `run train`:
+Optional overrides:
 
-- `--output-dir`
+- `--output-dir <path>`
 - `--profile <simple|purged_walk_forward|full_history_refit>`
-- `--store-root`
+- `--store-root <path>`
 
-Use `--profile full_history_refit` only for final refits; it does not emit validation metrics.
+`experiment train` uses the same training engine profiles as `run train`, but it links the resulting run to the experiment manifest and report surfaces.
 
 ## Inspect
 
 ```bash
 uv run numereng experiment list
-uv run numereng experiment details --id 2026-02-22_baseline
-uv run numereng experiment report --id 2026-02-22_baseline --format table
+uv run numereng experiment details --id 2026-03-12_lgbm-baseline
+uv run numereng experiment report --id 2026-03-12_lgbm-baseline --format table
 ```
 
-## Promote Champion
+Useful artifacts under `.numereng/experiments/<experiment_id>/`:
+
+- `experiment.json`
+- `EXPERIMENT.md`
+- `configs/*.json`
+- `hpo/`
+- `ensembles/`
+
+## Promote A Champion
 
 ```bash
-# Promote best run by metric (default metric: bmc_last_200_eras.mean)
-uv run numereng experiment promote --id 2026-02-22_baseline
+# default metric-based promotion
+uv run numereng experiment promote --id 2026-03-12_lgbm-baseline
 
-# Or promote an explicit run
-uv run numereng experiment promote --id 2026-02-22_baseline --run <run_id>
+# explicit run promotion
+uv run numereng experiment promote --id 2026-03-12_lgbm-baseline --run <run_id>
 ```
+
+If `--run` is omitted, numereng promotes the best candidate by the selected metric.
 
 ## High-Risk Gotchas
 
-- `experiment train` requires `--id` and `--config`.
-- Config file must be `.json`.
-- If you pass `--store-root`, keep `--output-dir` aligned with the same root.
+- `experiment train` requires both `--id` and `--config`
+- config files must end in `.json`
+- if you override `--store-root`, keep experiment paths and output paths aligned to the same store
+- `full_history_refit` should be reserved for final refits because it emits no validation metrics

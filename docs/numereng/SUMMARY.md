@@ -13,6 +13,9 @@
 * [Ensembles](workflows/ensembles.md)
 * [Submissions](workflows/submission.md)
 * [Cloud Training](workflows/cloud-training.md)
+* [Store Operations](workflows/store-ops.md)
+* [Numerai Operations](workflows/numerai-ops.md)
+* [Dashboard](workflows/dashboard.md)
 
 ## Concepts
 * [Targets & Scoring](concepts/targets-scoring.md)
@@ -21,6 +24,8 @@
 
 ## Reference
 * [CLI Commands](reference/cli.md)
+* [Python API](reference/python-api.md)
+* [Custom Models](reference/custom-models.md)
 * [Configuration](reference/configuration.md)
 * [Metrics](reference/metrics.md)
 * [Config-Only Runtime](reference/presets.md)

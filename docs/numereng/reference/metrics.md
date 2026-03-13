@@ -1,10 +1,20 @@
 # Metrics
 
-Canonical run metrics written by Numereng and consumed by reporting/viz flows.
+Numereng writes canonical scoring outputs to run artifacts and exposes normalized metric views through the store and dashboard.
 
-## Core Output Keys
+## Files
 
-`metrics.json` and normalized views expose these families:
+For scored runs, the primary scoring artifacts are:
+
+- `results.json`
+- `metrics.json`
+- `score_provenance.json`
+
+`run score` refreshes those files from persisted predictions and updates the run index rows in SQLite.
+
+## Core Metric Families
+
+`metrics.json` exposes these canonical families:
 
 - `corr`
 - `corr_<alias>`
@@ -17,40 +27,50 @@ Canonical run metrics written by Numereng and consumed by reporting/viz flows.
 - `bmc_last_200_eras`
 - `feature_exposure`
 - `max_feature_exposure`
+- `max_drawdown`
 
-No payout estimate fields are emitted.
+Numereng does not emit payout-estimate fields.
 
 ## Interpretation
 
-- `corr` / `corr_<alias>`: Numerai correlation against the native or aliased scoring target.
-- `fnc` / `fnc_<alias>`: feature-neutral correlation using `fncv3_features`, then correlating against the scoring target being evaluated.
-- `mmc` / `mmc_<alias>`: meta-model contribution metrics on the available overlapping meta window.
-- `cwmm`: prediction/meta correlation diagnostic using the Numerai prediction transform and raw meta model series.
-- `bmc` / `bmc_last_200_eras`: benchmark contribution diagnostics against one selected benchmark model.
-- `feature_exposure` / `max_feature_exposure`: local diagnostics on rank-based exposure to `fncv3_features`.
+- `corr`: Numerai correlation against the native or aliased scoring target
+- `fnc`: feature-neutral correlation using `fncv3_features`
+- `mmc`: meta-model contribution on the available overlapping meta window
+- `cwmm`: diagnostic correlation between Numerai-transformed predictions and the raw meta-model series
+- `bmc`: benchmark contribution against the configured benchmark model
+- `bmc_last_200_eras`: benchmark contribution restricted to the trailing 200 eras
+- `feature_exposure`: rank-based exposure summary against `fncv3_features`
+- `max_feature_exposure`: maximum absolute exposure summary
+- `max_drawdown`: drawdown derived from the relevant per-era score series
 
-## Coverage and Provenance
+## Coverage And Provenance
 
-`score_provenance.json` is the source of scoring-policy and join-coverage context. Relevant fields:
+`score_provenance.json` records the scoring-policy and join-coverage context used to produce the metrics.
+
+Important fields include:
 
 - `joins.predictions_rows`
 - `joins.benchmark_source_rows`
 - `joins.benchmark_overlap_rows`
 - `joins.benchmark_missing_rows`
 - `joins.benchmark_missing_eras`
-- `joins.meta_overlap_rows`
 - `joins.meta_source_rows`
+- `joins.meta_overlap_rows`
 - `joins.meta_overlap_eras`
 - `policy.fnc_feature_set`
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
 - `policy.include_feature_neutral_metrics`
 
-Canonical training requires strict era alignment for benchmark/meta joins, but not whole-run full coverage. Benchmark diagnostics are computed on overlapping rows only. Meta metrics are emitted on the maximum available overlapping meta-model window whenever any overlap exists.
+Current rules:
+
+- benchmark and meta-model joins require strict era alignment
+- benchmark diagnostics score only overlapping rows
+- meta metrics are emitted whenever there is usable overlap
 
 ## Dashboard Contract
 
-Primary ranking/report keys currently exposed by viz include:
+The dashboard normalizes a subset of the metric space into common ranking fields, including:
 
 - `corr_mean`
 - `corr_sharpe`
@@ -60,4 +80,8 @@ Primary ranking/report keys currently exposed by viz include:
 - `feature_exposure_mean`
 - `max_feature_exposure`
 
-Additional aliased families such as `corr_ender20.mean` or `fnc_ender20.mean` remain available in `metrics.json` even when viz normalizes only the native-target scalar keys.
+Aliased target families remain available in `metrics.json` even when the dashboard presents only canonical scalar keys.
+
+## Special Case: `full_history_refit`
+
+`full_history_refit` is final-fit only. It does not emit validation metrics because there is no scored validation window.
