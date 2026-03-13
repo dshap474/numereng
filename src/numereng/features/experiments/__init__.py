@@ -1,6 +1,7 @@
 """Public surface for experiment lifecycle feature services."""
 
 from numereng.features.experiments.contracts import (
+    ExperimentArchiveResult,
     ExperimentPromotionResult,
     ExperimentRecord,
     ExperimentReport,
@@ -14,16 +15,19 @@ from numereng.features.experiments.service import (
     ExperimentNotFoundError,
     ExperimentRunNotFoundError,
     ExperimentValidationError,
+    archive_experiment,
     create_experiment,
     get_experiment,
     list_experiments,
     promote_experiment,
     report_experiment,
     train_experiment,
+    unarchive_experiment,
 )
 
 __all__ = [
     "ExperimentAlreadyExistsError",
+    "ExperimentArchiveResult",
     "ExperimentError",
     "ExperimentNotFoundError",
     "ExperimentPromotionResult",
@@ -34,10 +38,12 @@ __all__ = [
     "ExperimentStatus",
     "ExperimentTrainResult",
     "ExperimentValidationError",
+    "archive_experiment",
     "create_experiment",
     "get_experiment",
     "list_experiments",
     "promote_experiment",
     "report_experiment",
     "train_experiment",
+    "unarchive_experiment",
 ]

@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import math
 import re
+import shutil
 from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from numereng.features.experiments.contracts import (
+    ExperimentArchiveResult,
     ExperimentPromotionResult,
     ExperimentRecord,
     ExperimentReport,
@@ -23,6 +26,16 @@ from numereng.features.training import TrainingProfile, run_training
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _EXPERIMENT_ID_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9-]*$")
 _DEFAULT_PROMOTION_METRIC = "bmc_last_200_eras.mean"
+_ARCHIVE_DIRNAME = "_archive"
+_PRE_ARCHIVE_STATUS_KEY = "pre_archive_status"
+
+
+@dataclass(frozen=True)
+class _ExperimentPaths:
+    live_dir: Path
+    archived_dir: Path
+    active_dir: Path | None
+    is_archived: bool
 
 
 class ExperimentError(Exception):
@@ -59,10 +72,11 @@ def create_experiment(
     _ensure_experiment_id_format(safe_experiment_id)
 
     root = resolve_store_root(store_root)
-    exp_dir = _experiment_dir(root, safe_experiment_id)
-    manifest_path = exp_dir / "experiment.json"
-    if manifest_path.exists():
+    existing_paths = _experiment_paths(root, safe_experiment_id)
+    if existing_paths.active_dir is not None:
         raise ExperimentAlreadyExistsError(f"experiment_already_exists:{safe_experiment_id}")
+    exp_dir = _live_experiment_dir(root, safe_experiment_id)
+    manifest_path = exp_dir / "experiment.json"
 
     exp_dir.mkdir(parents=True, exist_ok=False)
     (exp_dir / "configs").mkdir(exist_ok=True)
@@ -96,20 +110,15 @@ def list_experiments(
     """List experiments from manifest storage."""
 
     root = resolve_store_root(store_root)
-    experiments_dir = root / "experiments"
-    if not experiments_dir.is_dir():
-        return ()
-
     items: list[ExperimentRecord] = []
-    for experiment_dir in sorted(experiments_dir.iterdir(), key=lambda path: path.name):
-        if not experiment_dir.is_dir():
-            continue
-        manifest_path = experiment_dir / "experiment.json"
-        if not manifest_path.is_file():
-            continue
+    include_archived = status == "archived"
+    for manifest_path in _iter_experiment_manifest_paths(root, include_archived=include_archived):
         manifest = _load_manifest(manifest_path)
         record = _manifest_to_record(manifest_path, manifest)
-        if status is not None and record.status != status:
+        if status is None:
+            if record.status == "archived":
+                continue
+        elif record.status != status:
             continue
         items.append(record)
 
@@ -126,7 +135,7 @@ def get_experiment(
 
     safe_experiment_id = _ensure_safe_id(experiment_id)
     root = resolve_store_root(store_root)
-    manifest_path = _experiment_dir(root, safe_experiment_id) / "experiment.json"
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
     if not manifest_path.is_file():
         raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
     manifest = _load_manifest(manifest_path)
@@ -148,9 +157,7 @@ def train_experiment(
 
     safe_experiment_id = _ensure_safe_id(experiment_id)
     root = resolve_store_root(store_root)
-    manifest_path = _experiment_dir(root, safe_experiment_id) / "experiment.json"
-    if not manifest_path.is_file():
-        raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
 
     config_resolved = Path(config_path).expanduser().resolve()
     if not config_resolved.is_file():
@@ -158,6 +165,7 @@ def train_experiment(
     output_dir_resolved = _resolve_experiment_output_dir(output_dir=output_dir, store_root=root)
 
     manifest = _load_manifest(manifest_path)
+    _ensure_experiment_mutable(manifest)
     if profile is None:
         result = run_training(
             config_path=config_resolved,
@@ -212,11 +220,10 @@ def promote_experiment(
 
     safe_experiment_id = _ensure_safe_id(experiment_id)
     root = resolve_store_root(store_root)
-    manifest_path = _experiment_dir(root, safe_experiment_id) / "experiment.json"
-    if not manifest_path.is_file():
-        raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
 
     manifest = _load_manifest(manifest_path)
+    _ensure_experiment_mutable(manifest)
     run_ids = _normalize_run_ids(manifest.get("runs"))
     if not run_ids:
         raise ExperimentRunNotFoundError(f"experiment_has_no_runs:{safe_experiment_id}")
@@ -262,9 +269,7 @@ def report_experiment(
 
     safe_experiment_id = _ensure_safe_id(experiment_id)
     root = resolve_store_root(store_root)
-    manifest_path = _experiment_dir(root, safe_experiment_id) / "experiment.json"
-    if not manifest_path.is_file():
-        raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
     if limit < 1:
         raise ExperimentValidationError("experiment_report_limit_invalid")
 
@@ -309,6 +314,88 @@ def report_experiment(
     )
 
 
+def archive_experiment(
+    *,
+    store_root: str | Path = ".numereng",
+    experiment_id: str,
+) -> ExperimentArchiveResult:
+    """Archive one experiment by moving its directory under the archive root."""
+
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    root = resolve_store_root(store_root)
+    paths = _experiment_paths(root, safe_experiment_id)
+    if paths.active_dir is None:
+        raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
+    if paths.is_archived:
+        raise ExperimentValidationError(f"experiment_already_archived:{safe_experiment_id}")
+    if paths.archived_dir.exists():
+        raise ExperimentValidationError(f"experiment_archive_destination_exists:{safe_experiment_id}")
+    paths.archived_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = paths.live_dir / "experiment.json"
+    manifest = _load_manifest(manifest_path)
+    metadata = _normalize_metadata(manifest.get("metadata"))
+    current_status = _coerce_status(_as_str(manifest.get("status")) or "draft")
+    metadata[_PRE_ARCHIVE_STATUS_KEY] = current_status
+    manifest["metadata"] = metadata
+    manifest["status"] = "archived"
+    manifest["updated_at"] = _utc_now_iso()
+    _save_manifest(manifest_path, manifest)
+
+    shutil.move(str(paths.live_dir), str(paths.archived_dir))
+
+    archived_manifest_path = paths.archived_dir / "experiment.json"
+    archived_manifest = _load_manifest(archived_manifest_path)
+    _index_experiment_manifest(root, archived_manifest)
+    return ExperimentArchiveResult(
+        experiment_id=safe_experiment_id,
+        status="archived",
+        manifest_path=archived_manifest_path,
+        archived=True,
+    )
+
+
+def unarchive_experiment(
+    *,
+    store_root: str | Path = ".numereng",
+    experiment_id: str,
+) -> ExperimentArchiveResult:
+    """Restore one archived experiment to the live experiments root."""
+
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    root = resolve_store_root(store_root)
+    paths = _experiment_paths(root, safe_experiment_id)
+    if paths.active_dir is None:
+        raise ExperimentNotFoundError(f"experiment_not_found:{safe_experiment_id}")
+    if not paths.is_archived:
+        raise ExperimentValidationError(f"experiment_not_archived:{safe_experiment_id}")
+    if paths.live_dir.exists():
+        raise ExperimentValidationError(f"experiment_unarchive_destination_exists:{safe_experiment_id}")
+    paths.live_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = paths.archived_dir / "experiment.json"
+    manifest = _load_manifest(manifest_path)
+    metadata = _normalize_metadata(manifest.get("metadata"))
+    restored_status = _coerce_status(_as_str(metadata.pop(_PRE_ARCHIVE_STATUS_KEY, None)) or "active")
+    if restored_status == "archived":
+        restored_status = "active"
+    manifest["metadata"] = metadata
+    manifest["status"] = restored_status
+    manifest["updated_at"] = _utc_now_iso()
+    _save_manifest(manifest_path, manifest)
+
+    shutil.move(str(paths.archived_dir), str(paths.live_dir))
+
+    live_manifest = _load_manifest(paths.live_dir / "experiment.json")
+    _index_experiment_manifest(root, live_manifest)
+    return ExperimentArchiveResult(
+        experiment_id=safe_experiment_id,
+        status=cast(ExperimentStatus, live_manifest.get("status")),
+        manifest_path=paths.live_dir / "experiment.json",
+        archived=False,
+    )
+
+
 def _ensure_safe_id(value: str) -> str:
     if not value or not _SAFE_ID.match(value):
         raise ExperimentValidationError(f"experiment_id_invalid:{value}")
@@ -320,8 +407,65 @@ def _ensure_experiment_id_format(experiment_id: str) -> None:
         raise ExperimentValidationError("experiment_id_format_invalid:expected_YYYY-MM-DD_slug")
 
 
-def _experiment_dir(root: Path, experiment_id: str) -> Path:
+def _live_experiment_dir(root: Path, experiment_id: str) -> Path:
     return root / "experiments" / experiment_id
+
+
+def _archived_experiment_dir(root: Path, experiment_id: str) -> Path:
+    return root / "experiments" / _ARCHIVE_DIRNAME / experiment_id
+
+
+def _experiment_paths(root: Path, experiment_id: str) -> _ExperimentPaths:
+    live_dir = _live_experiment_dir(root, experiment_id)
+    archived_dir = _archived_experiment_dir(root, experiment_id)
+    live_exists = (live_dir / "experiment.json").is_file()
+    archived_exists = (archived_dir / "experiment.json").is_file()
+    if live_exists and archived_exists:
+        raise ExperimentValidationError(f"experiment_manifest_conflict:{experiment_id}")
+    if live_exists:
+        return _ExperimentPaths(live_dir=live_dir, archived_dir=archived_dir, active_dir=live_dir, is_archived=False)
+    if archived_exists:
+        return _ExperimentPaths(
+            live_dir=live_dir,
+            archived_dir=archived_dir,
+            active_dir=archived_dir,
+            is_archived=True,
+        )
+    return _ExperimentPaths(live_dir=live_dir, archived_dir=archived_dir, active_dir=None, is_archived=False)
+
+
+def _resolved_manifest_path(root: Path, experiment_id: str) -> Path:
+    paths = _experiment_paths(root, experiment_id)
+    if paths.active_dir is None:
+        raise ExperimentNotFoundError(f"experiment_not_found:{experiment_id}")
+    return paths.active_dir / "experiment.json"
+
+
+def _iter_experiment_manifest_paths(root: Path, *, include_archived: bool = False) -> tuple[Path, ...]:
+    manifest_paths: list[Path] = []
+    live_root = root / "experiments"
+    if live_root.is_dir():
+        for experiment_dir in sorted(live_root.iterdir(), key=lambda path: path.name):
+            if not experiment_dir.is_dir() or experiment_dir.name == _ARCHIVE_DIRNAME:
+                continue
+            manifest_path = experiment_dir / "experiment.json"
+            if manifest_path.is_file():
+                manifest_paths.append(manifest_path)
+    if include_archived:
+        archive_root = live_root / _ARCHIVE_DIRNAME
+        if archive_root.is_dir():
+            for experiment_dir in sorted(archive_root.iterdir(), key=lambda path: path.name):
+                if not experiment_dir.is_dir():
+                    continue
+                manifest_path = experiment_dir / "experiment.json"
+                if manifest_path.is_file():
+                    manifest_paths.append(manifest_path)
+    return tuple(manifest_paths)
+
+
+def _ensure_experiment_mutable(manifest: dict[str, object]) -> None:
+    if _coerce_status(_as_str(manifest.get("status")) or "draft") == "archived":
+        raise ExperimentValidationError("experiment_archived_read_only")
 
 
 def _load_manifest(path: Path) -> dict[str, object]:

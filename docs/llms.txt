@@ -34,7 +34,7 @@ Source map:
 - `src/numereng/features/scoring/*`: modular post-training scoring service + metric engines.
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
-- `src/numereng/features/experiments/*`: experiment manifests + train linkage + promote/report.
+- `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -64,6 +64,7 @@ Key artifacts:
 - `experiments/<experiment_id>/experiment.json`
 - `experiments/<experiment_id>/EXPERIMENT.md`
 - `experiments/<experiment_id>/configs/*.json`
+- `experiments/_archive/<experiment_id>/...`
 
 Wiring map:
 - Bootstrap:
@@ -76,6 +77,8 @@ Wiring map:
   `cli run score -> bind cli metadata -> api.score_run -> features.scoring.run_service.score_run`
 - Experiment train:
   `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
+- Experiment archive:
+  `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
   `cli run submit -> api.submit_predictions -> features.submission`
 - HPO:
@@ -121,6 +124,7 @@ Local run telemetry write path:
 Experiment scoping behavior:
 - Preferred: pass `experiment_id` explicitly (`run train --experiment-id ...` or experiment train flow).
 - Fallback: telemetry infers experiment from config path under `.numereng/experiments/<id>/configs/*`.
+- Archived experiments live under `.numereng/experiments/_archive/<id>/configs/*`; direct reads are archive-aware, but archived experiments are read-only.
 
 Viz/frontend topology:
 - Frontend routes: `/docs`, `/docs/numerai`, `/notes`, `/experiments`, `/experiments/[id]`.
@@ -128,6 +132,7 @@ Viz/frontend topology:
 - Experiment page contains Analysis + Run Ops tabs; Run Ops is monitor-only (configs list + run queue + live monitor).
 - Run launch/control is CLI/API-only.
 - Backend still exposes read-only catalog/query endpoints (`/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
+- Normal experiment/config catalogs exclude archived experiments; direct experiment detail/doc/config reads remain available by ID.
 - Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
 - Viz does not expose payout metrics or payout-specific routes.
 - Run detail/chart APIs are read-only over persisted artifacts; when optional per-era visualization files are absent, viz returns unavailable/null instead of deriving payout-style diagnostics on demand.
@@ -179,6 +184,8 @@ Critical invariants:
 - Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
 - Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.
 - Experiment train defaults `output_dir` to `store_root`; when provided it must equal `store_root`.
+- `experiment archive` moves only experiment-local files; run directories remain canonical under `.numereng/runs/*`.
+- Archived experiments are operationally frozen: `experiment train` and `experiment promote` hard-fail until unarchived.
 - Ensemble supports only `rank_avg` and >=2 deduped run IDs.
 - Cloud AWS submit backend allowed only `sagemaker|batch`; `--spot` and `--on-demand` are mutually exclusive.
 - `cloud aws train pull` is download-only and writes managed artifacts under `.numereng/cloud/<run_id>/pull`.
@@ -199,7 +206,7 @@ Critical invariants:
 
 CLI families:
 - `numereng run train|score|submit`
-- `numereng experiment create|list|details|train|promote|report`
+- `numereng experiment create|list|details|archive|unarchive|train|promote|report`
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`
 - `numereng neutralize apply`

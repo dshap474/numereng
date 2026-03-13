@@ -574,6 +574,44 @@ def test_cli_experiment_details_table_success(
     assert "runs: 2" in captured.out
 
 
+def test_cli_experiment_archive_and_unarchive_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_experiment_archive(request: api_module.ExperimentArchiveRequest) -> api_module.ExperimentArchiveResponse:
+        assert request.experiment_id == "2026-02-22_test-exp"
+        return api_module.ExperimentArchiveResponse(
+            experiment_id=request.experiment_id,
+            status="archived",
+            manifest_path="/tmp/.numereng/experiments/_archive/2026-02-22_test-exp/experiment.json",
+            archived=True,
+        )
+
+    def fake_experiment_unarchive(request: api_module.ExperimentArchiveRequest) -> api_module.ExperimentArchiveResponse:
+        assert request.experiment_id == "2026-02-22_test-exp"
+        return api_module.ExperimentArchiveResponse(
+            experiment_id=request.experiment_id,
+            status="active",
+            manifest_path="/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json",
+            archived=False,
+        )
+
+    monkeypatch.setattr(api_module, "experiment_archive", fake_experiment_archive)
+    monkeypatch.setattr(api_module, "experiment_unarchive", fake_experiment_unarchive)
+
+    exit_code = cli.main(["experiment", "archive", "--id", "2026-02-22_test-exp"])
+    archived_payload = _parse_stdout_json(capsys.readouterr().out)
+    assert exit_code == 0
+    assert archived_payload["archived"] is True
+    assert archived_payload["status"] == "archived"
+
+    exit_code = cli.main(["experiment", "unarchive", "--id", "2026-02-22_test-exp"])
+    restored_payload = _parse_stdout_json(capsys.readouterr().out)
+    assert exit_code == 0
+    assert restored_payload["archived"] is False
+    assert restored_payload["status"] == "active"
+
+
 def test_cli_experiment_promote_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

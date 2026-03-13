@@ -23,9 +23,18 @@ Notes:
 - `numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]`
 - `numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]`
 - `numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]`
+- `numereng experiment archive --id <id> [--store-root <path>]`
+- `numereng experiment unarchive --id <id> [--store-root <path>]`
 - `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]`
 - `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]`
 - `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]`
+
+Notes:
+
+- archived experiments are hidden from normal experiment and config catalogs but still readable by direct experiment ID
+- `archive` moves `.numereng/experiments/<id>` to `.numereng/experiments/_archive/<id>` and updates indexed experiment status to `archived`
+- `unarchive` moves the directory back to the live root and restores the pre-archive status when recorded
+- archived experiments are read-only; `experiment train` and `experiment promote` hard-fail until the experiment is unarchived
 
 ## `hpo`
 

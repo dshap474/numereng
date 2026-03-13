@@ -37,6 +37,16 @@ class ExperimentTrainResult:
 
 
 @dataclass(frozen=True)
+class ExperimentArchiveResult:
+    """Result payload for archiving or unarchiving an experiment."""
+
+    experiment_id: str
+    status: ExperimentStatus
+    manifest_path: Path
+    archived: bool
+
+
+@dataclass(frozen=True)
 class ExperimentPromotionResult:
     """Result payload for champion promotion."""
 

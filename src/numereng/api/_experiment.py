@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 from numereng.api.contracts import (
+    ExperimentArchiveRequest,
+    ExperimentArchiveResponse,
     ExperimentCreateRequest,
     ExperimentGetRequest,
     ExperimentListRequest,
@@ -63,6 +65,46 @@ def experiment_create(request: ExperimentCreateRequest) -> ExperimentResponse:
         runs=list(record.runs),
         metadata=record.metadata,
         manifest_path=str(record.manifest_path),
+    )
+
+
+def experiment_archive(request: ExperimentArchiveRequest) -> ExperimentArchiveResponse:
+    """Archive one experiment and move it under the archive root."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.archive_experiment_record(
+            store_root=request.store_root,
+            experiment_id=request.experiment_id,
+        )
+    except (ExperimentNotFoundError, ExperimentValidationError, ExperimentError) as exc:
+        raise PackageError(str(exc)) from exc
+
+    return ExperimentArchiveResponse(
+        experiment_id=result.experiment_id,
+        status=result.status,
+        manifest_path=str(result.manifest_path),
+        archived=result.archived,
+    )
+
+
+def experiment_unarchive(request: ExperimentArchiveRequest) -> ExperimentArchiveResponse:
+    """Restore one archived experiment to the live experiment root."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.unarchive_experiment_record(
+            store_root=request.store_root,
+            experiment_id=request.experiment_id,
+        )
+    except (ExperimentNotFoundError, ExperimentValidationError, ExperimentError) as exc:
+        raise PackageError(str(exc)) from exc
+
+    return ExperimentArchiveResponse(
+        experiment_id=result.experiment_id,
+        status=result.status,
+        manifest_path=str(result.manifest_path),
+        archived=result.archived,
     )
 
 
@@ -246,10 +288,12 @@ def experiment_report(request: ExperimentReportRequest) -> ExperimentReportRespo
 
 
 __all__ = [
+    "experiment_archive",
     "experiment_create",
     "experiment_get",
     "experiment_list",
     "experiment_promote",
     "experiment_report",
     "experiment_train",
+    "experiment_unarchive",
 ]
