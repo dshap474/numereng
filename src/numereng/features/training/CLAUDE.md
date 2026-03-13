@@ -28,17 +28,20 @@ Conditionally required:
 - `score_provenance.json`
   - Present when post-run scoring succeeds.
   - May be absent if post-run scoring fails.
+- `artifacts/predictions/val_per_era_corr20v2.parquet`
+- `artifacts/predictions/val_per_era_corr20v2.csv`
+  - Present when post-run scoring succeeds for new or rescored runs.
+  - Legacy historical runs may still be missing them until backfilled or first viz materialization.
 
 Not guaranteed by the canonical training pipeline:
 
-- `artifacts/predictions/val_per_era_corr20v2.parquet`
-- `artifacts/predictions/val_per_era_corr20v2.csv`
 - `artifacts/eval/feature_importance.csv`
 - `artifacts/reports/trials.csv`
 - `artifacts/reports/best_params.json`
 
-Consumers must not derive these diagnostics at request time. Read-only surfaces
-should show them only when the precomputed visualization artifacts exist.
+Consumers should treat per-era CORR as a persisted scoring artifact and may use
+the store/viz write-through backfill path for legacy runs. Other optional
+diagnostics must not be derived at request time.
 
 ## Canonical Field Names
 
@@ -91,7 +94,7 @@ Canonical coverage ratio derivation:
 
 - Prefer canonical artifacts first (`run.json`, `metrics.json`, `results.json`,
   `score_provenance.json`, predictions parquet).
-- If precomputed visualization tables are absent, read-only consumers must surface them as unavailable.
+- If precomputed visualization tables are absent, read-only consumers may materialize canonical per-era CORR for legacy runs once, but should otherwise surface missing diagnostics as unavailable.
 - Do not infer non-canonical schema fields that training did not write.
 
 ## Anti-Drift Policy

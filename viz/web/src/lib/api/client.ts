@@ -2,8 +2,8 @@ const BASE = '/api';
 
 type FetchFn = typeof globalThis.fetch;
 
-async function get<T>(path: string, fetchFn: FetchFn = globalThis.fetch): Promise<T> {
-	const res = await fetchFn(`${BASE}${path}`);
+async function get<T>(path: string, fetchFn: FetchFn = globalThis.fetch, signal?: AbortSignal): Promise<T> {
+	const res = await fetchFn(`${BASE}${path}`, signal ? { signal } : undefined);
 	if (!res.ok) {
 		throw new Error(`API ${res.status}: ${path}`);
 	}
@@ -33,6 +33,7 @@ export interface ExperimentRun {
 	created_at: string;
 	run_name?: string | null;
 	model_type?: string | null;
+	seed?: number | null;
 	target?: string | null;
 	target_train?: string | null;
 	target_payout?: string | null;
@@ -401,6 +402,29 @@ export interface SystemCapabilities {
 }
 
 const bundleCache = new Map<string, RunBundle>();
+const immutableRunSectionCache = new Map<string, unknown>();
+
+function cachedKey(section: string, runId: string): string {
+	return `${section}:${runId}`;
+}
+
+function cachedGet<T>(
+	section: string,
+	runId: string,
+	path: string,
+	fetchFn: FetchFn,
+	signal?: AbortSignal
+): Promise<T> {
+	const key = cachedKey(section, runId);
+	const cached = immutableRunSectionCache.get(key) as T | undefined;
+	if (cached !== undefined) {
+		return Promise.resolve(cached);
+	}
+	return get<T>(path, fetchFn, signal).then((data) => {
+		immutableRunSectionCache.set(key, data);
+		return data;
+	});
+}
 
 export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 	const query = (params: Record<string, string | number | boolean | undefined | null>) => {
@@ -451,19 +475,38 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 		getExperimentRuns: (id: string) => get<ExperimentRun[]>(`/experiments/${id}/runs`, fetchFn),
 		getExperimentRoundResults: (id: string) =>
 			get<ExperimentRoundResult[]>(`/experiments/${id}/round-results`, fetchFn),
-		getRunManifest: (runId: string) => get<RunManifest>(`/runs/${runId}/manifest`, fetchFn),
-		getRunMetrics: (runId: string) => get<Record<string, number>>(`/runs/${runId}/metrics`, fetchFn),
-		getPerEraCorr: (runId: string) => get<PerEraRow[]>(`/runs/${runId}/per-era-corr`, fetchFn),
-		getFeatureImportance: (runId: string, topN = 30) =>
-			get<FeatureImportanceRow[]>(`/runs/${runId}/feature-importance?top_n=${topN}`, fetchFn),
-		getTrials: (runId: string) => get<Record<string, unknown>[]>(`/runs/${runId}/trials`, fetchFn),
-		getBestParams: (runId: string) =>
-			get<Record<string, unknown>>(`/runs/${runId}/best-params`, fetchFn),
-		getResolvedConfig: (runId: string) => get<{ yaml: string }>(`/runs/${runId}/config`, fetchFn),
-		getRunEvents: (runId: string, limit = 50) =>
-			get<RunEvent[]>(`/runs/${runId}/events?limit=${limit}`, fetchFn),
-		getRunResources: (runId: string, limit = 50) =>
-			get<ResourceSample[]>(`/runs/${runId}/resources?limit=${limit}`, fetchFn),
+		getRunManifest: (runId: string, signal?: AbortSignal) =>
+			cachedGet<RunManifest>('manifest', runId, `/runs/${runId}/manifest`, fetchFn, signal),
+		getRunMetrics: (runId: string, signal?: AbortSignal) =>
+			cachedGet<Record<string, number>>('metrics', runId, `/runs/${runId}/metrics`, fetchFn, signal),
+		getPerEraCorr: (runId: string, signal?: AbortSignal) =>
+			cachedGet<PerEraRow[]>('per-era-corr', runId, `/runs/${runId}/per-era-corr`, fetchFn, signal),
+		getFeatureImportance: (runId: string, topN = 30, signal?: AbortSignal) =>
+			cachedGet<FeatureImportanceRow[]>(
+				`feature-importance:${topN}`,
+				runId,
+				`/runs/${runId}/feature-importance?top_n=${topN}`,
+				fetchFn,
+				signal
+			),
+		getTrials: (runId: string, signal?: AbortSignal) =>
+			cachedGet<Record<string, unknown>[]>('trials', runId, `/runs/${runId}/trials`, fetchFn, signal),
+		getBestParams: (runId: string, signal?: AbortSignal) =>
+			cachedGet<Record<string, unknown>>('best-params', runId, `/runs/${runId}/best-params`, fetchFn, signal),
+		getResolvedConfig: (runId: string, signal?: AbortSignal) =>
+			cachedGet<{ yaml: string }>('config', runId, `/runs/${runId}/config`, fetchFn, signal),
+		getRunDiagnosticsSources: (runId: string, signal?: AbortSignal) =>
+			cachedGet<DiagnosticsSources>(
+				'diagnostics-sources',
+				runId,
+				`/runs/${runId}/diagnostics-sources`,
+				fetchFn,
+				signal
+			),
+		getRunEvents: (runId: string, limit = 50, signal?: AbortSignal) =>
+			get<RunEvent[]>(`/runs/${runId}/events?limit=${limit}`, fetchFn, signal),
+		getRunResources: (runId: string, limit = 50, signal?: AbortSignal) =>
+			get<ResourceSample[]>(`/runs/${runId}/resources?limit=${limit}`, fetchFn, signal),
 		listRunJobs: (params?: {
 			experiment_id?: string;
 			status?: string;

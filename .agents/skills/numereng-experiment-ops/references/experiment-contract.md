@@ -7,6 +7,7 @@ surface.
 
 - `.numereng/experiments/<experiment_id>/experiment.json`
 - `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
+- `.numereng/experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `.numereng/experiments/<experiment_id>/configs/*.json`
 - `.numereng/experiments/<experiment_id>/run_plan.csv`
 - `.numereng/runs/<run_id>/`
@@ -17,10 +18,11 @@ surface.
 - `experiment.json` is the source of truth for experiment status, run list, and champion state.
 - `run_plan.csv` is optional and only applies when a sweep order has been defined.
 - `EXPERIMENT.md` is the durable narrative for findings, decisions, anti-patterns, and next steps.
+- `EXPERIMENT.pack.md` is a generated snapshot that embeds `EXPERIMENT.md` plus one dashboard-aligned scalar run-metrics table; it excludes per-era/time-series metrics.
 
 ## Valid Command Families
 
-- `uv run numereng experiment create|list|details|train|promote|report ...`
+- `uv run numereng experiment create|list|details|train|promote|report|pack ...`
 - `uv run numereng run train ...`
 - `uv run numereng ensemble build|list|details ...`
 - `uv run numereng hpo create ...`

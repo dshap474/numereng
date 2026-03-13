@@ -18,6 +18,23 @@ from numereng.features.store import StoreError
 from numereng.features.training import TrainingRunResult
 
 
+def _write_run_artifacts(
+    store_root: Path,
+    run_id: str,
+    *,
+    status: str = "FINISHED",
+    created_at: str = "2026-02-22T00:00:00+00:00",
+    metrics: dict[str, object] | None = None,
+    score_provenance: dict[str, object] | None = None,
+) -> None:
+    run_dir = store_root / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(json.dumps({"run_id": run_id, "status": status, "created_at": created_at}))
+    (run_dir / "metrics.json").write_text(json.dumps(metrics or {}))
+    if score_provenance is not None:
+        (run_dir / "score_provenance.json").write_text(json.dumps(score_provenance))
+
+
 def test_create_experiment_writes_manifest_and_indexes_db(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
 
@@ -258,6 +275,134 @@ def test_report_experiment_ranks_rows(tmp_path: Path) -> None:
     assert report.total_runs == 2
     assert report.rows[0].run_id == "run-b"
     assert report.rows[0].is_champion is True
+
+
+def test_pack_experiment_writes_markdown_summary(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id, name="Packed Experiment")
+
+    exp_dir = store_root / "experiments" / experiment_id
+    manifest_path = exp_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["status"] = "complete"
+    manifest["champion_run_id"] = "run-b"
+    manifest["runs"] = ["run-b", "run-a"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    (exp_dir / "EXPERIMENT.md").write_text("# Notes\n\nThis experiment converged.\n", encoding="utf-8")
+
+    _write_run_artifacts(
+        store_root,
+        "run-b",
+        created_at="2026-02-22T00:02:00+00:00",
+        metrics={
+            "corr": {"mean": 0.11, "sharpe": 1.2, "max_drawdown": -0.03},
+            "mmc": {"mean": 0.02},
+            "cwmm": {"mean": 0.03},
+            "fnc": {"mean": 0.04},
+            "bmc": {"mean": 0.05},
+            "bmc_last_200_eras": {"mean": 0.06},
+            "feature_exposure": {"mean": 0.07},
+            "max_feature_exposure": {"mean": 0.08},
+        },
+        score_provenance={"joins": {"predictions_rows": 8, "meta_overlap_rows": 2}},
+    )
+    _write_run_artifacts(
+        store_root,
+        "run-a",
+        created_at="2026-02-22T00:01:00+00:00",
+        metrics={
+            "corr": {"mean": 0.09, "sharpe": 0.9},
+            "bmc": {"mean": 0.04},
+            "bmc_last_200_eras": {"mean": 0.03},
+        },
+    )
+
+    result = service_module.pack_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    assert result.run_count == 2
+    assert result.output_path == exp_dir / "EXPERIMENT.pack.md"
+    content = result.output_path.read_text(encoding="utf-8")
+    assert "## Experiment Notes" in content
+    assert "This experiment converged." in content
+    assert "| run-b | FINISHED | 2026-02-22T00:02:00+00:00 | yes |" in content
+    assert "| run-a | FINISHED | 2026-02-22T00:01:00+00:00 | no |" in content
+    assert content.index("| run-b |") < content.index("| run-a |")
+    assert "0.250000" in content
+    assert "n/a" in content
+
+
+def test_pack_experiment_supports_archived_experiments(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["runs"] = ["run-a"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    _write_run_artifacts(
+        store_root,
+        "run-a",
+        metrics={
+            "corr": {"mean": 0.09, "sharpe": 0.9},
+            "bmc": {"mean": 0.04},
+            "bmc_last_200_eras": {"mean": 0.03},
+        },
+    )
+
+    service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
+    result = service_module.pack_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    assert "_archive" in str(result.output_path)
+    assert result.output_path.is_file()
+
+
+def test_pack_experiment_requires_experiment_doc(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    exp_doc = store_root / "experiments" / experiment_id / "EXPERIMENT.md"
+    exp_doc.unlink()
+
+    with pytest.raises(ExperimentValidationError, match="experiment_doc_missing"):
+        service_module.pack_experiment(store_root=store_root, experiment_id=experiment_id)
+
+
+@pytest.mark.parametrize(
+    ("missing_name", "error_code"),
+    (
+        ("run.json", "experiment_pack_run_manifest_invalid"),
+        ("metrics.json", "experiment_pack_run_metrics_invalid"),
+    ),
+)
+def test_pack_experiment_requires_run_artifacts(
+    tmp_path: Path,
+    missing_name: str,
+    error_code: str,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["runs"] = ["run-a"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    _write_run_artifacts(
+        store_root,
+        "run-a",
+        metrics={
+            "corr": {"mean": 0.09, "sharpe": 0.9},
+            "bmc": {"mean": 0.04},
+            "bmc_last_200_eras": {"mean": 0.03},
+        },
+    )
+    (store_root / "runs" / "run-a" / missing_name).unlink()
+
+    with pytest.raises(ExperimentValidationError, match=error_code):
+        service_module.pack_experiment(store_root=store_root, experiment_id=experiment_id)
 
 
 def test_get_experiment_not_found_raises(tmp_path: Path) -> None:

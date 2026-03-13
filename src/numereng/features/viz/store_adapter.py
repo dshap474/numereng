@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,6 +26,12 @@ from urllib.parse import urlsplit
 
 import pandas as pd
 import yaml
+
+from numereng.features.scoring.artifacts import persist_primary_per_era_corr_artifacts
+from numereng.features.scoring.summary_metrics import (
+    expand_shared_metric_query_names,
+    normalize_shared_run_metrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +47,7 @@ _HIDDEN_NOTE_STEMS = {"CLAUDE", "AGENTS"}
 _EXPERIMENT_ARCHIVE_DIRNAME = "_archive"
 _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "corr_mean": ("corr_mean", "corr.mean"),
+    "corr_payout_mean": ("corr_payout_mean", "corr_ender20.mean", "corr_ender20"),
     "corr_std": ("corr_std", "corr.std"),
     "corr_sharpe": ("corr_sharpe", "corr.sharpe", "sharpe"),
     "corr_n_eras": ("corr_n_eras", "corr.n_eras", "n_eras"),
@@ -47,6 +55,7 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "fnc_std": ("fnc_std", "fnc.std"),
     "fnc_sharpe": ("fnc_sharpe", "fnc.sharpe"),
     "mmc_mean": ("mmc_mean", "mmc.mean"),
+    "mmc_payout_mean": ("mmc_payout_mean", "mmc_ender20.mean", "mmc_ender20"),
     "mmc_std": ("mmc_std", "mmc.std"),
     "mmc_sharpe": ("mmc_sharpe", "mmc.sharpe"),
     "mmc_n_eras": ("mmc_n_eras", "mmc.n_eras"),
@@ -255,6 +264,25 @@ def _resolve_run_targets(manifest: dict[str, Any]) -> tuple[str | None, str | No
     return target_train, target_payout, target
 
 
+def _extract_run_seed(payload: dict[str, Any]) -> int | None:
+    """Resolve canonical run seed from resolved/manifest payload."""
+
+    model_raw = payload.get("model")
+    model = model_raw if isinstance(model_raw, dict) else {}
+    params_raw = model.get("params")
+    params = params_raw if isinstance(params_raw, dict) else {}
+    for candidate in (params.get("random_state"), params.get("seed"), model.get("seed")):
+        if isinstance(candidate, bool):
+            continue
+        if isinstance(candidate, Integral):
+            return int(candidate)
+        if isinstance(candidate, Real):
+            number = float(candidate)
+            if math.isfinite(number):
+                return int(number)
+    return None
+
+
 @lru_cache(maxsize=1)
 def _load_scoring_functions() -> tuple[Callable[..., pd.Series] | None, Callable[..., pd.Series] | None]:
     """Load Numerai scoring functions lazily."""
@@ -306,7 +334,9 @@ def _expand_metric_query_names(metric_names: list[str]) -> list[str]:
     expanded: list[str] = []
     seen: set[str] = set()
     for name in metric_names:
-        aliases = _METRIC_QUERY_ALIASES.get(name, (name,))
+        aliases = _METRIC_QUERY_ALIASES.get(name)
+        if aliases is None:
+            aliases = tuple(expand_shared_metric_query_names([name])) or (name,)
         for alias in aliases:
             if alias in seen:
                 continue
@@ -450,33 +480,25 @@ def _normalize_round_metrics(
 ) -> dict[str, Any]:
     _ = target_col
     flattened = _flatten_metrics(_sanitize_metrics(metrics))
-    normalized: dict[str, Any] = {}
+    normalized = normalize_shared_run_metrics(metrics)
 
     scalar_metrics: tuple[tuple[str, tuple[str, ...], bool], ...] = (
-        ("corr_mean", ("corr.mean", "corr_mean", "corr20v2_mean"), False),
+        ("corr_payout_mean", ("corr_ender20.mean", "corr_ender20", "corr_payout_mean"), False),
         ("corr_std", ("corr.std", "corr_std", "corr20v2_std"), False),
-        ("corr_sharpe", ("corr.sharpe", "corr_sharpe", "corr20v2_sharpe", "sharpe"), False),
         ("corr_n_eras", ("corr.n_eras", "corr_n_eras", "corr20v2_n_eras", "n_eras"), True),
-        ("fnc_mean", ("fnc.mean", "fnc_mean"), False),
         ("fnc_std", ("fnc.std", "fnc_std"), False),
         ("fnc_sharpe", ("fnc.sharpe", "fnc_sharpe"), False),
-        ("mmc_mean", ("mmc.mean", "mmc_mean"), False),
+        ("mmc_payout_mean", ("mmc_ender20.mean", "mmc_ender20", "mmc_payout_mean"), False),
         ("mmc_std", ("mmc.std", "mmc_std"), False),
         ("mmc_sharpe", ("mmc.sharpe", "mmc_sharpe"), False),
         ("mmc_n_eras", ("mmc.n_eras", "mmc_n_eras"), True),
-        ("bmc_mean", ("bmc.mean", "bmc_mean"), False),
         ("bmc_std", ("bmc.std", "bmc_std"), False),
         ("bmc_sharpe", ("bmc.sharpe", "bmc_sharpe"), False),
         ("bmc_n_eras", ("bmc.n_eras", "bmc_n_eras"), True),
-        ("bmc_last_200_eras_mean", ("bmc_last_200_eras.mean", "bmc_last_200_eras_mean"), False),
-        ("cwmm_mean", ("cwmm.mean", "cwmm_mean"), False),
         ("cwmm_std", ("cwmm.std", "cwmm_std"), False),
         ("cwmm_sharpe", ("cwmm.sharpe", "cwmm_sharpe"), False),
-        ("feature_exposure_mean", ("feature_exposure.mean", "feature_exposure_mean"), False),
         ("feature_exposure_std", ("feature_exposure.std", "feature_exposure_std"), False),
         ("feature_exposure_sharpe", ("feature_exposure.sharpe", "feature_exposure_sharpe"), False),
-        ("max_feature_exposure", ("max_feature_exposure.mean", "max_feature_exposure"), False),
-        ("max_drawdown", ("corr.max_drawdown", "max_drawdown"), False),
     )
 
     for output_key, aliases, cast_int in scalar_metrics:
@@ -608,6 +630,16 @@ class VizStoreConfig:
             store_root=resolve_store_root(store_root),
             repo_root=repository_root(),
         )
+
+
+@dataclass(frozen=True)
+class PerEraCorrLoadResult:
+    """Per-era corr payload plus lightweight timing metadata for viz routes."""
+
+    payload: list[dict[str, Any]] | None
+    persisted_read_ms: float
+    materialize_ms: float
+    wrote_artifact: bool
 
 
 class VizStoreAdapter:
@@ -1070,6 +1102,12 @@ class VizStoreAdapter:
         metrics: dict[str, Any],
     ) -> dict[str, Any]:
         manifest = _parse_json_object(row.get("manifest_json"))
+        run_id = row.get("run_id")
+        resolved = (
+            _read_json_dict(self.store_root / "runs" / run_id / "resolved.json")
+            if isinstance(run_id, str)
+            else {}
+        )
         model_raw = manifest.get("model")
         model_info: dict[str, Any] = model_raw if isinstance(model_raw, dict) else {}
         data_raw = manifest.get("data")
@@ -1077,7 +1115,6 @@ class VizStoreAdapter:
         lineage_raw = manifest.get("lineage")
         lineage: dict[str, Any] = lineage_raw if isinstance(lineage_raw, dict) else {}
         target_train, target_payout, target = _resolve_run_targets(manifest)
-        run_id = row.get("run_id")
         return {
             "run_id": run_id,
             "experiment_id": row.get("experiment_id"),
@@ -1092,6 +1129,7 @@ class VizStoreAdapter:
             "sweep_dimension": lineage.get("sweep_dimension"),
             "run_name": manifest.get("run_name"),
             "model_type": model_info.get("type") if model_info else manifest.get("model_type"),
+            "seed": _extract_run_seed(resolved) or _extract_run_seed(manifest),
             "target_train": target_train,
             "target_payout": target_payout,
             "target_col": data_info.get("target_col"),
@@ -1177,6 +1215,7 @@ class VizStoreAdapter:
             data_raw = payload_raw.get("data")
             data_info: dict[str, Any] = data_raw if isinstance(data_raw, dict) else {}
             target_train, target_payout, target = _resolve_run_targets(payload_raw)
+            resolved_payload = _read_json_dict(run_dir / "resolved.json")
             payload.append(
                 {
                     "run_id": run_id,
@@ -1192,6 +1231,7 @@ class VizStoreAdapter:
                     "sweep_dimension": lineage.get("sweep_dimension"),
                     "run_name": payload_raw.get("run_name"),
                     "model_type": model_info.get("type") or payload_raw.get("model_type"),
+                    "seed": _extract_run_seed(resolved_payload) or _extract_run_seed(payload_raw),
                     "target_train": target_train,
                     "target_payout": target_payout,
                     "target_col": data_info.get("target_col"),
@@ -1603,14 +1643,54 @@ class VizStoreAdapter:
             )
         return _sort_records_by_era(records) if records else None
 
-    def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
+    def _persist_per_era_corr_records(self, run_dir: Path, records: list[dict[str, Any]]) -> bool:
+        frame = pd.DataFrame.from_records(records)
+        if frame.empty:
+            return False
+        normalized = frame.rename(columns={"corr20v2": "corr"})
+        if "era" not in normalized.columns or "corr" not in normalized.columns:
+            return False
+        paths = persist_primary_per_era_corr_artifacts(
+            normalized[["era", "corr"]],
+            predictions_dir=run_dir / "artifacts" / "predictions",
+        )
+        manifest_path = run_dir / "run.json"
+        manifest = _read_json_dict(manifest_path)
+        artifacts_raw = manifest.get("artifacts")
+        artifacts = dict(artifacts_raw) if isinstance(artifacts_raw, dict) else {}
+        artifacts["per_era_corr"] = str(paths.parquet_path.relative_to(run_dir))
+        artifacts["per_era_corr_csv"] = str(paths.csv_path.relative_to(run_dir))
+        manifest["artifacts"] = artifacts
+        tmp_path = manifest_path.with_suffix(".json.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+        tmp_path.replace(manifest_path)
+        return True
+
+    def get_per_era_corr_result(self, run_id: str) -> PerEraCorrLoadResult:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
         parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet"
         csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv"
+        read_start = time.perf_counter()
         records = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
+        persisted_read_ms = (time.perf_counter() - read_start) * 1000.0
         if records is None:
-            return self._derive_per_era_corr_fallback(run_id, run_dir)
+            materialize_start = time.perf_counter()
+            payload = self._derive_per_era_corr_fallback(run_id, run_dir)
+            wrote_artifact = False
+            if payload:
+                try:
+                    wrote_artifact = self._persist_per_era_corr_records(run_dir, payload)
+                except OSError:
+                    wrote_artifact = False
+            return PerEraCorrLoadResult(
+                payload=payload,
+                persisted_read_ms=persisted_read_ms,
+                materialize_ms=(time.perf_counter() - materialize_start) * 1000.0,
+                wrote_artifact=wrote_artifact,
+            )
+
         normalized: list[dict[str, Any]] = []
         for row in records:
             item = dict(row)
@@ -1618,7 +1698,15 @@ class VizStoreAdapter:
                 item["corr"] = item["corr20v2"]
             item.pop("corr20v2", None)
             normalized.append(item)
-        return normalized
+        return PerEraCorrLoadResult(
+            payload=normalized,
+            persisted_read_ms=persisted_read_ms,
+            materialize_ms=0.0,
+            wrote_artifact=False,
+        )
+
+    def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
+        return self.get_per_era_corr_result(run_id).payload
 
     def get_feature_importance(self, run_id: str, top_n: int) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")
@@ -2357,6 +2445,11 @@ class VizStoreAdapter:
             if not isinstance(ensemble_id, str) or not isinstance(name, str):
                 continue
             payload.setdefault(ensemble_id, {})[name] = _sanitize_metric_value(row["value"])
+        for ensemble_id, raw_metrics in list(payload.items()):
+            payload[ensemble_id] = {
+                **raw_metrics,
+                **_normalize_round_metrics(raw_metrics),
+            }
         return payload
 
     def list_ensembles(

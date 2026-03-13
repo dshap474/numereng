@@ -286,6 +286,20 @@ class ExperimentReportResponse(BaseModel):
     rows: list[ExperimentReportRowResponse]
 
 
+class ExperimentPackRequest(BaseModel):
+    experiment_id: str
+    store_root: str = ".numereng"
+
+
+class ExperimentPackResponse(BaseModel):
+    experiment_id: str
+    output_path: str
+    experiment_path: str
+    source_markdown_path: str
+    run_count: int
+    packed_at: str
+
+
 __all__ = [
     "ExperimentCreateRequest",
     "ExperimentArchiveRequest",
@@ -295,6 +309,8 @@ __all__ = [
     "ExperimentListResponse",
     "ExperimentPromoteRequest",
     "ExperimentPromoteResponse",
+    "ExperimentPackRequest",
+    "ExperimentPackResponse",
     "ExperimentReportRequest",
     "ExperimentReportResponse",
     "ExperimentReportRowResponse",

@@ -36,6 +36,7 @@
 	import SharpeBarChart from '$lib/components/charts/SharpeBarChart.svelte';
 	import ParetoChart from '$lib/components/charts/ParetoChart.svelte';
 	import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
+	import Select, { type SelectOption } from '$lib/components/ui/Select.svelte';
 	import RunDetailPanel from '$lib/components/ui/RunDetailPanel.svelte';
 	import HpoDetailPanel from '$lib/components/ui/HpoDetailPanel.svelte';
 	import EnsembleDetailPanel from '$lib/components/ui/EnsembleDetailPanel.svelte';
@@ -60,7 +61,7 @@
 
 	let sortColumn = $state('bmc_last_200_eras_mean');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
-	let chartTab = $state<'composite' | 'charts'>('charts');
+	let chartTab = $state<'charts' | 'composite' | 'target-analysis'>('charts');
 	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
 	let runOpsView = $state<'table' | 'chart'>('table');
 	let launchSectionOpen = $state(true);
@@ -79,6 +80,7 @@
 	const PARETO_CORR_WEIGHT = 0.75;
 	const PARETO_MMC_WEIGHT = 2.25;
 	let paretoColorMode = $state<ParetoColorMode>('default');
+	let selectedTargetAnalysisTarget = $state('');
 
 	let configItems = $state<ExperimentConfig[]>([]);
 	let configTotal = $state<number>(0);
@@ -369,8 +371,8 @@
 		const runPoints = data.runs
 			.filter(
 				(r) =>
-					metricNumber(r.metrics, 'corr_mean') != null &&
-					metricNumber(r.metrics, 'mmc_mean') != null
+					metricNumber(r.metrics, 'corr_payout_mean') != null &&
+					metricNumber(r.metrics, 'mmc_payout_mean') != null
 			)
 				.map((r) => ({
 					run_id: r.run_id,
@@ -378,9 +380,10 @@
 						configNameByRunId.get(r.run_id) ??
 						r.run_name ??
 						`${r.model_type ?? 'unknown'} · ${targetLabel(r)}`,
-					corr_mean: metricNumber(r.metrics, 'corr_mean') ?? 0,
-					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
+					corr_payout_mean: metricNumber(r.metrics, 'corr_payout_mean') ?? 0,
+					mmc_payout_mean: metricNumber(r.metrics, 'mmc_payout_mean') ?? 0,
 					model_type: r.model_type ?? 'unknown',
+					seed: r.seed,
 				target: targetLabel(r),
 				entity_type: hpoBestRunIds.has(r.run_id) ? ('hpo_best' as const) : ('run' as const),
 				mmc_coverage_ratio_rows: metricNumber(r.metrics, 'mmc_coverage_ratio_rows'),
@@ -392,8 +395,8 @@
 		const roundPoints = data.roundResults
 			.filter(
 				(r) =>
-					metricNumber(r.metrics, 'corr_mean') != null &&
-					metricNumber(r.metrics, 'mmc_mean') != null
+					metricNumber(r.metrics, 'corr_payout_mean') != null &&
+					metricNumber(r.metrics, 'mmc_payout_mean') != null
 			)
 				.map((r) => ({
 					run_id: r.run_id,
@@ -401,8 +404,8 @@
 						configNameByRunId.get(r.run_id) ??
 						r.name ??
 						`${r.model_type ?? 'derived'} · ${r.target ?? '-'}`,
-					corr_mean: metricNumber(r.metrics, 'corr_mean') ?? 0,
-					mmc_mean: metricNumber(r.metrics, 'mmc_mean') ?? 0,
+					corr_payout_mean: metricNumber(r.metrics, 'corr_payout_mean') ?? 0,
+					mmc_payout_mean: metricNumber(r.metrics, 'mmc_payout_mean') ?? 0,
 					model_type: r.model_type ?? 'derived',
 				target: r.target ?? '-',
 				entity_type: 'run' as const,
@@ -415,14 +418,14 @@
 		const ensemblePoints = data.ensembles
 			.filter(
 				(e) =>
-					metricNumber(e.metrics, 'corr_mean') != null &&
-					metricNumber(e.metrics, 'mmc_mean') != null
+					metricNumber(e.metrics, 'corr_payout_mean') != null &&
+					metricNumber(e.metrics, 'mmc_payout_mean') != null
 			)
 				.map((e) => ({
 					run_id: e.ensemble_id,
 					config_name: e.name ?? 'ensemble',
-					corr_mean: metricNumber(e.metrics, 'corr_mean') ?? 0,
-					mmc_mean: metricNumber(e.metrics, 'mmc_mean') ?? 0,
+					corr_payout_mean: metricNumber(e.metrics, 'corr_payout_mean') ?? 0,
+					mmc_payout_mean: metricNumber(e.metrics, 'mmc_payout_mean') ?? 0,
 				model_type: e.method ?? 'ensemble',
 				target: 'ensemble',
 				entity_type: 'ensemble' as const,
@@ -433,6 +436,86 @@
 				max_drawdown: metricNumber(e.metrics, 'max_drawdown')
 			}));
 		return [...runPoints, ...roundPoints, ...ensemblePoints];
+	});
+
+	function nativeTargetKey(run: ExperimentRun): string | null {
+		return run.target_train ?? run.target_col ?? run.target ?? null;
+	}
+
+	function formatTargetOptionLabel(target: string): string {
+		const stripped = target.replace(/^target_/, '');
+		const parts = stripped.split('_').filter(Boolean);
+		if (parts.length === 0) return target;
+		const day = parts.length > 1 ? parts[parts.length - 1] : null;
+		const nameParts = day ? parts.slice(0, -1) : parts;
+		const name = nameParts
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+		return day ? `${name} ${day}` : name;
+	}
+
+	let targetAnalysisOptions = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const run of data.runs) {
+			const target = nativeTargetKey(run);
+			if (!target) continue;
+			if (metricNumber(run.metrics, 'corr_mean') == null || metricNumber(run.metrics, 'mmc_mean') == null) {
+				continue;
+			}
+			counts.set(target, (counts.get(target) ?? 0) + 1);
+		}
+
+		return [...counts.entries()]
+			.sort((a, b) => {
+				if (b[1] !== a[1]) return b[1] - a[1];
+				return a[0].localeCompare(b[0]);
+			})
+			.map(
+				([value]): SelectOption => ({
+					value,
+					label: formatTargetOptionLabel(value)
+				})
+			);
+	});
+
+	let targetAnalysisRuns = $derived.by(() => {
+		if (!selectedTargetAnalysisTarget) return [];
+		return data.runs
+			.filter((run) => nativeTargetKey(run) === selectedTargetAnalysisTarget)
+			.filter(
+				(run) =>
+					metricNumber(run.metrics, 'corr_mean') != null &&
+					metricNumber(run.metrics, 'mmc_mean') != null
+			)
+			.map((run) => ({
+				run_id: run.run_id,
+				config_name:
+					configNameByRunId.get(run.run_id) ??
+					run.run_name ??
+					`${run.model_type ?? 'unknown'} · ${formatTargetOptionLabel(selectedTargetAnalysisTarget)}`,
+				corr_mean: metricNumber(run.metrics, 'corr_mean') ?? 0,
+				mmc_mean: metricNumber(run.metrics, 'mmc_mean') ?? 0,
+				model_type: run.model_type ?? 'unknown',
+				seed: run.seed,
+				target: selectedTargetAnalysisTarget,
+				entity_type: hpoBestRunIds.has(run.run_id) ? ('hpo_best' as const) : ('run' as const),
+				mmc_coverage_ratio_rows: metricNumber(run.metrics, 'mmc_coverage_ratio_rows'),
+				bmc_mean: metricNumber(run.metrics, 'bmc_mean'),
+				bmc_last_200_eras_mean: metricNumber(run.metrics, 'bmc_last_200_eras_mean'),
+				corr_sharpe: metricNumber(run.metrics, 'corr_sharpe'),
+				max_drawdown: metricNumber(run.metrics, 'max_drawdown')
+			}));
+	});
+
+	$effect(() => {
+		const options = targetAnalysisOptions;
+		if (options.length === 0) {
+			selectedTargetAnalysisTarget = '';
+			return;
+		}
+		if (!options.some((option) => option.value === selectedTargetAnalysisTarget)) {
+			selectedTargetAnalysisTarget = options[0]?.value ?? '';
+		}
 	});
 
 	let filteredConfigs = $derived.by(() => {
@@ -875,7 +958,7 @@
 					<tr class="h-[92px] text-left align-middle">
 						<th
 							scope="col"
-							class="sticky left-0 top-0 z-30 w-[320px] min-w-[320px] border-b border-r border-border bg-background px-4 py-3 align-middle"
+							class="sticky left-0 top-0 z-30 relative overflow-hidden w-[320px] min-w-[320px] border-b border-r border-border bg-background px-4 py-3 align-middle"
 						>
 							<div class="flex items-start justify-between gap-3">
 								<div>
@@ -909,7 +992,7 @@
 							onclick={() => selectOperation(op)}
 						>
 							<td
-								class="sticky left-0 z-10 w-[320px] min-w-[320px] border-b border-r border-border px-4 py-3 text-left {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-primary/10 shadow-[inset_2px_0_0_0_var(--color-primary)]' : 'bg-background group-hover:bg-muted/20'}"
+								class="sticky left-0 z-10 relative overflow-hidden w-[320px] min-w-[320px] border-b border-r border-border px-4 py-3 text-left {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-card shadow-[inset_2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.04)]' : 'bg-background group-hover:bg-card'}"
 							>
 								<div class="flex items-start gap-2">
 									<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
@@ -1025,13 +1108,13 @@
 			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
 				<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
 					<div class="flex gap-0">
-						{#each [['charts', 'BMC Ranking'], ['composite', 'Payout Proxy']] as [key, label] (key)}
+						{#each [['charts', 'BMC Ranking'], ['composite', 'Payout Proxy'], ['target-analysis', 'Target Analysis']] as [key, label] (key)}
 							<button
 								type="button"
 								class="px-3 py-2 text-xs font-medium transition-colors {chartTab === key
 									? 'border-b-2 border-primary text-foreground'
 									: 'text-muted-foreground hover:text-foreground'}"
-								onclick={() => (chartTab = key as 'composite' | 'charts')}
+								onclick={() => (chartTab = key as 'charts' | 'composite' | 'target-analysis')}
 							>{label}</button>
 						{/each}
 					</div>
@@ -1046,6 +1129,17 @@
 									onclick={() => (paretoColorMode = mode)}
 								>{PARETO_COLOR_MODE_LABELS[mode]}</button>
 							{/each}
+						</div>
+					{:else if chartTab === 'target-analysis'}
+						<div class="w-48">
+							<Select
+								options={targetAnalysisOptions}
+								bind:value={selectedTargetAnalysisTarget}
+								placeholder="Select target"
+								size="xs"
+								align="right"
+								ariaLabel="Target analysis target"
+							/>
 						</div>
 					{/if}
 				</div>
@@ -1066,14 +1160,14 @@
 								</div>
 							{/if}
 						</div>
-					{:else}
+					{:else if chartTab === 'composite'}
 						<div class="flex h-full min-h-0 flex-col">
 							<div class="mb-3 flex-shrink-0">
 								<p class="text-xs text-muted-foreground">
-									Historical proxy from CORR and MMC. Research-only; not a live payout forecast.
+									Historical proxy from CORR (Payout Target) and MMC (Payout Target). Research-only; not a live payout forecast.
 								</p>
 								<p class="mt-1 text-xs text-muted-foreground font-mono">
-									Iso-lines: payout proxy = {PARETO_CORR_WEIGHT.toFixed(2)}*CORR + {PARETO_MMC_WEIGHT.toFixed(2)}*MMC
+									Iso-lines: payout proxy = {PARETO_CORR_WEIGHT.toFixed(2)}*CORR_payout + {PARETO_MMC_WEIGHT.toFixed(2)}*MMC_payout
 								</p>
 							</div>
 							{#if paretoRuns.length > 0}
@@ -1087,7 +1181,31 @@
 								/>
 							{:else}
 								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
-									No CORR/MMC data available for payout proxy view.
+									No payout-target CORR/MMC data available for payout proxy view.
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<div class="flex h-full min-h-0 flex-col">
+							<div class="mb-3 flex-shrink-0">
+								<p class="text-xs text-muted-foreground">
+									Native CORR vs MMC for runs sharing the selected target.
+								</p>
+							</div>
+							{#if targetAnalysisOptions.length === 0}
+								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
+									No native CORR/MMC target data available.
+								</div>
+							{:else if targetAnalysisRuns.length > 0}
+								<ParetoChart
+									runs={targetAnalysisRuns}
+									metricMode="native"
+									showIsoLines={false}
+									class="h-full"
+								/>
+							{:else}
+								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
+									No native CORR/MMC runs available for this target.
 								</div>
 							{/if}
 						</div>
@@ -1621,6 +1739,7 @@
 							<RunDetailPanel
 								runId={selectedOp.id}
 								experimentId={data.experiment.experiment_id}
+								experimentName={data.experiment.name}
 								runs={data.runs}
 								readOnly={readOnly}
 								onClose={() => (selectedOp = null)}

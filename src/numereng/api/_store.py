@@ -9,6 +9,9 @@ from numereng.api.contracts import (
     StoreIndexResponse,
     StoreInitRequest,
     StoreInitResponse,
+    StoreMaterializeVizArtifactsFailureResponse,
+    StoreMaterializeVizArtifactsRequest,
+    StoreMaterializeVizArtifactsResponse,
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
@@ -99,4 +102,41 @@ def store_doctor(request: StoreDoctorRequest | None = None) -> StoreDoctorRespon
     )
 
 
-__all__ = ["store_doctor", "store_index_run", "store_init", "store_rebuild"]
+def store_materialize_viz_artifacts(
+    request: StoreMaterializeVizArtifactsRequest,
+) -> StoreMaterializeVizArtifactsResponse:
+    """Persist visualization artifacts for existing runs."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.materialize_viz_artifacts(
+            store_root=request.store_root,
+            kind=request.kind,
+            run_id=request.run_id,
+            experiment_id=request.experiment_id,
+            all_runs=request.all,
+        )
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+
+    return StoreMaterializeVizArtifactsResponse(
+        store_root=str(result.store_root),
+        kind=result.kind,
+        scoped_run_count=result.scoped_run_count,
+        created_count=result.created_count,
+        skipped_count=result.skipped_count,
+        failed_count=result.failed_count,
+        failures=[
+            StoreMaterializeVizArtifactsFailureResponse(run_id=item.run_id, error=item.error)
+            for item in result.failures
+        ],
+    )
+
+
+__all__ = [
+    "store_doctor",
+    "store_index_run",
+    "store_init",
+    "store_materialize_viz_artifacts",
+    "store_rebuild",
+]

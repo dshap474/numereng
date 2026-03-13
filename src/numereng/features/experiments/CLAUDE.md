@@ -17,7 +17,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Fallback computations viz relies on
 
-- Per-era CORR (`val_per_era_corr20v2`) is an optional persisted visualization artifact. Viz must treat it as a read-only input and expose rows as `{ era, corr }`; if it is absent, the UI surfaces it as unavailable instead of deriving alternative diagnostics at request time.
+- Per-era CORR (`val_per_era_corr20v2`) is the canonical persisted visualization artifact for run-level performance charts. Viz exposes it as `{ era, corr }`, prefers the persisted parquet/csv, and only materializes it on request for legacy runs that predate artifact persistence. Request-time fallback is write-through, so subsequent reads hit disk instead of recomputing.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
 ## Provenance, diagnostics, and artefact resolution
@@ -29,7 +29,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 ## Read-path resilience
 
 - `get_run_manifest` and `get_run_metrics` prefer SQLite-backed rows but gracefully read `run.json`/`metrics.json` when the DB is missing. That means offline experiments (without the index) still show up in viz if their directories contain the canonical files.
-- Derivation helpers may still exist for offline/backfill workflows, but they are not part of the live viz request path. Read-only UI/API surfaces must not perform on-demand scoring work.
+- The live run-detail path is section-based rather than bundle-based. Read-only UI/API surfaces can materialize missing per-era CORR exactly once for legacy runs, but must not perform broader on-demand scoring work beyond that bounded write-through fallback.
 
 ## Maintenance & anti-drift
 

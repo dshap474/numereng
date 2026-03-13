@@ -36,15 +36,21 @@ Optional overrides:
 uv run numereng experiment list
 uv run numereng experiment details --id 2026-03-12_lgbm-baseline
 uv run numereng experiment report --id 2026-03-12_lgbm-baseline --format table
+uv run numereng experiment pack --id 2026-03-12_lgbm-baseline
 ```
 
 Useful artifacts under `.numereng/experiments/<experiment_id>/`:
 
 - `experiment.json`
 - `EXPERIMENT.md`
+- `EXPERIMENT.pack.md`
 - `configs/*.json`
 - `hpo/`
 - `ensembles/`
+
+`experiment pack` overwrites `EXPERIMENT.pack.md` in the experiment folder. The packed file
+contains the current `EXPERIMENT.md` narrative plus one run-summary table with dashboard-aligned
+scalar metrics only, not per-era or other time-series artifacts.
 
 ## Promote A Champion
 

@@ -32,11 +32,11 @@ Default runtime state lives under `.numereng/`.
 - Train runs from strict JSON configs: `uv run numereng run train --help`
 - Re-score an existing run: `uv run numereng run score --help`
 - Submit predictions or run outputs: `uv run numereng run submit --help`
-- Manage experiments: `uv run numereng experiment --help`
+- Manage experiments and pack experiment summaries: `uv run numereng experiment --help`
 - Run HPO studies: `uv run numereng hpo --help`
 - Build ensembles: `uv run numereng ensemble --help`
 - Neutralize predictions: `uv run numereng neutralize --help`
-- Manage datasets and store state: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
+- Manage datasets, store state, and backfill viz artifacts for historical runs: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
 - Launch cloud jobs: `uv run numereng cloud --help`
 - Query Numerai APIs and forum data: `uv run numereng numerai --help`
 
@@ -103,6 +103,7 @@ The default store root is `.numereng/`. Common artifacts include:
   experiments/<experiment_id>/
     experiment.json
     EXPERIMENT.md
+    EXPERIMENT.pack.md
     configs/*.json
   datasets/
   cloud/
@@ -134,6 +135,7 @@ make viz
 - Stop servers: `make kill-viz`
 
 The dashboard is monitor-only. Launch and control operations still happen through the CLI or Python API.
+Training and `run score` persist the primary per-era CORR artifact used by run-detail charts, and older runs can be backfilled with `uv run numereng store materialize-viz-artifacts --kind per-era-corr ...`.
 
 ## Docs
 
