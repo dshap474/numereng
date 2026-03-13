@@ -672,6 +672,25 @@ def save_score_provenance(score_provenance: dict[str, object], score_provenance_
         json.dump(score_provenance, f, indent=2, sort_keys=True)
 
 
+def save_per_era_corr_artifacts(
+    per_era_corr: pd.DataFrame,
+    *,
+    predictions_dir: Path,
+    output_dir: Path,
+) -> tuple[Path, Path, Path, Path]:
+    """Persist canonical per-era correlation artifacts and return absolute+relative paths."""
+
+    from numereng.features.scoring.artifacts import persist_primary_per_era_corr_artifacts
+
+    paths = persist_primary_per_era_corr_artifacts(per_era_corr, predictions_dir=predictions_dir)
+    return (
+        paths.parquet_path,
+        paths.csv_path,
+        paths.parquet_path.relative_to(output_dir),
+        paths.csv_path.relative_to(output_dir),
+    )
+
+
 def save_resolved_config(config: dict[str, object], resolved_config_path: Path) -> None:
     """Persist resolved config snapshot for one run."""
     resolved_config_path.parent.mkdir(parents=True, exist_ok=True)

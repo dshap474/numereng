@@ -138,6 +138,43 @@ def handle_store_command(args: Sequence[str]) -> int:
         print(doctor_payload.model_dump_json())
         return 0
 
+    if args[0] == "materialize-viz-artifacts":
+        values, toggles, parse_error = _parse_simple_options(
+            args[1:],
+            value_flags={"--store-root", "--kind", "--run-id", "--experiment-id"},
+            bool_flags={"--all"},
+        )
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if values.get("--kind") is None:
+            print("missing required argument: --kind", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        try:
+            payload = api.store_materialize_viz_artifacts(
+                api.StoreMaterializeVizArtifactsRequest(
+                    store_root=values.get("--store-root", ".numereng"),
+                    kind=values["--kind"],
+                    run_id=values.get("--run-id"),
+                    experiment_id=values.get("--experiment-id"),
+                    all="--all" in toggles,
+                )
+            )
+        except ValidationError as exc:
+            print(_validation_error_message(exc), file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(payload.model_dump_json())
+        return 0
+
     print(f"unknown arguments: store {' '.join(args)}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2

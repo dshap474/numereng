@@ -63,6 +63,7 @@ Key artifacts:
 - `runs/<run_id>/artifacts/predictions/*.parquet`
 - `experiments/<experiment_id>/experiment.json`
 - `experiments/<experiment_id>/EXPERIMENT.md`
+- `experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `experiments/<experiment_id>/configs/*.json`
 - `experiments/_archive/<experiment_id>/...`
 
@@ -77,6 +78,8 @@ Wiring map:
   `cli run score -> bind cli metadata -> api.score_run -> features.scoring.run_service.score_run`
 - Experiment train:
   `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
+- Experiment pack:
+  `cli experiment pack -> api.experiment_pack -> features.experiments.pack_experiment`
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
@@ -131,11 +134,14 @@ Viz/frontend topology:
 - No standalone frontend routes for `/run-ops` or `/configs`.
 - Experiment page contains Analysis + Run Ops tabs; Run Ops is monitor-only (configs list + run queue + live monitor).
 - Run launch/control is CLI/API-only.
+- `experiment pack` writes `EXPERIMENT.pack.md` beside `EXPERIMENT.md`; it embeds the current experiment narrative plus a dashboard-aligned scalar run-metrics table only (no per-era/time-series payloads).
 - Backend still exposes read-only catalog/query endpoints (`/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
 - Normal experiment/config catalogs exclude archived experiments; direct experiment detail/doc/config reads remain available by ID.
 - Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
-- Viz does not expose payout metrics or payout-specific routes.
-- Run detail/chart APIs are read-only over persisted artifacts; when optional per-era visualization files are absent, viz returns unavailable/null instead of deriving payout-style diagnostics on demand.
+- Viz also exposes payout-target aliases `corr_payout_mean` and `mmc_payout_mean`, currently normalized from Ender20-backed scoring fields (`corr_ender20`, `mmc_ender20`) without overwriting native `corr_mean` / `mmc_mean`.
+- Run detail/chart APIs are read-only over persisted artifacts and section endpoints; the frontend no longer uses `/api/runs/{run_id}/bundle` as its primary path.
+- Training and `run score` persist canonical per-era CORR artifacts at `artifacts/predictions/val_per_era_corr20v2.parquet` and `.csv`.
+- Viz prefers persisted per-era CORR artifacts, and legacy runs can be backfilled via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Request-time fallback is write-through and persists the artifact on first miss.
 
 Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
@@ -152,13 +158,15 @@ Critical invariants:
 - Loading mode allowed only: `materialized|fold_lazy`.
 - Scoring mode allowed only: `materialized|era_stream`.
 - For non-`full_history_refit` runs, model fitting/prediction persistence completes first, then `features.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
-- Post-run scoring persists `corr`, `fnc`, `feature_exposure`, `max_feature_exposure`, `bmc`, `bmc_last_200_eras`, and `score_provenance.json`; `mmc` and `cwmm` are additionally persisted when meta-model overlap exists.
+- Post-run scoring persists `corr`, `fnc`, `feature_exposure`, `max_feature_exposure`, `bmc`, `bmc_last_200_eras`, canonical per-era CORR (`val_per_era_corr20v2.parquet` + `.csv`), and `score_provenance.json`; `mmc` and `cwmm` are additionally persisted when meta-model overlap exists.
 - `corr`, `fnc`, and `mmc` delegate directly to `numerai_tools`; `cwmm` uses the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
+- The experiment-page payout proxy chart is a research visualization only; it compares runs on the common payout-target plane (`corr_payout_mean`, `mmc_payout_mean`) so heterogeneous target runs are evaluated on the same Ender20-based basis.
+- The experiment-page analysis panel now has three chart views: `BMC Ranking`, `Payout Proxy`, and `Target Analysis`. `Target Analysis` is frontend-only filtering over actual runs and compares native `corr_mean` vs native `mmc_mean` within one selected training target.
 - Viz defaults rank/sort experiment views by `bmc_last_200_eras_mean`.
 - Feature exposure diagnostics are informational only: scoring computes rank-based exposures against `fncv3_features`, persists nested summaries for `feature_exposure` and `max_feature_exposure`, and viz normalizes `feature_exposure_mean` plus scalar `max_feature_exposure`.
 - Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
-- `features.scoring.run_service.score_run` can recompute the same scoring artifacts for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows.
+- `features.scoring.run_service.score_run` can recompute the same scoring artifacts for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including per-era CORR artifacts.
 - Canonical FNC neutralizes against dataset feature set `fncv3_features`, independent of the run training feature set, then correlates against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `score_provenance.json` records `policy.fnc_feature_set=fncv3_features`, `policy.fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`, join row/era counts, benchmark/meta missing-row/era counts, and whether meta-dependent metrics were emitted.
 - Benchmark post-run scoring joins require strict era alignment, but `bmc` / `bmc_last_200_eras` are computed on the maximum available overlapping benchmark window whenever any overlap exists.
@@ -206,12 +214,12 @@ Critical invariants:
 
 CLI families:
 - `numereng run train|score|submit`
-- `numereng experiment create|list|details|archive|unarchive|train|promote|report`
+- `numereng experiment create|list|details|archive|unarchive|train|promote|report|pack`
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`
 - `numereng neutralize apply`
 - `numereng dataset-tools build-full-datasets`
-- `numereng store init|index|rebuild|doctor`
+- `numereng store init|index|rebuild|doctor|materialize-viz-artifacts`
 - `numereng cloud ec2 ...`
 - `numereng cloud aws image|train ...`
 - `numereng cloud modal deploy|data sync|train ...`

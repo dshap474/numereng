@@ -118,6 +118,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 benchmark_min_overlap_ratio=0.0,
                 include_feature_neutral_metrics=True,
             ),
+            per_era_corr=pd.DataFrame([{"era": "era1", "corr": 0.12}]),
         ),
     )
     indexed_runs: list[str] = []
@@ -145,8 +146,12 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"
+    assert saved_manifest["artifacts"]["per_era_corr"] == "artifacts/predictions/val_per_era_corr20v2.parquet"
+    assert saved_manifest["artifacts"]["per_era_corr_csv"] == "artifacts/predictions/val_per_era_corr20v2.csv"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
     assert saved_manifest["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
+    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet").is_file()
+    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv").is_file()
 
 
 def test_score_run_requires_existing_run(tmp_path: Path) -> None:

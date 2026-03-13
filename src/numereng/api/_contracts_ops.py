@@ -228,6 +228,36 @@ class StoreDoctorResponse(BaseModel):
     missing_paths: list[str] = Field(default_factory=list)
 
 
+class StoreMaterializeVizArtifactsRequest(BaseModel):
+    store_root: str = ".numereng"
+    kind: str
+    run_id: str | None = None
+    experiment_id: str | None = None
+    all: bool = False
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> "StoreMaterializeVizArtifactsRequest":
+        scope_flags = int(self.run_id is not None) + int(self.experiment_id is not None) + int(self.all)
+        if scope_flags != 1:
+            raise ValueError("exactly one of run_id, experiment_id, or all=true is required")
+        return self
+
+
+class StoreMaterializeVizArtifactsFailureResponse(BaseModel):
+    run_id: str
+    error: str
+
+
+class StoreMaterializeVizArtifactsResponse(BaseModel):
+    store_root: str
+    kind: str
+    scoped_run_count: int
+    created_count: int
+    skipped_count: int
+    failed_count: int
+    failures: list[StoreMaterializeVizArtifactsFailureResponse]
+
+
 class DatasetToolsBuildDownsampleRequest(BaseModel):
     data_version: str = "v5.2"
     data_dir: str = ".numereng/datasets"
@@ -279,6 +309,9 @@ __all__ = [
     "StoreIndexResponse",
     "StoreInitRequest",
     "StoreInitResponse",
+    "StoreMaterializeVizArtifactsFailureResponse",
+    "StoreMaterializeVizArtifactsRequest",
+    "StoreMaterializeVizArtifactsResponse",
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",

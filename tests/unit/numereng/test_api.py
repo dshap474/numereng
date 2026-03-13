@@ -27,6 +27,8 @@ from numereng.api import (
     ExperimentGetRequest,
     ExperimentListRequest,
     ExperimentListResponse,
+    ExperimentPackRequest,
+    ExperimentPackResponse,
     ExperimentPromoteRequest,
     ExperimentPromoteResponse,
     ExperimentReportRequest,
@@ -59,6 +61,8 @@ from numereng.api import (
     StoreIndexResponse,
     StoreInitRequest,
     StoreInitResponse,
+    StoreMaterializeVizArtifactsRequest,
+    StoreMaterializeVizArtifactsResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
     SubmissionRequest,
@@ -66,10 +70,11 @@ from numereng.api import (
     TrainRunRequest,
     TrainRunResponse,
     download_numerai_dataset,
-    experiment_create,
     experiment_archive,
+    experiment_create,
     experiment_get,
     experiment_list,
+    experiment_pack,
     experiment_promote,
     experiment_report,
     experiment_train,
@@ -84,6 +89,7 @@ from numereng.api import (
     store_doctor,
     store_index_run,
     store_init,
+    store_materialize_viz_artifacts,
     store_rebuild,
     submit_predictions,
 )
@@ -92,6 +98,7 @@ from numereng.features.cloud.modal import CloudModalError
 from numereng.features.experiments import (
     ExperimentArchiveResult,
     ExperimentNotFoundError,
+    ExperimentPackResult,
     ExperimentPromotionResult,
     ExperimentRecord,
     ExperimentReport,
@@ -104,6 +111,7 @@ from numereng.features.store import (
     StoreError,
     StoreIndexResult,
     StoreInitResult,
+    StoreMaterializeVizArtifactsResult,
     StoreRebuildResult,
 )
 from numereng.features.submission import (
@@ -1473,6 +1481,39 @@ def test_experiment_promote_and_report_success(monkeypatch: pytest.MonkeyPatch) 
     assert report_response.rows[0].run_id == "run-2"
 
 
+def test_experiment_pack_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_pack_experiment(*, store_root: str, experiment_id: str) -> ExperimentPackResult:
+        assert store_root == ".numereng"
+        assert experiment_id == "2026-02-22_test-exp"
+        return ExperimentPackResult(
+            experiment_id=experiment_id,
+            output_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md"),
+            experiment_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp"),
+            source_markdown_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.md"),
+            run_count=2,
+            packed_at="2026-02-22T00:05:00+00:00",
+        )
+
+    monkeypatch.setattr(api_module, "pack_experiment_record", fake_pack_experiment)
+
+    response = experiment_pack(ExperimentPackRequest(experiment_id="2026-02-22_test-exp"))
+
+    assert isinstance(response, ExperimentPackResponse)
+    assert response.run_count == 2
+    assert response.output_path.endswith("EXPERIMENT.pack.md")
+
+
+def test_experiment_pack_translates_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_pack_experiment(*, store_root: str, experiment_id: str) -> ExperimentPackResult:
+        _ = (store_root, experiment_id)
+        raise ExperimentValidationError("experiment_doc_missing:/tmp/EXPERIMENT.md")
+
+    monkeypatch.setattr(api_module, "pack_experiment_record", fake_pack_experiment)
+
+    with pytest.raises(PackageError, match="experiment_doc_missing"):
+        experiment_pack(ExperimentPackRequest(experiment_id="2026-02-22_test-exp"))
+
+
 def test_experiment_get_translates_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_get_experiment(*, store_root: str, experiment_id: str) -> ExperimentRecord:
         _ = (store_root, experiment_id)
@@ -1630,6 +1671,41 @@ def test_store_doctor_fix_strays_flag_passes_to_service(monkeypatch: pytest.Monk
     assert response.stray_cleanup_applied is True
     assert response.deleted_paths == ["/tmp/.numereng/modal_smoke_data"]
     assert response.missing_paths == ["/tmp/.numereng/smoke_live_check"]
+
+
+def test_store_materialize_viz_artifacts_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_materialize_viz_artifacts(
+        *,
+        store_root: str,
+        kind: str,
+        run_id: str | None,
+        experiment_id: str | None,
+        all_runs: bool,
+    ) -> StoreMaterializeVizArtifactsResult:
+        assert store_root == ".numereng"
+        assert kind == "per-era-corr"
+        assert run_id is None
+        assert experiment_id == "exp-1"
+        assert all_runs is False
+        return StoreMaterializeVizArtifactsResult(
+            store_root=Path("/tmp/.numereng"),
+            kind="per-era-corr",
+            scoped_run_count=3,
+            created_count=2,
+            skipped_count=1,
+            failed_count=0,
+            failures=(),
+        )
+
+    monkeypatch.setattr(api_module, "materialize_viz_artifacts", fake_materialize_viz_artifacts)
+
+    response = store_materialize_viz_artifacts(
+        StoreMaterializeVizArtifactsRequest(kind="per-era-corr", experiment_id="exp-1")
+    )
+
+    assert isinstance(response, StoreMaterializeVizArtifactsResponse)
+    assert response.created_count == 2
+    assert response.skipped_count == 1
 
 
 def test_store_api_translates_store_errors(monkeypatch: pytest.MonkeyPatch) -> None:
