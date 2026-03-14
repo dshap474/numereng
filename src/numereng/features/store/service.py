@@ -885,7 +885,7 @@ def materialize_viz_artifacts(
     """Materialize persisted viz artifacts for existing runs."""
 
     resolved_kind = kind.strip()
-    if resolved_kind != "per-era-corr":
+    if resolved_kind not in {"per-era-corr", "scoring-artifacts"}:
         raise StoreError(f"store_viz_artifact_kind_unsupported:{kind}")
 
     scope_flags = int(run_id is not None) + int(experiment_id is not None) + int(all_runs)
@@ -939,7 +939,7 @@ def materialize_viz_artifacts(
     for candidate_run_id in selected_runs:
         run_dir = runs_dir / candidate_run_id
         try:
-            created = _materialize_run_per_era_corr(run_dir)
+            created = _materialize_run_scoring_artifacts(run_dir)
         except StoreError as exc:
             failures.append(StoreMaterializeVizArtifactsFailure(run_id=candidate_run_id, error=str(exc)))
             continue
@@ -2393,18 +2393,6 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     return row is not None
 
 
-def _build_primary_per_era_corr_frame(**kwargs: Any):
-    from numereng.features.scoring.artifacts import build_primary_per_era_corr_frame
-
-    return build_primary_per_era_corr_frame(**kwargs)
-
-
-def _persist_primary_per_era_corr_artifacts(frame: Any, *, predictions_dir: Path):
-    from numereng.features.scoring.artifacts import persist_primary_per_era_corr_artifacts
-
-    return persist_primary_per_era_corr_artifacts(frame, predictions_dir=predictions_dir)
-
-
 def _load_run_manifest_for_materialize(run_dir: Path) -> dict[str, Any]:
     manifest_path = run_dir / "run.json"
     if not manifest_path.is_file():
@@ -2418,55 +2406,28 @@ def _load_run_manifest_for_materialize(run_dir: Path) -> dict[str, Any]:
     return payload
 
 
-def _materialize_run_per_era_corr(run_dir: Path) -> bool:
+def _score_run_for_materialize(*, run_id: str, store_root: Path) -> None:
+    from numereng.features.scoring.run_service import score_run
+
+    score_run(run_id=run_id, store_root=store_root)
+
+
+def _materialize_run_scoring_artifacts(run_dir: Path) -> bool:
     run_id = _ensure_safe_run_id(run_dir.name)
     manifest = _load_run_manifest_for_materialize(run_dir)
     artifacts = manifest.get("artifacts")
     artifacts_map = dict(artifacts) if isinstance(artifacts, dict) else {}
-    predictions_ref = artifacts_map.get("predictions")
-    if not isinstance(predictions_ref, str) or not predictions_ref.strip():
-        raise StoreError(f"store_viz_artifact_predictions_missing:{run_id}")
-
-    predictions_path = (run_dir / predictions_ref).resolve()
-    if not predictions_path.is_file():
-        raise StoreError(f"store_viz_artifact_predictions_not_found:{run_id}")
-
-    data = manifest.get("data")
-    data_map = data if isinstance(data, dict) else {}
-    target_col = _as_nonempty_str(data_map.get("target_col"))
-    if target_col is None:
-        raise StoreError(f"store_viz_artifact_target_missing:{run_id}")
-    era_col = _as_nonempty_str(data_map.get("era_col")) or "era"
-
-    predictions_dir = run_dir / "artifacts" / "predictions"
-    parquet_path = predictions_dir / "val_per_era_corr20v2.parquet"
-    csv_path = predictions_dir / "val_per_era_corr20v2.csv"
-    if parquet_path.is_file() and csv_path.is_file():
+    scoring_manifest_ref = artifacts_map.get("scoring_manifest")
+    if isinstance(scoring_manifest_ref, str) and scoring_manifest_ref.strip():
+        scoring_manifest_path = (run_dir / scoring_manifest_ref).resolve()
+    else:
+        scoring_manifest_path = (run_dir / "artifacts" / "scoring" / "manifest.json").resolve()
+    if scoring_manifest_path.is_file():
         return False
-
-    frame = _build_primary_per_era_corr_frame(
-        predictions_path=predictions_path,
-        target_col=target_col,
-        era_col=era_col,
-    )
-    if frame is None or frame.empty:
-        raise StoreError(f"store_viz_artifact_rows_missing:{run_id}")
-
-    paths = _persist_primary_per_era_corr_artifacts(frame, predictions_dir=predictions_dir)
-    artifacts_map["per_era_corr"] = str(paths.parquet_path.relative_to(run_dir))
-    artifacts_map["per_era_corr_csv"] = str(paths.csv_path.relative_to(run_dir))
-    manifest["artifacts"] = artifacts_map
-
-    manifest_path = run_dir / "run.json"
-    tmp_path = manifest_path.with_suffix(".json.tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2, sort_keys=True)
-    tmp_path.replace(manifest_path)
-
     try:
-        index_run(store_root=run_dir.parent.parent, run_id=run_id)
-    except StoreError as exc:
-        raise StoreError(f"store_viz_artifact_index_failed:{run_id}") from exc
+        _score_run_for_materialize(run_id=run_id, store_root=run_dir.parent.parent)
+    except Exception as exc:
+        raise StoreError(f"store_viz_artifact_materialize_failed:{run_id}") from exc
     return True
 
 

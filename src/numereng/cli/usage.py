@@ -28,7 +28,7 @@ USAGE = (
     "  numereng store index --run-id <id> [--store-root <path>]\n"
     "  numereng store rebuild [--store-root <path>]\n"
     "  numereng store doctor [--store-root <path>] [--fix-strays]\n"
-    "  numereng store materialize-viz-artifacts --kind <per-era-corr> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]\n"  # noqa: E501
+    "  numereng store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]\n"  # noqa: E501
     "  numereng cloud ec2 init-iam [--region <region>] [--bucket <bucket>] [--role-name <name>] [--security-group-name <name>]\n"  # noqa: E501
     "  numereng cloud ec2 setup-data --data-version <v> [--cache-dir <path>] [--region <region>] [--bucket <bucket>]\n"  # noqa: E501
     "  numereng cloud ec2 provision --run-id <id> [--tier <tier>] [--spot|--on-demand] [--region <region>] [--bucket <bucket>] [--state-path <path>]\n"  # noqa: E501

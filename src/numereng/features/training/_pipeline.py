@@ -12,7 +12,7 @@ from typing import cast
 import pandas as pd
 
 from numereng.features.scoring.metrics import attach_benchmark_predictions, load_custom_benchmark_predictions
-from numereng.features.scoring.models import PostTrainingScoringRequest, default_scoring_policy
+from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest, default_scoring_policy
 from numereng.features.scoring.service import run_post_training_scoring
 from numereng.features.store import StoreError, index_run
 from numereng.features.telemetry import (
@@ -39,7 +39,6 @@ from numereng.features.training.models import (
     normalize_x_groups,
 )
 from numereng.features.training.repo import (
-    DEFAULT_BENCHMARK_MODEL,
     DEFAULT_DATASETS_DIR,
     apply_missing_all_twos_as_nan,
     ensure_split_dataset_paths,
@@ -56,12 +55,12 @@ from numereng.features.training.repo import (
     resolve_run_manifest_path,
     resolve_score_provenance_path,
     save_metrics,
-    save_per_era_corr_artifacts,
     save_predictions,
     save_resolved_config,
     save_results,
     save_run_manifest,
     save_score_provenance,
+    save_scoring_artifacts,
     select_prediction_columns,
 )
 from numereng.features.training.run_lock import (
@@ -107,6 +106,7 @@ from numereng.features.training.service import (
     _resolve_store_root_for_run,
     _scoring_policy_payload,
     build_results_payload,
+    resolve_benchmark_source,
     resolve_model_config,
 )
 from numereng.features.training.strategies import TrainingProfile, resolve_training_engine
@@ -137,11 +137,10 @@ class TrainingPipelineState:
     target_col: str = "target"
     era_col: str = "era"
     id_col: str = "id"
-    benchmark_data_path: str | Path | None = None
+    benchmark_source: BenchmarkSource | None = None
     meta_model_data_path: str | Path | None = None
     meta_model_col: str = "numerai_meta_model"
     data_embargo_eras: int | None = None
-    benchmark_model: str = DEFAULT_BENCHMARK_MODEL
     dataset_scope: str = "train_only"
     loading_mode: str = _MATERIALIZED_LOADING_MODE
     scoring_mode: str = "materialized"
@@ -162,6 +161,7 @@ class TrainingPipelineState:
     baselines_dir: Path | None = None
     results_dir: Path | None = None
     predictions_dir: Path | None = None
+    scoring_dir: Path | None = None
     run_manifest_path: Path | None = None
     resolved_snapshot_path: Path | None = None
     metrics_path: Path | None = None
@@ -245,11 +245,13 @@ def prepare_training_run(
     state.target_col = str(state.data_config.get("target_col", "target"))
     state.era_col = str(state.data_config.get("era_col", "era"))
     state.id_col = str(state.data_config.get("id_col", "id"))
-    state.benchmark_data_path = _optional_path(state.data_config.get("benchmark_data_path"))
+    state.benchmark_source = resolve_benchmark_source(
+        data_config=state.data_config,
+        data_root=DEFAULT_DATASETS_DIR,
+    )
     state.meta_model_data_path = _optional_path(state.data_config.get("meta_model_data_path"))
     state.meta_model_col = str(state.data_config.get("meta_model_col", "numerai_meta_model"))
     state.data_embargo_eras = _coerce_optional_int(state.data_config.get("embargo_eras"))
-    state.benchmark_model = str(state.data_config.get("benchmark_model", DEFAULT_BENCHMARK_MODEL))
     dataset_scope_config = _resolve_dataset_scope(state.data_config.get("dataset_scope"))
     loading_config = _as_dict(state.data_config.get("loading"))
     state.loading_mode = _resolve_loading_mode(loading_config.get("mode"))
@@ -304,7 +306,7 @@ def prepare_training_run(
     state.run_id = run_id_from_hash(state.run_hash)
     state.config_hash = compute_config_hash(cast(dict[str, object], state.config))
 
-    output_root, baselines_dir, results_dir, predictions_dir = resolve_output_locations(
+    output_root, baselines_dir, results_dir, predictions_dir, scoring_dir = resolve_output_locations(
         cast(dict[str, object], state.config),
         state.output_dir,
         state.run_id,
@@ -313,6 +315,7 @@ def prepare_training_run(
     state.baselines_dir = baselines_dir
     state.results_dir = results_dir
     state.predictions_dir = predictions_dir
+    state.scoring_dir = scoring_dir
     state.run_manifest_path = resolve_run_manifest_path(output_root)
     state.resolved_snapshot_path = resolve_resolved_config_path(output_root)
     state.metrics_path = resolve_metrics_path(output_root)
@@ -697,8 +700,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         oof_eras=state.oof_eras,
         configured_embargo_eras=state.data_embargo_eras,
         effective_embargo_eras=state.effective_embargo_eras,
-        benchmark_model=state.benchmark_model,
-        benchmark_data_path=state.benchmark_data_path,
+        benchmark_source=cast(BenchmarkSource, state.benchmark_source),
         meta_model_col=state.meta_model_col,
         meta_model_data_path=state.meta_model_data_path,
         output_dir=cast(Path, state.output_root),
@@ -782,8 +784,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 feature_set=state.feature_set,
                 feature_source_paths=state.scoring_feature_source_paths,
                 dataset_scope=state.dataset_scope,
-                benchmark_model=state.benchmark_model,
-                benchmark_data_path=state.benchmark_data_path,
+                benchmark_source=cast(BenchmarkSource, state.benchmark_source),
                 meta_model_col=state.meta_model_col,
                 meta_model_data_path=state.meta_model_data_path,
                 era_col=state.era_col,
@@ -824,14 +825,12 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     save_score_provenance(score_provenance, cast(Path, state.score_provenance_path))
     state.score_provenance_relative = cast(Path, state.score_provenance_path).relative_to(cast(Path, state.output_root))
     state.artifacts["score_provenance"] = str(state.score_provenance_relative)
-    if scoring_result.per_era_corr is not None:
-        _, _, per_era_corr_relative, per_era_corr_csv_relative = save_per_era_corr_artifacts(
-            scoring_result.per_era_corr,
-            predictions_dir=cast(Path, state.predictions_dir),
-            output_dir=cast(Path, state.output_root),
-        )
-        state.artifacts["per_era_corr"] = str(per_era_corr_relative)
-        state.artifacts["per_era_corr_csv"] = str(per_era_corr_csv_relative)
+    persisted_scoring = save_scoring_artifacts(
+        scoring_result.artifacts,
+        scoring_dir=cast(Path, state.scoring_dir),
+        output_dir=cast(Path, state.output_root),
+    )
+    state.artifacts["scoring_manifest"] = str(persisted_scoring.manifest_relative)
     state.metrics_status = None
     log_info(
         state.run_log_path,
@@ -857,8 +856,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         oof_eras=state.oof_eras,
         configured_embargo_eras=state.data_embargo_eras,
         effective_embargo_eras=state.effective_embargo_eras,
-        benchmark_model=state.benchmark_model,
-        benchmark_data_path=state.benchmark_data_path,
+        benchmark_source=cast(BenchmarkSource, state.benchmark_source),
         meta_model_col=state.meta_model_col,
         meta_model_data_path=state.meta_model_data_path,
         output_dir=cast(Path, state.output_root),

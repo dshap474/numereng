@@ -17,7 +17,7 @@ Notes:
 
 - `full_history_refit` is final-fit only and emits no validation metrics
 - `run score` recomputes metrics from saved predictions and refreshes `results.json`, `metrics.json`, `score_provenance.json`, and store index rows
-- `run score` also refreshes canonical per-era CORR artifacts at `artifacts/predictions/val_per_era_corr20v2.parquet` and `.csv`
+- `run score` also refreshes canonical scoring artifacts under `artifacts/scoring/` and updates `artifacts/scoring/manifest.json`
 
 ## `experiment`
 
@@ -66,13 +66,14 @@ Notes:
 - `numereng store index --run-id <id> [--store-root <path>]`
 - `numereng store rebuild [--store-root <path>]`
 - `numereng store doctor [--store-root <path>] [--fix-strays]`
-- `numereng store materialize-viz-artifacts --kind <per-era-corr> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]`
+- `numereng store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]`
 
 Notes:
 
 - `materialize-viz-artifacts` backfills persisted viz artifacts for historical runs without retraining
-- `--kind per-era-corr` derives canonical per-era CORR and writes `val_per_era_corr20v2.parquet` plus `.csv`
-- the command is idempotent and refreshes run-manifest artifact links when it materializes a missing file
+- `--kind scoring-artifacts` is the canonical hard-refactor path and rescoring persists the full `artifacts/scoring/` bundle plus `manifest.json`
+- `--kind per-era-corr` is accepted as a compatibility label for the same rescoring/backfill path, but the canonical outputs are the new `artifacts/scoring/*` parquet artifacts
+- the command is idempotent and refreshes run-manifest artifact links when it materializes missing scoring artifacts
 
 ## `cloud`
 

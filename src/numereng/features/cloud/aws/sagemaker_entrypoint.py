@@ -40,6 +40,10 @@ _OFFICIAL_DATASET_FILENAMES = {
     "validation_example_preds.parquet",
 }
 _STORE_DB_FILENAMES = ("numereng.db", "numereng.db-shm", "numereng.db-wal")
+_ACTIVE_BENCHMARK_KEYS = {
+    "baselines/active_benchmark/predictions.parquet",
+    "baselines/active_benchmark/benchmark.json",
+}
 
 
 def _log(message: str) -> None:
@@ -139,7 +143,9 @@ def _variant_filename(*, dataset_variant: str, filename: str) -> str:
     raise ValueError(f"dataset_variant_invalid:{dataset_variant}")
 
 
-def _validate_official_dataset_key(key: str) -> None:
+def _validate_dataset_key(key: str) -> None:
+    if key in _ACTIVE_BENCHMARK_KEYS:
+        return
     parts = Path(key).parts
     if len(parts) == 3 and parts[0] == "data":
         filename = parts[2]
@@ -178,9 +184,14 @@ def required_dataset_keys(config_payload: Mapping[str, object]) -> list[str]:
             ]
         )
 
-    benchmark_data_path = data_payload.get("benchmark_data_path")
-    if isinstance(benchmark_data_path, str) and benchmark_data_path:
-        benchmark_key = _to_data_key(benchmark_data_path)
+    benchmark_source_raw = data_payload.get("benchmark_source")
+    benchmark_source = benchmark_source_raw if isinstance(benchmark_source_raw, dict) else {}
+    benchmark_source_mode = str(benchmark_source.get("source", "active"))
+    benchmark_predictions_path = benchmark_source.get("predictions_path")
+    if benchmark_source_mode == "active":
+        candidates.extend(sorted(_ACTIVE_BENCHMARK_KEYS))
+    elif isinstance(benchmark_predictions_path, str) and benchmark_predictions_path:
+        benchmark_key = _to_data_key(benchmark_predictions_path)
         if benchmark_key is not None:
             candidates.append(benchmark_key)
 
@@ -193,7 +204,7 @@ def required_dataset_keys(config_payload: Mapping[str, object]) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for key in candidates:
-        _validate_official_dataset_key(key)
+        _validate_dataset_key(key)
         if key in seen:
             continue
         seen.add(key)

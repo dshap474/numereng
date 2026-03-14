@@ -24,12 +24,13 @@ from numereng.features.training.repo import (
     resolve_run_manifest_path,
     resolve_score_provenance_path,
     save_metrics,
-    save_per_era_corr_artifacts,
     save_results,
     save_run_manifest,
     save_score_provenance,
+    save_scoring_artifacts,
 )
 from numereng.features.training.run_log import log_error, log_info, resolve_run_log_path
+from numereng.features.training.service import resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
@@ -105,8 +106,7 @@ def score_run(
         feature_set=feature_set,
         feature_source_paths=None,
         dataset_scope=str(data_config.get("dataset_scope", _DEFAULT_DATASET_SCOPE)),
-        benchmark_model=str(data_config.get("benchmark_model", "v52_lgbm_ender20")),
-        benchmark_data_path=_optional_path(data_config.get("benchmark_data_path")),
+        benchmark_source=resolve_benchmark_source(data_config=data_config, data_root=DEFAULT_DATASETS_DIR),
         meta_model_col=str(data_config.get("meta_model_col", "numerai_meta_model")),
         meta_model_data_path=_optional_path(data_config.get("meta_model_data_path")),
         era_col=str(data_config.get("era_col", "era")),
@@ -138,18 +138,15 @@ def score_run(
     score_provenance_path = resolve_score_provenance_path(run_dir)
     score_provenance_relative = score_provenance_path.relative_to(run_dir)
     predictions_relative = predictions_path.relative_to(run_dir)
+    scoring_dir = run_dir / "artifacts" / "scoring"
 
     save_score_provenance(scoring_result.score_provenance, score_provenance_path)
     save_metrics(metrics_payload, metrics_path)
-    if scoring_result.per_era_corr is not None:
-        _, _, per_era_corr_relative, per_era_corr_csv_relative = save_per_era_corr_artifacts(
-            scoring_result.per_era_corr,
-            predictions_dir=run_dir / "artifacts" / "predictions",
-            output_dir=run_dir,
-        )
-    else:
-        per_era_corr_relative = None
-        per_era_corr_csv_relative = None
+    persisted_scoring = save_scoring_artifacts(
+        scoring_result.artifacts,
+        scoring_dir=scoring_dir,
+        output_dir=run_dir,
+    )
 
     results_output = _as_mapping(results.get("output"))
     results_output["output_dir"] = str(run_dir)
@@ -173,9 +170,7 @@ def score_run(
     artifacts["results"] = "results.json"
     artifacts["metrics"] = "metrics.json"
     artifacts["score_provenance"] = str(score_provenance_relative)
-    if per_era_corr_relative is not None and per_era_corr_csv_relative is not None:
-        artifacts["per_era_corr"] = str(per_era_corr_relative)
-        artifacts["per_era_corr_csv"] = str(per_era_corr_csv_relative)
+    artifacts["scoring_manifest"] = str(persisted_scoring.manifest_relative)
     run_manifest["artifacts"] = artifacts
     run_manifest["metrics_summary"] = metrics_payload
     manifest_training = _as_mapping(run_manifest.get("training"))

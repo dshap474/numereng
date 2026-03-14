@@ -90,9 +90,18 @@ def resolve_required_data_files(
             ]
         )
 
-    benchmark_data_path = _optional_path(data_config.get("benchmark_data_path"))
-    if benchmark_data_path is not None:
-        requested_paths.append(("benchmark_data_path", benchmark_data_path))
+    benchmark_source_raw = data_config.get("benchmark_source")
+    benchmark_source = benchmark_source_raw if isinstance(benchmark_source_raw, dict) else {}
+    benchmark_source_mode = str(benchmark_source.get("source", "active"))
+    if benchmark_source_mode == "path":
+        benchmark_predictions_path = _optional_path(benchmark_source.get("predictions_path"))
+        if benchmark_predictions_path is not None:
+            requested_paths.append(("benchmark_source.predictions_path", benchmark_predictions_path))
+    else:
+        requested_paths.append(
+            ("benchmark_source.active_predictions", "baselines/active_benchmark/predictions.parquet")
+        )
+        requested_paths.append(("benchmark_source.active_metadata", "baselines/active_benchmark/benchmark.json"))
 
     meta_model_data_path = _optional_path(data_config.get("meta_model_data_path"))
     if meta_model_data_path is not None:

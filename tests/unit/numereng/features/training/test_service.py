@@ -13,6 +13,7 @@ from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
+    ScoringArtifactBundle,
 )
 from numereng.features.store import StoreError
 from numereng.features.training.errors import TrainingConfigError, TrainingError
@@ -226,6 +227,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
             tmp_path / "baselines",
             store_root / "runs" / run_id,
             store_root / "runs" / run_id / "artifacts" / "predictions",
+            store_root / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(
@@ -289,7 +291,10 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 benchmark_min_overlap_ratio=0.0,
                 include_feature_neutral_metrics=True,
             ),
-            per_era_corr=pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+            artifacts=ScoringArtifactBundle(
+                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+                manifest={},
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -368,10 +373,8 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     manifest_artifacts = cast(dict[str, object], run_manifest["artifacts"])
     assert manifest_artifacts["log"] == "run.log"
-    assert manifest_artifacts["per_era_corr"] == "artifacts/predictions/val_per_era_corr20v2.parquet"
-    assert manifest_artifacts["per_era_corr_csv"] == "artifacts/predictions/val_per_era_corr20v2.csv"
-    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet").is_file()
-    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv").is_file()
+    assert manifest_artifacts["scoring_manifest"] == "artifacts/scoring/manifest.json"
+    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_started" in run_log
     assert "stage_update" in run_log
@@ -455,6 +458,7 @@ def test_run_training_submission_full_history_skips_validation_metrics(
             tmp_path / "baselines",
             store_root / "runs" / run_id,
             store_root / "runs" / run_id / "artifacts" / "predictions",
+            store_root / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(
@@ -588,6 +592,7 @@ def test_run_training_index_failure_raises_training_error(
             tmp_path / "baselines",
             output_dir / "runs" / run_id,
             output_dir / "runs" / run_id / "artifacts" / "predictions",
+            output_dir / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
@@ -755,6 +760,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
             tmp_path / "baselines",
             store_root / "runs" / run_id,
             store_root / "runs" / run_id / "artifacts" / "predictions",
+            store_root / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(service_module, "resolve_fold_lazy_source_paths", lambda *args, **kwargs: source_paths)
@@ -838,6 +844,10 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
                 benchmark_min_overlap_ratio=0.0,
                 include_feature_neutral_metrics=True,
             ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+                manifest={},
+            ),
         )
 
     monkeypatch.setattr(service_module, "run_post_training_scoring", _fake_score)
@@ -920,6 +930,7 @@ def test_run_training_index_failure_writes_failed_manifest(monkeypatch: pytest.M
             tmp_path / "baselines",
             tmp_path / "store" / "runs" / run_id,
             tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
@@ -1028,6 +1039,7 @@ def test_run_training_second_index_failure_keeps_finished_manifest(
             tmp_path / "baselines",
             tmp_path / "store" / "runs" / run_id,
             tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
@@ -1140,6 +1152,7 @@ def test_run_training_startup_write_failure_writes_failed_manifest(
             tmp_path / "baselines",
             tmp_path / "store" / "runs" / run_id,
             tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(
@@ -1213,6 +1226,7 @@ def test_run_training_unexpected_exception_writes_failed_manifest(
             tmp_path / "baselines",
             tmp_path / "store" / "runs" / run_id,
             tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
         ),
     )
     monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
@@ -1311,7 +1325,7 @@ def test_run_training_failed_run_writes_run_local_failure_log(
         ),
     )
 
-    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path]:
+    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path, Path]:
         _ = (cfg, override)
         captured_run_id["run_id"] = run_id
         return (
@@ -1319,6 +1333,7 @@ def test_run_training_failed_run_writes_run_local_failure_log(
             tmp_path / "baselines",
             tmp_path / "store" / "runs" / run_id,
             tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
         )
 
     monkeypatch.setattr(service_module, "resolve_output_locations", _resolve_output_locations)
@@ -1416,7 +1431,7 @@ def test_run_training_rejects_non_fresh_run_directory(
         ),
     )
 
-    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path]:
+    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path, Path]:
         _ = (cfg, override)
         run_dir = tmp_path / "store" / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1427,6 +1442,7 @@ def test_run_training_rejects_non_fresh_run_directory(
             tmp_path / "baselines",
             run_dir,
             run_dir / "artifacts" / "predictions",
+            run_dir / "artifacts" / "scoring",
         )
 
     monkeypatch.setattr(service_module, "resolve_output_locations", _resolve_output_locations)
@@ -1497,7 +1513,7 @@ def test_run_training_scoring_failure_marks_run_failed(
         ),
     )
 
-    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path]:
+    def _resolve_output_locations(cfg: object, override: object, run_id: str) -> tuple[Path, Path, Path, Path, Path]:
         _ = (cfg, override)
         run_dir = store_root / "runs" / run_id
         captured_run_dir["path"] = run_dir
@@ -1506,6 +1522,7 @@ def test_run_training_scoring_failure_marks_run_failed(
             tmp_path / "baselines",
             run_dir,
             run_dir / "artifacts" / "predictions",
+            run_dir / "artifacts" / "scoring",
         )
 
     monkeypatch.setattr(service_module, "resolve_output_locations", _resolve_output_locations)

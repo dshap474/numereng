@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 import numereng.features.scoring.run_service as run_score_module
-from numereng.features.scoring.models import PostTrainingScoringResult, ResolvedScoringPolicy
+from numereng.features.scoring.models import PostTrainingScoringResult, ResolvedScoringPolicy, ScoringArtifactBundle
 from numereng.features.training.errors import TrainingError
 
 
@@ -88,7 +88,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 "dataset_scope": "train_plus_validation",
                 "feature_set": "medium",
                 "target_col": "target",
-                "benchmark_model": "v52_lgbm_ender20",
+                "benchmark_source": {"source": "active"},
                 "meta_model_col": "numerai_meta_model",
                 "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
             },
@@ -118,7 +118,10 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 benchmark_min_overlap_ratio=0.0,
                 include_feature_neutral_metrics=True,
             ),
-            per_era_corr=pd.DataFrame([{"era": "era1", "corr": 0.12}]),
+            artifacts=ScoringArtifactBundle(
+                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.12}])},
+                manifest={},
+            ),
         ),
     )
     indexed_runs: list[str] = []
@@ -146,12 +149,10 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"
-    assert saved_manifest["artifacts"]["per_era_corr"] == "artifacts/predictions/val_per_era_corr20v2.parquet"
-    assert saved_manifest["artifacts"]["per_era_corr_csv"] == "artifacts/predictions/val_per_era_corr20v2.csv"
+    assert saved_manifest["artifacts"]["scoring_manifest"] == "artifacts/scoring/manifest.json"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
     assert saved_manifest["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
-    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet").is_file()
-    assert (run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv").is_file()
+    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
 
 
 def test_score_run_requires_existing_run(tmp_path: Path) -> None:

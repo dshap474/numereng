@@ -140,8 +140,8 @@ Viz/frontend topology:
 - Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
 - Viz also exposes payout-target aliases `corr_payout_mean` and `mmc_payout_mean`, currently normalized from Ender20-backed scoring fields (`corr_ender20`, `mmc_ender20`) without overwriting native `corr_mean` / `mmc_mean`.
 - Run detail/chart APIs are read-only over persisted artifacts and section endpoints; the frontend no longer uses `/api/runs/{run_id}/bundle` as its primary path.
-- Training and `run score` persist canonical per-era CORR artifacts at `artifacts/predictions/val_per_era_corr20v2.parquet` and `.csv`.
-- Viz prefers persisted per-era CORR artifacts, and legacy runs can be backfilled via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Request-time fallback is write-through and persists the artifact on first miss.
+- Training and `run score` persist canonical scoring artifacts under `artifacts/scoring/`, with `artifacts/scoring/manifest.json` as the run-local entrypoint.
+- Viz prefers persisted scoring artifacts, and historical runs can be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Request-time per-era CORR fallback is read-only and does not write legacy artifacts.
 
 Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
@@ -158,7 +158,7 @@ Critical invariants:
 - Loading mode allowed only: `materialized|fold_lazy`.
 - Scoring mode allowed only: `materialized|era_stream`.
 - For non-`full_history_refit` runs, model fitting/prediction persistence completes first, then `features.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
-- Post-run scoring persists `corr`, `fnc`, `feature_exposure`, `max_feature_exposure`, `bmc`, `bmc_last_200_eras`, canonical per-era CORR (`val_per_era_corr20v2.parquet` + `.csv`), and `score_provenance.json`; `mmc` and `cwmm` are additionally persisted when meta-model overlap exists.
+- Post-run scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle: native plus Ender20 `corr`/`bmc` per-era and cumulative series, `corr_with_benchmark`, baseline CORR series, and delta-vs-baseline cumulative CORR. `mmc` and `cwmm` remain scalar summary outputs when meta-model overlap exists.
 - `corr`, `fnc`, and `mmc` delegate directly to `numerai_tools`; `cwmm` uses the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - The experiment-page payout proxy chart is a research visualization only; it compares runs on the common payout-target plane (`corr_payout_mean`, `mmc_payout_mean`) so heterogeneous target runs are evaluated on the same Ender20-based basis.
@@ -166,7 +166,7 @@ Critical invariants:
 - Viz defaults rank/sort experiment views by `bmc_last_200_eras_mean`.
 - Feature exposure diagnostics are informational only: scoring computes rank-based exposures against `fncv3_features`, persists nested summaries for `feature_exposure` and `max_feature_exposure`, and viz normalizes `feature_exposure_mean` plus scalar `max_feature_exposure`.
 - Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
-- `features.scoring.run_service.score_run` can recompute the same scoring artifacts for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including per-era CORR artifacts.
+- `features.scoring.run_service.score_run` can recompute the same scoring bundle for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including `artifacts/scoring/manifest.json`.
 - Canonical FNC neutralizes against dataset feature set `fncv3_features`, independent of the run training feature set, then correlates against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `score_provenance.json` records `policy.fnc_feature_set=fncv3_features`, `policy.fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`, join row/era counts, benchmark/meta missing-row/era counts, and whether meta-dependent metrics were emitted.
 - Benchmark post-run scoring joins require strict era alignment, but `bmc` / `bmc_last_200_eras` are computed on the maximum available overlapping benchmark window whenever any overlap exists.

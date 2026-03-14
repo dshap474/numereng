@@ -46,7 +46,8 @@ from numereng.features.store import StoreError, index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
 from numereng.features.training import TrainingRunResult, run_training
 from numereng.features.training.client import TrainingDataClient, create_training_data_client
-from numereng.features.training.repo import DEFAULT_BENCHMARK_MODEL, DEFAULT_DATASETS_DIR
+from numereng.features.training.repo import DEFAULT_DATASETS_DIR
+from numereng.features.training.service import resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 
@@ -475,8 +476,6 @@ def _extract_metric_value_from_predictions(
     era_col = str(data_config.get("era_col", "era"))
     id_col = str(data_config.get("id_col", "id"))
     dataset_scope = str(data_config.get("dataset_scope", "train_only"))
-    benchmark_model = str(data_config.get("benchmark_model", DEFAULT_BENCHMARK_MODEL))
-    benchmark_data_path = _optional_path(data_config.get("benchmark_data_path"))
     meta_model_data_path = _optional_path(data_config.get("meta_model_data_path"))
     meta_model_col = str(data_config.get("meta_model_col", DEFAULT_META_MODEL_COL))
     loading_config = _as_mapping(data_config.get("loading"))
@@ -498,8 +497,7 @@ def _extract_metric_value_from_predictions(
                 feature_set=feature_set,
                 feature_source_paths=None,
                 dataset_scope=dataset_scope,
-                benchmark_model=benchmark_model,
-                benchmark_data_path=benchmark_data_path,
+                benchmark_source=resolve_benchmark_source(data_config=data_config, data_root=DEFAULT_DATASETS_DIR),
                 meta_model_col=meta_model_col,
                 meta_model_data_path=meta_model_data_path,
                 era_col=era_col,

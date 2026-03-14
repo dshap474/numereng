@@ -11,13 +11,18 @@ import numpy as np
 import pandas as pd
 
 from numereng.config.training import TrainingConfigLoaderError, load_training_config_json
+from numereng.features.scoring.artifacts import PersistedScoringArtifacts, persist_scoring_artifacts
+from numereng.features.scoring.models import ScoringArtifactBundle
 from numereng.features.store.layout import ensure_store_root_not_nested
 from numereng.features.training.client import TrainingDataClient
 from numereng.features.training.errors import TrainingConfigError, TrainingDataError
 
 DEFAULT_DATASETS_DIR = Path(".numereng") / "datasets"
 DEFAULT_STORE_DIR = Path(".numereng")
-DEFAULT_BASELINES_DIR = Path(".numereng") / "baselines"
+DEFAULT_BASELINES_DIR = DEFAULT_DATASETS_DIR / "baselines"
+DEFAULT_ACTIVE_BENCHMARK_DIR = DEFAULT_BASELINES_DIR / "active_benchmark"
+DEFAULT_ACTIVE_BENCHMARK_PREDICTIONS = DEFAULT_ACTIVE_BENCHMARK_DIR / "predictions.parquet"
+DEFAULT_ACTIVE_BENCHMARK_METADATA = DEFAULT_ACTIVE_BENCHMARK_DIR / "benchmark.json"
 DEFAULT_BENCHMARK_MODEL = "v52_lgbm_ender20"
 DEFAULT_DATASET_VARIANT = "non_downsampled"
 _SUPPORTED_DATASET_VARIANTS = {"non_downsampled", "downsampled"}
@@ -54,7 +59,7 @@ def resolve_output_locations(
     config: dict[str, object],
     output_dir_override: Path | None,
     run_id: str,
-) -> tuple[Path, Path, Path, Path]:
+) -> tuple[Path, Path, Path, Path, Path]:
     """Resolve run-scoped output locations from store-root defaults/overrides."""
     output_config = _as_dict(config.get("output"), field="output")
     data_config = _as_dict(config.get("data"), field="data")
@@ -79,7 +84,8 @@ def resolve_output_locations(
     run_dir = store_root / "runs" / run_id
     results_dir = run_dir
     predictions_dir = run_dir / "artifacts" / "predictions"
-    return run_dir, baselines_dir, results_dir, predictions_dir
+    scoring_dir = run_dir / "artifacts" / "scoring"
+    return run_dir, baselines_dir, results_dir, predictions_dir, scoring_dir
 
 
 def resolve_metrics_path(run_dir: Path) -> Path:
@@ -90,6 +96,24 @@ def resolve_metrics_path(run_dir: Path) -> Path:
 def resolve_score_provenance_path(run_dir: Path) -> Path:
     """Resolve canonical run score-provenance path."""
     return run_dir / "score_provenance.json"
+
+
+def resolve_active_benchmark_dir(*, data_root: Path = DEFAULT_DATASETS_DIR) -> Path:
+    """Resolve the canonical active-benchmark directory."""
+
+    return (resolve_data_path(DEFAULT_ACTIVE_BENCHMARK_DIR, data_root=data_root)).resolve()
+
+
+def resolve_active_benchmark_predictions_path(*, data_root: Path = DEFAULT_DATASETS_DIR) -> Path:
+    """Resolve the canonical active-benchmark predictions parquet path."""
+
+    return (resolve_active_benchmark_dir(data_root=data_root) / DEFAULT_ACTIVE_BENCHMARK_PREDICTIONS.name).resolve()
+
+
+def resolve_active_benchmark_metadata_path(*, data_root: Path = DEFAULT_DATASETS_DIR) -> Path:
+    """Resolve the canonical active-benchmark metadata json path."""
+
+    return (resolve_active_benchmark_dir(data_root=data_root) / DEFAULT_ACTIVE_BENCHMARK_METADATA.name).resolve()
 
 
 def resolve_run_manifest_path(run_dir: Path) -> Path:
@@ -651,23 +675,48 @@ def save_score_provenance(score_provenance: dict[str, object], score_provenance_
         json.dump(score_provenance, f, indent=2, sort_keys=True)
 
 
-def save_per_era_corr_artifacts(
-    per_era_corr: pd.DataFrame,
+def save_scoring_artifacts(
+    artifacts: ScoringArtifactBundle,
     *,
-    predictions_dir: Path,
+    scoring_dir: Path,
     output_dir: Path,
-) -> tuple[Path, Path, Path, Path]:
-    """Persist canonical per-era correlation artifacts and return absolute+relative paths."""
+) -> PersistedScoringArtifacts:
+    """Persist canonical scoring artifacts and return their locations."""
 
-    from numereng.features.scoring.artifacts import persist_primary_per_era_corr_artifacts
+    return persist_scoring_artifacts(artifacts, scoring_dir=scoring_dir, output_dir=output_dir)
 
-    paths = persist_primary_per_era_corr_artifacts(per_era_corr, predictions_dir=predictions_dir)
-    return (
-        paths.parquet_path,
-        paths.csv_path,
-        paths.parquet_path.relative_to(output_dir),
-        paths.csv_path.relative_to(output_dir),
-    )
+
+def seed_active_benchmark(
+    *,
+    source_dir: Path,
+    predictions_filename: str,
+    metadata_filename: str = "baseline.json",
+    data_root: Path = DEFAULT_DATASETS_DIR,
+) -> tuple[Path, Path]:
+    """Copy one baseline directory into the canonical active-benchmark paths."""
+
+    source_predictions = (source_dir / predictions_filename).resolve()
+    source_metadata = (source_dir / metadata_filename).resolve()
+    if not source_predictions.is_file():
+        raise TrainingDataError(f"training_active_benchmark_predictions_not_found:{source_predictions}")
+    if not source_metadata.is_file():
+        raise TrainingDataError(f"training_active_benchmark_metadata_not_found:{source_metadata}")
+
+    active_dir = resolve_active_benchmark_dir(data_root=data_root)
+    active_dir.mkdir(parents=True, exist_ok=True)
+    predictions_dest = resolve_active_benchmark_predictions_path(data_root=data_root)
+    metadata_dest = resolve_active_benchmark_metadata_path(data_root=data_root)
+    predictions_dest.write_bytes(source_predictions.read_bytes())
+    metadata_payload = json.loads(source_metadata.read_text(encoding="utf-8"))
+    if not isinstance(metadata_payload, dict):
+        raise TrainingDataError(f"training_active_benchmark_metadata_invalid:{source_metadata}")
+    benchmark_payload = dict(metadata_payload)
+    benchmark_payload["source_path"] = str(source_dir.resolve())
+    benchmark_payload["predictions_file"] = predictions_dest.name
+    benchmark_payload["pred_col"] = "prediction"
+    benchmark_payload.setdefault("created_at", None)
+    metadata_dest.write_text(json.dumps(benchmark_payload, indent=2, sort_keys=True), encoding="utf-8")
+    return predictions_dest, metadata_dest
 
 
 def save_resolved_config(config: dict[str, object], resolved_config_path: Path) -> None:

@@ -9,5 +9,9 @@ class NumeraiClientError(PackageError):
     """Raised when Numerai API client operations fail."""
 
 
+class NumeraiMcpAuthError(PackageError):
+    """Raised when Numerai MCP auth cannot be resolved for shell export."""
+
+
 class ForumScraperError(PackageError):
     """Raised when forum scraping operations fail."""

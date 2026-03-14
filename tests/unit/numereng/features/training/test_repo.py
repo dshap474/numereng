@@ -76,13 +76,14 @@ def test_load_config_missing_file_raises(tmp_path: Path) -> None:
 
 
 def test_resolve_output_locations_default() -> None:
-    output_dir, baselines_dir, results_dir, predictions_dir = resolve_output_locations({}, None, "run-1")
+    output_dir, baselines_dir, results_dir, predictions_dir, scoring_dir = resolve_output_locations({}, None, "run-1")
     assert output_dir.name == "run-1"
     assert output_dir.parent.name == "runs"
     assert baselines_dir.name == "baselines"
     assert results_dir.name == "run-1"
     assert results_dir.parent.name == "runs"
     assert predictions_dir.name == "predictions"
+    assert scoring_dir.name == "scoring"
 
 
 def test_resolve_output_locations_rejects_nested_store_root() -> None:

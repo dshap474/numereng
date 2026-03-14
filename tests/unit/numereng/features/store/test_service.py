@@ -5,7 +5,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd
 import pytest
 
 import numereng.features.store.service as store_service
@@ -362,8 +361,28 @@ def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
 
     monkeypatch.setattr(
         store_service,
-        "_build_primary_per_era_corr_frame",
-        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+        "_score_run_for_materialize",
+        lambda **kwargs: (
+            lambda run_payload: (
+                (run_dir / "artifacts" / "scoring").mkdir(parents=True, exist_ok=True),
+                (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").write_bytes(b"PAR1"),
+                (run_dir / "artifacts" / "scoring" / "manifest.json").write_text("{}", encoding="utf-8"),
+                (run_dir / "run.json").write_text(
+                    json.dumps(
+                        {
+                            **run_payload,
+                            "artifacts": {
+                                **cast(dict[str, object], run_payload["artifacts"]),
+                                "scoring_manifest": "artifacts/scoring/manifest.json",
+                            },
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                ),
+            )[-1]
+        )(json.loads((run_dir / "run.json").read_text(encoding="utf-8"))),
     )
 
     first = materialize_viz_artifacts(
@@ -383,13 +402,11 @@ def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
     assert first.failed_count == 0
     assert second.created_count == 0
     assert second.skipped_count == 1
-    assert (predictions_dir / "val_per_era_corr20v2.parquet").is_file()
-    assert (predictions_dir / "val_per_era_corr20v2.csv").is_file()
+    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     artifacts = cast(dict[str, object], saved_manifest["artifacts"])
-    assert artifacts["per_era_corr"] == "artifacts/predictions/val_per_era_corr20v2.parquet"
-    assert artifacts["per_era_corr_csv"] == "artifacts/predictions/val_per_era_corr20v2.csv"
+    assert artifacts["scoring_manifest"] == "artifacts/scoring/manifest.json"
 
 
 def test_materialize_viz_artifacts_requires_exactly_one_scope(tmp_path: Path) -> None:
@@ -434,8 +451,8 @@ def test_materialize_viz_artifacts_experiment_scope_skips_unreadable_unrelated_r
 
     monkeypatch.setattr(
         store_service,
-        "_build_primary_per_era_corr_frame",
-        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+        "_score_run_for_materialize",
+        lambda **kwargs: (target_run_dir / "artifacts" / "scoring").mkdir(parents=True, exist_ok=True),
     )
 
     result = materialize_viz_artifacts(

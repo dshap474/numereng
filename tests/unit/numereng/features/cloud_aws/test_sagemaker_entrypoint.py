@@ -56,7 +56,7 @@ def test_required_dataset_keys_for_official_config() -> None:
         "data": {
             "data_version": "v5.2",
             "dataset_variant": "non_downsampled",
-            "benchmark_data_path": "v5.2/validation_benchmark_models.parquet",
+            "benchmark_source": {"source": "active"},
             "meta_model_data_path": "v5.2/meta_model.parquet",
         }
     }
@@ -66,7 +66,8 @@ def test_required_dataset_keys_for_official_config() -> None:
         "data/v5.2/features.json",
         "data/v5.2/train.parquet",
         "data/v5.2/validation.parquet",
-        "data/v5.2/validation_benchmark_models.parquet",
+        "baselines/active_benchmark/benchmark.json",
+        "baselines/active_benchmark/predictions.parquet",
         "data/v5.2/meta_model.parquet",
     ]
 
@@ -83,7 +84,10 @@ def test_required_dataset_keys_accepts_downsampled_paths() -> None:
         "data": {
             "data_version": "v5.2",
             "dataset_variant": "downsampled",
-            "benchmark_data_path": "v5.2/downsampled_full_benchmark_models.parquet",
+            "benchmark_source": {
+                "source": "path",
+                "predictions_path": "v5.2/downsampled_full_benchmark_models.parquet",
+            },
         }
     }
 
@@ -107,6 +111,8 @@ def test_required_dataset_keys_defaults_to_downsampled_full_for_downsampled_vari
     assert keys == [
         "data/v5.2/features.json",
         "data/v5.2/downsampled_full.parquet",
+        "baselines/active_benchmark/benchmark.json",
+        "baselines/active_benchmark/predictions.parquet",
     ]
 
 def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +123,7 @@ def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch
                 "data": {
                     "data_version": "v5.2",
                     "dataset_variant": "non_downsampled",
-                    "benchmark_data_path": "v5.2/train_benchmark_models.parquet",
+                    "benchmark_source": {"source": "active"},
                 }
             }
         ),
@@ -139,7 +145,8 @@ def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch
         "data/v5.2/features.json",
         "data/v5.2/train.parquet",
         "data/v5.2/validation.parquet",
-        "data/v5.2/train_benchmark_models.parquet",
+        "baselines/active_benchmark/benchmark.json",
+        "baselines/active_benchmark/predictions.parquet",
     ]
 
 

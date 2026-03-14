@@ -16,6 +16,7 @@ from numereng.features.scoring.metrics import (
     load_custom_benchmark_predictions,  # noqa: F401
 )
 from numereng.features.scoring.models import (
+    BenchmarkSource,
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
@@ -53,6 +54,8 @@ from numereng.features.training.repo import (
     load_features,
     load_fold_data_lazy,  # noqa: F401
     load_full_data,
+    resolve_active_benchmark_metadata_path,
+    resolve_active_benchmark_predictions_path,
     resolve_fold_lazy_source_paths,  # noqa: F401
     resolve_metrics_path,  # noqa: F401
     resolve_output_locations,  # noqa: F401
@@ -185,8 +188,7 @@ def build_results_payload(
     oof_eras: int,
     configured_embargo_eras: int | None,
     effective_embargo_eras: int,
-    benchmark_model: str,
-    benchmark_data_path: str | Path | None,
+    benchmark_source: BenchmarkSource,
     meta_model_col: str,
     meta_model_data_path: str | Path | None,
     output_dir: Path,
@@ -250,11 +252,11 @@ def build_results_payload(
             "effective_embargo_eras": effective_embargo_eras,
         },
         "benchmark": {
-            "model": benchmark_model,
-            "file": str(
-                benchmark_data_path
-                or _default_benchmark_data_reference(data_version, dataset_variant)
-            ),
+            "mode": benchmark_source.mode,
+            "name": benchmark_source.name,
+            "file": str(benchmark_source.predictions_path),
+            "pred_col": benchmark_source.pred_col,
+            "metadata_file": str(benchmark_source.metadata_path) if benchmark_source.metadata_path else None,
         },
         "meta_model": {
             "column": meta_model_col,
@@ -612,12 +614,67 @@ def _default_variant_data_path(data_version: str, dataset_variant: str, filename
     return f"{data_version}/{resolved_filename}"
 
 
-def _default_benchmark_data_reference(data_version: str, dataset_variant: str) -> str:
-    if dataset_variant == "downsampled":
-        return _default_variant_data_path(data_version, dataset_variant, "full_benchmark_models.parquet")
-    return (
-        f"{data_version}/train_benchmark_models.parquet + "
-        f"{data_version}/validation_benchmark_models.parquet[data_type=validation]"
+def _resolve_benchmark_source_config(data_config: dict[str, object]) -> dict[str, object]:
+    raw = data_config.get("benchmark_source")
+    if raw is None:
+        return {
+            "source": "active",
+            "pred_col": "prediction",
+        }
+    if not isinstance(raw, dict):
+        raise TrainingConfigError("training_benchmark_source_invalid")
+    source = str(raw.get("source", "active")).strip()
+    if source not in {"active", "path"}:
+        raise TrainingConfigError("training_benchmark_source_invalid")
+    pred_col = str(raw.get("pred_col", "prediction")).strip()
+    if not pred_col:
+        raise TrainingConfigError("training_benchmark_source_pred_col_invalid")
+    predictions_path = raw.get("predictions_path")
+    if source == "path":
+        if not isinstance(predictions_path, str) or not predictions_path.strip():
+            raise TrainingConfigError("training_benchmark_source_predictions_path_required")
+    elif predictions_path is not None:
+        raise TrainingConfigError("training_benchmark_source_predictions_path_disallowed_for_active")
+    resolved = {
+        "source": source,
+        "pred_col": pred_col,
+    }
+    name = raw.get("name")
+    if isinstance(name, str) and name.strip():
+        resolved["name"] = name.strip()
+    if isinstance(predictions_path, str) and predictions_path.strip():
+        resolved["predictions_path"] = predictions_path.strip()
+    return resolved
+
+
+def resolve_benchmark_source(
+    *,
+    data_config: dict[str, object],
+    data_root: Path,
+) -> BenchmarkSource:
+    """Resolve the configured benchmark prediction source for scoring."""
+
+    config = _resolve_benchmark_source_config(data_config)
+    source = str(config["source"])
+    pred_col = str(config["pred_col"])
+    if source == "active":
+        predictions_path = resolve_active_benchmark_predictions_path(data_root=data_root)
+        metadata_path = resolve_active_benchmark_metadata_path(data_root=data_root)
+        name = str(config.get("name") or "active_benchmark")
+    else:
+        predictions_path = Path(str(config["predictions_path"])).expanduser()
+        if not predictions_path.is_absolute():
+            predictions_path = (data_root.expanduser().resolve() / predictions_path).resolve()
+        else:
+            predictions_path = predictions_path.resolve()
+        metadata_path = None
+        name = str(config.get("name") or predictions_path.stem)
+    return BenchmarkSource(
+        mode=source,
+        name=name,
+        predictions_path=predictions_path,
+        pred_col=pred_col,
+        metadata_path=metadata_path,
     )
 
 

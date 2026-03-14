@@ -16,22 +16,8 @@
           "default": null,
           "title": "Baselines Dir"
         },
-        "benchmark_data_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Benchmark Data Path"
-        },
-        "benchmark_model": {
-          "default": "v52_lgbm_ender20",
-          "title": "Benchmark Model",
-          "type": "string"
+        "benchmark_source": {
+          "$ref": "#/$defs/BenchmarkSourceConfig"
         },
         "data_version": {
           "default": "v5.2",
@@ -144,6 +130,52 @@
         "dataset_variant"
       ],
       "title": "DataConfig",
+      "type": "object"
+    },
+    "BenchmarkSourceConfig": {
+      "additionalProperties": false,
+      "description": "Benchmark prediction source used for benchmark-relative scoring.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "pred_col": {
+          "default": "prediction",
+          "title": "Pred Col",
+          "type": "string"
+        },
+        "predictions_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predictions Path"
+        },
+        "source": {
+          "default": "active",
+          "enum": [
+            "active",
+            "path"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "title": "BenchmarkSourceConfig",
       "type": "object"
     },
     "DataLoadingConfig": {

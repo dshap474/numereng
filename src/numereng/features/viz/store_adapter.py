@@ -27,7 +27,6 @@ from urllib.parse import urlsplit
 import pandas as pd
 import yaml
 
-from numereng.features.scoring.artifacts import persist_primary_per_era_corr_artifacts
 from numereng.features.scoring.summary_metrics import (
     expand_shared_metric_query_names,
     normalize_shared_run_metrics,
@@ -1413,13 +1412,13 @@ class VizStoreAdapter:
 
         return self.store_root / "runs" / run_id
 
-    def _read_artifact_records(self, *, parquet_path: Path, csv_path: Path) -> list[dict[str, Any]] | None:
+    def _read_artifact_records(self, *, parquet_path: Path, csv_path: Path | None) -> list[dict[str, Any]] | None:
         if parquet_path.exists():
             try:
                 return _read_parquet_records_cached(str(parquet_path), parquet_path.stat().st_mtime_ns)
             except Exception:
                 logger.debug("Failed parquet read for %s; falling back to CSV", parquet_path)
-        if csv_path.exists():
+        if csv_path is not None and csv_path.exists():
             return _read_csv_records_cached(str(csv_path), csv_path.stat().st_mtime_ns, 0)
         return None
 
@@ -1643,60 +1642,30 @@ class VizStoreAdapter:
             )
         return _sort_records_by_era(records) if records else None
 
-    def _persist_per_era_corr_records(self, run_dir: Path, records: list[dict[str, Any]]) -> bool:
-        frame = pd.DataFrame.from_records(records)
-        if frame.empty:
-            return False
-        normalized = frame.rename(columns={"corr20v2": "corr"})
-        if "era" not in normalized.columns or "corr" not in normalized.columns:
-            return False
-        paths = persist_primary_per_era_corr_artifacts(
-            normalized[["era", "corr"]],
-            predictions_dir=run_dir / "artifacts" / "predictions",
-        )
-        manifest_path = run_dir / "run.json"
-        manifest = _read_json_dict(manifest_path)
-        artifacts_raw = manifest.get("artifacts")
-        artifacts = dict(artifacts_raw) if isinstance(artifacts_raw, dict) else {}
-        artifacts["per_era_corr"] = str(paths.parquet_path.relative_to(run_dir))
-        artifacts["per_era_corr_csv"] = str(paths.csv_path.relative_to(run_dir))
-        manifest["artifacts"] = artifacts
-        tmp_path = manifest_path.with_suffix(".json.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(manifest, handle, indent=2, sort_keys=True)
-        tmp_path.replace(manifest_path)
-        return True
-
     def get_per_era_corr_result(self, run_id: str) -> PerEraCorrLoadResult:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
-        parquet_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.parquet"
-        csv_path = run_dir / "artifacts" / "predictions" / "val_per_era_corr20v2.csv"
+        parquet_path = run_dir / "artifacts" / "scoring" / "corr_per_era.parquet"
+        csv_path = None
         read_start = time.perf_counter()
         records = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
         persisted_read_ms = (time.perf_counter() - read_start) * 1000.0
         if records is None:
             materialize_start = time.perf_counter()
             payload = self._derive_per_era_corr_fallback(run_id, run_dir)
-            wrote_artifact = False
-            if payload:
-                try:
-                    wrote_artifact = self._persist_per_era_corr_records(run_dir, payload)
-                except OSError:
-                    wrote_artifact = False
             return PerEraCorrLoadResult(
                 payload=payload,
                 persisted_read_ms=persisted_read_ms,
                 materialize_ms=(time.perf_counter() - materialize_start) * 1000.0,
-                wrote_artifact=wrote_artifact,
+                wrote_artifact=False,
             )
 
         normalized: list[dict[str, Any]] = []
         for row in records:
             item = dict(row)
-            if "corr" not in item and "corr20v2" in item:
-                item["corr"] = item["corr20v2"]
-            item.pop("corr20v2", None)
+            if "corr" not in item and "value" in item:
+                item["corr"] = item["value"]
+            item.pop("value", None)
             normalized.append(item)
         return PerEraCorrLoadResult(
             payload=normalized,
