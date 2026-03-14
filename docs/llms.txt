@@ -39,7 +39,7 @@ Source map:
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
 - `src/numereng/features/telemetry/*`: local run telemetry write path.
-- `src/numereng/features/dataset-tools/*`: local dataset downsampling utilities (official-style full/downsampled builders).
+- `src/numereng/features/dataset-tools/*`: local dataset downsampling utilities for stored derived downsampled artifacts.
 - `src/numereng/features/cloud/aws/*`: EC2 + managed AWS train/image/state.
 - `src/numereng/features/cloud/modal/*`: Modal deploy/data/train/state.
 - `src/numereng/features/viz/*`: read-only API over store filesystem/sqlite.
@@ -93,7 +93,7 @@ Wiring map:
 - Store:
   `cli store * -> api.store_* -> features.store`
 - Dataset tooling command:
-  `uv run numereng dataset-tools build-full-datasets --data-version v5.2`
+  `uv run numereng dataset-tools build-downsampled-full --data-version v5.2`
 - Cloud AWS:
   `cli cloud aws * -> api.cloud_aws_* -> features.cloud.aws.*`
 - Cloud Modal:
@@ -175,10 +175,11 @@ Critical invariants:
 - Dataset scope allowed only: `train_only|train_plus_validation` (default `train_only`).
 - `data.dataset_variant` is required and allowed only: `non_downsampled|downsampled`.
 - Dataset defaults resolve under `.numereng/datasets/<data_version>/`.
-- Official downsampling artifacts are local files under `.numereng/datasets/<data_version>/`:
-  `full.parquet`, `full_benchmark_models.parquet`, `downsampled_full.parquet`, `downsampled_full_benchmark_models.parquet`.
-- `dataset-tools build-full-datasets` defaults to fixed era filtering (keep every 4th era, offset 0), with optional `--downsample-eras-step` and `--downsample-eras-offset`.
-- `dataset-tools build-full-datasets --skip-downsample` builds only `full.parquet` and `full_benchmark_models.parquet`.
+- Canonical non-downsampled storage uses split sources under `.numereng/datasets/<data_version>/`:
+  `train.parquet`, `validation.parquet`, plus split benchmark files.
+- Stored derived downsampled artifacts are:
+  `downsampled_full.parquet`, `downsampled_full_benchmark_models.parquet`.
+- `dataset-tools build-downsampled-full` defaults to fixed era filtering (keep every 4th era, offset 0), with optional `--downsample-eras-step` and `--downsample-eras-offset`.
 - In `purged_walk_forward`, walk-forward defaults are fixed: window `156`, embargo `8` for `20d` and `16` for `60d`.
 - `data.target_horizon` is `20d|60d` when provided and takes precedence over target-name inference.
 - If `target_horizon` is omitted, horizon is inferred from `target_col`; ambiguous names hard-fail.
@@ -218,7 +219,7 @@ CLI families:
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`
 - `numereng neutralize apply`
-- `numereng dataset-tools build-full-datasets`
+- `numereng dataset-tools build-downsampled-full`
 - `numereng store init|index|rebuild|doctor|materialize-viz-artifacts`
 - `numereng cloud ec2 ...`
 - `numereng cloud aws image|train ...`

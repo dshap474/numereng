@@ -36,7 +36,6 @@ def _request(
         dataset_variant="non_downsampled",
         feature_set="small",
         feature_source_paths=None,
-        full_data_path=None,
         dataset_scope="train_plus_validation",
         benchmark_model="v52_lgbm_ender20",
         benchmark_data_path=benchmark_path,

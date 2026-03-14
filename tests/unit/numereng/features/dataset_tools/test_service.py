@@ -92,16 +92,10 @@ def test_build_downsampled_full_builds_expected_artifacts(tmp_path: Path) -> Non
         client=_NoDownloadClient(),
     )
 
-    assert result.full_rows == 3
     assert result.total_eras == 3
     assert result.kept_eras == 1
     assert result.downsampled_rows == 1
-    assert result.full_benchmark_rows == 3
     assert result.downsampled_full_benchmark_rows == 1
-    assert result.downsampled_full_path is not None
-    assert result.downsampled_full_benchmark_path is not None
-    assert result.full_path.exists()
-    assert result.full_benchmark_path.exists()
     assert result.downsampled_full_path.exists()
     assert result.downsampled_full_benchmark_path.exists()
 
@@ -118,7 +112,7 @@ def test_build_downsampled_full_downloads_missing_sources(tmp_path: Path) -> Non
         client=client,
     )
 
-    assert result.full_rows == 2
+    assert result.downsampled_rows == 1
     assert sorted(client.calls) == [
         "v5.2/train.parquet",
         "v5.2/train_benchmark_models.parquet",
@@ -168,35 +162,6 @@ def test_build_downsampled_full_rejects_invalid_step(tmp_path: Path) -> None:
             client=_NoDownloadClient(),
         )
 
-
-def test_build_downsampled_full_supports_skip_downsample(tmp_path: Path) -> None:
-    datasets_root = tmp_path / "datasets"
-    version_dir = datasets_root / "v5.2"
-    version_dir.mkdir(parents=True, exist_ok=True)
-    _seed_local_dataset(version_dir)
-
-    result = build_downsampled_full(
-        BuildDownsampledFullRequest(
-            data_dir=datasets_root,
-            data_version="v5.2",
-            skip_downsample=True,
-        ),
-        client=_NoDownloadClient(),
-    )
-
-    assert result.downsample_built is False
-    assert result.downsampled_full_path is None
-    assert result.downsampled_full_benchmark_path is None
-    assert result.downsampled_rows is None
-    assert result.downsampled_full_benchmark_rows is None
-    assert result.total_eras is None
-    assert result.kept_eras is None
-    assert result.full_path.exists()
-    assert result.full_benchmark_path.exists()
-    assert not (version_dir / "downsampled_full.parquet").exists()
-    assert not (version_dir / "downsampled_full_benchmark_models.parquet").exists()
-
-
 def test_build_downsampled_full_supports_custom_step_and_offset(tmp_path: Path) -> None:
     datasets_root = tmp_path / "datasets"
     version_dir = datasets_root / "v5.2"
@@ -213,8 +178,6 @@ def test_build_downsampled_full_supports_custom_step_and_offset(tmp_path: Path) 
         client=_NoDownloadClient(),
     )
 
-    assert result.downsample_built is True
-    assert result.downsampled_full_path is not None
     downsampled = pd.read_parquet(result.downsampled_full_path)
     assert list(downsampled["era"]) == ["0002"]
     assert result.downsample_step == 2

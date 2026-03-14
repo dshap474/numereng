@@ -58,7 +58,7 @@ Notes:
 
 ## `dataset-tools`
 
-- `numereng dataset-tools build-full-datasets [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--skip-downsample] [--rebuild]`
+- `numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]`
 
 ## `store`
 

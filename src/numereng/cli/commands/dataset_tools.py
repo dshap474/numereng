@@ -18,7 +18,7 @@ _BUILD_VALUE_FLAGS = {
     "--downsample-eras-step",
     "--downsample-eras-offset",
 }
-_BUILD_BOOL_FLAGS = {"--rebuild", "--skip-downsample"}
+_BUILD_BOOL_FLAGS = {"--rebuild"}
 
 
 def _handle_build_downsampled_full_subcommand(args: Sequence[str]) -> int:
@@ -44,8 +44,6 @@ def _handle_build_downsampled_full_subcommand(args: Sequence[str]) -> int:
         request_kwargs["downsample_eras_step"] = values["--downsample-eras-step"]
     if "--downsample-eras-offset" in values:
         request_kwargs["downsample_eras_offset"] = values["--downsample-eras-offset"]
-    if "--skip-downsample" in toggles:
-        request_kwargs["skip_downsample"] = True
     if "--rebuild" in toggles:
         request_kwargs["rebuild"] = True
 
@@ -76,13 +74,13 @@ def handle_dataset_tools_command(args: Sequence[str]) -> int:
 
     if args[0] in {"quantize", "quantize-lossless"}:
         print(
-            "dataset-tools quantization commands are removed; use dataset-tools build-full-datasets",
+            "dataset-tools quantization commands are removed; use dataset-tools build-downsampled-full",
             file=sys.stderr,
         )
         print(USAGE, file=sys.stderr)
         return 2
 
-    if args[0] in {"build-full-datasets", "build-downsampled-full"}:
+    if args[0] == "build-downsampled-full":
         return _handle_build_downsampled_full_subcommand(args[1:])
 
     print(f"unknown arguments: dataset-tools {' '.join(args)}", file=sys.stderr)

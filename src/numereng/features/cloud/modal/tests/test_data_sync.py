@@ -13,46 +13,6 @@ def _write_file(path: Path, content: bytes = b"data") -> None:
     path.write_bytes(content)
 
 
-def test_resolve_required_data_files_with_explicit_paths(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    data_dir = tmp_path / ".numereng" / "datasets" / "v5.2"
-    _write_file(data_dir / "full.parquet")
-    _write_file(data_dir / "bench.parquet")
-    _write_file(data_dir / "meta.parquet")
-    (data_dir / "features.json").write_text("{}", encoding="utf-8")
-    config_path = tmp_path / "train.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "data": {
-                    "data_version": "v5.2",
-                    "dataset_variant": "non_downsampled",
-                    "full_data_path": "v5.2/full.parquet",
-                    "benchmark_data_path": "v5.2/bench.parquet",
-                    "meta_model_data_path": "v5.2/meta.parquet",
-                },
-                "model": {"type": "LGBMRegressor", "params": {}},
-                "training": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    data_version, dataset_variant, files = resolve_required_data_files(config_path=config_path)
-
-    assert data_version == "v5.2"
-    assert dataset_variant == "non_downsampled"
-    assert [item.remote_path for item in files] == [
-        "v5.2/bench.parquet",
-        "v5.2/features.json",
-        "v5.2/full.parquet",
-        "v5.2/meta.parquet",
-    ]
-
-
 def test_resolve_required_data_files_defaults_to_train_and_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -103,37 +63,6 @@ def test_resolve_required_data_files_rejects_quantized_variant(
     with pytest.raises(ValueError, match="training_config_schema_invalid"):
         resolve_required_data_files(config_path=config_path)
 
-
-def test_resolve_required_data_files_rejects_paths_outside_data_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    outside = tmp_path / "outside.parquet"
-    _write_file(outside)
-    data_dir = tmp_path / ".numereng" / "datasets" / "v5.2"
-    (data_dir / "features.json").parent.mkdir(parents=True, exist_ok=True)
-    (data_dir / "features.json").write_text("{}", encoding="utf-8")
-    config_path = tmp_path / "train.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "data": {
-                    "data_version": "v5.2",
-                    "dataset_variant": "non_downsampled",
-                    "full_data_path": str(outside),
-                },
-                "model": {"type": "LGBMRegressor", "params": {}},
-                "training": {},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="modal_data_sync_path_outside_data_root"):
-        resolve_required_data_files(config_path=config_path)
-
-
 def test_resolve_required_data_files_requires_files_to_exist(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -146,7 +75,6 @@ def test_resolve_required_data_files_requires_files_to_exist(
                 "data": {
                     "data_version": "v5.2",
                     "dataset_variant": "non_downsampled",
-                    "full_data_path": "v5.2/full.parquet",
                 },
                 "model": {"type": "LGBMRegressor", "params": {}},
                 "training": {},

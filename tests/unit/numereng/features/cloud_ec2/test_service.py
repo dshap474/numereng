@@ -207,8 +207,6 @@ def test_setup_data_syncs_required_and_optional_files(tmp_path: Path) -> None:
         "validation.parquet",
         "features.json",
         "validation_example_preds.parquet",
-        "full.parquet",
-        "full_benchmark_models.parquet",
         "downsampled_full.parquet",
         "downsampled_full_benchmark_models.parquet",
     ]:
@@ -220,7 +218,7 @@ def test_setup_data_syncs_required_and_optional_files(tmp_path: Path) -> None:
 
     assert response.action == "cloud.ec2.setup-data"
     assert response.result["missing_optional"] == []
-    assert len(s3.uploaded) == 8
+    assert len(s3.uploaded) == 6
 
 
 def test_setup_data_raises_when_required_file_missing(tmp_path: Path) -> None:

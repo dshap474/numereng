@@ -20,7 +20,6 @@ class PostTrainingScoringRequest:
     dataset_variant: str
     feature_set: str
     feature_source_paths: tuple[Path, ...] | None
-    full_data_path: str | Path | None
     dataset_scope: str
     benchmark_model: str
     benchmark_data_path: str | Path | None

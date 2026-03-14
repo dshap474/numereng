@@ -39,7 +39,6 @@ def run_post_training_scoring(
         dataset_variant=request.dataset_variant,
         feature_set=request.feature_set,
         feature_source_paths=request.feature_source_paths,
-        full_data_path=request.full_data_path,
         dataset_scope=request.dataset_scope,
         client=client,
         benchmark_model=request.benchmark_model,

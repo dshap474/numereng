@@ -280,9 +280,11 @@ Data loading and CV rules:
 - `data.dataset_variant=non_downsampled` resolves canonical defaults from `.numereng/datasets/<data_version>/`.
 - `data.dataset_variant=downsampled` resolves `full.parquet -> downsampled_full.parquet` and `full_benchmark_models.parquet -> downsampled_full_benchmark_models.parquet`.
 - `data.dataset_variant` is required and allowed only: `non_downsampled|downsampled`.
-- Official downsampling artifacts (built by `dataset-tools build-full-datasets`) are:
-  `full.parquet`, `full_benchmark_models.parquet`, `downsampled_full.parquet`, `downsampled_full_benchmark_models.parquet`.
-- `dataset-tools build-full-datasets` uses default era filtering of every 4th era (`offset=0`) and supports `--skip-downsample` to build only full datasets.
+- Canonical non-downsampled storage uses split sources under `.numereng/datasets/<data_version>/`:
+  `train.parquet`, `validation.parquet`, plus split benchmark files.
+- Stored derived downsampled artifacts (built by `dataset-tools build-downsampled-full`) are:
+  `downsampled_full.parquet`, `downsampled_full_benchmark_models.parquet`.
+- `dataset-tools build-downsampled-full` uses default era filtering of every 4th era (`offset=0`).
 - `data.dataset_scope=train_only` uses `train.parquet` only.
 - `data.dataset_scope=train_plus_validation` uses `train.parquet` plus `validation.parquet`, and applies `data_type=validation` filtering only on validation sources.
 - `purged_walk_forward` uses walk-forward defaults of `chunk_size=156`; embargo is horizon-based (`20d -> 8`, `60d -> 16`).

@@ -15,7 +15,6 @@ class BuildDownsampledFullRequest:
     rebuild: bool = False
     downsample_eras_step: int = 4
     downsample_eras_offset: int = 0
-    skip_downsample: bool = False
 
 
 @dataclass(frozen=True)
@@ -24,16 +23,11 @@ class BuildDownsampledFullResult:
 
     data_dir: Path
     data_version: str
-    full_path: Path
-    full_benchmark_path: Path
-    downsampled_full_path: Path | None
-    downsampled_full_benchmark_path: Path | None
-    full_rows: int
-    downsampled_rows: int | None
-    full_benchmark_rows: int
-    downsampled_full_benchmark_rows: int | None
-    total_eras: int | None
-    kept_eras: int | None
+    downsampled_full_path: Path
+    downsampled_full_benchmark_path: Path
+    downsampled_rows: int
+    downsampled_full_benchmark_rows: int
+    total_eras: int
+    kept_eras: int
     downsample_step: int
     downsample_offset: int
-    downsample_built: bool

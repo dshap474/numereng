@@ -21,7 +21,7 @@ USAGE = (
     "  numereng hpo trials --study-id <id> [--format <table|json>] [--store-root <path>]\n"
     "  numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--store-root <path>]\n"  # noqa: E501
     "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--store-root <path>]\n"  # noqa: E501
-    "  numereng dataset-tools build-full-datasets [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--skip-downsample] [--rebuild]\n"  # noqa: E501
+    "  numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]\n"  # noqa: E501
     "  numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng ensemble details --ensemble-id <id> [--format <table|json>] [--store-root <path>]\n"
     "  numereng store init [--store-root <path>]\n"

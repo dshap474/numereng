@@ -12,15 +12,15 @@ from typing import cast
 import pandas as pd
 
 from numereng.features.scoring.metrics import (
-    attach_benchmark_predictions,
-    load_custom_benchmark_predictions,
+    attach_benchmark_predictions,  # noqa: F401
+    load_custom_benchmark_predictions,  # noqa: F401
 )
 from numereng.features.scoring.models import (
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
-from numereng.features.scoring.service import run_post_training_scoring
-from numereng.features.store import index_run
+from numereng.features.scoring.service import run_post_training_scoring  # noqa: F401
+from numereng.features.store import index_run  # noqa: F401
 from numereng.features.telemetry import (
     LocalRunTelemetrySession,
     append_log_line,
@@ -31,57 +31,63 @@ from numereng.features.telemetry import (
     mark_job_completed,
     mark_job_failed,
 )
-from numereng.features.training.client import TrainingDataClient, create_training_data_client
+from numereng.features.training.client import TrainingDataClient, create_training_data_client  # noqa: F401
+from numereng.features.training.cv import (
+    build_full_history_predictions,  # noqa: F401
+    build_oof_predictions,  # noqa: F401
+)
 from numereng.features.training.errors import TrainingConfigError, TrainingError
-from numereng.features.training.mlflow_tracking import maybe_log_training_run
+from numereng.features.training.mlflow_tracking import maybe_log_training_run  # noqa: F401
 from numereng.features.training.models import (
     TrainingRunResult,
-    build_lazy_parquet_data_loader,
-    build_model_data_loader,
-    build_x_cols,
-    normalize_x_groups,
+    build_lazy_parquet_data_loader,  # noqa: F401
+    build_model_data_loader,  # noqa: F401
+    build_x_cols,  # noqa: F401
+    normalize_x_groups,  # noqa: F401
 )
 from numereng.features.training.repo import (
     apply_missing_all_twos_as_nan,
-    ensure_split_dataset_paths,
-    list_lazy_source_eras,
-    load_config,
+    ensure_split_dataset_paths,  # noqa: F401
+    list_lazy_source_eras,  # noqa: F401
+    load_config,  # noqa: F401
     load_features,
-    load_fold_data_lazy,
+    load_fold_data_lazy,  # noqa: F401
     load_full_data,
-    resolve_fold_lazy_source_paths,
-    resolve_metrics_path,
-    resolve_output_locations,
-    resolve_resolved_config_path,
-    resolve_results_path,
-    resolve_run_manifest_path,
-    resolve_score_provenance_path,
+    resolve_fold_lazy_source_paths,  # noqa: F401
+    resolve_metrics_path,  # noqa: F401
+    resolve_output_locations,  # noqa: F401
+    resolve_resolved_config_path,  # noqa: F401
+    resolve_results_path,  # noqa: F401
+    resolve_run_manifest_path,  # noqa: F401
+    resolve_score_provenance_path,  # noqa: F401
     resolve_variant_dataset_filename,
-    save_metrics,
-    save_predictions,
-    save_resolved_config,
-    save_results,
-    save_run_manifest,
-    save_score_provenance,
-    select_prediction_columns,
+    save_metrics,  # noqa: F401
+    save_predictions,  # noqa: F401
+    save_resolved_config,  # noqa: F401
+    save_results,  # noqa: F401
+    save_run_manifest,  # noqa: F401
+    save_score_provenance,  # noqa: F401
+    select_prediction_columns,  # noqa: F401
 )
 from numereng.features.training.run_lock import (
     RUN_LOCK_FILENAME,
 )
 from numereng.features.training.run_log import (
-    initialize_run_log,
+    initialize_run_log,  # noqa: F401
     log_error,
     log_info,
     log_stage,
-    resolve_run_log_path,
+    resolve_run_log_path,  # noqa: F401
 )
-from numereng.features.training.run_store import compute_config_hash, compute_run_hash
+from numereng.features.training.run_store import (
+    compute_config_hash,  # noqa: F401
+    compute_run_hash,  # noqa: F401
+)
 from numereng.features.training.strategies import (
     TrainingEnginePlan,
     TrainingProfile,
-    resolve_training_engine,
+    resolve_training_engine,  # noqa: F401
 )
-from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions
 
 _MATERIALIZED_LOADING_MODE = "materialized"
 _FOLD_LAZY_LOADING_MODE = "fold_lazy"
@@ -138,7 +144,6 @@ def load_and_prepare_data(
     target_col: str,
     era_col: str,
     id_col: str,
-    full_data_path: str | Path | None,
     dataset_scope: str,
     nan_missing_all_twos: bool,
     missing_value: float,
@@ -153,7 +158,6 @@ def load_and_prepare_data(
         era_col,
         target_col,
         id_col,
-        full_data_path=full_data_path,
         dataset_scope=dataset_scope,
     )
 
@@ -174,7 +178,6 @@ def build_results_payload(
     dataset_variant: str,
     feature_set: str,
     target_col: str,
-    full_data_path: str | Path | None,
     dataset_scope: str,
     full_rows: int,
     full_eras: int,
@@ -237,7 +240,6 @@ def build_results_payload(
             "dataset_variant": dataset_variant,
             "feature_set": feature_set,
             "target": target_col,
-            "full_data_path": str(full_data_path) if full_data_path else None,
             "dataset_scope": dataset_scope,
             "full_rows": full_rows,
             "full_eras": full_eras,
@@ -251,11 +253,7 @@ def build_results_payload(
             "model": benchmark_model,
             "file": str(
                 benchmark_data_path
-                or _default_variant_data_path(
-                    data_version,
-                    dataset_variant,
-                    "full_benchmark_models.parquet",
-                )
+                or _default_benchmark_data_reference(data_version, dataset_variant)
             ),
         },
         "meta_model": {
@@ -589,8 +587,8 @@ def _resolve_dataset_scope_for_profile(
     profile: TrainingProfile,
     configured_scope: str,
     dataset_variant: str,
-    full_data_path: str | Path | None,
 ) -> str:
+    _ = dataset_variant
     if profile in {_PURGED_WALK_FORWARD_PROFILE, _FULL_HISTORY_REFIT_PROFILE}:
         return "train_plus_validation"
     if profile == _SIMPLE_PROFILE:
@@ -598,15 +596,6 @@ def _resolve_dataset_scope_for_profile(
             raise TrainingConfigError("training_profile_simple_disallows_downsampled_dataset_variant")
         return "train_plus_validation"
     return configured_scope
-
-
-def _resolve_simple_split_paths_from_full_data_path(full_data_path: str | Path) -> tuple[Path, Path]:
-    full_path = Path(full_data_path).expanduser().resolve()
-    train_path = full_path.parent / "train.parquet"
-    validation_path = full_path.parent / "validation.parquet"
-    if not train_path.is_file() or not validation_path.is_file():
-        raise TrainingConfigError("training_profile_simple_requires_split_sources_near_full_data_path")
-    return train_path, validation_path
 
 
 def _resolve_dataset_variant(value: object) -> str:
@@ -621,6 +610,15 @@ def _resolve_dataset_variant(value: object) -> str:
 def _default_variant_data_path(data_version: str, dataset_variant: str, filename: str) -> str:
     resolved_filename = resolve_variant_dataset_filename(dataset_variant=dataset_variant, filename=filename)
     return f"{data_version}/{resolved_filename}"
+
+
+def _default_benchmark_data_reference(data_version: str, dataset_variant: str) -> str:
+    if dataset_variant == "downsampled":
+        return _default_variant_data_path(data_version, dataset_variant, "full_benchmark_models.parquet")
+    return (
+        f"{data_version}/train_benchmark_models.parquet + "
+        f"{data_version}/validation_benchmark_models.parquet[data_type=validation]"
+    )
 
 
 def _resolve_scoring_mode(value: object) -> str:

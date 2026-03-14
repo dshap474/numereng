@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -23,7 +24,6 @@ from numereng.features.scoring.metrics import summarize_prediction_file_with_sco
 @dataclass(frozen=True)
 class _SyntheticDataset:
     features: list[str]
-    full_path: Path
     train_path: Path
     validation_path: Path
     benchmark_path: Path
@@ -61,6 +61,8 @@ def _build_synthetic_dataset(
 ) -> _SyntheticDataset:
     rng = np.random.default_rng(seed)
     feature_cols = [f"feature_{idx}" for idx in range(n_features)]
+    version_dir = root / "v5.2"
+    version_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[pd.DataFrame] = []
     for era_idx in range(1, n_eras + 1):
@@ -88,13 +90,11 @@ def _build_synthetic_dataset(
     if not validation.empty:
         validation.loc[validation.index[0], "data_type"] = "live"
 
-    full_path = root / "full.parquet"
-    train_path = root / "train.parquet"
-    validation_path = root / "validation.parquet"
-    benchmark_path = root / "benchmark.parquet"
-    meta_path = root / "meta.parquet"
+    train_path = version_dir / "train.parquet"
+    validation_path = version_dir / "validation.parquet"
+    benchmark_path = version_dir / "benchmark.parquet"
+    meta_path = version_dir / "meta.parquet"
 
-    full.to_parquet(full_path, index=False)
     train.to_parquet(train_path, index=False)
     validation.to_parquet(validation_path, index=False)
 
@@ -108,12 +108,19 @@ def _build_synthetic_dataset(
 
     return _SyntheticDataset(
         features=feature_cols,
-        full_path=full_path,
         train_path=train_path,
         validation_path=validation_path,
         benchmark_path=benchmark_path,
         meta_path=meta_path,
     )
+
+
+def _stage_default_dataset_root(root: Path, dataset: _SyntheticDataset) -> None:
+    version_dir = root / ".numereng" / "datasets" / "v5.2"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(root / "v5.2" / "features.json", version_dir / "features.json")
+    shutil.copyfile(dataset.train_path, version_dir / "train.parquet")
+    shutil.copyfile(dataset.validation_path, version_dir / "validation.parquet")
 
 
 def _build_training_config(
@@ -124,7 +131,6 @@ def _build_training_config(
     scoring_mode: str,
     era_chunk_size: int,
     parallel_folds: int,
-    use_full_data_path: bool,
 ) -> dict[str, object]:
     data_block: dict[str, object] = {
         "data_version": "v5.2",
@@ -142,9 +148,6 @@ def _build_training_config(
             "era_chunk_size": era_chunk_size,
         },
     }
-    if use_full_data_path:
-        data_block["full_data_path"] = str(dataset.full_path)
-
     return {
         "data": data_block,
         "model": {
@@ -195,9 +198,11 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=180, n_features=8, seed=7)
     store_root = tmp_path / ".numereng"
     _write_features_metadata(tmp_path, dataset.features)
+    _stage_default_dataset_root(tmp_path, dataset)
 
     config_path = tmp_path / "train_fold_lazy.json"
     config_payload = _build_training_config(
@@ -207,12 +212,10 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
         scoring_mode="materialized",
         era_chunk_size=8,
         parallel_folds=1,
-        use_full_data_path=False,
     )
     _write_config(config_path, config_payload)
 
     monkeypatch.setattr(training_service_module, "create_training_data_client", lambda: _NoDownloadClient())
-    monkeypatch.setattr(training_service_module, "DEFAULT_DATASETS_DIR", tmp_path)
     monkeypatch.setattr(
         training_service_module,
         "load_features",
@@ -222,12 +225,11 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
     def _resolve_fold_paths(
         client: object,
         data_version: str,
-        full_data_path: Path | None = None,
         dataset_scope: str = "train_only",
         data_root: Path | None = None,
         dataset_variant: str = "non_downsampled",
     ) -> tuple[Path, ...]:
-        del client, data_version, full_data_path, data_root, dataset_variant
+        del client, data_version, data_root, dataset_variant
         if dataset_scope == "train_plus_validation":
             return (dataset.train_path, dataset.validation_path)
         return (dataset.train_path,)
@@ -281,7 +283,10 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
     _write_features_metadata(tmp_path, dataset.features)
     predictions_path = tmp_path / "predictions.parquet"
 
-    full = pd.read_parquet(dataset.full_path)
+    train = pd.read_parquet(dataset.train_path)
+    validation = pd.read_parquet(dataset.validation_path)
+    validation_only = validation[validation["data_type"] == "validation"].drop(columns=["data_type"])
+    full = pd.concat([train, validation_only], ignore_index=True)
     prediction_frame = full[["id", "era", "target"]].copy()
     prediction_frame["prediction"] = prediction_frame["target"] * 0.6 + 0.2
     prediction_frame.to_parquet(predictions_path, index=False)
@@ -294,7 +299,6 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
-        full_data_path=dataset.full_path,
         dataset_scope="train_plus_validation",
         benchmark_model="v52_lgbm_ender20",
         benchmark_data_path=dataset.benchmark_path,
@@ -313,7 +317,6 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         data_version="v5.2",
         client=_NoDownloadClient(),
         feature_set="small",
-        full_data_path=dataset.full_path,
         dataset_scope="train_plus_validation",
         benchmark_model="v52_lgbm_ender20",
         benchmark_data_path=dataset.benchmark_path,
@@ -341,12 +344,13 @@ def test_parallel_memmap_outputs_match_single_worker(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=320, n_features=10, seed=23)
     store_root = tmp_path / ".numereng"
     _write_features_metadata(tmp_path, dataset.features)
+    _stage_default_dataset_root(tmp_path, dataset)
 
     monkeypatch.setattr(training_service_module, "create_training_data_client", lambda: _NoDownloadClient())
-    monkeypatch.setattr(training_service_module, "DEFAULT_DATASETS_DIR", tmp_path)
     monkeypatch.setattr(
         training_service_module,
         "load_features",
@@ -364,7 +368,6 @@ def test_parallel_memmap_outputs_match_single_worker(
             scoring_mode="materialized",
             era_chunk_size=8,
             parallel_folds=1,
-            use_full_data_path=True,
         ),
     )
     _write_config(
@@ -376,7 +379,6 @@ def test_parallel_memmap_outputs_match_single_worker(
             scoring_mode="materialized",
             era_chunk_size=8,
             parallel_folds=2,
-            use_full_data_path=True,
         ),
     )
 
@@ -484,7 +486,6 @@ def test_fold_lazy_slow_peak_rss_regression_gate(tmp_path: Path) -> None:
             scoring_mode="materialized",
             era_chunk_size=64,
             parallel_folds=1,
-            use_full_data_path=False,
         ),
     )
     _write_config(
@@ -496,7 +497,6 @@ def test_fold_lazy_slow_peak_rss_regression_gate(tmp_path: Path) -> None:
             scoring_mode="materialized",
             era_chunk_size=64,
             parallel_folds=1,
-            use_full_data_path=False,
         ),
     )
 

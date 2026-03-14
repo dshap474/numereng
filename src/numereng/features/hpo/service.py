@@ -474,7 +474,6 @@ def _extract_metric_value_from_predictions(
     target_col = str(data_config.get("target_col", "target"))
     era_col = str(data_config.get("era_col", "era"))
     id_col = str(data_config.get("id_col", "id"))
-    full_data_path = _optional_path(data_config.get("full_data_path"))
     dataset_scope = str(data_config.get("dataset_scope", "train_only"))
     benchmark_model = str(data_config.get("benchmark_model", DEFAULT_BENCHMARK_MODEL))
     benchmark_data_path = _optional_path(data_config.get("benchmark_data_path"))
@@ -498,7 +497,6 @@ def _extract_metric_value_from_predictions(
                 dataset_variant=dataset_variant,
                 feature_set=feature_set,
                 feature_source_paths=None,
-                full_data_path=full_data_path,
                 dataset_scope=dataset_scope,
                 benchmark_model=benchmark_model,
                 benchmark_data_path=benchmark_data_path,
