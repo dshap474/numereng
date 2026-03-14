@@ -121,6 +121,30 @@ def test_build_downsampled_full_downloads_missing_sources(tmp_path: Path) -> Non
     ]
 
 
+def test_build_downsampled_full_reuses_existing_artifacts_when_not_rebuilding(tmp_path: Path) -> None:
+    datasets_root = tmp_path / "datasets"
+    version_dir = datasets_root / "v5.2"
+    version_dir.mkdir(parents=True, exist_ok=True)
+    _seed_local_dataset(version_dir)
+
+    first = build_downsampled_full(
+        BuildDownsampledFullRequest(data_dir=datasets_root, data_version="v5.2"),
+        client=_NoDownloadClient(),
+    )
+    first_full_mtime = first.downsampled_full_path.stat().st_mtime_ns
+    first_benchmark_mtime = first.downsampled_full_benchmark_path.stat().st_mtime_ns
+
+    second = build_downsampled_full(
+        BuildDownsampledFullRequest(data_dir=datasets_root, data_version="v5.2", rebuild=False),
+        client=_NoDownloadClient(),
+    )
+
+    assert second.downsampled_rows == first.downsampled_rows
+    assert second.downsampled_full_benchmark_rows == first.downsampled_full_benchmark_rows
+    assert second.downsampled_full_path.stat().st_mtime_ns == first_full_mtime
+    assert second.downsampled_full_benchmark_path.stat().st_mtime_ns == first_benchmark_mtime
+
+
 def test_build_downsampled_full_rejects_missing_era_column(tmp_path: Path) -> None:
     datasets_root = tmp_path / "datasets"
     version_dir = datasets_root / "v5.2"
@@ -144,6 +168,47 @@ def test_build_downsampled_full_rejects_missing_era_column(tmp_path: Path) -> No
             BuildDownsampledFullRequest(data_dir=datasets_root, data_version="v5.2"),
             client=_NoDownloadClient(),
         )
+
+
+def test_build_downsampled_full_writes_empty_benchmark_when_ids_do_not_overlap(tmp_path: Path) -> None:
+    datasets_root = tmp_path / "datasets"
+    version_dir = datasets_root / "v5.2"
+    version_dir.mkdir(parents=True, exist_ok=True)
+
+    pd.DataFrame(
+        {
+            "id": ["train_1"],
+            "era": ["0001"],
+            "target": [0.1],
+        }
+    ).to_parquet(version_dir / "train.parquet", index=False)
+    pd.DataFrame(
+        {
+            "id": ["val_1"],
+            "era": ["0002"],
+            "target": [0.2],
+            "data_type": ["validation"],
+        }
+    ).set_index("id").to_parquet(version_dir / "validation.parquet")
+    pd.DataFrame({"id": ["other_train"], "v52_lgbm_ender20": [0.01]}).to_parquet(
+        version_dir / "train_benchmark_models.parquet",
+        index=False,
+    )
+    pd.DataFrame({"id": ["other_val"], "v52_lgbm_ender20": [0.02]}).to_parquet(
+        version_dir / "validation_benchmark_models.parquet",
+        index=False,
+    )
+
+    result = build_downsampled_full(
+        BuildDownsampledFullRequest(data_dir=datasets_root, data_version="v5.2"),
+        client=_NoDownloadClient(),
+    )
+
+    assert result.downsampled_rows == 1
+    assert result.downsampled_full_benchmark_rows == 0
+    assert result.downsampled_full_benchmark_path.exists()
+    downsampled_benchmark = pd.read_parquet(result.downsampled_full_benchmark_path)
+    assert downsampled_benchmark.empty
 
 
 def test_build_downsampled_full_rejects_invalid_step(tmp_path: Path) -> None:

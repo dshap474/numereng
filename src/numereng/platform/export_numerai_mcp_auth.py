@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Mapping, Sequence
 
 from numereng.platform.errors import NumeraiMcpAuthError
 
