@@ -409,7 +409,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(404, f"Manifest for run {run_id} not found")
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_manifest": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_manifest": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/metrics")
@@ -423,7 +427,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(404, f"Metrics for run {run_id} not found")
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_metrics": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_metrics": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/events")
@@ -435,7 +443,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(400, str(exc)) from exc
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_events": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_events": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/resources")
@@ -447,7 +459,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(400, str(exc)) from exc
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_resources": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_resources": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/per-era-corr")
@@ -485,7 +501,9 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header({"run_feature_importance": (time.perf_counter() - started_at) * 1000.0})
+                "Server-Timing": _server_timing_header(
+                    {"run_feature_importance": (time.perf_counter() - started_at) * 1000.0}
+                )
             },
         )
 
@@ -500,7 +518,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(404, f"Trials data for run {run_id} not found")
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_trials": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_trials": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/best-params")
@@ -514,7 +536,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(404, f"Best params for run {run_id} not found")
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_best_params": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_best_params": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/config")
@@ -528,7 +554,11 @@ def create_router(service: VizService) -> APIRouter:
             raise HTTPException(404, f"Resolved config for run {run_id} not found")
         return _cached_response(
             payload,
-            extra_headers={"Server-Timing": _server_timing_header({"run_config": (time.perf_counter() - started_at) * 1000.0})},
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_config": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
         )
 
     @router.get("/runs/{run_id}/diagnostics-sources")
@@ -543,7 +573,9 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header({"run_diagnostics_sources": (time.perf_counter() - started_at) * 1000.0})
+                "Server-Timing": _server_timing_header(
+                    {"run_diagnostics_sources": (time.perf_counter() - started_at) * 1000.0}
+                )
             },
         )
 
