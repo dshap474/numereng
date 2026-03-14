@@ -201,7 +201,6 @@ def _write_data_sync_config(tmp_path: Path) -> Path:
                 "data": {
                     "data_version": "v5.2",
                     "dataset_variant": "non_downsampled",
-                    "full_data_path": "v5.2/full.parquet",
                     "benchmark_data_path": "v5.2/benchmark.parquet",
                     "meta_model_data_path": "v5.2/meta_model.parquet",
                 },
@@ -314,7 +313,8 @@ def test_data_sync_uploads_config_required_files_and_persists_state(
     monkeypatch.chdir(tmp_path)
     datasets_root = tmp_path / ".numereng" / "datasets" / "v5.2"
     datasets_root.mkdir(parents=True, exist_ok=True)
-    (datasets_root / "full.parquet").write_bytes(b"full")
+    (datasets_root / "train.parquet").write_bytes(b"train")
+    (datasets_root / "validation.parquet").write_bytes(b"validation")
     (datasets_root / "benchmark.parquet").write_bytes(b"bench")
     (datasets_root / "meta_model.parquet").write_bytes(b"meta")
     (datasets_root / "features.json").write_text("{}", encoding="utf-8")
@@ -337,10 +337,13 @@ def test_data_sync_uploads_config_required_files_and_persists_state(
     assert response.state.data_volume_name == "numereng-v52"
     assert response.state.metadata["owner"] == "daniel"
     assert response.state.metadata["data_sync_dataset_variant"] == "non_downsampled"
-    assert response.state.data_manifest["v5.2/full.parquet"].endswith("/.numereng/datasets/v5.2/full.parquet")
+    assert response.state.data_manifest["v5.2/train.parquet"].endswith("/.numereng/datasets/v5.2/train.parquet")
+    assert response.state.data_manifest["v5.2/validation.parquet"].endswith(
+        "/.numereng/datasets/v5.2/validation.parquet"
+    )
     assert response.result["mount_path"] == MODAL_DATASETS_MOUNT_PATH
     assert response.result["dataset_variant"] == "non_downsampled"
-    assert response.result["file_count"] == 4
+    assert response.result["file_count"] == 5
     assert adapter.sync_payloads
     assert adapter.sync_payloads[0]["volume_name"] == "numereng-v52"
 

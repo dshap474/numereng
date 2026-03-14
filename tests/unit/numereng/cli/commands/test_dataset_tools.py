@@ -48,31 +48,25 @@ def test_build_downsampled_full_success(
         assert request.data_dir == expected_data_dir
         assert request.downsample_eras_step == 8
         assert request.downsample_eras_offset == 2
-        assert request.skip_downsample is False
         assert request.rebuild is True
         return api_module.DatasetToolsBuildDownsampleResponse(
             data_version="v5.2",
             data_dir=expected_data_dir,
-            full_path=f"{expected_data_dir}/v5.2/full.parquet",
-            full_benchmark_path=f"{expected_data_dir}/v5.2/full_benchmark_models.parquet",
             downsampled_full_path=f"{expected_data_dir}/v5.2/downsampled_full.parquet",
             downsampled_full_benchmark_path=f"{expected_data_dir}/v5.2/downsampled_full_benchmark_models.parquet",
-            full_rows=100,
             downsampled_rows=25,
-            full_benchmark_rows=100,
             downsampled_full_benchmark_rows=25,
             total_eras=200,
             kept_eras=50,
             downsample_step=8,
             downsample_offset=2,
-            downsample_built=True,
         )
 
     monkeypatch.setattr(api_module, "dataset_tools_build_downsampled_full", fake_build)
     rc = main(
         [
             "dataset-tools",
-            "build-full-datasets",
+            "build-downsampled-full",
             "--data-version",
             "v5.2",
             "--data-dir",
@@ -89,52 +83,6 @@ def test_build_downsampled_full_success(
     assert payload["downsampled_rows"] == 25
     assert payload["downsample_step"] == 8
     assert payload["downsample_offset"] == 2
-    assert payload["downsample_built"] is True
-
-
-def test_build_full_datasets_skip_downsample_success(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    expected_data_dir = str(tmp_path / "datasets")
-
-    def fake_build(
-        request: api_module.DatasetToolsBuildDownsampleRequest,
-    ) -> api_module.DatasetToolsBuildDownsampleResponse:
-        assert request.skip_downsample is True
-        return api_module.DatasetToolsBuildDownsampleResponse(
-            data_version="v5.2",
-            data_dir=expected_data_dir,
-            full_path=f"{expected_data_dir}/v5.2/full.parquet",
-            full_benchmark_path=f"{expected_data_dir}/v5.2/full_benchmark_models.parquet",
-            downsampled_full_path=None,
-            downsampled_full_benchmark_path=None,
-            full_rows=100,
-            downsampled_rows=None,
-            full_benchmark_rows=100,
-            downsampled_full_benchmark_rows=None,
-            total_eras=None,
-            kept_eras=None,
-            downsample_step=4,
-            downsample_offset=0,
-            downsample_built=False,
-        )
-
-    monkeypatch.setattr(api_module, "dataset_tools_build_downsampled_full", fake_build)
-    rc = main(
-        [
-            "dataset-tools",
-            "build-full-datasets",
-            "--data-dir",
-            expected_data_dir,
-            "--skip-downsample",
-        ]
-    )
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["downsample_built"] is False
-    assert payload["downsampled_full_path"] is None
 
 
 def test_build_downsampled_full_boundary_error(
@@ -149,12 +97,12 @@ def test_build_downsampled_full_boundary_error(
 
     monkeypatch.setattr(api_module, "dataset_tools_build_downsampled_full", fake_build)
 
-    rc = main(["dataset-tools", "build-full-datasets"])
+    rc = main(["dataset-tools", "build-downsampled-full"])
     assert rc == 1
     assert "dataset_build_failed" in capsys.readouterr().err
 
 
-def test_build_downsampled_full_alias_still_supported(
+def test_build_downsampled_full_is_canonical_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     called = False
@@ -168,19 +116,14 @@ def test_build_downsampled_full_alias_still_supported(
         return api_module.DatasetToolsBuildDownsampleResponse(
             data_version="v5.2",
             data_dir=".numereng/datasets",
-            full_path=".numereng/datasets/v5.2/full.parquet",
-            full_benchmark_path=".numereng/datasets/v5.2/full_benchmark_models.parquet",
             downsampled_full_path=".numereng/datasets/v5.2/downsampled_full.parquet",
             downsampled_full_benchmark_path=".numereng/datasets/v5.2/downsampled_full_benchmark_models.parquet",
-            full_rows=1,
             downsampled_rows=1,
-            full_benchmark_rows=1,
             downsampled_full_benchmark_rows=1,
             total_eras=1,
             kept_eras=1,
             downsample_step=4,
             downsample_offset=0,
-            downsample_built=True,
         )
 
     monkeypatch.setattr(api_module, "dataset_tools_build_downsampled_full", fake_build)

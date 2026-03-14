@@ -236,7 +236,7 @@ class StoreMaterializeVizArtifactsRequest(BaseModel):
     all: bool = False
 
     @model_validator(mode="after")
-    def _validate_scope(self) -> "StoreMaterializeVizArtifactsRequest":
+    def _validate_scope(self) -> StoreMaterializeVizArtifactsRequest:
         scope_flags = int(self.run_id is not None) + int(self.experiment_id is not None) + int(self.all)
         if scope_flags != 1:
             raise ValueError("exactly one of run_id, experiment_id, or all=true is required")
@@ -264,25 +264,19 @@ class DatasetToolsBuildDownsampleRequest(BaseModel):
     rebuild: bool = False
     downsample_eras_step: int = 4
     downsample_eras_offset: int = 0
-    skip_downsample: bool = False
 
 
 class DatasetToolsBuildDownsampleResponse(BaseModel):
     data_version: str
     data_dir: str
-    full_path: str
-    full_benchmark_path: str
-    downsampled_full_path: str | None
-    downsampled_full_benchmark_path: str | None
-    full_rows: int
-    downsampled_rows: int | None
-    full_benchmark_rows: int
-    downsampled_full_benchmark_rows: int | None
-    total_eras: int | None
-    kept_eras: int | None
+    downsampled_full_path: str
+    downsampled_full_benchmark_path: str
+    downsampled_rows: int
+    downsampled_full_benchmark_rows: int
+    total_eras: int
+    kept_eras: int
     downsample_step: int
     downsample_offset: int
-    downsample_built: bool
 
 
 __all__ = [

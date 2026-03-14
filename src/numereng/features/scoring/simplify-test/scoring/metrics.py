@@ -1032,7 +1032,6 @@ def resolve_fnc_source_paths(
     data_version: str,
     dataset_variant: str,
     feature_source_paths: Sequence[Path] | None,
-    full_data_path: str | Path | None,
     dataset_scope: str,
     data_root: Path,
 ) -> tuple[tuple[Path, ...], bool]:
@@ -1044,11 +1043,10 @@ def resolve_fnc_source_paths(
             client,
             data_version,
             dataset_variant=dataset_variant,
-            full_data_path=full_data_path,
             dataset_scope=dataset_scope,
             data_root=data_root,
         )
-    include_validation_only = full_data_path is None and dataset_scope == "train_plus_validation"
+    include_validation_only = dataset_scope == "train_plus_validation"
     return source_paths, include_validation_only
 
 
@@ -1207,7 +1205,6 @@ def _summarize_prediction_file_with_scores_materialized(
     client: TrainingDataClient,
     feature_set: str,
     feature_source_paths: Sequence[Path] | None = None,
-    full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
     benchmark_model: str = DEFAULT_BENCHMARK_MODEL,
     benchmark_data_path: str | Path | None = None,
@@ -1254,7 +1251,6 @@ def _summarize_prediction_file_with_scores_materialized(
         data_version=data_version,
         dataset_variant=dataset_variant,
         feature_source_paths=feature_source_paths,
-        full_data_path=full_data_path,
         dataset_scope=dataset_scope,
         data_root=data_root,
     )
@@ -1561,7 +1557,6 @@ def summarize_prediction_file_with_scores(
     client: TrainingDataClient,
     feature_set: str = "small",
     feature_source_paths: Sequence[Path] | None = None,
-    full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
     benchmark_model: str = DEFAULT_BENCHMARK_MODEL,
     benchmark_data_path: str | Path | None = None,
@@ -1587,7 +1582,6 @@ def summarize_prediction_file_with_scores(
             client=client,
             feature_set=feature_set,
             feature_source_paths=feature_source_paths,
-            full_data_path=full_data_path,
             dataset_scope=dataset_scope,
             benchmark_model=benchmark_model,
             benchmark_data_path=benchmark_data_path,
@@ -1617,7 +1611,6 @@ def summarize_prediction_file_with_scores(
             client=client,
             feature_set=feature_set,
             feature_source_paths=feature_source_paths,
-            full_data_path=full_data_path,
             dataset_scope=dataset_scope,
             benchmark_model=benchmark_model,
             benchmark_data_path=benchmark_data_path,
@@ -1644,7 +1637,6 @@ def _summarize_prediction_file_with_scores_era_stream(
     client: TrainingDataClient,
     feature_set: str,
     feature_source_paths: Sequence[Path] | None = None,
-    full_data_path: str | Path | None = None,
     dataset_scope: str = "train_plus_validation",
     benchmark_model: str = DEFAULT_BENCHMARK_MODEL,
     benchmark_data_path: str | Path | None = None,
@@ -1714,7 +1706,6 @@ def _summarize_prediction_file_with_scores_era_stream(
         data_version=data_version,
         dataset_variant=dataset_variant,
         feature_source_paths=feature_source_paths,
-        full_data_path=full_data_path,
         dataset_scope=dataset_scope,
         data_root=data_root,
     )

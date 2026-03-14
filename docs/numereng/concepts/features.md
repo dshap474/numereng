@@ -69,17 +69,20 @@ Important constraints:
 
 ## Dataset Tools
 
-Official-style full and downsampled full datasets are built with:
+Stored derived downsampled datasets are built with:
 
 ```bash
-uv run numereng dataset-tools build-full-datasets --data-version v5.2
+uv run numereng dataset-tools build-downsampled-full --data-version v5.2
 ```
 
 That workflow materializes:
 
-- `full.parquet`
-- `full_benchmark_models.parquet`
 - `downsampled_full.parquet`
 - `downsampled_full_benchmark_models.parquet`
 
 under `.numereng/datasets/<data_version>/`.
+
+Non-downsampled training data remains canonical as split sources:
+
+- `train.parquet`
+- `validation.parquet`

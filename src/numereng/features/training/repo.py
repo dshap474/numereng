@@ -374,17 +374,10 @@ def resolve_fold_lazy_source_paths(
     data_version: str,
     *,
     dataset_variant: str = DEFAULT_DATASET_VARIANT,
-    full_data_path: str | Path | None = None,
     dataset_scope: str = "train_only",
     data_root: Path = DEFAULT_DATASETS_DIR,
 ) -> tuple[Path, ...]:
     """Resolve parquet sources used by fold-lazy loading mode."""
-    if full_data_path is not None:
-        resolved = resolve_data_path(full_data_path, data_root=data_root)
-        if not resolved.exists():
-            raise TrainingDataError(f"training_full_data_file_not_found:{resolved}")
-        return (resolved,)
-
     if dataset_variant == "downsampled":
         full_path = ensure_full_dataset(
             client,
@@ -484,7 +477,6 @@ def load_full_data(
     era_col: str,
     target_col: str,
     id_col: str | None,
-    full_data_path: str | Path | None = None,
     dataset_scope: str = "train_only",
     extra_cols: list[str] | None = None,
     *,
@@ -495,19 +487,6 @@ def load_full_data(
     projected_columns = _dedupe_columns([era_col, target_col, *features, *extra_cols])
     if id_col:
         projected_columns = _dedupe_columns([*projected_columns, id_col])
-
-    if full_data_path:
-        full_path = resolve_data_path(full_data_path, data_root=data_root)
-        if not full_path.exists():
-            raise TrainingDataError(f"training_full_data_file_not_found:{full_path}")
-        return _read_full_data_source(
-            full_path,
-            columns=projected_columns,
-            era_col=era_col,
-            target_col=target_col,
-            feature_cols=features,
-            id_col=id_col,
-        )
 
     if dataset_variant == "downsampled":
         full_path = ensure_full_dataset(

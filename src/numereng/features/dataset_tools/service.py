@@ -226,80 +226,10 @@ def _era_sort_key(value: object) -> int:
         raise DatasetToolsValidationError(f"downsample_era_not_numeric:{value}") from exc
 
 
-def _build_full_dataset(
-    client: TrainingDataClient,
-    *,
-    data_version: str,
-    version_dir: Path,
-    reuse_existing: bool,
-) -> tuple[Path, int]:
-    full_path = (version_dir / "full.parquet").resolve()
-    if reuse_existing and full_path.exists():
-        return full_path, _parquet_num_rows(full_path)
-
-    train_path = _ensure_dataset_file(
-        client,
-        data_version=data_version,
-        version_dir=version_dir,
-        filename="train.parquet",
-    )
-    validation_path = _ensure_dataset_file(
-        client,
-        data_version=data_version,
-        version_dir=version_dir,
-        filename="validation.parquet",
-    )
-
-    rows = _write_full_dataset_streaming(
-        train_path=train_path,
-        validation_path=validation_path,
-        full_path=full_path,
-    )
-    return full_path, rows
-
-
-def _build_full_benchmark(
-    client: TrainingDataClient,
-    *,
-    data_version: str,
-    version_dir: Path,
-    reuse_existing: bool,
-) -> tuple[Path, int]:
-    full_path = (version_dir / "full_benchmark_models.parquet").resolve()
-    if reuse_existing and full_path.exists():
-        return full_path, _parquet_num_rows(full_path)
-
-    train_path = _ensure_dataset_file(
-        client,
-        data_version=data_version,
-        version_dir=version_dir,
-        filename="train_benchmark_models.parquet",
-    )
-    validation_path = _ensure_dataset_file(
-        client,
-        data_version=data_version,
-        version_dir=version_dir,
-        filename="validation_benchmark_models.parquet",
-    )
-    validation_data_path = _ensure_dataset_file(
-        client,
-        data_version=data_version,
-        version_dir=version_dir,
-        filename="validation.parquet",
-    )
-
-    rows = _write_full_benchmark_streaming(
-        train_benchmark_path=train_path,
-        validation_benchmark_path=validation_path,
-        validation_data_path=validation_data_path,
-        full_path=full_path,
-    )
-    return full_path, rows
-
-
 def _build_downsampled_full_dataset(
     *,
-    full_path: Path,
+    train_path: Path,
+    validation_path: Path,
     version_dir: Path,
     era_step: int,
     era_offset: int,
@@ -312,20 +242,65 @@ def _build_downsampled_full_dataset(
         )
 
     downsampled_path = (version_dir / "downsampled_full.parquet").resolve()
-    full = _safe_read_parquet(full_path)
-    if _ERA_COL not in full.columns:
-        raise DatasetToolsValidationError(f"downsample_missing_era_column:{full_path}:{_ERA_COL}")
+    unique_eras_set: set[object] = set()
+    for source_path, only_validation_rows in ((train_path, False), (validation_path, True)):
+        for frame in _iter_parquet_batches(source_path):
+            batch = frame
+            if only_validation_rows and "data_type" in batch.columns:
+                batch = batch[batch["data_type"] == "validation"].copy()
+            batch = batch.drop(columns=["data_type"], errors="ignore")
+            if batch.index.name and batch.index.name not in batch.columns:
+                batch = batch.reset_index()
+            if batch.empty:
+                continue
+            if _ERA_COL not in batch.columns:
+                raise DatasetToolsValidationError(f"downsample_missing_era_column:{source_path}:{_ERA_COL}")
+            unique_eras_set.update(batch[_ERA_COL].tolist())
 
-    unique_eras = sorted(full[_ERA_COL].unique(), key=_era_sort_key)
+    unique_eras = sorted(unique_eras_set, key=_era_sort_key)
     keep_eras = {era for idx, era in enumerate(unique_eras) if idx % era_step == era_offset}
-    downsampled = full[full[_ERA_COL].isin(keep_eras)].copy()
-    _safe_write_parquet(downsampled, downsampled_path, index=False)
-    return downsampled_path, int(len(downsampled)), int(len(unique_eras)), int(len(keep_eras))
+    writer: pq.ParquetWriter | None = None
+    downsampled_rows = 0
+
+    try:
+        for source_path, only_validation_rows in ((train_path, False), (validation_path, True)):
+            for frame in _iter_parquet_batches(source_path):
+                batch = frame
+                if only_validation_rows and "data_type" in batch.columns:
+                    batch = batch[batch["data_type"] == "validation"].copy()
+                batch = batch.drop(columns=["data_type"], errors="ignore")
+                if batch.index.name and batch.index.name not in batch.columns:
+                    batch = batch.reset_index()
+                if batch.empty:
+                    continue
+                if _ERA_COL not in batch.columns:
+                    raise DatasetToolsValidationError(f"downsample_missing_era_column:{source_path}:{_ERA_COL}")
+                batch = batch[batch[_ERA_COL].isin(keep_eras)].copy()
+                if batch.empty:
+                    continue
+                table = pa.Table.from_pandas(batch, preserve_index=False)
+                if writer is None:
+                    writer = _open_writer(downsampled_path, table)
+                writer.write_table(table)
+                downsampled_rows += int(len(batch))
+    except Exception as exc:
+        if writer is not None:
+            writer.close()
+        if downsampled_path.exists():
+            downsampled_path.unlink(missing_ok=True)
+        raise DatasetToolsExecutionError(f"parquet_write_failed:{downsampled_path}") from exc
+
+    if writer is None:
+        raise DatasetToolsExecutionError(f"parquet_write_failed:{downsampled_path}")
+    writer.close()
+    return downsampled_path, downsampled_rows, int(len(unique_eras)), int(len(keep_eras))
 
 
 def _build_downsampled_full_benchmark(
     *,
-    full_benchmark_path: Path,
+    train_benchmark_path: Path,
+    validation_benchmark_path: Path,
+    validation_data_path: Path,
     downsampled_full_path: Path,
     version_dir: Path,
 ) -> tuple[Path, int]:
@@ -334,12 +309,43 @@ def _build_downsampled_full_benchmark(
     if _ID_COL not in ids.columns:
         raise DatasetToolsValidationError(f"downsample_missing_id_column:{downsampled_full_path}:{_ID_COL}")
     id_values = pd.Index(ids[_ID_COL].dropna().unique())
-    benchmark = _safe_read_parquet(full_benchmark_path)
-    if _ID_COL in benchmark.columns:
-        benchmark = benchmark.set_index(_ID_COL)
-    benchmark = benchmark.loc[benchmark.index.intersection(id_values)]
-    _safe_write_parquet(benchmark, downsampled_path, index=True)
-    return downsampled_path, int(len(benchmark))
+    writer: pq.ParquetWriter | None = None
+    rows_written = 0
+
+    def _write_filtered_batch(frame: pd.DataFrame) -> None:
+        nonlocal writer, rows_written
+        benchmark_batch = frame
+        if _ID_COL in benchmark_batch.columns:
+            benchmark_batch = benchmark_batch.set_index(_ID_COL)
+        benchmark_batch = benchmark_batch.loc[benchmark_batch.index.intersection(id_values)]
+        if benchmark_batch.empty:
+            return
+        table = pa.Table.from_pandas(benchmark_batch, preserve_index=True)
+        if writer is None:
+            writer = _open_writer(downsampled_path, table)
+        writer.write_table(table)
+        rows_written += int(len(benchmark_batch))
+
+    try:
+        for frame in _iter_parquet_batches(train_benchmark_path):
+            _write_filtered_batch(frame)
+
+        for frame in _iter_validation_benchmark_batches(
+            validation_data_path=validation_data_path,
+            validation_benchmark_path=validation_benchmark_path,
+        ):
+            _write_filtered_batch(frame)
+    except Exception as exc:
+        if writer is not None:
+            writer.close()
+        if downsampled_path.exists():
+            downsampled_path.unlink(missing_ok=True)
+        raise DatasetToolsExecutionError(f"parquet_write_failed:{downsampled_path}") from exc
+
+    if writer is None:
+        raise DatasetToolsExecutionError(f"parquet_write_failed:{downsampled_path}")
+    writer.close()
+    return downsampled_path, rows_written
 
 
 def build_downsampled_full(
@@ -347,63 +353,62 @@ def build_downsampled_full(
     *,
     client: TrainingDataClient,
 ) -> BuildDownsampledFullResult:
-    """Build full and downsampled full datasets using official era filtering."""
+    """Build downsampled full datasets using canonical split sources."""
 
     data_dir = Path(request.data_dir).expanduser().resolve()
     version_dir = (data_dir / request.data_version).resolve()
     version_dir.mkdir(parents=True, exist_ok=True)
-    reuse_existing = not request.rebuild
-
-    full_path, full_rows = _build_full_dataset(
+    train_path = _ensure_dataset_file(
         client,
         data_version=request.data_version,
         version_dir=version_dir,
-        reuse_existing=reuse_existing,
+        filename="train.parquet",
     )
-    full_benchmark_path, full_benchmark_rows = _build_full_benchmark(
+    validation_path = _ensure_dataset_file(
         client,
         data_version=request.data_version,
         version_dir=version_dir,
-        reuse_existing=reuse_existing,
+        filename="validation.parquet",
     )
-    downsampled_full_path: Path | None = None
-    downsampled_rows: int | None = None
-    total_eras: int | None = None
-    kept_eras: int | None = None
-    downsampled_full_benchmark_path: Path | None = None
-    downsampled_full_benchmark_rows: int | None = None
-    downsample_built = False
+    train_benchmark_path = _ensure_dataset_file(
+        client,
+        data_version=request.data_version,
+        version_dir=version_dir,
+        filename="train_benchmark_models.parquet",
+    )
+    validation_benchmark_path = _ensure_dataset_file(
+        client,
+        data_version=request.data_version,
+        version_dir=version_dir,
+        filename="validation_benchmark_models.parquet",
+    )
 
-    if not request.skip_downsample:
-        downsampled_full_path, downsampled_rows, total_eras, kept_eras = _build_downsampled_full_dataset(
-            full_path=full_path,
-            version_dir=version_dir,
-            era_step=request.downsample_eras_step,
-            era_offset=request.downsample_eras_offset,
-        )
-        downsampled_full_benchmark_path, downsampled_full_benchmark_rows = _build_downsampled_full_benchmark(
-            full_benchmark_path=full_benchmark_path,
-            downsampled_full_path=downsampled_full_path,
-            version_dir=version_dir,
-        )
-        downsample_built = True
+    downsampled_full_path, downsampled_rows, total_eras, kept_eras = _build_downsampled_full_dataset(
+        train_path=train_path,
+        validation_path=validation_path,
+        version_dir=version_dir,
+        era_step=request.downsample_eras_step,
+        era_offset=request.downsample_eras_offset,
+    )
+    downsampled_full_benchmark_path, downsampled_full_benchmark_rows = _build_downsampled_full_benchmark(
+        train_benchmark_path=train_benchmark_path,
+        validation_benchmark_path=validation_benchmark_path,
+        validation_data_path=validation_path,
+        downsampled_full_path=downsampled_full_path,
+        version_dir=version_dir,
+    )
 
     return BuildDownsampledFullResult(
         data_dir=data_dir,
         data_version=request.data_version,
-        full_path=full_path,
-        full_benchmark_path=full_benchmark_path,
         downsampled_full_path=downsampled_full_path,
         downsampled_full_benchmark_path=downsampled_full_benchmark_path,
-        full_rows=full_rows,
         downsampled_rows=downsampled_rows,
-        full_benchmark_rows=full_benchmark_rows,
         downsampled_full_benchmark_rows=downsampled_full_benchmark_rows,
         total_eras=total_eras,
         kept_eras=kept_eras,
         downsample_step=request.downsample_eras_step,
         downsample_offset=request.downsample_eras_offset,
-        downsample_built=downsample_built,
     )
 
 
@@ -413,21 +418,14 @@ def build_downsampled_full_response_payload(result: BuildDownsampledFullResult) 
     return {
         "data_dir": str(result.data_dir),
         "data_version": result.data_version,
-        "full_path": str(result.full_path),
-        "full_benchmark_path": str(result.full_benchmark_path),
-        "downsampled_full_path": str(result.downsampled_full_path) if result.downsampled_full_path else None,
-        "downsampled_full_benchmark_path": (
-            str(result.downsampled_full_benchmark_path) if result.downsampled_full_benchmark_path else None
-        ),
-        "full_rows": result.full_rows,
+        "downsampled_full_path": str(result.downsampled_full_path),
+        "downsampled_full_benchmark_path": str(result.downsampled_full_benchmark_path),
         "downsampled_rows": result.downsampled_rows,
-        "full_benchmark_rows": result.full_benchmark_rows,
         "downsampled_full_benchmark_rows": result.downsampled_full_benchmark_rows,
         "total_eras": result.total_eras,
         "kept_eras": result.kept_eras,
         "downsample_step": result.downsample_step,
         "downsample_offset": result.downsample_offset,
-        "downsample_built": result.downsample_built,
     }
 
 

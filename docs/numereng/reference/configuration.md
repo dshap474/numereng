@@ -71,7 +71,7 @@ Important fields:
 - `target_horizon` optional but preferred for purged walk-forward
 - `era_col` default `era`
 - `id_col` default `id`
-- `full_data_path`, `benchmark_data_path`, `meta_model_data_path` optional overrides
+- `benchmark_data_path`, `meta_model_data_path` optional overrides
 - `meta_model_col` default `numerai_meta_model`
 - `benchmark_model` default `v52_lgbm_ender20`
 - `loading.mode`: `materialized|fold_lazy`
@@ -81,8 +81,11 @@ Important fields:
 Dataset path behavior:
 
 - `non_downsampled` defaults resolve under `.numereng/datasets/<data_version>/`
-- `downsampled` remaps full-data inputs to `downsampled_full.parquet` and `downsampled_full_benchmark_models.parquet`
-- `dataset-tools build-full-datasets` materializes the official-style full and downsampled full artifacts
+- `non_downsampled` canonical storage is split-source only: `train.parquet` and `validation.parquet`
+- `downsampled` uses stored derived artifacts: `downsampled_full.parquet` and `downsampled_full_benchmark_models.parquet`
+- dataset row paths are package-managed from `data_version`, `dataset_variant`, training profile, and `dataset_scope`
+- `full_data_path` is removed from the public config contract
+- `dataset-tools build-downsampled-full` materializes only the downsampled derived artifacts
 
 ## `model`
 

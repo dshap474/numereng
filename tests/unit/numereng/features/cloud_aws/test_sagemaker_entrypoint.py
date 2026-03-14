@@ -56,7 +56,6 @@ def test_required_dataset_keys_for_official_config() -> None:
         "data": {
             "data_version": "v5.2",
             "dataset_variant": "non_downsampled",
-            "full_data_path": "v5.2/train.parquet",
             "benchmark_data_path": "v5.2/validation_benchmark_models.parquet",
             "meta_model_data_path": "v5.2/meta_model.parquet",
         }
@@ -66,6 +65,7 @@ def test_required_dataset_keys_for_official_config() -> None:
     assert keys == [
         "data/v5.2/features.json",
         "data/v5.2/train.parquet",
+        "data/v5.2/validation.parquet",
         "data/v5.2/validation_benchmark_models.parquet",
         "data/v5.2/meta_model.parquet",
     ]
@@ -82,8 +82,7 @@ def test_required_dataset_keys_accepts_downsampled_paths() -> None:
     config = {
         "data": {
             "data_version": "v5.2",
-            "dataset_variant": "non_downsampled",
-            "full_data_path": "v5.2/downsampled_full.parquet",
+            "dataset_variant": "downsampled",
             "benchmark_data_path": "v5.2/downsampled_full_benchmark_models.parquet",
         }
     }
@@ -110,20 +109,6 @@ def test_required_dataset_keys_defaults_to_downsampled_full_for_downsampled_vari
         "data/v5.2/downsampled_full.parquet",
     ]
 
-
-def test_required_dataset_keys_rejects_non_official_dataset_names() -> None:
-    config = {
-        "data": {
-            "data_version": "v5.2",
-            "dataset_variant": "non_downsampled",
-            "full_data_path": "v5.2/tiny_full.parquet",
-        }
-    }
-
-    with pytest.raises(ValueError, match="dataset_key_not_official"):
-        sagemaker_entrypoint.required_dataset_keys(config)
-
-
 def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -132,7 +117,6 @@ def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch
                 "data": {
                     "data_version": "v5.2",
                     "dataset_variant": "non_downsampled",
-                    "full_data_path": "v5.2/train.parquet",
                     "benchmark_data_path": "v5.2/train_benchmark_models.parquet",
                 }
             }
@@ -154,6 +138,7 @@ def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch
     assert downloaded_keys == [
         "data/v5.2/features.json",
         "data/v5.2/train.parquet",
+        "data/v5.2/validation.parquet",
         "data/v5.2/train_benchmark_models.parquet",
     ]
 
@@ -187,36 +172,6 @@ def test_stage_required_data_rejects_quantized_variant(
 
     assert fake_s3.calls == []
 
-
-def test_stage_required_data_rejects_non_official_dataset_names(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "data": {
-                    "data_version": "v5.2",
-                    "dataset_variant": "non_downsampled",
-                    "full_data_path": "v5.2/tiny_full.parquet",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    fake_s3 = _FakeS3Client()
-    fake_boto3 = _FakeBoto3(fake_s3)
-    monkeypatch.setattr(sagemaker_entrypoint, "boto3", fake_boto3)
-
-    with pytest.raises(ValueError, match="dataset_key_not_official"):
-        sagemaker_entrypoint.stage_required_data(
-            config_path,
-            env={"NUMERENG_CONFIG_S3_URI": "s3://numereng-artifacts/runs/run-1/config/config.json"},
-            data_root=tmp_path / "datasets",
-        )
-
-    assert fake_s3.calls == []
 
 
 def test_sanitize_output_dir_removes_store_db_files(tmp_path: Path) -> None:

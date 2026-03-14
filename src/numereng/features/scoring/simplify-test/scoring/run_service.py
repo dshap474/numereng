@@ -103,7 +103,6 @@ def score_run(
         dataset_variant=str(data_config.get("dataset_variant", _DEFAULT_DATASET_VARIANT)),
         feature_set=feature_set,
         feature_source_paths=None,
-        full_data_path=_optional_path(data_config.get("full_data_path")),
         dataset_scope=str(data_config.get("dataset_scope", _DEFAULT_DATASET_SCOPE)),
         benchmark_model=str(data_config.get("benchmark_model", "v52_lgbm_ender20")),
         benchmark_data_path=_optional_path(data_config.get("benchmark_data_path")),

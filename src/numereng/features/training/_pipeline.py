@@ -104,7 +104,6 @@ from numereng.features.training.service import (
     _resolve_resource_policy,
     _resolve_scoring_mode,
     _resolve_scoring_target_cols,
-    _resolve_simple_split_paths_from_full_data_path,
     _resolve_store_root_for_run,
     _scoring_policy_payload,
     build_results_payload,
@@ -138,7 +137,6 @@ class TrainingPipelineState:
     target_col: str = "target"
     era_col: str = "era"
     id_col: str = "id"
-    full_data_path: str | Path | None = None
     benchmark_data_path: str | Path | None = None
     meta_model_data_path: str | Path | None = None
     meta_model_col: str = "numerai_meta_model"
@@ -247,7 +245,6 @@ def prepare_training_run(
     state.target_col = str(state.data_config.get("target_col", "target"))
     state.era_col = str(state.data_config.get("era_col", "era"))
     state.id_col = str(state.data_config.get("id_col", "id"))
-    state.full_data_path = _optional_path(state.data_config.get("full_data_path"))
     state.benchmark_data_path = _optional_path(state.data_config.get("benchmark_data_path"))
     state.meta_model_data_path = _optional_path(state.data_config.get("meta_model_data_path"))
     state.meta_model_col = str(state.data_config.get("meta_model_col", "numerai_meta_model"))
@@ -280,7 +277,6 @@ def prepare_training_run(
         profile=cast(TrainingProfile, state.engine_plan.mode),
         configured_scope=dataset_scope_config,
         dataset_variant=state.dataset_variant,
-        full_data_path=state.full_data_path,
     )
     state.model_type, state.model_params = resolve_model_config(state.model_config)
 
@@ -448,7 +444,6 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
             state.era_col,
             state.target_col,
             state.id_col,
-            full_data_path=state.full_data_path,
             dataset_scope=state.dataset_scope,
         )
         if state.nan_missing_all_twos:
@@ -464,14 +459,11 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
     else:
         if state.nan_missing_all_twos:
             raise TrainingConfigError("training_data_loading_fold_lazy_disallows_nan_missing_all_twos")
-        state.lazy_include_validation_only = (
-            state.full_data_path is None and state.dataset_scope == "train_plus_validation"
-        )
+        state.lazy_include_validation_only = state.dataset_scope == "train_plus_validation"
         state.source_paths = resolve_fold_lazy_source_paths(
             cast(TrainingDataClient, state.training_client),
             state.data_version,
             dataset_variant=state.dataset_variant,
-            full_data_path=state.full_data_path,
             dataset_scope=state.dataset_scope,
             data_root=DEFAULT_DATASETS_DIR,
         )
@@ -570,8 +562,6 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             and len(state.source_paths) >= 2
         ):
             train_path, validation_path = state.source_paths[0], state.source_paths[1]
-        elif state.full_data_path is not None:
-            train_path, validation_path = _resolve_simple_split_paths_from_full_data_path(state.full_data_path)
         else:
             train_path, validation_path = ensure_split_dataset_paths(
                 cast(TrainingDataClient, state.training_client),
@@ -700,7 +690,6 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         dataset_variant=state.dataset_variant,
         feature_set=state.feature_set,
         target_col=state.target_col,
-        full_data_path=state.full_data_path,
         dataset_scope=state.dataset_scope,
         full_rows=state.full_rows,
         full_eras=state.full_eras,
@@ -792,7 +781,6 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 dataset_variant=state.dataset_variant,
                 feature_set=state.feature_set,
                 feature_source_paths=state.scoring_feature_source_paths,
-                full_data_path=state.full_data_path,
                 dataset_scope=state.dataset_scope,
                 benchmark_model=state.benchmark_model,
                 benchmark_data_path=state.benchmark_data_path,
@@ -862,7 +850,6 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         dataset_variant=state.dataset_variant,
         feature_set=state.feature_set,
         target_col=state.target_col,
-        full_data_path=state.full_data_path,
         dataset_scope=state.dataset_scope,
         full_rows=state.full_rows,
         full_eras=state.full_eras,

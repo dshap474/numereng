@@ -43,7 +43,6 @@ class DataConfig(_StrictConfigModel):
     target_horizon: Literal["20d", "60d"] | None = None
     era_col: str = "era"
     id_col: str = "id"
-    full_data_path: str | None = None
     benchmark_data_path: str | None = None
     meta_model_data_path: str | None = None
     meta_model_col: str = "numerai_meta_model"

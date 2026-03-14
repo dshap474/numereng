@@ -78,18 +78,6 @@
           "title": "Feature Set",
           "type": "string"
         },
-        "full_data_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Full Data Path"
-        },
         "id_col": {
           "default": "id",
           "title": "Id Col",

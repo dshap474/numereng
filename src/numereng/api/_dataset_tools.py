@@ -22,7 +22,7 @@ from numereng.platform.errors import PackageError
 def dataset_tools_build_downsampled_full(
     request: DatasetToolsBuildDownsampleRequest,
 ) -> DatasetToolsBuildDownsampleResponse:
-    """Build full + downsampled full datasets using official era downsampling."""
+    """Build downsampled full datasets using canonical split sources."""
 
     try:
         from numereng import api as api_module
@@ -34,7 +34,6 @@ def dataset_tools_build_downsampled_full(
                 rebuild=request.rebuild,
                 downsample_eras_step=request.downsample_eras_step,
                 downsample_eras_offset=request.downsample_eras_offset,
-                skip_downsample=request.skip_downsample,
             ),
             client=api_module._create_numerai_client(tournament="classic"),
         )

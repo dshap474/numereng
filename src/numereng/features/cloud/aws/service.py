@@ -280,8 +280,6 @@ class CloudEc2Service:
         optional_files = ["validation_example_preds.parquet"]
         optional_files.extend(
             [
-                "full.parquet",
-                "full_benchmark_models.parquet",
                 "downsampled_full.parquet",
                 "downsampled_full_benchmark_models.parquet",
             ]

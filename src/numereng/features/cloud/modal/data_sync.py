@@ -77,22 +77,18 @@ def resolve_required_data_files(
         raise ValueError("modal_data_sync_dataset_variant_invalid")
 
     requested_paths: list[tuple[str, str]] = []
-    full_data_path = _optional_path(data_config.get("full_data_path"))
-    if full_data_path is None:
-        if dataset_variant == "downsampled":
-            full_filename = _variant_filename(dataset_variant=dataset_variant, filename="full.parquet")
-            requested_paths.append(("full.parquet", f"{data_version}/{full_filename}"))
-        else:
-            train_filename = _variant_filename(dataset_variant=dataset_variant, filename="train.parquet")
-            validation_filename = _variant_filename(dataset_variant=dataset_variant, filename="validation.parquet")
-            requested_paths.extend(
-                [
-                    ("train.parquet", f"{data_version}/{train_filename}"),
-                    ("validation.parquet", f"{data_version}/{validation_filename}"),
-                ]
-            )
+    if dataset_variant == "downsampled":
+        full_filename = _variant_filename(dataset_variant=dataset_variant, filename="full.parquet")
+        requested_paths.append(("downsampled_full.parquet", f"{data_version}/{full_filename}"))
     else:
-        requested_paths.append(("full_data_path", full_data_path))
+        train_filename = _variant_filename(dataset_variant=dataset_variant, filename="train.parquet")
+        validation_filename = _variant_filename(dataset_variant=dataset_variant, filename="validation.parquet")
+        requested_paths.extend(
+            [
+                ("train.parquet", f"{data_version}/{train_filename}"),
+                ("validation.parquet", f"{data_version}/{validation_filename}"),
+            ]
+        )
 
     benchmark_data_path = _optional_path(data_config.get("benchmark_data_path"))
     if benchmark_data_path is not None:

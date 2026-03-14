@@ -479,43 +479,6 @@ def test_fold_lazy_list_eras_uses_train_and_filtered_validation(tmp_path: Path) 
     assert eras == ["001", "002", "003"]
 
 
-def test_fold_lazy_full_data_path_can_disable_validation_only_filter(tmp_path: Path) -> None:
-    data_root = tmp_path.resolve()
-    full_path = data_root / "full.parquet"
-    pd.DataFrame(
-        {
-            "id": ["a", "b", "c"],
-            "era": ["001", "002", "003"],
-            "target": [0.1, 0.2, 0.3],
-            "feature_1": [1.0, 2.0, 3.0],
-            "data_type": ["validation", "live", "test"],
-        }
-    ).to_parquet(full_path, index=False)
-
-    source_paths = resolve_fold_lazy_source_paths(
-        _NoDownloadClient(),
-        "v5.2",
-        full_data_path=full_path,
-        data_root=data_root,
-    )
-    scanned = load_fold_data_lazy(
-        source_paths,
-        eras=["001", "002", "003"],
-        columns=["era", "target", "feature_1", "id"],
-        era_col="era",
-        id_col="id",
-        include_validation_only=False,
-    )
-    eras = list_lazy_source_eras(
-        source_paths,
-        era_col="era",
-        include_validation_only=False,
-    )
-
-    assert list(scanned["era"]) == ["001", "002", "003"]
-    assert eras == ["001", "002", "003"]
-
-
 def test_resolve_fold_lazy_source_paths_defaults_to_train_only(tmp_path: Path) -> None:
     data_root = (tmp_path / ".numereng" / "datasets").resolve()
     version_dir = data_root / "v5.2"

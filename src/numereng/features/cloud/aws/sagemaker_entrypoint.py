@@ -165,27 +165,18 @@ def required_dataset_keys(config_payload: Mapping[str, object]) -> list[str]:
     features_filename = _variant_filename(dataset_variant=dataset_variant, filename="features.json")
     candidates: list[str] = [f"{dataset_prefix}/{features_filename}"]
 
-    full_data_path = data_payload.get("full_data_path")
-    full_data_path_value: str | None = None
-    if isinstance(full_data_path, str) and full_data_path:
-        full_data_path_value = full_data_path
-    if full_data_path_value is not None:
-        full_data_key = _to_data_key(full_data_path_value)
-        if full_data_key is not None:
-            candidates.append(full_data_key)
+    if dataset_variant == "downsampled":
+        full_filename = _variant_filename(dataset_variant=dataset_variant, filename="full.parquet")
+        candidates.append(f"{dataset_prefix}/{full_filename}")
     else:
-        if dataset_variant == "downsampled":
-            full_filename = _variant_filename(dataset_variant=dataset_variant, filename="full.parquet")
-            candidates.append(f"{dataset_prefix}/{full_filename}")
-        else:
-            train_filename = _variant_filename(dataset_variant=dataset_variant, filename="train.parquet")
-            validation_filename = _variant_filename(dataset_variant=dataset_variant, filename="validation.parquet")
-            candidates.extend(
-                [
-                    f"{dataset_prefix}/{train_filename}",
-                    f"{dataset_prefix}/{validation_filename}",
-                ]
-            )
+        train_filename = _variant_filename(dataset_variant=dataset_variant, filename="train.parquet")
+        validation_filename = _variant_filename(dataset_variant=dataset_variant, filename="validation.parquet")
+        candidates.extend(
+            [
+                f"{dataset_prefix}/{train_filename}",
+                f"{dataset_prefix}/{validation_filename}",
+            ]
+        )
 
     benchmark_data_path = data_payload.get("benchmark_data_path")
     if isinstance(benchmark_data_path, str) and benchmark_data_path:
