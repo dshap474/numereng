@@ -10,7 +10,9 @@ Training scoring emits these native-target metric families when the required
 join sources are available:
 
 - `bmc`
+- `bmc_ender20`
 - `bmc_last_200_eras`
+- `bmc_ender20_last_200_eras`
 
 Training scoring emits these meta-dependent metric families only when there is
 strictly era-aligned meta-model overlap:
@@ -50,6 +52,7 @@ No payout estimate fields are emitted.
 - `mmc_<alias>`: the same metric against the meta model and one non-native scoring target, computed on the overlapping meta-model window only
 - `cwmm`: per-era Pearson correlation between the Numerai-transformed submission and the raw meta-model series, computed on the overlapping meta-model window only
 - `bmc`: diagnostics-style benchmark contribution against a single selected benchmark model
+- `bmc_ender20`: the same benchmark contribution evaluated against `target_ender_20`
 - `bmc_last_200_eras`: the same BMC family restricted to the most recent 200 eras
 
 ## Local Diagnostics
@@ -63,7 +66,7 @@ payout metrics:
 
 ## Fixed Policy
 
-- default scoring targets: native run target plus `target_ender_20`
+- default scoring targets: native run target plus opportunistic `target_ender_20`
 - explicit config override: `data.scoring_targets`
   - when present, this list becomes the entire scoring-target set
 - `fnc_feature_set`: `fncv3_features`
@@ -74,14 +77,16 @@ payout metrics:
 - meta-model overlap policy: emit `mmc`, `mmc_<alias>`, and `cwmm` when there is
   any strictly era-aligned `(id, era)` overlap; compute them on the maximum
   available overlapping meta-model window
-- diagnostics benchmark default: `v52_lgbm_ender20`
-- diagnostics BMC semantics: single selected benchmark model, not stake-weighted live benchmark meta semantics
+- diagnostics benchmark default: `.numereng/datasets/baselines/active_benchmark/predictions.parquet`
+- diagnostics benchmark override: explicit `data.benchmark_source={source=\"path\", predictions_path=...}`
+- diagnostics BMC semantics: contribution relative to the configured benchmark prediction source, not stake-weighted live benchmark meta semantics
 - meta-dependent metrics (`mmc`, `mmc_<alias>`, `cwmm`) use the maximum available overlapping meta-model rows rather than requiring whole-run coverage
 
 ## Join and Coverage Rules
 
 - non-native scoring targets are joined back from dataset files by `(id, era)`
-- scoring-target joins require full `(id, era)` coverage
+- explicitly configured scoring-target joins require full `(id, era)` coverage
+- opportunistic `target_ender_20` scoring is emitted only when the target column is available on the scoring universe
 - FNC feature joins require full `(id, era)` coverage.
 - Benchmark and meta-model joins require strict era alignment after matching on `id`.
 - Benchmark and meta-model joins must have non-zero overlap.
@@ -114,6 +119,8 @@ This package writes or refreshes the following scoring artifacts:
 - `results.json`
 - `run.json`
 - `score_provenance.json`
+- `artifacts/scoring/manifest.json`
+- `artifacts/scoring/*.parquet`
 
 ## Provenance Contract
 

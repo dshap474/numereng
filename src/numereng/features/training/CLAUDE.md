@@ -28,10 +28,10 @@ Conditionally required:
 - `score_provenance.json`
   - Present when post-run scoring succeeds.
   - May be absent if post-run scoring fails.
-- `artifacts/predictions/val_per_era_corr20v2.parquet`
-- `artifacts/predictions/val_per_era_corr20v2.csv`
+- `artifacts/scoring/manifest.json`
+- `artifacts/scoring/*.parquet`
   - Present when post-run scoring succeeds for new or rescored runs.
-  - Legacy historical runs may still be missing them until backfilled or first viz materialization.
+  - This bundle is the canonical persisted scoring surface for viz/report consumers.
 
 Not guaranteed by the canonical training pipeline:
 
@@ -39,9 +39,9 @@ Not guaranteed by the canonical training pipeline:
 - `artifacts/reports/trials.csv`
 - `artifacts/reports/best_params.json`
 
-Consumers should treat per-era CORR as a persisted scoring artifact and may use
-the store/viz write-through backfill path for legacy runs. Other optional
-diagnostics must not be derived at request time.
+Consumers should treat `artifacts/scoring/manifest.json` as the scoring
+artifact entrypoint and may use the store rescoring backfill path for legacy
+runs. Other optional diagnostics must not be derived at request time.
 
 ## Canonical Field Names
 

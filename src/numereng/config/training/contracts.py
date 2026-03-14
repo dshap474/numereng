@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 TrainingEngineMode = Literal["official", "custom", "full_history"]
@@ -32,6 +32,31 @@ class DataLoadingConfig(_StrictConfigModel):
     include_feature_neutral_metrics: bool = True
 
 
+class BenchmarkSourceConfig(_StrictConfigModel):
+    """Benchmark prediction source used for benchmark-relative scoring."""
+
+    source: Literal["active", "path"] = "active"
+    predictions_path: str | None = None
+    pred_col: str = "prediction"
+    name: str | None = None
+
+    @field_validator("predictions_path")
+    @classmethod
+    def _normalize_predictions_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        candidate = value.strip()
+        return candidate or None
+
+    @model_validator(mode="after")
+    def _validate_source_requirements(self) -> BenchmarkSourceConfig:
+        if self.source == "path" and self.predictions_path is None:
+            raise ValueError("training_benchmark_source_predictions_path_required")
+        if self.source == "active" and self.predictions_path is not None:
+            raise ValueError("training_benchmark_source_predictions_path_disallowed_for_active")
+        return self
+
+
 class DataConfig(_StrictConfigModel):
     """Data loading and target-selection settings."""
 
@@ -43,11 +68,10 @@ class DataConfig(_StrictConfigModel):
     target_horizon: Literal["20d", "60d"] | None = None
     era_col: str = "era"
     id_col: str = "id"
-    benchmark_data_path: str | None = None
+    benchmark_source: BenchmarkSourceConfig = Field(default_factory=BenchmarkSourceConfig)
     meta_model_data_path: str | None = None
     meta_model_col: str = "numerai_meta_model"
     embargo_eras: int | None = Field(default=None, ge=0)
-    benchmark_model: str = "v52_lgbm_ender20"
     baselines_dir: str | None = None
     dataset_scope: DatasetScope = "train_only"
     loading: DataLoadingConfig = Field(default_factory=DataLoadingConfig)
@@ -184,6 +208,7 @@ class TrainingConfig(_StrictConfigModel):
 
 __all__ = [
     "CacheMode",
+    "BenchmarkSourceConfig",
     "DataConfig",
     "DataLoadingConfig",
     "DataLoadingMode",

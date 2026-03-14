@@ -201,7 +201,10 @@ def _write_data_sync_config(tmp_path: Path) -> Path:
                 "data": {
                     "data_version": "v5.2",
                     "dataset_variant": "non_downsampled",
-                    "benchmark_data_path": "v5.2/benchmark.parquet",
+                    "benchmark_source": {
+                        "source": "path",
+                        "predictions_path": "v5.2/benchmark.parquet",
+                    },
                     "meta_model_data_path": "v5.2/meta_model.parquet",
                 },
                 "model": {"type": "LGBMRegressor", "params": {}},

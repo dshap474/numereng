@@ -140,7 +140,11 @@ def _build_training_config(
         "scoring_targets": ["target"],
         "era_col": "era",
         "id_col": "id",
-        "benchmark_data_path": str(dataset.benchmark_path),
+        "benchmark_source": {
+            "source": "path",
+            "predictions_path": str(dataset.benchmark_path),
+            "pred_col": "v52_lgbm_ender20",
+        },
         "meta_model_data_path": str(dataset.meta_path),
         "loading": {
             "mode": loading_mode,

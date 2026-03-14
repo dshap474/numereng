@@ -43,7 +43,6 @@ htmlcov/
 .env
 .env.*
 !.env.example
-.codex/
 
 # Vendored reference repos
 vendor/

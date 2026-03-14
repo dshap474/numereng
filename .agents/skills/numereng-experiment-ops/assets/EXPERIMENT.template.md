@@ -13,6 +13,21 @@
 - **Primary metric**: `bmc_last_200_eras.mean`
 - **Tie-break metric**: `bmc.mean`
 
+## Abstract
+
+- What was tested:
+- Headline result:
+- Best run / leading candidate:
+- Why this result matters:
+
+## Method
+
+- Data split / CV setup:
+- Feature set or dataset scope:
+- Model family and key hyperparameters:
+- Target(s) evaluated:
+- Transforms / neutralization / special scoring notes:
+
 ## Ambiguity Resolution (If Applicable)
 
 | interpretation_id | interpretation | scout configs tested | winner run_id | rationale |
@@ -58,6 +73,13 @@
 - Plateau gate status: `<continue|pivot|stop>`
 - Next round action:
 
+## Results
+
+- Best run on primary metric:
+- Best run on tie-break metric:
+- Main trade-offs across leading runs:
+- Detailed evidence source: `Round Log` and `EXPERIMENT.pack.md`
+
 ## Ensemble Log (Optional)
 
 ### Ensemble <N>
@@ -92,6 +114,13 @@ Artifact checklist:
 - Selected champion run:
 - Promotion command used:
 - Promotion metric/value:
+
+## Stopping Rationale
+
+- Why iteration stopped:
+- Plateau or diminishing-returns evidence:
+- Confirmatory run or scale-check evidence:
+- Remaining uncertainty accepted:
 
 ## Findings
 

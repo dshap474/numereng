@@ -9,6 +9,25 @@ import pandas as pd
 
 
 @dataclass(frozen=True)
+class BenchmarkSource:
+    """Resolved benchmark prediction source used during one scoring pass."""
+
+    mode: str
+    name: str
+    predictions_path: Path
+    pred_col: str
+    metadata_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class ScoringArtifactBundle:
+    """All persisted scoring-side parquet/json artifacts for one run."""
+
+    series_frames: dict[str, pd.DataFrame]
+    manifest: dict[str, object]
+
+
+@dataclass(frozen=True)
 class PostTrainingScoringRequest:
     """Inputs required to compute post-training scoring artifacts."""
 
@@ -21,8 +40,7 @@ class PostTrainingScoringRequest:
     feature_set: str
     feature_source_paths: tuple[Path, ...] | None
     dataset_scope: str
-    benchmark_model: str
-    benchmark_data_path: str | Path | None
+    benchmark_source: BenchmarkSource
     meta_model_col: str
     meta_model_data_path: str | Path | None
     era_col: str
@@ -65,10 +83,10 @@ def default_scoring_policy(include_feature_neutral_metrics: bool | None = None) 
 
 @dataclass(frozen=True)
 class PostTrainingScoringResult:
-    """Computed summaries and provenance from one scoring run."""
+    """Computed summaries, provenance, and artifact payloads from one scoring run."""
 
     summaries: dict[str, pd.DataFrame]
     score_provenance: dict[str, object]
     effective_scoring_backend: str
     policy: ResolvedScoringPolicy
-    per_era_corr: pd.DataFrame | None = None
+    artifacts: ScoringArtifactBundle

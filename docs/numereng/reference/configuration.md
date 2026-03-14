@@ -71,9 +71,13 @@ Important fields:
 - `target_horizon` optional but preferred for purged walk-forward
 - `era_col` default `era`
 - `id_col` default `id`
-- `benchmark_data_path`, `meta_model_data_path` optional overrides
+- `benchmark_source` optional override block for benchmark scoring input
+- `meta_model_data_path` optional override
 - `meta_model_col` default `numerai_meta_model`
-- `benchmark_model` default `v52_lgbm_ender20`
+- `benchmark_source.source` default `active` (`active|path`)
+- `benchmark_source.predictions_path` required only when `source=path`
+- `benchmark_source.pred_col` default `prediction`
+- `benchmark_source.name` optional provenance label
 - `loading.mode`: `materialized|fold_lazy`
 - `loading.scoring_mode`: `materialized|era_stream`
 - `loading.era_chunk_size`: integer >= 1

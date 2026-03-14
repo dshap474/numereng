@@ -689,9 +689,7 @@ def test_per_era_fallback_derives_corr_rows(tmp_path: Path) -> None:
     assert [row["era"] for row in result.payload] == [1, 2]
     assert all(float(row["corr"]) > 0.99 for row in result.payload)
     assert result.materialize_ms >= 0
-    assert result.wrote_artifact is True
-    assert (predictions_dir / "val_per_era_corr20v2.parquet").is_file()
-    assert (predictions_dir / "val_per_era_corr20v2.csv").is_file()
+    assert result.wrote_artifact is False
 
 
 def test_run_diagnostics_sources_route_returns_payload(tmp_path: Path) -> None:

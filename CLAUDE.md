@@ -15,6 +15,8 @@ Read order:
 - Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `mypy`, `numereng`, etc.).
 - If direct Python is required, use `.venv/bin/python`.
 - Do not create ad-hoc virtual envs.
+- Numerai MCP auth is project-local via `.codex/config.toml` and expects `NUMERAI_MCP_AUTH` in the launching shell environment.
+- If Numerai MCP tools are loaded but return missing-auth errors, run `eval "$(uv run python -m numereng.platform.export_numerai_mcp_auth)"` from the repo root, then relaunch Codex from that shell if MCP access is needed.
 
 ## Non-Negotiable Rules
 - Preserve dependency direction: `config -> platform -> features -> api -> cli`.

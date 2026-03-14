@@ -17,7 +17,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Fallback computations viz relies on
 
-- Per-era CORR (`val_per_era_corr20v2`) is the canonical persisted visualization artifact for run-level performance charts. Viz exposes it as `{ era, corr }`, prefers the persisted parquet/csv, and only materializes it on request for legacy runs that predate artifact persistence. Request-time fallback is write-through, so subsequent reads hit disk instead of recomputing.
+- `artifacts/scoring/manifest.json` is the canonical persisted scoring entrypoint for run-level performance charts. Viz exposes per-era CORR as `{ era, corr }`, prefers `artifacts/scoring/corr_per_era.parquet`, and only derives a read-only fallback payload on request for legacy runs that predate scoring-artifact persistence.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
 ## Provenance, diagnostics, and artefact resolution
@@ -29,7 +29,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 ## Read-path resilience
 
 - `get_run_manifest` and `get_run_metrics` prefer SQLite-backed rows but gracefully read `run.json`/`metrics.json` when the DB is missing. That means offline experiments (without the index) still show up in viz if their directories contain the canonical files.
-- The live run-detail path is section-based rather than bundle-based. Read-only UI/API surfaces can materialize missing per-era CORR exactly once for legacy runs, but must not perform broader on-demand scoring work beyond that bounded write-through fallback.
+- The live run-detail path is section-based rather than bundle-based. Read-only UI/API surfaces may derive missing per-era CORR in memory for legacy runs, but the canonical backfill path is store rescoring (`store materialize-viz-artifacts --kind scoring-artifacts`), not request-time write-through.
 
 ## Maintenance & anti-drift
 

@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 import numereng.features.scoring.service as scoring_service_module
-from numereng.features.scoring.models import PostTrainingScoringRequest
+from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest, ScoringArtifactBundle
 
 
 class _FakeClient:
@@ -37,8 +37,12 @@ def _request(
         feature_set="small",
         feature_source_paths=None,
         dataset_scope="train_plus_validation",
-        benchmark_model="v52_lgbm_ender20",
-        benchmark_data_path=benchmark_path,
+        benchmark_source=BenchmarkSource(
+            mode="path",
+            name="benchmark",
+            predictions_path=Path(benchmark_path) if benchmark_path is not None else Path("benchmark.parquet"),
+            pred_col="prediction",
+        ),
         meta_model_col="numerai_meta_model",
         meta_model_data_path=meta_path,
         era_col="era",
@@ -62,8 +66,14 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     monkeypatch.setattr(scoring_service_module, "summarize_prediction_file_with_scores", _fake_summarize)
     monkeypatch.setattr(
         scoring_service_module,
-        "build_primary_per_era_corr_frame",
-        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.1}]),
+        "build_scoring_artifact_bundle",
+        lambda **kwargs: (
+            ScoringArtifactBundle(
+                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+                manifest={},
+            ),
+            {"benchmark_overlap_rows": 1},
+        ),
     )
 
     result = scoring_service_module.run_post_training_scoring(
@@ -83,8 +93,8 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     assert execution["effective_scoring_mode"] == "materialized"
     assert execution["fallback_reason"] == "external_source_not_parquet"
     assert result.policy.fnc_feature_set == "fncv3_features"
-    assert result.per_era_corr is not None
-    assert list(result.per_era_corr.columns) == ["era", "corr"]
+    assert "corr_per_era" in result.artifacts.series_frames
+    assert list(result.artifacts.series_frames["corr_per_era"].columns) == ["era", "value"]
 
 
 def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
@@ -100,8 +110,14 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     monkeypatch.setattr(scoring_service_module, "summarize_prediction_file_with_scores", _fake_summarize)
     monkeypatch.setattr(
         scoring_service_module,
-        "build_primary_per_era_corr_frame",
-        lambda **kwargs: pd.DataFrame([{"era": "era1", "corr": 0.2}]),
+        "build_scoring_artifact_bundle",
+        lambda **kwargs: (
+            ScoringArtifactBundle(
+                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.2}])},
+                manifest={},
+            ),
+            {"benchmark_overlap_rows": 1},
+        ),
     )
 
     result = scoring_service_module.run_post_training_scoring(
@@ -122,5 +138,4 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     assert "fallback_reason" not in execution
     assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
     assert result.policy.fnc_target_policy == "scoring_target"
-    assert result.per_era_corr is not None
-    assert result.per_era_corr.iloc[0]["corr"] == pytest.approx(0.2)
+    assert result.artifacts.series_frames["corr_per_era"].iloc[0]["value"] == pytest.approx(0.2)
