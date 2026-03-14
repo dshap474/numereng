@@ -359,31 +359,28 @@ def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
     (run_dir / "results.json").write_text("{}")
     (run_dir / "metrics.json").write_text("{}")
 
-    monkeypatch.setattr(
-        store_service,
-        "_score_run_for_materialize",
-        lambda **kwargs: (
-            lambda run_payload: (
-                (run_dir / "artifacts" / "scoring").mkdir(parents=True, exist_ok=True),
-                (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").write_bytes(b"PAR1"),
-                (run_dir / "artifacts" / "scoring" / "manifest.json").write_text("{}", encoding="utf-8"),
-                (run_dir / "run.json").write_text(
-                    json.dumps(
-                        {
-                            **run_payload,
-                            "artifacts": {
-                                **cast(dict[str, object], run_payload["artifacts"]),
-                                "scoring_manifest": "artifacts/scoring/manifest.json",
-                            },
-                        },
-                        indent=2,
-                        sort_keys=True,
-                    ),
-                    encoding="utf-8",
-                ),
-            )[-1]
-        )(json.loads((run_dir / "run.json").read_text(encoding="utf-8"))),
-    )
+    def _fake_score_run_for_materialize(**kwargs: object) -> None:
+        run_payload = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        scoring_dir = run_dir / "artifacts" / "scoring"
+        scoring_dir.mkdir(parents=True, exist_ok=True)
+        (scoring_dir / "corr_per_era.parquet").write_bytes(b"PAR1")
+        (scoring_dir / "manifest.json").write_text("{}", encoding="utf-8")
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    **run_payload,
+                    "artifacts": {
+                        **cast(dict[str, object], run_payload["artifacts"]),
+                        "scoring_manifest": "artifacts/scoring/manifest.json",
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(store_service, "_score_run_for_materialize", _fake_score_run_for_materialize)
 
     first = materialize_viz_artifacts(
         store_root=store_root,

@@ -984,6 +984,7 @@ class VizStoreAdapter:
                 stat = exp_dir.stat()
                 created_at = datetime.fromtimestamp(stat.st_ctime, tz=UTC).isoformat()
                 updated_at = datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat()
+            runs_raw = manifest.get("runs")
             items.append(
                 {
                     "experiment_id": exp_id,
@@ -995,7 +996,7 @@ class VizStoreAdapter:
                     "hypothesis": _to_non_empty_str(manifest.get("hypothesis")),
                     "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else [],
                     "champion_run_id": _to_non_empty_str(manifest.get("champion_run_id")),
-                    "run_count": len(manifest.get("runs")) if isinstance(manifest.get("runs"), list) else 0,
+                    "run_count": len(runs_raw) if isinstance(runs_raw, list) else 0,
                     "metadata": manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {},
                 }
             )
@@ -1031,6 +1032,7 @@ class VizStoreAdapter:
         if resolved_dir.exists() and resolved_dir.is_dir():
             created_at = datetime.fromtimestamp(resolved_dir.stat().st_ctime, tz=UTC).isoformat()
             updated_at = datetime.fromtimestamp(resolved_dir.stat().st_mtime, tz=UTC).isoformat()
+            runs_raw = manifest.get("runs")
             return {
                 "experiment_id": experiment_id,
                 "name": _to_non_empty_str(manifest.get("name")) or experiment_id,
@@ -1041,7 +1043,7 @@ class VizStoreAdapter:
                 "hypothesis": _to_non_empty_str(manifest.get("hypothesis")),
                 "tags": manifest.get("tags") if isinstance(manifest.get("tags"), list) else [],
                 "champion_run_id": _to_non_empty_str(manifest.get("champion_run_id")),
-                "run_count": len(manifest.get("runs")) if isinstance(manifest.get("runs"), list) else 0,
+                "run_count": len(runs_raw) if isinstance(runs_raw, list) else 0,
                 "metadata": manifest.get("metadata") if isinstance(manifest.get("metadata"), dict) else {},
                 "study_count": 0,
                 "ensemble_count": 0,

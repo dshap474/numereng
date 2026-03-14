@@ -582,7 +582,7 @@ def build_cumulative_scores(per_era_scores: pd.DataFrame) -> pd.DataFrame:
     """Build cumulative scores for one per-era score dataframe."""
 
     sorted_scores = cast(pd.DataFrame, _sort_era_index(per_era_scores))
-    return cast(pd.DataFrame, sorted_scores.cumsum())
+    return sorted_scores.cumsum()
 
 
 def build_scoring_artifact_bundle(
@@ -648,7 +648,7 @@ def build_scoring_artifact_bundle(
             resolved_scoring_targets=resolved_scoring_targets,
             missing_scoring_targets=missing_scoring_targets,
             optional_scoring_targets=optional_scoring_targets,
-            available_columns=target_frame.columns,
+            available_columns=[str(col) for col in target_frame.columns],
         )
         if available_missing_targets:
             prepared = attach_scoring_targets(
@@ -754,7 +754,9 @@ def build_scoring_artifact_bundle(
         "scoring_eras": int(prepared_for_benchmark[era_col].nunique()),
     }
     series_manifest["series"] = sorted(series_frames.keys())
-    return ScoringArtifactBundle(series_frames=series_frames, manifest=series_manifest), benchmark_overlap
+    return ScoringArtifactBundle(series_frames=series_frames, manifest=series_manifest), cast(
+        dict[str, object], benchmark_overlap
+    )
 
 
 def _single_series_frame(per_era_scores: pd.DataFrame, column: str) -> pd.DataFrame:
@@ -1124,7 +1126,7 @@ def attach_meta_model_predictions(
     era_col: str = "era",
     id_col: str = "id",
     min_overlap_ratio: float = 1.0,
-) -> tuple[pd.DataFrame, dict[str, int]]:
+) -> tuple[pd.DataFrame, dict[str, int | float]]:
     """Align and attach meta model predictions to model predictions."""
     if id_col not in predictions.columns:
         raise TrainingDataError(f"training_predictions_missing_columns:{id_col}")
@@ -1512,7 +1514,7 @@ def _summarize_prediction_file_with_scores_materialized(
             resolved_scoring_targets=resolved_scoring_targets,
             missing_scoring_targets=missing_scoring_targets,
             optional_scoring_targets=optional_scoring_targets,
-            available_columns=target_keys.columns,
+            available_columns=[str(col) for col in target_keys.columns],
         )
         if available_missing_targets:
             target_join_stats = validate_join_source_coverage(
@@ -2051,7 +2053,7 @@ def _summarize_prediction_file_with_scores_era_stream(
             resolved_scoring_targets=resolved_scoring_targets,
             missing_scoring_targets=missing_scoring_targets,
             optional_scoring_targets=optional_scoring_targets,
-            available_columns=target_keys.columns,
+            available_columns=[str(col) for col in target_keys.columns],
         )
         if available_missing_targets:
             target_join_stats = validate_join_source_coverage(

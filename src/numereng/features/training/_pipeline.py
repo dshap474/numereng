@@ -109,7 +109,7 @@ from numereng.features.training.service import (
     resolve_benchmark_source,
     resolve_model_config,
 )
-from numereng.features.training.strategies import TrainingProfile, resolve_training_engine
+from numereng.features.training.strategies import TrainingEnginePlan, TrainingProfile, resolve_training_engine
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ class TrainingPipelineState:
     missing_value: float = 2.0
     resource_policy: dict[str, object] = field(default_factory=dict)
     cache_policy: dict[str, object] = field(default_factory=dict)
-    engine_plan: object | None = None
+    engine_plan: TrainingEnginePlan | None = None
     model_type: str = "LGBMRegressor"
     model_params: dict[str, object] = field(default_factory=dict)
     x_groups: list[str] = field(default_factory=list)
@@ -238,6 +238,7 @@ def prepare_training_run(
     state.preprocessing_config = _as_dict(state.config.get("preprocessing"))
     state.training_config = _as_dict(state.config.get("training"))
     state.model_config = _as_dict(state.config.get("model"))
+    config = state.config
 
     state.data_version = str(state.data_config.get("data_version", "v5.2"))
     state.dataset_variant = _resolve_dataset_variant(state.data_config.get("dataset_variant"))
@@ -276,7 +277,7 @@ def prepare_training_run(
         embargo_eras=state.embargo_eras,
     )
     state.dataset_scope = _resolve_dataset_scope_for_profile(
-        profile=cast(TrainingProfile, state.engine_plan.mode),
+        profile=state.engine_plan.mode,
         configured_scope=dataset_scope_config,
         dataset_variant=state.dataset_variant,
     )
@@ -295,7 +296,7 @@ def prepare_training_run(
         raise TrainingConfigError(str(exc)) from exc
 
     state.run_hash = compute_run_hash(
-        config=cast(dict[str, object], state.config),
+        config=config,
         data_version=state.data_version,
         feature_set=state.feature_set,
         target_col=state.target_col,
@@ -304,10 +305,10 @@ def prepare_training_run(
         engine_settings=state.engine_plan.resolved_config,
     )
     state.run_id = run_id_from_hash(state.run_hash)
-    state.config_hash = compute_config_hash(cast(dict[str, object], state.config))
+    state.config_hash = compute_config_hash(config)
 
     output_root, baselines_dir, results_dir, predictions_dir, scoring_dir = resolve_output_locations(
-        cast(dict[str, object], state.config),
+        config,
         state.output_dir,
         state.run_id,
     )
@@ -415,7 +416,7 @@ def prepare_training_run(
         ),
         attempt_id=state.run_attempt_id,
     )
-    save_resolved_config(cast(dict[str, object], state.config), state.resolved_snapshot_path)
+    save_resolved_config(config, state.resolved_snapshot_path)
     state.created_at = str(running_manifest["created_at"])
     state.training_client = create_training_data_client() if state.client is None else state.client
     return state
@@ -508,18 +509,20 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
             era_col=state.era_col,
             id_col=state.id_col,
         )
+        if state.baseline_col is None:
+            raise TrainingConfigError("training_baseline_column_missing")
         if state.loading_mode == _MATERIALIZED_LOADING_MODE:
             if state.full is None:
                 raise TrainingConfigError("training_data_loading_materialized_missing_frame")
             state.full = attach_benchmark_predictions(
                 state.full,
                 state.baseline,
-                cast(str, state.baseline_col),
+                state.baseline_col,
                 era_col=state.era_col,
                 id_col=state.id_col,
             )
         else:
-            state.join_columns.append(FoldJoinColumn(frame=state.baseline, column=cast(str, state.baseline_col)))
+            state.join_columns.append(FoldJoinColumn(frame=state.baseline, column=state.baseline_col))
 
     state.x_cols = build_x_cols(
         x_groups=state.x_groups,
@@ -556,9 +559,15 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
 
 def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     """Build predictions and persist pre-scoring artifacts."""
+    if state.config is None:
+        raise TrainingError("training_config_uninitialized")
+    config = state.config
+    engine_plan = state.engine_plan
+    if engine_plan is None:
+        raise TrainingError("training_engine_plan_uninitialized")
     simple_train_eras: list[object] | None = None
     simple_val_eras: list[object] | None = None
-    if state.engine_plan.mode == _SIMPLE_PROFILE:
+    if engine_plan.mode == _SIMPLE_PROFILE:
         if (
             state.loading_mode == _FOLD_LAZY_LOADING_MODE
             and state.source_paths is not None
@@ -577,8 +586,8 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         if not simple_train_eras or not simple_val_eras:
             raise TrainingConfigError("training_profile_simple_requires_nonempty_split_eras")
 
-    cv_config = dict(state.engine_plan.cv_config)
-    if state.engine_plan.mode == _SIMPLE_PROFILE:
+    cv_config = dict(engine_plan.cv_config)
+    if engine_plan.mode == _SIMPLE_PROFILE:
         cv_config["embargo"] = 0
         cv_config["train_eras"] = simple_train_eras
         cv_config["val_eras"] = simple_val_eras
@@ -594,7 +603,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    if _is_full_history_refit_profile(state.engine_plan.mode):
+    if _is_full_history_refit_profile(engine_plan.mode):
         state.predictions, state.cv_meta = build_full_history_predictions(
             state.all_eras,
             cast(ModelDataLoaderProtocol, state.data_loader),
@@ -630,12 +639,14 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         default=0 if state.data_embargo_eras is None else state.data_embargo_eras,
     )
     state.predictions = select_prediction_columns(state.predictions, state.id_col, state.era_col, state.target_col)
+    if state.predictions_dir is None or state.output_root is None:
+        raise TrainingError("training_output_paths_uninitialized")
     state.predictions_path, state.predictions_relative = save_predictions(
         state.predictions,
-        cast(dict[str, object], state.config),
+        config,
         state.config_path,
-        cast(Path, state.predictions_dir),
-        cast(Path, state.output_root),
+        state.predictions_dir,
+        state.output_root,
     )
     state.artifacts["predictions"] = str(state.predictions_relative)
     state.oof_rows = int(state.predictions.shape[0])
@@ -651,7 +662,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    if _is_full_history_refit_profile(state.engine_plan.mode):
+    if _is_full_history_refit_profile(engine_plan.mode):
         state.metrics_status = {
             "status": "not_applicable",
             "reason": "training_profile_full_history_refit_no_validation_metrics",
@@ -678,11 +689,14 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    state.results_path = resolve_results_path(
-        cast(dict[str, object], state.config),
-        state.config_path,
-        cast(Path, state.results_dir),
-    )
+    if (
+        state.results_dir is None
+        or state.predictions_relative is None
+        or state.metrics_path is None
+        or state.benchmark_source is None
+    ):
+        raise TrainingError("training_artifact_paths_uninitialized")
+    state.results_path = resolve_results_path(config, state.config_path, state.results_dir)
     results = build_results_payload(
         model_type=state.model_type,
         model_params=state.model_params,
@@ -700,15 +714,15 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         oof_eras=state.oof_eras,
         configured_embargo_eras=state.data_embargo_eras,
         effective_embargo_eras=state.effective_embargo_eras,
-        benchmark_source=cast(BenchmarkSource, state.benchmark_source),
+        benchmark_source=state.benchmark_source,
         meta_model_col=state.meta_model_col,
         meta_model_data_path=state.meta_model_data_path,
-        output_dir=cast(Path, state.output_root),
-        predictions_relative=cast(Path, state.predictions_relative),
+        output_dir=state.output_root,
+        predictions_relative=state.predictions_relative,
         score_provenance_relative=state.score_provenance_relative,
         summaries=None,
         cv_meta=state.cv_meta,
-        engine_plan=state.engine_plan,
+        engine_plan=engine_plan,
         cv_enabled=state.cv_enabled,
         loading_mode=state.loading_mode,
         scoring_mode=state.scoring_mode,
@@ -719,11 +733,13 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         scoring_policy=default_scoring_policy(),
         metrics_status=state.metrics_status,
     )
-    save_results(results, cast(Path, state.results_path))
-    state.artifacts["results"] = str(cast(Path, state.results_path).relative_to(cast(Path, state.output_root)))
+    if state.results_path is None:
+        raise TrainingError("training_results_path_uninitialized")
+    save_results(results, state.results_path)
+    state.artifacts["results"] = str(state.results_path.relative_to(state.output_root))
     state.metrics_payload = _extract_metrics_payload(results)
-    save_metrics(state.metrics_payload, cast(Path, state.metrics_path))
-    state.artifacts["metrics"] = str(cast(Path, state.metrics_path).relative_to(cast(Path, state.output_root)))
+    save_metrics(state.metrics_payload, state.metrics_path)
+    state.artifacts["metrics"] = str(state.metrics_path.relative_to(state.output_root))
     _record_telemetry_stage(
         state.telemetry_session,
         completed_stages=state.completed_stages,
@@ -732,7 +748,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    state.run_store_root = _resolve_store_root_for_run(cast(Path, state.output_root))
+    state.run_store_root = _resolve_store_root_for_run(state.output_root)
     try:
         index_run(store_root=state.run_store_root, run_id=state.run_id)
     except StoreError as exc:
@@ -742,8 +758,18 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
 
 def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     """Compute post-run scoring artifacts for the persisted predictions."""
-    if _is_full_history_refit_profile(state.engine_plan.mode):
+    engine_plan = state.engine_plan
+    if engine_plan is None:
+        raise TrainingError("training_engine_plan_uninitialized")
+    if _is_full_history_refit_profile(engine_plan.mode):
         return state
+    if (
+        state.output_root is None
+        or state.predictions_path is None
+        or state.training_client is None
+        or state.benchmark_source is None
+    ):
+        raise TrainingError("training_scoring_paths_uninitialized")
 
     _record_telemetry_stage(
         state.telemetry_session,
@@ -772,7 +798,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     try:
         scoring_result = run_post_training_scoring(
             request=PostTrainingScoringRequest(
-                predictions_path=cast(Path, state.predictions_path),
+                predictions_path=state.predictions_path,
                 pred_cols=("prediction",),
                 target_col=state.target_col,
                 scoring_target_cols=_resolve_scoring_target_cols(
@@ -784,7 +810,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 feature_set=state.feature_set,
                 feature_source_paths=state.scoring_feature_source_paths,
                 dataset_scope=state.dataset_scope,
-                benchmark_source=cast(BenchmarkSource, state.benchmark_source),
+                benchmark_source=state.benchmark_source,
                 meta_model_col=state.meta_model_col,
                 meta_model_data_path=state.meta_model_data_path,
                 era_col=state.era_col,
@@ -794,7 +820,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 era_chunk_size=state.scoring_era_chunk_size,
                 include_feature_neutral_metrics=state.include_feature_neutral_metrics,
             ),
-            client=cast(TrainingDataClient, state.training_client),
+            client=state.training_client,
         )
     except Exception as exc:
         logger.exception("post-run scoring failed for run_id=%s", state.run_id)
@@ -822,13 +848,21 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         "effective_backend": state.effective_scoring_backend,
         "policy": _scoring_policy_payload(scoring_result.policy),
     }
-    save_score_provenance(score_provenance, cast(Path, state.score_provenance_path))
-    state.score_provenance_relative = cast(Path, state.score_provenance_path).relative_to(cast(Path, state.output_root))
+    if (
+        state.score_provenance_path is None
+        or state.scoring_dir is None
+        or state.results_path is None
+        or state.predictions_relative is None
+        or state.metrics_path is None
+    ):
+        raise TrainingError("training_scoring_paths_uninitialized")
+    save_score_provenance(score_provenance, state.score_provenance_path)
+    state.score_provenance_relative = state.score_provenance_path.relative_to(state.output_root)
     state.artifacts["score_provenance"] = str(state.score_provenance_relative)
     persisted_scoring = save_scoring_artifacts(
         scoring_result.artifacts,
-        scoring_dir=cast(Path, state.scoring_dir),
-        output_dir=cast(Path, state.output_root),
+        scoring_dir=state.scoring_dir,
+        output_dir=state.output_root,
     )
     state.artifacts["scoring_manifest"] = str(persisted_scoring.manifest_relative)
     state.metrics_status = None
@@ -856,15 +890,15 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         oof_eras=state.oof_eras,
         configured_embargo_eras=state.data_embargo_eras,
         effective_embargo_eras=state.effective_embargo_eras,
-        benchmark_source=cast(BenchmarkSource, state.benchmark_source),
+        benchmark_source=state.benchmark_source,
         meta_model_col=state.meta_model_col,
         meta_model_data_path=state.meta_model_data_path,
-        output_dir=cast(Path, state.output_root),
-        predictions_relative=cast(Path, state.predictions_relative),
+        output_dir=state.output_root,
+        predictions_relative=state.predictions_relative,
         score_provenance_relative=state.score_provenance_relative,
         summaries=state.summaries,
         cv_meta=state.cv_meta,
-        engine_plan=state.engine_plan,
+        engine_plan=engine_plan,
         cv_enabled=state.cv_enabled,
         loading_mode=state.loading_mode,
         scoring_mode=state.scoring_mode,
@@ -875,15 +909,21 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         scoring_policy=scoring_result.policy,
         metrics_status=None,
     )
-    save_results(results, cast(Path, state.results_path))
+    save_results(results, state.results_path)
     state.metrics_payload = _extract_metrics_payload(results)
-    save_metrics(state.metrics_payload, cast(Path, state.metrics_path))
+    save_metrics(state.metrics_payload, state.metrics_path)
     _record_telemetry_metrics(state.telemetry_session, state.metrics_payload)
     return state
 
 
 def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
     """Persist final manifest state, refresh index, and return run outputs."""
+    if state.config is None:
+        raise TrainingError("training_config_uninitialized")
+    config = state.config
+    engine_plan = state.engine_plan
+    if engine_plan is None:
+        raise TrainingError("training_engine_plan_uninitialized")
     state.full = None
     state.source_paths = None
     state.profile_frame = None
@@ -912,29 +952,31 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
         feature_set=state.feature_set,
         target_col=state.target_col,
         model_type=state.model_type,
-        engine_mode=state.engine_plan.mode,
+        engine_mode=engine_plan.mode,
         experiment_id=state.experiment_id,
         created_at=state.created_at,
         artifacts=state.artifacts,
         metrics_summary=state.metrics_payload,
         training_metadata=state.training_runtime_metadata,
     )
-    save_run_manifest(finished_manifest, cast(Path, state.run_manifest_path))
+    if state.run_manifest_path is None or state.run_store_root is None or state.output_root is None:
+        raise TrainingError("training_finalize_paths_uninitialized")
+    save_run_manifest(finished_manifest, state.run_manifest_path)
     try:
         index_run(store_root=state.run_store_root, run_id=state.run_id)
     except StoreError:
         pass
     _ = maybe_log_training_run(
         run_id=state.run_id,
-        config=cast(dict[str, object], state.config),
+        config=config,
         metrics_payload=state.metrics_payload,
         artifacts=state.artifacts,
-        output_root=cast(Path, state.output_root),
+        output_root=state.output_root,
     )
     _mark_telemetry_completed(
         state.telemetry_session,
         run_id=state.run_id,
-        run_dir=cast(Path, state.output_root),
+        run_dir=state.output_root,
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
@@ -947,6 +989,7 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
 
 def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
     """Persist failure manifest and telemetry for an interrupted run."""
+    engine_plan = state.engine_plan
     if state.run_manifest_written:
         failed_manifest = build_run_manifest(
             run_id=state.run_id,
@@ -958,7 +1001,7 @@ def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
             feature_set=state.feature_set,
             target_col=state.target_col,
             model_type=state.model_type,
-            engine_mode=state.engine_plan.mode,
+            engine_mode=engine_plan.mode if engine_plan is not None else state.engine_mode or "unknown",
             experiment_id=state.experiment_id,
             created_at=state.created_at,
             artifacts=state.artifacts,

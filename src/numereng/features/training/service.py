@@ -635,7 +635,7 @@ def _resolve_benchmark_source_config(data_config: dict[str, object]) -> dict[str
             raise TrainingConfigError("training_benchmark_source_predictions_path_required")
     elif predictions_path is not None:
         raise TrainingConfigError("training_benchmark_source_predictions_path_disallowed_for_active")
-    resolved = {
+    resolved: dict[str, object] = {
         "source": source,
         "pred_col": pred_col,
     }
