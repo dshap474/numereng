@@ -24,6 +24,8 @@ def _write_run_artifacts(
     *,
     status: str = "FINISHED",
     created_at: str = "2026-02-22T00:00:00+00:00",
+    config_path: str | None = None,
+    predictions_rel: str | None = "artifacts/predictions/pred.parquet",
     target_col: str | None = None,
     metrics: dict[str, object] | None = None,
     score_provenance: dict[str, object] | None = None,
@@ -31,6 +33,13 @@ def _write_run_artifacts(
     run_dir = store_root / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     run_manifest: dict[str, object] = {"run_id": run_id, "status": status, "created_at": created_at}
+    if config_path is not None:
+        run_manifest["config"] = {"path": config_path}
+    if predictions_rel is not None:
+        run_manifest["artifacts"] = {"predictions": predictions_rel}
+        predictions_path = run_dir / predictions_rel
+        predictions_path.parent.mkdir(parents=True, exist_ok=True)
+        predictions_path.write_text("predictions", encoding="utf-8")
     if target_col is not None:
         run_manifest["data"] = {"target_col": target_col}
     (run_dir / "run.json").write_text(json.dumps(run_manifest))
@@ -221,17 +230,10 @@ def test_score_experiment_round_resolves_round_run_ids(
         ("run-b", "r1_target_b_seed43.json"),
         ("run-c", "r2_target_c_seed44.json"),
     ):
-        run_dir = store_root / "runs" / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        (run_dir / "run.json").write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "status": "FINISHED",
-                    "config": {"path": str(experiment_dir / "configs" / config_name)},
-                }
-            ),
-            encoding="utf-8",
+        _write_run_artifacts(
+            store_root,
+            run_id,
+            config_path=str(experiment_dir / "configs" / config_name),
         )
 
     scored_batches: list[dict[str, object]] = []
@@ -266,6 +268,127 @@ def test_score_experiment_round_resolves_round_run_ids(
             "stage": "post_training_core",
         }
     ]
+
+
+def test_score_experiment_round_skips_failed_and_missing_prediction_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    for name in ("r1_target_a_seed42.json", "r1_target_b_seed43.json", "r1_target_c_seed44.json"):
+        (experiment_dir / "configs" / name).write_text("{}", encoding="utf-8")
+    (experiment_dir / "run_plan.csv").write_text(
+        "\n".join(
+            [
+                "target,horizon,seed,config_path",
+                f"target_a,20d,42,{experiment_dir / 'configs' / 'r1_target_a_seed42.json'}",
+                f"target_b,20d,43,{experiment_dir / 'configs' / 'r1_target_b_seed43.json'}",
+                f"target_c,20d,44,{experiment_dir / 'configs' / 'r1_target_c_seed44.json'}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = experiment_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = "active"
+    manifest["runs"] = ["run-failed", "run-missing", "run-finished"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    _write_run_artifacts(
+        store_root,
+        "run-failed",
+        status="FAILED",
+        config_path=str(experiment_dir / "configs" / "r1_target_a_seed42.json"),
+    )
+    _write_run_artifacts(
+        store_root,
+        "run-missing",
+        config_path=str(experiment_dir / "configs" / "r1_target_b_seed43.json"),
+        predictions_rel=None,
+    )
+    _write_run_artifacts(
+        store_root,
+        "run-finished",
+        config_path=str(experiment_dir / "configs" / "r1_target_c_seed44.json"),
+    )
+
+    scored_batches: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        service_module,
+        "score_run_batch",
+        lambda *, run_ids, store_root, stage: scored_batches.append(tuple(run_ids)) or (),
+    )
+
+    result = service_module.score_experiment_round(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        round="r1",
+        stage="post_training_core",
+    )
+
+    assert result.run_ids == ("run-finished",)
+    assert scored_batches == [("run-finished",)]
+
+
+def test_score_experiment_round_prefers_latest_finished_run_for_duplicate_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    config_path = experiment_dir / "configs" / "r1_target_a_seed42.json"
+    config_path.write_text("{}", encoding="utf-8")
+    (experiment_dir / "run_plan.csv").write_text(
+        "\n".join(
+            [
+                "target,horizon,seed,config_path",
+                f"target_a,20d,42,{config_path}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = experiment_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = "active"
+    manifest["runs"] = ["run-old", "run-new"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    _write_run_artifacts(
+        store_root,
+        "run-old",
+        created_at="2026-02-22T00:00:00+00:00",
+        config_path=str(config_path),
+    )
+    _write_run_artifacts(
+        store_root,
+        "run-new",
+        created_at="2026-02-23T00:00:00+00:00",
+        config_path=str(config_path),
+    )
+
+    scored_batches: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        service_module,
+        "score_run_batch",
+        lambda *, run_ids, store_root, stage: scored_batches.append(tuple(run_ids)) or (),
+    )
+
+    result = service_module.score_experiment_round(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        round="r1",
+        stage="post_training_core",
+    )
+
+    assert result.run_ids == ("run-new",)
+    assert scored_batches == [("run-new",)]
 
 
 def test_promote_experiment_selects_best_metric(tmp_path: Path) -> None:

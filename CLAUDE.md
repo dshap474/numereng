@@ -48,6 +48,7 @@ Read order:
 - Launch metadata precedence: explicit outer binding first (CLI/API caller), API defaults only when unbound.
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
+- `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
 - Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.

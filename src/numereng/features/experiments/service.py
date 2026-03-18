@@ -559,17 +559,56 @@ def _resolve_round_run_ids(
     if not round_stems:
         raise ExperimentValidationError(f"experiment_round_not_found:{experiment_id}:{round}")
 
-    run_by_stem: dict[str, str] = {}
+    run_by_stem: dict[str, tuple[datetime, int, str]] = {}
     expected_stems = set(round_stems)
-    for run_id in _normalize_run_ids(manifest.get("runs")):
+    for manifest_index, run_id in enumerate(_normalize_run_ids(manifest.get("runs"))):
         run_manifest = _load_json_mapping(root / "runs" / run_id / "run.json")
+        if not _round_run_is_eligible(root=root, run_id=run_id, run_manifest=run_manifest):
+            continue
         config_path = _as_str(_as_mapping(run_manifest.get("config")).get("path"))
         if config_path is None:
             continue
         stem = Path(config_path).stem
-        if stem in expected_stems and stem not in run_by_stem:
-            run_by_stem[stem] = run_id
-    return tuple(run_by_stem[stem] for stem in round_stems if stem in run_by_stem)
+        if stem not in expected_stems:
+            continue
+        candidate = (
+            _parse_run_created_at(run_manifest),
+            manifest_index,
+            run_id,
+        )
+        current = run_by_stem.get(stem)
+        if current is None or candidate[:2] >= current[:2]:
+            run_by_stem[stem] = candidate
+    return tuple(run_by_stem[stem][2] for stem in round_stems if stem in run_by_stem)
+
+
+def _round_run_is_eligible(*, root: Path, run_id: str, run_manifest: dict[str, object]) -> bool:
+    if _as_str(run_manifest.get("status")) != "FINISHED":
+        return False
+    return _run_predictions_exist(root=root, run_id=run_id, run_manifest=run_manifest)
+
+
+def _run_predictions_exist(*, root: Path, run_id: str, run_manifest: dict[str, object]) -> bool:
+    run_dir = root / "runs" / run_id
+    artifacts = _as_mapping(run_manifest.get("artifacts"))
+    predictions_rel = _as_str(artifacts.get("predictions"))
+    if predictions_rel is not None:
+        return (run_dir / predictions_rel).is_file()
+    predictions_dir = run_dir / "artifacts" / "predictions"
+    return len(tuple(predictions_dir.glob("*.parquet"))) == 1
+
+
+def _parse_run_created_at(run_manifest: dict[str, object]) -> datetime:
+    created_at = _as_str(run_manifest.get("created_at"))
+    if created_at is None:
+        return datetime.min.replace(tzinfo=UTC)
+    try:
+        parsed = datetime.fromisoformat(created_at)
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _load_round_config_stems(*, experiment_dir: Path, round: str) -> tuple[str, ...]:

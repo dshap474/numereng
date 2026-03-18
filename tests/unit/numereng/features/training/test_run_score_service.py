@@ -319,3 +319,124 @@ def test_score_run_partial_stage_preserves_existing_unselected_artifacts(
     assert scoring_manifest["requested_stage"] == "run_metric_series"
     assert scoring_manifest["current_canonical_stages"] == ["run_metric_series", "post_training_core"]
     assert scoring_manifest["refreshed_canonical_stages"] == ["run_metric_series"]
+
+
+def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / "store"
+    run_id = "run-123"
+    run_dir = store_root / "runs" / run_id
+    predictions_path = run_dir / "artifacts" / "predictions" / "pred.parquet"
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions_path.write_text("placeholder", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run.json",
+        {
+            "run_id": run_id,
+            "status": "FINISHED",
+            "data": {"version": "v5.2", "feature_set": "medium", "target_col": "target"},
+            "artifacts": {
+                "predictions": "artifacts/predictions/pred.parquet",
+                "resolved_config": "resolved.json",
+                "results": "results.json",
+            },
+        },
+    )
+    _write_json(
+        run_dir / "resolved.json",
+        {
+            "data": {
+                "data_version": "v5.2",
+                "dataset_variant": "non_downsampled",
+                "dataset_scope": "train_plus_validation",
+                "feature_set": "medium",
+                "target_col": "target",
+                "benchmark_source": {"source": "active"},
+                "meta_model_col": "numerai_meta_model",
+                "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
+            },
+            "output": {"predictions_name": "pred"},
+        },
+    )
+    _write_json(run_dir / "results.json", {"output": {}, "training": {}})
+
+    monkeypatch.setattr(run_score_module, "create_training_data_client", lambda: object())
+    monkeypatch.setattr(
+        run_score_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries=_scoring_summaries(),
+            score_provenance={
+                "execution": {"effective_scoring_mode": "materialized"},
+                "artifacts": {
+                    "charts": ["run_metric_series"],
+                    "stage_files": [
+                        "post_fold_per_era",
+                        "post_fold_snapshots",
+                        "post_training_core_summary",
+                        "run_metric_series",
+                    ],
+                },
+            },
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=False,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                manifest={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.12,
+                            }
+                        ]
+                    ),
+                    "post_training_core_summary": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "corr_native_mean": 0.1,
+                                "corr_native_std": 0.2,
+                                "corr_native_sharpe": 0.5,
+                                "corr_native_max_drawdown": 0.1,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            requested_stage="post_training_core",
+            refreshed_stages=("post_training_core",),
+        ),
+    )
+    monkeypatch.setattr(run_score_module, "index_run", lambda **kwargs: None)
+
+    run_score_module.score_run(run_id=run_id, store_root=store_root, stage="post_training_core")
+
+    saved_provenance = json.loads((run_dir / "score_provenance.json").read_text(encoding="utf-8"))
+    artifacts_block = cast(dict[str, object], saved_provenance["artifacts"])
+    assert artifacts_block["charts"] == []
+    assert artifacts_block["stage_files"] == ["post_training_core_summary"]
+    assert artifacts_block["requested_stage"] == "post_training_core"
+    assert artifacts_block["refreshed_canonical_stages"] == ["post_training_core"]

@@ -148,14 +148,18 @@ def score_run(
     predictions_relative = predictions_path.relative_to(run_dir)
     scoring_dir = run_dir / "artifacts" / "scoring"
 
-    save_score_provenance(scoring_result.score_provenance, score_provenance_path)
-    save_metrics(metrics_payload, metrics_path)
     persisted_scoring = save_scoring_artifacts(
         scoring_result.artifacts,
         scoring_dir=scoring_dir,
         output_dir=run_dir,
         selected_stage=scoring_result.requested_stage,
     )
+    _refresh_persisted_artifacts_provenance(
+        score_provenance=scoring_result.score_provenance,
+        persisted_scoring=persisted_scoring,
+    )
+    save_score_provenance(scoring_result.score_provenance, score_provenance_path)
+    save_metrics(metrics_payload, metrics_path)
 
     results_output = _as_mapping(results.get("output"))
     results_output["output_dir"] = str(run_dir)
@@ -333,6 +337,34 @@ def _as_mapping(value: object) -> dict[str, object]:
     if isinstance(value, dict):
         return cast(dict[str, object], value)
     return {}
+
+
+def _refresh_persisted_artifacts_provenance(
+    *,
+    score_provenance: dict[str, object],
+    persisted_scoring: object,
+) -> None:
+    if not hasattr(persisted_scoring, "manifest_path") or not hasattr(persisted_scoring, "manifest_relative"):
+        return
+    manifest_path = cast(Path, getattr(persisted_scoring, "manifest_path"))
+    manifest_relative = cast(Path, getattr(persisted_scoring, "manifest_relative"))
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(manifest_payload, dict):
+        return
+    chart_files = _as_mapping(manifest_payload.get("chart_files"))
+    stage_files = _as_mapping(manifest_payload.get("stage_files"))
+    refreshed = manifest_payload.get("refreshed_canonical_stages")
+    refreshed_stages = [str(value) for value in refreshed] if isinstance(refreshed, list) else []
+    score_provenance["artifacts"] = {
+        "scoring_manifest": str(manifest_relative),
+        "charts": sorted(chart_files.keys()),
+        "stage_files": sorted(stage_files.keys()),
+        "requested_stage": manifest_payload.get("requested_stage"),
+        "refreshed_canonical_stages": refreshed_stages,
+    }
 
 
 def _optional_path(value: object) -> str | Path | None:
