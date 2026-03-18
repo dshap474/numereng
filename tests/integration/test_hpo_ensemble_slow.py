@@ -51,13 +51,13 @@ def _write_run_predictions(store_root: Path, run_id: str, frame: pd.DataFrame) -
     predictions_dir = run_dir / "artifacts" / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
 
-    predictions_path = predictions_dir / "predictions.csv"
-    frame.to_csv(predictions_path, index=False)
+    predictions_path = predictions_dir / "predictions.parquet"
+    frame.to_parquet(predictions_path, index=False)
 
     manifest = {
         "run_id": run_id,
         "artifacts": {
-            "predictions": "artifacts/predictions/predictions.csv",
+            "predictions": "artifacts/predictions/predictions.parquet",
         },
     }
     (run_dir / "run.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -154,9 +154,9 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert len(trials.trials) == n_trials
     assert trials.trials[-1].trial_number == n_trials - 1
 
-    csv_path = Path(created.storage_path) / "trials_live.csv"
-    assert csv_path.is_file()
-    frame = pd.read_csv(csv_path)
+    parquet_path = Path(created.storage_path) / "trials_live.parquet"
+    assert parquet_path.is_file()
+    frame = pd.read_parquet(parquet_path)
     assert len(frame.index) == n_trials
 
 
@@ -205,12 +205,12 @@ def test_ensemble_slow_large_matrix_optimize_smoke(tmp_path: Path) -> None:
 
     artifacts_path = Path(created.artifacts_path)
     assert (artifacts_path / "predictions.parquet").is_file()
-    assert (artifacts_path / "correlation_matrix.csv").is_file()
+    assert (artifacts_path / "correlation_matrix.parquet").is_file()
     assert (artifacts_path / "metrics.json").is_file()
-    assert (artifacts_path / "weights.csv").is_file()
-    assert (artifacts_path / "component_metrics.csv").is_file()
-    assert (artifacts_path / "era_metrics.csv").is_file()
-    assert (artifacts_path / "regime_metrics.csv").is_file()
+    assert (artifacts_path / "weights.parquet").is_file()
+    assert (artifacts_path / "component_metrics.parquet").is_file()
+    assert (artifacts_path / "era_metrics.parquet").is_file()
+    assert (artifacts_path / "regime_metrics.parquet").is_file()
     assert (artifacts_path / "lineage.json").is_file()
 
     loaded = api_module.ensemble_get(

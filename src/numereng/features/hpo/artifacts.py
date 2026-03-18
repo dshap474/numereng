@@ -10,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.platform.parquet import write_parquet
+
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 
 
@@ -46,18 +48,11 @@ def write_trial_config(*, storage_path: Path, trial_number: int, config: dict[st
 
 
 def write_trials_table(*, storage_path: Path, trials: list[dict[str, Any]]) -> None:
-    """Persist trial summary table in CSV (+parquet if available)."""
+    """Persist trial summary table in parquet."""
 
     frame = pd.DataFrame(trials)
-    csv_path = storage_path / "trials_live.csv"
-    frame.to_csv(csv_path, index=False)
-
     parquet_path = storage_path / "trials_live.parquet"
-    try:
-        frame.to_parquet(parquet_path, index=False)
-    except Exception:
-        if parquet_path.exists():
-            parquet_path.unlink(missing_ok=True)
+    write_parquet(frame, parquet_path, index=False)
 
 
 def _slug(value: str | None) -> str:

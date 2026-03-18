@@ -18,6 +18,7 @@ from numereng.features.telemetry import bind_launch_metadata
 from numereng.platform.errors import PackageError
 
 NeutralizationModeValue = Literal["era", "global"]
+ScoreStageValue = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
 
 
 def _parse_neutralization_mode(value: str) -> tuple[NeutralizationModeValue | None, str | None]:
@@ -41,6 +42,15 @@ def _parse_neutralizer_cols(value: str) -> tuple[list[str] | None, str | None]:
     if not cols:
         return None, "invalid value for --neutralizer-cols: expected comma-separated column names"
     return cols, None
+
+
+def _parse_score_stage(value: str) -> tuple[ScoreStageValue | None, str | None]:
+    if value not in {"all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"}:
+        return (
+            None,
+            "invalid value for --stage: expected all|run_metric_series|post_fold|post_training_core|post_training_full",
+        )
+    return cast(ScoreStageValue, value), None
 
 
 def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | None, str | None]:
@@ -227,18 +237,26 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
 def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | None, str | None]:
     run_id: str | None = None
     store_root = ".numereng"
+    stage: ScoreStageValue = "all"
 
     idx = 0
     while idx < len(argv):
         arg = argv[idx]
         if arg in {"-h", "--help"}:
             return None, "__help__"
-        if arg in {"--run-id", "--store-root"}:
+        if arg in {"--run-id", "--store-root", "--stage"}:
             if idx + 1 >= len(argv):
                 return None, f"missing value for {arg}"
             value = argv[idx + 1]
             if arg == "--run-id":
                 run_id = value
+            elif arg == "--stage":
+                parsed_stage, parse_error = _parse_score_stage(value)
+                if parse_error is not None:
+                    return None, parse_error
+                if parsed_stage is None:  # pragma: no cover - parse_error branch guards this
+                    return None, "invalid value for --stage"
+                stage = parsed_stage
             else:
                 store_root = value
             idx += 2
@@ -249,7 +267,7 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
         return None, "missing required argument: --run-id"
 
     try:
-        request = api.ScoreRunRequest(run_id=run_id, store_root=store_root)
+        request = api.ScoreRunRequest(run_id=run_id, store_root=store_root, stage=stage)
     except ValidationError as exc:
         errors = exc.errors()
         if errors:

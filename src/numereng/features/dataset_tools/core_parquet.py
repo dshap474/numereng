@@ -8,6 +8,14 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.platform.parquet import (
+    PARQUET_COMPRESSION,
+    PARQUET_COMPRESSION_LEVEL,
+)
+from numereng.platform.parquet import (
+    write_parquet as write_parquet_file,
+)
+
 
 def read_parquet(path: str | Path, *, columns: list[str] | None = None) -> pd.DataFrame:
     """Read one parquet file and raise explicit validation errors on failure."""
@@ -25,23 +33,16 @@ def write_parquet(
     path: str | Path,
     *,
     index: bool = False,
-    compression: str = "zstd",
-    compression_level: int | None = 3,
+    compression: str = PARQUET_COMPRESSION,
+    compression_level: int | None = PARQUET_COMPRESSION_LEVEL,
 ) -> Path:
     """Write one parquet file with deterministic compression defaults."""
-    resolved = Path(path).expanduser().resolve()
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    kwargs: dict[str, Any] = {
-        "index": index,
-        "compression": compression,
-    }
-    if compression_level is not None:
-        kwargs["compression_level"] = int(compression_level)
+    if compression != PARQUET_COMPRESSION or compression_level != PARQUET_COMPRESSION_LEVEL:
+        raise ValueError("parquet_write_policy_override_not_supported")
     try:
-        frame.to_parquet(resolved, **kwargs)
+        return write_parquet_file(frame, path, index=index)
     except Exception as exc:  # pragma: no cover - thin IO wrapper
-        raise ValueError(f"parquet_write_failed:{resolved}") from exc
-    return resolved
+        raise ValueError(f"parquet_write_failed:{Path(path).expanduser().resolve()}") from exc
 
 
 def dump_json_stdout(payload: dict[str, Any]) -> None:

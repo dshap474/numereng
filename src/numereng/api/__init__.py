@@ -12,6 +12,7 @@ from numereng.api._experiment import (
     experiment_pack,
     experiment_promote,
     experiment_report,
+    experiment_score_round,
     experiment_train,
     experiment_unarchive,
 )
@@ -96,6 +97,8 @@ from numereng.api.contracts import (
     ExperimentReportRequest,
     ExperimentReportResponse,
     ExperimentReportRowResponse,
+    ExperimentScoreRoundRequest,
+    ExperimentScoreRoundResponse,
     ExperimentResponse,
     ExperimentStatus,
     ExperimentTrainRequest,
@@ -191,6 +194,7 @@ from numereng.features.experiments import list_experiments as list_experiment_re
 from numereng.features.experiments import pack_experiment as pack_experiment_record
 from numereng.features.experiments import promote_experiment as promote_experiment_record
 from numereng.features.experiments import report_experiment as report_experiment_record
+from numereng.features.experiments import score_experiment_round as score_experiment_round_record
 from numereng.features.experiments import train_experiment as train_experiment_record
 from numereng.features.experiments import unarchive_experiment as unarchive_experiment_record
 from numereng.features.feature_neutralization import neutralize_predictions_file as neutralize_prediction_artifact
@@ -220,6 +224,7 @@ _COMPAT_EXPORTS = (
     pack_experiment_record,
     promote_experiment_record,
     report_experiment_record,
+    score_experiment_round_record,
     train_experiment_record,
     unarchive_experiment_record,
     build_ensemble_record,
@@ -275,6 +280,8 @@ __all__ = [
     "ExperimentReportRequest",
     "ExperimentReportResponse",
     "ExperimentReportRowResponse",
+    "ExperimentScoreRoundRequest",
+    "ExperimentScoreRoundResponse",
     "ExperimentResponse",
     "ExperimentStatus",
     "ExperimentTrainRequest",
@@ -397,6 +404,7 @@ __all__ = [
     "experiment_pack",
     "experiment_promote",
     "experiment_report",
+    "experiment_score_round",
     "experiment_train",
     "experiment_unarchive",
     "get_experiment_record",

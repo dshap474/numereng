@@ -339,7 +339,7 @@ def test_doctor_fix_strays_deletes_targeted_dirs(tmp_path: Path) -> None:
     assert not (store_root / "smoke_live_check").exists()
 
 
-def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
+def test_materialize_viz_artifacts_creates_scoring_manifest_and_is_idempotent(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -363,7 +363,7 @@ def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
         run_payload = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         scoring_dir = run_dir / "artifacts" / "scoring"
         scoring_dir.mkdir(parents=True, exist_ok=True)
-        (scoring_dir / "corr_per_era.parquet").write_bytes(b"PAR1")
+        (scoring_dir / "run_metric_series.parquet").write_bytes(b"PAR1")
         (scoring_dir / "manifest.json").write_text("{}", encoding="utf-8")
         (run_dir / "run.json").write_text(
             json.dumps(
@@ -399,7 +399,7 @@ def test_materialize_viz_artifacts_creates_per_era_corr_and_is_idempotent(
     assert first.failed_count == 0
     assert second.created_count == 0
     assert second.skipped_count == 1
-    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
+    assert (run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     artifacts = cast(dict[str, object], saved_manifest["artifacts"])

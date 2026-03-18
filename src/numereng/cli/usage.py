@@ -5,13 +5,14 @@ USAGE = (
     "  numereng [--fail]\n"
     "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
     "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--experiment-id <id>]\n"  # noqa: E501
-    "  numereng run score --run-id <id> [--store-root <path>]\n"
+    "  numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]\n"
     "  numereng experiment archive --id <id> [--store-root <path>]\n"
     "  numereng experiment unarchive --id <id> [--store-root <path>]\n"
     "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]\n"  # noqa: E501
+    "  numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment pack --id <id> [--store-root <path>]\n"
@@ -28,7 +29,7 @@ USAGE = (
     "  numereng store index --run-id <id> [--store-root <path>]\n"
     "  numereng store rebuild [--store-root <path>]\n"
     "  numereng store doctor [--store-root <path>] [--fix-strays]\n"
-    "  numereng store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]\n"  # noqa: E501
+    "  numereng store materialize-viz-artifacts --kind <scoring-artifacts|per-era-corr(deprecated)> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]\n"  # noqa: E501
     "  numereng cloud ec2 init-iam [--region <region>] [--bucket <bucket>] [--role-name <name>] [--security-group-name <name>]\n"  # noqa: E501
     "  numereng cloud ec2 setup-data --data-version <v> [--cache-dir <path>] [--region <region>] [--bucket <bucket>]\n"  # noqa: E501
     "  numereng cloud ec2 provision --run-id <id> [--tier <tier>] [--spot|--on-demand] [--region <region>] [--bucket <bucket>] [--state-path <path>]\n"  # noqa: E501

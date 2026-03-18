@@ -21,6 +21,7 @@ from numereng.features.submission import (
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsFileNotFoundError,
+    SubmissionPredictionsFormatUnsupportedError,
     SubmissionPredictionsReadError,
     SubmissionRunIdInvalidError,
     SubmissionRunNotFoundError,
@@ -77,6 +78,8 @@ def submit_predictions(request: SubmissionRequest) -> SubmissionResponse:
         raise PackageError("submission_model_not_found") from exc
     except SubmissionPredictionsFileNotFoundError as exc:
         raise PackageError("submission_predictions_file_not_found") from exc
+    except SubmissionPredictionsFormatUnsupportedError as exc:
+        raise PackageError("submission_predictions_format_unsupported") from exc
     except SubmissionPredictionsReadError as exc:
         raise PackageError("submission_predictions_read_failed") from exc
     except SubmissionRunIdInvalidError as exc:
@@ -185,6 +188,7 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
             result = api_module.score_run_pipeline(
                 run_id=request.run_id,
                 store_root=request.store_root,
+                stage=request.stage,
             )
     except TrainingConfigError as exc:
         raise PackageError("training_score_config_invalid") from exc
@@ -217,6 +221,8 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
         metrics_path=str(result.metrics_path),
         score_provenance_path=str(result.score_provenance_path),
         effective_scoring_backend=result.effective_scoring_backend,
+        requested_stage=result.requested_stage,
+        refreshed_stages=list(result.refreshed_stages),
     )
 
 

@@ -84,7 +84,7 @@ class HpoStudyConfig(_StrictConfigModel):
     study_name: str
     config_path: str
     experiment_id: str | None = None
-    metric: str = "bmc_last_200_eras.mean"
+    metric: str = "post_fold_champion_objective"
     direction: HpoDirection = "maximize"
     n_trials: int = Field(default=100, ge=1)
     sampler: HpoSampler = "tpe"

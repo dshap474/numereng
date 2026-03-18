@@ -18,12 +18,14 @@ from pandas.testing import assert_frame_equal
 import numereng.features.scoring.metrics as metrics_module
 from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,
+    build_scoring_artifact_bundle,
     ensure_full_benchmark_models,
     per_era_corr,
     per_era_reference_corr,
     summarize_prediction_file_with_scores,
     validate_join_source_coverage,
 )
+from numereng.features.scoring.models import BenchmarkSource, default_scoring_policy
 from numereng.features.training.errors import TrainingDataError, TrainingMetricsError
 
 
@@ -86,6 +88,20 @@ def _write_feature_sources(
         encoding="utf-8",
     )
     return resolved_feature_cols
+
+
+def _summary_frame(mean: float) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "mean": mean,
+                "std": 0.2,
+                "sharpe": 0.5,
+                "max_drawdown": 0.1,
+            }
+        ],
+        index=["prediction"],
+    )
 
 
 def test_per_era_corr_requires_numerai_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,6 +409,30 @@ def test_attach_benchmark_predictions_respects_explicit_min_overlap_ratio() -> N
         )
 
 
+def test_load_benchmark_predictions_from_path_renames_prediction_column_for_scoring(
+    tmp_path: Path,
+) -> None:
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b"],
+            "era": ["era1", "era1"],
+            "prediction": [0.6, 0.7],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    benchmark, benchmark_col = metrics_module.load_benchmark_predictions_from_path(
+        benchmark_path,
+        "prediction",
+        benchmark_name="active_benchmark",
+        prediction_cols=["prediction"],
+    )
+
+    assert benchmark_col == "active_benchmark"
+    assert "active_benchmark" in benchmark.columns
+    assert "prediction" not in benchmark.columns
+
+
 def test_validate_join_source_coverage_enforces_min_overlap_ratio() -> None:
     predictions = pd.DataFrame(
         {
@@ -576,6 +616,116 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     assert policy["fnc_feature_set"] == "fncv3_features"
     assert policy["fnc_target_policy"] == "scoring_target"
     assert policy["benchmark_min_overlap_ratio"] == pytest.approx(0.0)
+
+
+def test_score_prediction_file_with_details_uses_safe_benchmark_alias_for_path_sources(
+    tmp_path: Path,
+) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": [f"id_{idx:02d}" for idx in range(16)],
+            "era": ["era1"] * 8 + ["era2"] * 8,
+            "target": [0.25, 0.75, 0.0, 1.0, 1.0, 1.0, 1.0, 0.75, 0.25, 0.0, 1.0, 1.0, 0.25, 0.0, 1.0, 0.75],
+            "target_ender_20": [0.5, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.5, 0.25, 0.75, 0.25, 0.25, 0.0, 0.0, 0.0, 0.75],
+            "prediction": [
+                0.7513497479419687,
+                0.058831023373207114,
+                0.240878644685536,
+                0.4621910019255766,
+                0.3640547347463734,
+                0.9937279354356283,
+                0.3404926320091791,
+                0.9879014457274485,
+                0.5765625060866246,
+                0.4453574074926534,
+                0.23581589889191912,
+                0.6644301829806721,
+                0.9340306216935929,
+                0.158496171550921,
+                0.9483836430847913,
+                0.3935786668089223,
+            ],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": [f"id_{idx:02d}" for idx in range(16)],
+            "era": ["era1"] * 8 + ["era2"] * 8,
+            "prediction": [
+                0.36852577141984666,
+                0.3130693920343792,
+                0.3508596696971633,
+                0.9854988569730171,
+                0.9683485471710603,
+                0.5991209612142128,
+                0.30458643561964005,
+                0.52667969905836,
+                0.34509695939502005,
+                0.7548573017739116,
+                0.21837524897699712,
+                0.6911222226428309,
+                0.8063910029158436,
+                0.29993891504543413,
+                0.3648808012597531,
+                0.9471711861139864,
+            ],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    meta_path = tmp_path / "meta.parquet"
+    pd.DataFrame(
+        {
+            "id": [f"id_{idx:02d}" for idx in range(16)],
+            "era": ["era1"] * 8 + ["era2"] * 8,
+            "numerai_meta_model": [
+                0.6,
+                0.4,
+                0.2,
+                0.1,
+                0.2,
+                0.4,
+                0.6,
+                0.8,
+                0.3,
+                0.5,
+                0.7,
+                0.9,
+                0.8,
+                0.6,
+                0.4,
+                0.2,
+            ],
+        }
+    ).to_parquet(meta_path, index=False)
+
+    summaries, _, metric_frames = metrics_module.score_prediction_file_with_details(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target", "target_ender_20"],
+        data_version="v5.2",
+        client=_FakeClient(),
+        feature_set="small",
+        dataset_scope="train_plus_validation",
+        benchmark_model="prediction",
+        benchmark_name="active_benchmark",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_mode="materialized",
+    )
+
+    assert summaries["bmc_ender20"].loc["prediction", "mean"] != pytest.approx(0.0)
+    assert summaries["bmc_ender20"].loc["prediction", "avg_corr_with_benchmark"] < 0.999
+    assert not metric_frames["bmc_ender20"]["value"].eq(0.0).all()
+    assert not metric_frames["corr_with_benchmark"]["value"].eq(1.0).all()
 
 
 def test_summarize_prediction_file_with_scores_fails_when_fncv3_features_missing(tmp_path: Path) -> None:
@@ -1319,3 +1469,199 @@ def test_summarize_prediction_file_with_scores_emits_extra_target_metrics_from_d
         columns = provenance["columns"]
         assert isinstance(columns, dict)
         assert columns["scoring_target_cols"] == ["target", "target_ender_20"]
+
+
+def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "target": [0.2, 0.4, 0.1, 0.3],
+            "target_ender_20": [0.9, 0.8, 0.7, 0.6],
+            "prediction": [0.1, 0.3, 0.2, 0.4],
+            "cv_fold": [0, 0, 1, 1],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "prediction": [0.6, 0.7, 0.2, 0.3],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    summaries = {
+        "corr": _summary_frame(0.1),
+        "corr_ender20": _summary_frame(0.2),
+        "mmc_ender20": _summary_frame(0.03),
+        "bmc_ender20": _summary_frame(0.04),
+        "fnc": _summary_frame(0.05),
+        "fnc_ender20": _summary_frame(0.06),
+        "feature_exposure": _summary_frame(0.07),
+        "max_feature_exposure": _summary_frame(0.08),
+    }
+
+    bundle, _ = build_scoring_artifact_bundle(
+        run_id="run-123",
+        config_hash="config-hash",
+        seed=None,
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target", "target_ender_20"],
+        summaries=summaries,
+        metric_frames={
+            "corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}, {"era": "era2", "value": 0.2}]),
+            "corr_ender20": pd.DataFrame([{"era": "era1", "value": 0.2}, {"era": "era2", "value": 0.3}]),
+            "bmc_ender20": pd.DataFrame([{"era": "era1", "value": 0.03}, {"era": "era2", "value": 0.05}]),
+            "mmc_ender20": pd.DataFrame([{"era": "era1", "value": 0.01}, {"era": "era2", "value": 0.02}]),
+            "fnc_native": pd.DataFrame([{"era": "era1", "value": 0.04}, {"era": "era2", "value": 0.05}]),
+            "fnc_ender20": pd.DataFrame([{"era": "era1", "value": 0.05}, {"era": "era2", "value": 0.06}]),
+            "feature_exposure": pd.DataFrame([{"era": "era1", "value": 0.07}, {"era": "era2", "value": 0.08}]),
+            "max_feature_exposure": pd.DataFrame([{"era": "era1", "value": 0.08}, {"era": "era2", "value": 0.09}]),
+            "corr_with_benchmark": pd.DataFrame([{"era": "era1", "value": 0.11}, {"era": "era2", "value": 0.12}]),
+        },
+        benchmark_source=BenchmarkSource(
+            mode="path",
+            name="benchmark",
+            predictions_path=benchmark_path,
+            pred_col="prediction",
+        ),
+        client=_FakeClient(),
+        data_version="v5.2",
+        dataset_variant="non_downsampled",
+        feature_set="small",
+        feature_source_paths=None,
+        dataset_scope="train_plus_validation",
+        meta_model_col="numerai_meta_model",
+        meta_model_data_path=None,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=True),
+    )
+
+    assert set(bundle.stage_frames) == {
+        "run_metric_series",
+        "post_fold_per_era",
+        "post_fold_snapshots",
+        "post_training_core_summary",
+        "post_training_full_summary",
+    }
+    assert list(bundle.stage_frames["run_metric_series"].columns) == [
+        "run_id",
+        "config_hash",
+        "seed",
+        "target_col",
+        "payout_target_col",
+        "prediction_col",
+        "era",
+        "metric_key",
+        "series_type",
+        "value",
+    ]
+
+    post_fold = bundle.stage_frames["post_fold_per_era"]
+    assert list(post_fold.columns) == [
+        "run_id",
+        "config_hash",
+        "seed",
+        "target_col",
+        "payout_target_col",
+        "cv_fold",
+        "era",
+        "corr_native",
+        "corr_ender20",
+        "bmc_ender20",
+    ]
+    assert list(post_fold["cv_fold"]) == [0, 1]
+
+    post_fold_snapshots = bundle.stage_frames["post_fold_snapshots"]
+    assert list(post_fold_snapshots["cv_fold"]) == [0, 1]
+    assert list(post_fold_snapshots.columns) == [
+        "run_id",
+        "config_hash",
+        "seed",
+        "target_col",
+        "payout_target_col",
+        "cv_fold",
+        "corr_native_fold_mean",
+        "corr_ender20_fold_mean",
+        "bmc_ender20_fold_mean",
+    ]
+
+    post_training = bundle.stage_frames["post_training_core_summary"]
+    assert "corr_native_mean" in post_training.columns
+    assert "corr_ender20_mean" in post_training.columns
+    assert "mmc_ender20_mean" in post_training.columns
+    assert "bmc_ender20_mean" in post_training.columns
+
+    post_training_features = bundle.stage_frames["post_training_full_summary"]
+    assert "fnc_native_mean" in post_training_features.columns
+    assert "fnc_ender20_mean" in post_training_features.columns
+    assert "feature_exposure_mean" in post_training_features.columns
+    assert "max_feature_exposure_mean" in post_training_features.columns
+
+
+def test_build_scoring_artifact_bundle_omits_post_fold_without_cv_fold(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "target": [0.2, 0.4, 0.1, 0.3],
+            "prediction": [0.1, 0.3, 0.2, 0.4],
+        }
+    ).to_parquet(predictions_path, index=False)
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "prediction": [0.6, 0.7, 0.2, 0.3],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    bundle, _ = build_scoring_artifact_bundle(
+        run_id="run-123",
+        config_hash="config-hash",
+        seed=None,
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target"],
+        summaries={"corr": _summary_frame(0.1)},
+        metric_frames={"corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}, {"era": "era2", "value": 0.2}])},
+        benchmark_source=BenchmarkSource(
+            mode="path",
+            name="benchmark",
+            predictions_path=benchmark_path,
+            pred_col="prediction",
+        ),
+        client=_FakeClient(),
+        data_version="v5.2",
+        dataset_variant="non_downsampled",
+        feature_set="small",
+        feature_source_paths=None,
+        dataset_scope="train_plus_validation",
+        meta_model_col="numerai_meta_model",
+        meta_model_data_path=None,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+    )
+
+    assert "post_fold_per_era" not in bundle.stage_frames
+    assert "post_fold_snapshots" not in bundle.stage_frames
+    stages = bundle.manifest["stages"]
+    assert isinstance(stages, dict)
+    assert stages["post_fold_available"] is False
+    omissions = stages["omissions"]
+    assert isinstance(omissions, dict)
+    assert omissions["post_fold"] == "cv_fold_missing_or_not_applicable"

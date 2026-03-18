@@ -4,6 +4,7 @@ from numereng.features.submission.service import (
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsFileNotFoundError,
+    SubmissionPredictionsFormatUnsupportedError,
     SubmissionPredictionsReadError,
     SubmissionResult,
     SubmissionRunIdInvalidError,
@@ -18,6 +19,7 @@ from numereng.features.submission.service import (
 __all__ = [
     "SubmissionModelNotFoundError",
     "SubmissionPredictionsFileNotFoundError",
+    "SubmissionPredictionsFormatUnsupportedError",
     "SubmissionPredictionsReadError",
     "SubmissionResult",
     "SubmissionRunIdInvalidError",

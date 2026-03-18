@@ -1,28 +1,31 @@
-"""Service orchestration for modular post-training scoring."""
+"""Service orchestration for canonical run-scoring workflows."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from numereng.features.scoring.metrics import (
     build_scoring_artifact_bundle,
-    summarize_prediction_file_with_scores,
+    score_prediction_file_with_details,
 )
 from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
+    RunScoringRequest,
+    RunScoringResult,
     default_scoring_policy,
 )
 from numereng.features.training.client import TrainingDataClient
 
 
-def run_post_training_scoring(
+def run_scoring(
     *,
-    request: PostTrainingScoringRequest,
+    request: RunScoringRequest,
     client: TrainingDataClient,
-) -> PostTrainingScoringResult:
-    """Compute post-training metrics/provenance from persisted predictions."""
+) -> RunScoringResult:
+    """Compute canonical run-scoring outputs from persisted predictions."""
 
     effective_scoring_backend = _resolve_effective_scoring_mode(request)
     base_policy = default_scoring_policy()
@@ -33,7 +36,7 @@ def run_post_training_scoring(
         include_feature_neutral_metrics=request.include_feature_neutral_metrics,
     )
 
-    summaries, score_provenance = summarize_prediction_file_with_scores(
+    summaries, score_provenance, metric_frames = score_prediction_file_with_details(
         predictions_path=request.predictions_path,
         pred_cols=list(request.pred_cols),
         target_col=request.target_col,
@@ -45,6 +48,7 @@ def run_post_training_scoring(
         dataset_scope=request.dataset_scope,
         client=client,
         benchmark_model=request.benchmark_source.pred_col,
+        benchmark_name=request.benchmark_source.name,
         benchmark_data_path=request.benchmark_source.predictions_path,
         meta_model_data_path=request.meta_model_data_path,
         meta_model_col=request.meta_model_col,
@@ -56,10 +60,15 @@ def run_post_training_scoring(
         scoring_policy=policy,
     )
     artifacts, benchmark_joins = build_scoring_artifact_bundle(
+        run_id=request.run_id,
+        config_hash=request.config_hash,
+        seed=request.seed,
         predictions_path=request.predictions_path,
         pred_cols=list(request.pred_cols),
         target_col=request.target_col,
         scoring_target_cols=list(request.scoring_target_cols),
+        summaries=summaries,
+        metric_frames=metric_frames,
         benchmark_source=request.benchmark_source,
         client=client,
         data_version=request.data_version,
@@ -79,6 +88,7 @@ def run_post_training_scoring(
         "requested_scoring_mode": request.scoring_mode,
         "effective_scoring_mode": effective_scoring_backend,
         "era_chunk_size": request.era_chunk_size,
+        "requested_stage": request.stage,
     }
     if request.scoring_mode == "era_stream" and effective_scoring_backend != request.scoring_mode:
         execution_payload["fallback_reason"] = "external_source_not_parquet"
@@ -87,7 +97,8 @@ def run_post_training_scoring(
         "mode": request.benchmark_source.mode,
         "name": request.benchmark_source.name,
         "predictions_path": str(request.benchmark_source.predictions_path),
-        "pred_col": request.benchmark_source.pred_col,
+        "source_pred_col": request.benchmark_source.pred_col,
+        "scoring_col": request.benchmark_source.name,
         "metadata_path": (
             str(request.benchmark_source.metadata_path) if request.benchmark_source.metadata_path else None
         ),
@@ -95,10 +106,11 @@ def run_post_training_scoring(
     columns_payload = score_provenance.setdefault("columns", {})
     if isinstance(columns_payload, dict):
         columns_payload["benchmark_prediction_col"] = request.benchmark_source.pred_col
+        columns_payload["benchmark_scoring_col"] = request.benchmark_source.name
         columns_payload["target_families_emitted"] = sorted(
             {
                 "native",
-                *(["ender20"] if "bmc_ender20_per_era" in artifacts.series_frames else []),
+                *(["ender20"] if "corr_ender20" in metric_frames or "bmc_ender20" in metric_frames else []),
             }
         )
     joins_payload = score_provenance.setdefault("joins", {})
@@ -106,16 +118,32 @@ def run_post_training_scoring(
         joins_payload["benchmark_source"] = benchmark_joins
     score_provenance["artifacts"] = {
         "scoring_manifest": "artifacts/scoring/manifest.json",
-        "series": sorted(artifacts.series_frames.keys()),
+        "charts": sorted(key for key in artifacts.stage_frames.keys() if key == "run_metric_series"),
+        "stage_files": sorted(key for key in artifacts.stage_frames.keys()),
+        "requested_stage": request.stage,
+        "refreshed_canonical_stages": _refreshed_canonical_stages(request.stage, artifacts.stage_frames),
     }
+    score_provenance["stages"] = artifacts.manifest.get("stages", {})
 
-    return PostTrainingScoringResult(
+    return RunScoringResult(
         summaries=summaries,
         score_provenance=score_provenance,
         effective_scoring_backend=effective_scoring_backend,
         policy=policy,
         artifacts=artifacts,
+        requested_stage=request.stage,
+        refreshed_stages=tuple(_refreshed_canonical_stages(request.stage, artifacts.stage_frames)),
     )
+
+
+def run_post_training_scoring(
+    *,
+    request: PostTrainingScoringRequest,
+    client: TrainingDataClient,
+) -> PostTrainingScoringResult:
+    """Backward-compatible alias for the canonical run scorer."""
+
+    return run_scoring(request=request, client=client)
 
 
 def _resolve_effective_scoring_mode(request: PostTrainingScoringRequest) -> str:
@@ -135,3 +163,31 @@ def _looks_parquet(value: str | Path | None) -> bool:
     if value is None:
         return True
     return Path(str(value)).suffix.lower() == ".parquet"
+
+
+def _refreshed_canonical_stages(stage: str, stage_frames: Mapping[str, object]) -> list[str]:
+    if stage == "all":
+        refreshed: list[str] = []
+        if "run_metric_series" in stage_frames:
+            refreshed.append("run_metric_series")
+        if "post_fold_per_era" in stage_frames or "post_fold_snapshots" in stage_frames:
+            refreshed.append("post_fold")
+        if "post_training_core_summary" in stage_frames:
+            refreshed.append("post_training_core")
+        if "post_training_full_summary" in stage_frames:
+            refreshed.append("post_training_full")
+        return refreshed
+    if stage == "post_fold":
+        return ["post_fold"] if "post_fold_per_era" in stage_frames or "post_fold_snapshots" in stage_frames else []
+    if stage == "post_training_core":
+        return ["post_training_core"] if "post_training_core_summary" in stage_frames else []
+    if stage == "post_training_full":
+        refreshed: list[str] = []
+        if "post_training_core_summary" in stage_frames:
+            refreshed.append("post_training_core")
+        if "post_training_full_summary" in stage_frames:
+            refreshed.append("post_training_full")
+        return refreshed
+    if stage == "run_metric_series":
+        return ["run_metric_series"] if "run_metric_series" in stage_frames else []
+    return []

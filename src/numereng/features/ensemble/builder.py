@@ -115,7 +115,7 @@ def _resolve_predictions_path(*, run_dir: Path, manifest: dict[str, Any]) -> Pat
 
     predictions_dir = run_dir / "artifacts" / "predictions"
     if predictions_dir.is_dir():
-        allowed_suffixes = {".parquet", ".csv"}
+        allowed_suffixes = {".parquet"}
         files = sorted(
             [
                 item
@@ -127,7 +127,7 @@ def _resolve_predictions_path(*, run_dir: Path, manifest: dict[str, Any]) -> Pat
         if files:
             return files[0]
 
-    for name in ("predictions.parquet", "predictions.csv"):
+    for name in ("predictions.parquet",):
         path = run_dir / name
         if path.exists() and path.is_file():
             return path
@@ -153,6 +153,4 @@ def _read_table(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".parquet":
         return pd.read_parquet(path)
-    if suffix == ".csv":
-        return pd.read_csv(path)
     raise EnsembleBuildError(f"ensemble_predictions_format_unsupported:{path.suffix}")

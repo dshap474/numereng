@@ -207,7 +207,7 @@ Minimal example:
 - benchmark predictions are metrics-only and are not generic training features
 - `model.x_groups` and `model.data_needed` are feature-only by default
 - `model.x_groups` rejects `era`, `id`, and benchmark aliases
-- for non-`full_history_refit` runs, metrics are computed from saved predictions in the post-run scoring stage
+- training emits `post_fold` during CV; deferred `post_training_core` / `post_training_full` metrics are computed later from saved predictions
 - canonical FNC neutralizes to `fncv3_features` and then correlates against the scoring target being evaluated
 - benchmark and meta-model joins require strict era alignment
 - if `neutralization.enabled=true` in an HPO config, `neutralizer_path` is required

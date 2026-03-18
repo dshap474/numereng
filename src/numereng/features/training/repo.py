@@ -12,10 +12,11 @@ import pandas as pd
 
 from numereng.config.training import TrainingConfigLoaderError, load_training_config_json
 from numereng.features.scoring.artifacts import PersistedScoringArtifacts, persist_scoring_artifacts
-from numereng.features.scoring.models import ScoringArtifactBundle
+from numereng.features.scoring.models import CanonicalScoringStage, ScoringArtifactBundle
 from numereng.features.store.layout import ensure_store_root_not_nested
 from numereng.features.training.client import TrainingDataClient
 from numereng.features.training.errors import TrainingConfigError, TrainingDataError
+from numereng.platform.parquet import write_parquet
 
 DEFAULT_DATASETS_DIR = Path(".numereng") / "datasets"
 DEFAULT_STORE_DIR = Path(".numereng")
@@ -680,10 +681,16 @@ def save_scoring_artifacts(
     *,
     scoring_dir: Path,
     output_dir: Path,
+    selected_stage: CanonicalScoringStage = "all",
 ) -> PersistedScoringArtifacts:
     """Persist canonical scoring artifacts and return their locations."""
 
-    return persist_scoring_artifacts(artifacts, scoring_dir=scoring_dir, output_dir=output_dir)
+    return persist_scoring_artifacts(
+        artifacts,
+        scoring_dir=scoring_dir,
+        output_dir=output_dir,
+        selected_stage=selected_stage,
+    )
 
 
 def seed_active_benchmark(
@@ -849,7 +856,7 @@ def _read_parquet(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
 
 def _write_parquet(df: pd.DataFrame, path: Path, *, index: bool) -> None:
     try:
-        df.to_parquet(path, index=index)
+        write_parquet(df, path, index=index)
     except ImportError as exc:
         raise TrainingDataError("training_data_parquet_engine_missing") from exc
     except Exception as exc:

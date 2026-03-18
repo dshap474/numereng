@@ -242,10 +242,38 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     )
     monkeypatch.setattr(service_module, "build_model_data_loader", lambda **kwargs: object())
     def _fake_build_oof_predictions(*args: object, **kwargs: object) -> tuple[pd.DataFrame, dict[str, object]]:
-        _ = kwargs
+        on_fold_start = cast(Any, kwargs.get("on_fold_start"))
+        on_fold_complete = cast(Any, kwargs.get("on_fold_complete"))
         cv_config = cast(dict[str, object], args[5])
         assert cv_config["n_splits"] == 2
         assert cv_config["mode"] == "blocked"
+        if on_fold_start is not None:
+            on_fold_start(
+                {
+                    "fold": 0,
+                    "train_eras": 1,
+                    "val_eras": 1,
+                    "val_interval": {"start": "era1", "end": "era1"},
+                    "train_intervals": [],
+                    "purge_intervals": [],
+                    "embargo_intervals": [],
+                }
+            )
+        if on_fold_complete is not None:
+            on_fold_complete(
+                predictions.iloc[[0]].copy(),
+                {
+                    "fold": 0,
+                    "train_rows": 1,
+                    "val_rows": 1,
+                    "train_eras": 1,
+                    "val_eras": 1,
+                    "val_interval": {"start": "era1", "end": "era1"},
+                    "train_intervals": [],
+                    "purge_intervals": [],
+                    "embargo_intervals": [],
+                },
+            )
         return (
             predictions,
             {
@@ -271,7 +299,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     )
     monkeypatch.setattr(
         service_module,
-        "run_post_training_scoring",
+        "run_scoring",
         lambda **kwargs: PostTrainingScoringResult(
             summaries={
                 "corr": corr_df,
@@ -292,7 +320,25 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 include_feature_neutral_metrics=True,
             ),
             artifacts=ScoringArtifactBundle(
-                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
                 manifest={},
             ),
         ),
@@ -343,12 +389,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert saved_payload["path"] == store_root / "runs" / result.run_id / "run.json"
     saved_results = cast(dict[str, object], saved_payload["results"])
     metrics_block = cast(dict[str, object], saved_results["metrics"])
-    assert "corr" in metrics_block
-    assert "fnc" in metrics_block
-    assert "mmc" in metrics_block
-    assert "cwmm" in metrics_block
-    assert "bmc" in metrics_block
-    assert "payout_estimate_mean" not in metrics_block
+    assert metrics_block == {"status": "pending", "reason": "post_run_metrics_pending"}
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
@@ -357,7 +398,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert loading_block["mode"] == "materialized"
     scoring_block = cast(dict[str, object], training_block["scoring"])
     assert scoring_block["mode"] == "materialized"
-    assert scoring_block["effective_backend"] == "materialized"
+    assert scoring_block["effective_backend"] == "pending"
     resources_block = cast(dict[str, object], training_block["resources"])
     assert resources_block["parallel_backend"] == "joblib"
     cache_block = cast(dict[str, object], training_block["cache"])
@@ -368,27 +409,28 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert data_block["effective_embargo_eras"] == 0
     assert data_block["embargo_eras"] == 0
     output_block = cast(dict[str, object], saved_results["output"])
-    assert output_block["score_provenance_file"] == "score_provenance.json"
+    assert output_block["score_provenance_file"] is None
     run_dir = store_root / "runs" / result.run_id
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     manifest_artifacts = cast(dict[str, object], run_manifest["artifacts"])
     assert manifest_artifacts["log"] == "run.log"
-    assert manifest_artifacts["scoring_manifest"] == "artifacts/scoring/manifest.json"
-    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
+    assert "scoring_manifest" not in manifest_artifacts
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_started" in run_log
     assert "stage_update" in run_log
+    assert "fold_started" in run_log
+    assert "fold_completed" in run_log
     assert "run_completed" in run_log
     index_stage_pos = run_log.index("stage_update | index_run")
-    score_stage_pos = run_log.index("stage_update | score_predictions_post_run")
     finalize_stage_pos = run_log.index("stage_update | finalize_manifest")
-    assert index_stage_pos < score_stage_pos < finalize_stage_pos
+    assert "stage_update | score_predictions_post_run" not in run_log
+    assert index_stage_pos < finalize_stage_pos
     assert manifest_statuses == ["RUNNING", "FINISHED"]
     assert indexed["store_root"] == store_root
     assert indexed["run_id"] == result.run_id
 
 
-def test_run_training_submission_full_history_skips_validation_metrics(
+def test_run_training_submission_full_history_runs_post_training_scoring(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     config = {
@@ -431,6 +473,10 @@ def test_run_training_submission_full_history_skips_validation_metrics(
     predictions_dir = output_dir / "artifacts" / "predictions"
 
     predictions_path = predictions_dir / "run.parquet"
+    corr_df = pd.DataFrame(
+        [{"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}],
+        index=["prediction"],
+    )
 
     monkeypatch.setattr(service_module, "load_config", lambda path: config)
     monkeypatch.setattr(
@@ -502,11 +548,52 @@ def test_run_training_submission_full_history_skips_validation_metrics(
             Path("predictions/run.parquet"),
         ),
     )
-    monkeypatch.setattr(
-        service_module,
-        "run_post_training_scoring",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Metrics summary should not run")),
-    )
+    scoring_calls: list[dict[str, object]] = []
+
+    def _fake_score(**kwargs: object) -> PostTrainingScoringResult:
+        request = cast(PostTrainingScoringRequest, kwargs["request"])
+        scoring_calls.append(
+            {
+                "run_id": request.run_id,
+                "predictions_path": request.predictions_path,
+                "stage": request.stage,
+            }
+        )
+        return PostTrainingScoringResult(
+            summaries={"corr": corr_df},
+            score_provenance={"schema_version": "1"},
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
+                manifest={},
+            ),
+        )
+
+    monkeypatch.setattr(service_module, "run_scoring", _fake_score)
     monkeypatch.setattr(
         service_module,
         "resolve_results_path",
@@ -531,7 +618,8 @@ def test_run_training_submission_full_history_skips_validation_metrics(
     assert result.predictions_path == predictions_path
     assert result.results_path == store_root / "runs" / result.run_id / "run.json"
     saved_results = cast(dict[str, object], saved_payload["results"])
-    assert cast(dict[str, object], saved_results["metrics"])["status"] == "not_applicable"
+    metrics_block = cast(dict[str, object], saved_results["metrics"])
+    assert metrics_block == {"status": "pending", "reason": "post_run_metrics_pending"}
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
@@ -544,6 +632,7 @@ def test_run_training_submission_full_history_skips_validation_metrics(
     assert data_block["effective_embargo_eras"] == 0
     output_block = cast(dict[str, object], saved_results["output"])
     assert output_block["score_provenance_file"] is None
+    assert scoring_calls == []
 
 
 def test_run_training_index_failure_raises_training_error(
@@ -627,6 +716,48 @@ def test_run_training_index_failure_raises_training_error(
         service_module,
         "resolve_results_path",
         lambda cfg, path, results_dir: results_dir / "run.json",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries={
+                "corr": pd.DataFrame(
+                    [{"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}],
+                    index=["prediction"],
+                )
+            },
+            score_provenance={"schema_version": "1"},
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
+                manifest={},
+            ),
+        ),
     )
     monkeypatch.setattr(service_module, "save_results", lambda results, path: None)
     monkeypatch.setattr(service_module, "save_metrics", lambda metrics, path: None)
@@ -816,6 +947,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
             {
                 "scoring_mode": request.scoring_mode,
                 "era_chunk_size": request.era_chunk_size,
+                "stage": request.stage,
             }
         )
         return PostTrainingScoringResult(
@@ -845,12 +977,30 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
                 include_feature_neutral_metrics=True,
             ),
             artifacts=ScoringArtifactBundle(
-                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
                 manifest={},
             ),
         )
 
-    monkeypatch.setattr(service_module, "run_post_training_scoring", _fake_score)
+    monkeypatch.setattr(service_module, "run_scoring", _fake_score)
     monkeypatch.setattr(
         service_module,
         "resolve_results_path",
@@ -873,10 +1023,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
     )
 
     assert result.predictions_path == predictions_path
-    assert scoring_calls
-    score_call = scoring_calls[0]
-    assert score_call["scoring_mode"] == "era_stream"
-    assert score_call["era_chunk_size"] == 8
+    assert scoring_calls == []
 
     saved_results = cast(dict[str, object], saved_payload["results"])
     training_block = cast(dict[str, object], saved_results["training"])
@@ -884,7 +1031,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
     assert cast(dict[str, object], training_block["loading"])["mode"] == "fold_lazy"
     scoring_block = cast(dict[str, object], training_block["scoring"])
     assert scoring_block["mode"] == "era_stream"
-    assert scoring_block["effective_backend"] == "era_stream"
+    assert scoring_block["effective_backend"] == "pending"
     data_block = cast(dict[str, object], saved_results["data"])
     assert data_block["dataset_scope"] == "train_plus_validation"
 
@@ -965,6 +1112,48 @@ def test_run_training_index_failure_writes_failed_manifest(monkeypatch: pytest.M
         service_module,
         "resolve_results_path",
         lambda cfg, path, results_dir: results_dir / "run.json",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries={
+                "corr": pd.DataFrame(
+                    [{"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}],
+                    index=["prediction"],
+                )
+            },
+            score_provenance={"schema_version": "1"},
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
+                manifest={},
+            ),
+        ),
     )
     monkeypatch.setattr(service_module, "save_results", lambda results, path: None)
     monkeypatch.setattr(service_module, "save_metrics", lambda metrics, path: None)
@@ -1074,6 +1263,48 @@ def test_run_training_second_index_failure_keeps_finished_manifest(
         service_module,
         "resolve_results_path",
         lambda cfg, path, results_dir: results_dir / "run.json",
+    )
+    monkeypatch.setattr(
+        service_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries={
+                "corr": pd.DataFrame(
+                    [{"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}],
+                    index=["prediction"],
+                )
+            },
+            score_provenance={"schema_version": "1"},
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.1,
+                            }
+                        ]
+                    )
+                },
+                manifest={},
+            ),
+        ),
     )
     monkeypatch.setattr(service_module, "save_results", lambda results, path: None)
     monkeypatch.setattr(service_module, "save_metrics", lambda metrics, path: None)
@@ -1554,11 +1785,14 @@ def test_run_training_scoring_failure_marks_run_failed(
             Path("predictions/run.parquet"),
         ),
     )
+    scoring_called = {"value": False}
+
     def _raise_scoring_failure(**kwargs: object) -> PostTrainingScoringResult:
         _ = kwargs
+        scoring_called["value"] = True
         raise RuntimeError("score boom")
 
-    monkeypatch.setattr(service_module, "run_post_training_scoring", _raise_scoring_failure)
+    monkeypatch.setattr(service_module, "run_scoring", _raise_scoring_failure)
     monkeypatch.setattr(
         service_module,
         "resolve_results_path",
@@ -1577,17 +1811,18 @@ def test_run_training_scoring_failure_marks_run_failed(
 
     monkeypatch.setattr(service_module, "save_run_manifest", _record_manifest)
 
-    with pytest.raises(TrainingError, match="training_post_run_scoring_failed"):
-        service_module.run_training(
-            config_path=tmp_path / "config.json",
-            output_dir=None,
-            client=_FakeClient(),
-        )
+    result = service_module.run_training(
+        config_path=tmp_path / "config.json",
+        output_dir=None,
+        client=_FakeClient(),
+    )
 
     run_dir = captured_run_dir["path"]
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
-    assert run_manifest["status"] == "FAILED"
-    assert written_statuses == ["RUNNING", "FAILED"]
-    assert "post_run_scoring_failed" in run_log
-    assert "run_failed" in run_log
+    assert result.run_id == run_manifest["run_id"]
+    assert scoring_called["value"] is False
+    assert run_manifest["status"] == "FINISHED"
+    assert written_statuses == ["RUNNING", "FINISHED"]
+    assert "post_run_scoring_failed" not in run_log
+    assert "run_failed" not in run_log

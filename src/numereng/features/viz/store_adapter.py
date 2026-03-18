@@ -72,19 +72,26 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "max_feature_exposure": ("max_feature_exposure", "max_feature_exposure.mean"),
     "max_drawdown": ("max_drawdown", "corr.max_drawdown"),
 }
-
-
-@lru_cache(maxsize=512)
-def _read_csv_records_cached(path_str: str, mtime_ns: int, top_n: int = 0) -> list[dict[str, Any]]:
-    """Read CSV records with optional top-N filtering and mtime-keyed cache."""
-
-    _ = mtime_ns
-    frame = pd.read_csv(path_str)
-    if top_n > 0:
-        numeric_columns = frame.select_dtypes(include="number").columns
-        if len(numeric_columns) > 0:
-            frame = frame.nlargest(top_n, numeric_columns[-1])
-    return _frame_to_records(frame)
+_LEGACY_SCORING_SERIES_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("corr_per_era.parquet", "corr_native", "per_era"),
+    ("corr_cumulative.parquet", "corr_native", "cumulative"),
+    ("corr_ender20_per_era.parquet", "corr_ender20", "per_era"),
+    ("corr_ender20_cumulative.parquet", "corr_ender20", "cumulative"),
+    ("bmc_per_era.parquet", "bmc_native", "per_era"),
+    ("bmc_cumulative.parquet", "bmc_native", "cumulative"),
+    ("bmc_ender20_per_era.parquet", "bmc_ender20", "per_era"),
+    ("bmc_ender20_cumulative.parquet", "bmc_ender20", "cumulative"),
+    ("corr_with_benchmark_per_era.parquet", "corr_with_benchmark", "per_era"),
+    ("corr_with_benchmark_cumulative.parquet", "corr_with_benchmark", "cumulative"),
+    ("baseline_corr_per_era.parquet", "baseline_corr_native", "per_era"),
+    ("baseline_corr_cumulative.parquet", "baseline_corr_native", "cumulative"),
+    ("baseline_corr_ender20_per_era.parquet", "baseline_corr_ender20", "per_era"),
+    ("baseline_corr_ender20_cumulative.parquet", "baseline_corr_ender20", "cumulative"),
+    ("corr_delta_vs_baseline_per_era.parquet", "corr_delta_vs_baseline_native", "per_era"),
+    ("corr_delta_vs_baseline_cumulative.parquet", "corr_delta_vs_baseline_native", "cumulative"),
+    ("corr_delta_vs_baseline_ender20_per_era.parquet", "corr_delta_vs_baseline_ender20", "per_era"),
+    ("corr_delta_vs_baseline_ender20_cumulative.parquet", "corr_delta_vs_baseline_ender20", "cumulative"),
+)
 
 
 @lru_cache(maxsize=256)
@@ -108,24 +115,12 @@ def _read_parquet_frame_cached(
     return pd.read_parquet(path_str, columns=list(columns) if columns else None)
 
 
-@lru_cache(maxsize=32)
-def _read_csv_frame_cached(
-    path_str: str,
-    mtime_ns: int,
-    columns: tuple[str, ...] | None = None,
-) -> pd.DataFrame:
-    """Read csv frame with optional column subset from mtime-keyed cache."""
-
-    _ = mtime_ns
-    return pd.read_csv(path_str, usecols=list(columns) if columns else None)
-
-
 @lru_cache(maxsize=128)
-def _read_csv_matrix_cached(path_str: str, mtime_ns: int) -> tuple[list[str], list[list[float | None]]]:
-    """Read correlation matrix CSV into labels + matrix payload."""
+def _read_parquet_matrix_cached(path_str: str, mtime_ns: int) -> tuple[list[str], list[list[float | None]]]:
+    """Read correlation matrix parquet into labels + matrix payload."""
 
     _ = mtime_ns
-    frame = pd.read_csv(path_str, index_col=0)
+    frame = pd.read_parquet(path_str)
     labels = [str(value) for value in frame.columns.tolist()]
     matrix: list[list[float | None]] = []
     for row in frame.values.tolist():
@@ -483,6 +478,16 @@ def _normalize_round_metrics(
 
     scalar_metrics: tuple[tuple[str, tuple[str, ...], bool], ...] = (
         ("corr_payout_mean", ("corr_ender20.mean", "corr_ender20", "corr_payout_mean"), False),
+        (
+            "corr_with_benchmark",
+            (
+                "corr_with_benchmark",
+                "avg_corr_with_benchmark",
+                "bmc.avg_corr_with_benchmark",
+                "bmc_last_200_eras.avg_corr_with_benchmark",
+            ),
+            False,
+        ),
         ("corr_std", ("corr.std", "corr_std", "corr20v2_std"), False),
         ("corr_n_eras", ("corr.n_eras", "corr_n_eras", "corr20v2_n_eras", "n_eras"), True),
         ("fnc_std", ("fnc.std", "fnc_std"), False),
@@ -1414,14 +1419,12 @@ class VizStoreAdapter:
 
         return self.store_root / "runs" / run_id
 
-    def _read_artifact_records(self, *, parquet_path: Path, csv_path: Path | None) -> list[dict[str, Any]] | None:
+    def _read_artifact_records(self, *, parquet_path: Path) -> list[dict[str, Any]] | None:
         if parquet_path.exists():
             try:
                 return _read_parquet_records_cached(str(parquet_path), parquet_path.stat().st_mtime_ns)
             except Exception:
-                logger.debug("Failed parquet read for %s; falling back to CSV", parquet_path)
-        if csv_path is not None and csv_path.exists():
-            return _read_csv_records_cached(str(csv_path), csv_path.stat().st_mtime_ns, 0)
+                logger.debug("Failed parquet read for %s", parquet_path, exc_info=True)
         return None
 
     def _resolve_run_artifact_file(self, run_dir: Path, raw_path: Any) -> Path | None:
@@ -1451,12 +1454,59 @@ class VizStoreAdapter:
         try:
             if suffix == ".parquet":
                 return _read_parquet_frame_cached(str(path), path.stat().st_mtime_ns, normalized_columns)
-            if suffix == ".csv":
-                return _read_csv_frame_cached(str(path), path.stat().st_mtime_ns, normalized_columns)
         except Exception:
             logger.debug("Failed table read for %s", path, exc_info=True)
             return None
         return None
+
+    def _read_scoring_manifest(self, run_dir: Path) -> dict[str, Any]:
+        path = run_dir / "artifacts" / "scoring" / "manifest.json"
+        return _read_json_dict(path)
+
+    def _summary_row_from_frame(self, path: Path) -> dict[str, Any] | None:
+        frame = self._read_table_frame(path)
+        if frame is None or frame.empty:
+            return None
+        return _frame_to_records(frame.iloc[[0]])[0]
+
+    def _summary_row_from_any(self, *paths: Path) -> dict[str, Any] | None:
+        for path in paths:
+            payload = self._summary_row_from_frame(path)
+            if payload is not None:
+                return payload
+        return None
+
+    def _legacy_scoring_dashboard_series(self, run_dir: Path) -> list[dict[str, Any]]:
+        scoring_dir = run_dir / "artifacts" / "scoring"
+        rows: list[dict[str, Any]] = []
+        for filename, metric_key, series_type in _LEGACY_SCORING_SERIES_SPECS:
+            path = scoring_dir / filename
+            frame = self._read_table_frame(path)
+            if frame is None or frame.empty:
+                continue
+            normalized = frame.copy()
+            if "value" not in normalized.columns and "corr" in normalized.columns:
+                normalized["value"] = normalized["corr"]
+            if "era" not in normalized.columns or "value" not in normalized.columns:
+                continue
+            normalized = normalized[["era", "value"]]
+            for row in _frame_to_records(normalized):
+                rows.append(
+                    {
+                        "metric_key": metric_key,
+                        "series_type": series_type,
+                        "era": row.get("era"),
+                        "value": row.get("value"),
+                    }
+                )
+        rows.sort(
+            key=lambda row: (
+                str(row.get("metric_key", "")),
+                str(row.get("series_type", "")),
+                str(row.get("era", "")),
+            )
+        )
+        return rows
 
     def _resolve_predictions_artifact_path(
         self,
@@ -1492,9 +1542,6 @@ class VizStoreAdapter:
         parquet_files = sorted(artifacts_predictions.glob("*.parquet"))
         if parquet_files:
             return parquet_files[0]
-        csv_files = sorted(artifacts_predictions.glob("*.csv"))
-        if csv_files:
-            return csv_files[0]
         return None
 
     def _resolve_meta_model_artifact_path(
@@ -1648,9 +1695,8 @@ class VizStoreAdapter:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
         parquet_path = run_dir / "artifacts" / "scoring" / "corr_per_era.parquet"
-        csv_path = None
         read_start = time.perf_counter()
-        records = self._read_artifact_records(parquet_path=parquet_path, csv_path=csv_path)
+        records = self._read_artifact_records(parquet_path=parquet_path)
         persisted_read_ms = (time.perf_counter() - read_start) * 1000.0
         if records is None:
             materialize_start = time.perf_counter()
@@ -1679,21 +1725,99 @@ class VizStoreAdapter:
     def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
         return self.get_per_era_corr_result(run_id).payload
 
+    def get_scoring_dashboard(self, run_id: str) -> dict[str, Any] | None:
+        _ensure_safe_id(run_id, label="run_id")
+        run_dir = self._resolve_run_dir(run_id)
+        manifest = self.get_run_manifest(run_id) or _read_json_dict(run_dir / "run.json")
+        scoring_manifest = self._read_scoring_manifest(run_dir)
+        scoring_dir = run_dir / "artifacts" / "scoring"
+
+        chart_path = scoring_dir / "run_metric_series.parquet"
+        if chart_path.exists():
+            chart_frame = self._read_table_frame(chart_path)
+            series = _frame_to_records(chart_frame) if chart_frame is not None else []
+            source = "canonical"
+        else:
+            series = self._legacy_scoring_dashboard_series(run_dir)
+            source = "legacy_fallback"
+
+        fold_snapshots = None
+        fold_path = scoring_dir / "post_fold_snapshots.parquet"
+        if fold_path.exists():
+            fold_frame = self._read_table_frame(fold_path)
+            if fold_frame is not None and not fold_frame.empty:
+                fold_snapshots = _frame_to_records(fold_frame)
+
+        summary = self._summary_row_from_any(
+            scoring_dir / "post_training_core_summary.parquet",
+            scoring_dir / "post_training_summary.parquet",
+        )
+        feature_summary = self._summary_row_from_any(
+            scoring_dir / "post_training_full_summary.parquet",
+            scoring_dir / "post_training_features_summary.parquet",
+        )
+
+        target_train, target_payout, target_col = _resolve_run_targets(manifest)
+        meta_target_col = target_col
+        meta_payout_col = target_payout or "target_ender_20"
+        if summary is not None:
+            meta_target_col = _to_non_empty_str(summary.get("target_col")) or meta_target_col
+            meta_payout_col = _to_non_empty_str(summary.get("payout_target_col")) or meta_payout_col
+
+        available_metric_keys = sorted(
+            {
+                str(row.get("metric_key"))
+                for row in series
+                if isinstance(row, dict) and isinstance(row.get("metric_key"), str)
+            }
+        )
+        stages_raw = scoring_manifest.get("stages")
+        stages = stages_raw if isinstance(stages_raw, dict) else {}
+        omissions_raw = stages.get("omissions")
+        omissions = omissions_raw if isinstance(omissions_raw, dict) else {}
+
+        if not series and fold_snapshots is None and summary is None and feature_summary is None:
+            return None
+
+        return {
+            "series": series,
+            "fold_snapshots": fold_snapshots,
+            "summary": summary,
+            "feature_summary": feature_summary,
+            "meta": {
+                "target_col": meta_target_col or target_train,
+                "payout_target_col": meta_payout_col,
+                "available_metric_keys": available_metric_keys,
+                "source": source,
+                "omissions": {
+                    str(key): _coerce_json_value(value)
+                    for key, value in omissions.items()
+                },
+            },
+        }
+
     def get_feature_importance(self, run_id: str, top_n: int) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
-        path = run_dir / "artifacts" / "eval" / "feature_importance.csv"
+        path = run_dir / "artifacts" / "eval" / "feature_importance.parquet"
         if not path.exists():
             return None
-        return _read_csv_records_cached(str(path), path.stat().st_mtime_ns, max(0, top_n))
+        records = _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
+        if top_n <= 0:
+            return records
+        frame = pd.DataFrame(records)
+        numeric_columns = frame.select_dtypes(include="number").columns
+        if len(numeric_columns) > 0:
+            frame = frame.nlargest(top_n, numeric_columns[-1])
+        return _frame_to_records(frame)
 
     def get_trials(self, run_id: str) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")
         run_dir = self._resolve_run_dir(run_id)
-        path = run_dir / "artifacts" / "reports" / "trials.csv"
+        path = run_dir / "artifacts" / "reports" / "trials.parquet"
         if not path.exists():
             return None
-        return _read_csv_records_cached(str(path), path.stat().st_mtime_ns, 0)
+        return _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
 
     def get_best_params(self, run_id: str) -> dict[str, Any] | None:
         _ensure_safe_id(run_id, label="run_id")
@@ -2375,9 +2499,6 @@ class VizStoreAdapter:
                 return _read_parquet_records_cached(str(trials_path), trials_path.stat().st_mtime_ns)
             except Exception:
                 logger.debug("Failed parquet read for study trials: %s", trials_path)
-        csv_path = Path(storage_path) / "trials_live.csv"
-        if csv_path.exists():
-            return _read_csv_records_cached(str(csv_path), csv_path.stat().st_mtime_ns, 0)
         return None
 
     def get_experiment_studies(self, experiment_id: str) -> list[dict[str, Any]]:
@@ -2502,11 +2623,11 @@ class VizStoreAdapter:
             return None
         return resolved
 
-    def _read_ensemble_csv_records(self, artifacts_dir: Path, filename: str) -> list[dict[str, Any]] | None:
+    def _read_ensemble_parquet_records(self, artifacts_dir: Path, filename: str) -> list[dict[str, Any]] | None:
         path = artifacts_dir / filename
         if not path.exists() or not path.is_file():
             return None
-        return _read_csv_records_cached(str(path), path.stat().st_mtime_ns, 0)
+        return _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
 
     def _read_ensemble_json(self, artifacts_dir: Path, filename: str) -> dict[str, Any] | None:
         path = artifacts_dir / filename
@@ -2522,10 +2643,10 @@ class VizStoreAdapter:
         artifacts_dir = self._resolve_ensemble_artifacts_dir(ensemble)
         if artifacts_dir is None:
             return None
-        corr_path = artifacts_dir / "correlation_matrix.csv"
+        corr_path = artifacts_dir / "correlation_matrix.parquet"
         if not corr_path.exists():
             return None
-        labels, matrix = _read_csv_matrix_cached(str(corr_path), corr_path.stat().st_mtime_ns)
+        labels, matrix = _read_parquet_matrix_cached(str(corr_path), corr_path.stat().st_mtime_ns)
         return {
             "labels": labels,
             "matrix": matrix,
@@ -2540,10 +2661,10 @@ class VizStoreAdapter:
             return None
 
         component_predictions_path = artifacts_dir / "component_predictions.parquet"
-        weights = self._read_ensemble_csv_records(artifacts_dir, "weights.csv")
-        component_metrics = self._read_ensemble_csv_records(artifacts_dir, "component_metrics.csv")
-        era_metrics = self._read_ensemble_csv_records(artifacts_dir, "era_metrics.csv")
-        regime_metrics = self._read_ensemble_csv_records(artifacts_dir, "regime_metrics.csv")
+        weights = self._read_ensemble_parquet_records(artifacts_dir, "weights.parquet")
+        component_metrics = self._read_ensemble_parquet_records(artifacts_dir, "component_metrics.parquet")
+        era_metrics = self._read_ensemble_parquet_records(artifacts_dir, "era_metrics.parquet")
+        regime_metrics = self._read_ensemble_parquet_records(artifacts_dir, "regime_metrics.parquet")
         lineage = self._read_ensemble_json(artifacts_dir, "lineage.json")
         bootstrap_metrics = self._read_ensemble_json(artifacts_dir, "bootstrap_metrics.json")
         available_files = sorted(path.name for path in artifacts_dir.iterdir() if path.is_file())

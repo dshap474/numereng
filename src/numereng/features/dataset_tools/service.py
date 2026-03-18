@@ -15,6 +15,7 @@ from numereng.features.dataset_tools.contracts import (
     BuildDownsampledFullResult,
 )
 from numereng.features.training.client import TrainingDataClient
+from numereng.platform.parquet import PARQUET_COMPRESSION, PARQUET_COMPRESSION_LEVEL, write_parquet
 
 _DEFAULT_DOWNSAMPLE_STEP = 4
 _DEFAULT_DOWNSAMPLE_OFFSET = 0
@@ -65,8 +66,7 @@ def _safe_read_parquet(path: Path, *, columns: list[str] | None = None) -> pd.Da
 
 def _safe_write_parquet(frame: pd.DataFrame, path: Path, *, index: bool) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_parquet(path, index=index)
+        write_parquet(frame, path, index=index)
     except Exception as exc:
         raise DatasetToolsExecutionError(f"parquet_write_failed:{path}") from exc
 
@@ -90,7 +90,12 @@ def _iter_parquet_batches(path: Path, *, batch_size: int = _PARQUET_BATCH_SIZE) 
 def _open_writer(path: Path, table: pa.Table) -> pq.ParquetWriter:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        return pq.ParquetWriter(str(path), table.schema)
+        return pq.ParquetWriter(
+            str(path),
+            table.schema,
+            compression=PARQUET_COMPRESSION,
+            compression_level=PARQUET_COMPRESSION_LEVEL,
+        )
     except Exception as exc:
         raise DatasetToolsExecutionError(f"parquet_write_failed:{path}") from exc
 

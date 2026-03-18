@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 import numereng.features.ensemble.service as service_module
@@ -17,13 +18,13 @@ def _write_run_predictions(store_root: Path, run_id: str, frame: pd.DataFrame) -
     predictions_dir = run_dir / "artifacts" / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
 
-    predictions_path = predictions_dir / "predictions.csv"
-    frame.to_csv(predictions_path, index=False)
+    predictions_path = predictions_dir / "predictions.parquet"
+    frame.to_parquet(predictions_path, index=False)
 
     manifest = {
         "run_id": run_id,
         "artifacts": {
-            "predictions": "artifacts/predictions/predictions.csv",
+            "predictions": "artifacts/predictions/predictions.parquet",
         },
     }
     (run_dir / "run.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -74,12 +75,12 @@ def test_build_ensemble_persists_components_metrics_and_artifacts(tmp_path: Path
 
     artifacts_path = result.artifacts_path
     assert (artifacts_path / "predictions.parquet").is_file()
-    assert (artifacts_path / "correlation_matrix.csv").is_file()
+    assert (artifacts_path / "correlation_matrix.parquet").is_file()
     assert (artifacts_path / "metrics.json").is_file()
-    assert (artifacts_path / "weights.csv").is_file()
-    assert (artifacts_path / "component_metrics.csv").is_file()
-    assert (artifacts_path / "era_metrics.csv").is_file()
-    assert (artifacts_path / "regime_metrics.csv").is_file()
+    assert (artifacts_path / "weights.parquet").is_file()
+    assert (artifacts_path / "component_metrics.parquet").is_file()
+    assert (artifacts_path / "era_metrics.parquet").is_file()
+    assert (artifacts_path / "regime_metrics.parquet").is_file()
     assert (artifacts_path / "lineage.json").is_file()
     assert not (artifacts_path / "component_predictions.parquet").exists()
     assert not (artifacts_path / "bootstrap_metrics.json").exists()
@@ -90,16 +91,26 @@ def test_build_ensemble_persists_components_metrics_and_artifacts(tmp_path: Path
     assert result.config["artifacts"] == {
         "always": [
             "predictions.parquet",
-            "correlation_matrix.csv",
+            "correlation_matrix.parquet",
             "metrics.json",
-            "weights.csv",
-            "component_metrics.csv",
-            "era_metrics.csv",
-            "regime_metrics.csv",
+            "weights.parquet",
+            "component_metrics.parquet",
+            "era_metrics.parquet",
+            "regime_metrics.parquet",
             "lineage.json",
         ],
         "heavy": [],
     }
+    for filename in (
+        "predictions.parquet",
+        "correlation_matrix.parquet",
+        "weights.parquet",
+        "component_metrics.parquet",
+        "era_metrics.parquet",
+        "regime_metrics.parquet",
+    ):
+        parquet_file = pq.ParquetFile(artifacts_path / filename)
+        assert parquet_file.metadata.row_group(0).column(0).compression == "ZSTD"
 
     loaded = service_module.get_ensemble_view(store_root=store_root, ensemble_id=result.ensemble_id)
     assert loaded.ensemble_id == result.ensemble_id

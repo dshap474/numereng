@@ -186,7 +186,7 @@
       "title": "Experiment Id"
     },
     "metric": {
-      "default": "bmc_last_200_eras.mean",
+      "default": "post_fold_champion_objective",
       "title": "Metric",
       "type": "string"
     },

@@ -34,7 +34,7 @@ class HpoStudyCreateRequest:
     study_name: str
     config_path: Path
     experiment_id: str | None = None
-    metric: str = "bmc_last_200_eras.mean"
+    metric: str = "post_fold_champion_objective"
     direction: HpoDirection = "maximize"
     n_trials: int = 100
     sampler: HpoSampler = "tpe"

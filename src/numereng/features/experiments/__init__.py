@@ -7,6 +7,7 @@ from numereng.features.experiments.contracts import (
     ExperimentRecord,
     ExperimentReport,
     ExperimentReportRow,
+    ExperimentScoreRoundResult,
     ExperimentStatus,
     ExperimentTrainResult,
 )
@@ -23,6 +24,7 @@ from numereng.features.experiments.service import (
     pack_experiment,
     promote_experiment,
     report_experiment,
+    score_experiment_round,
     train_experiment,
     unarchive_experiment,
 )
@@ -37,6 +39,7 @@ __all__ = [
     "ExperimentRecord",
     "ExperimentReport",
     "ExperimentReportRow",
+    "ExperimentScoreRoundResult",
     "ExperimentRunNotFoundError",
     "ExperimentStatus",
     "ExperimentTrainResult",
@@ -48,6 +51,7 @@ __all__ = [
     "pack_experiment",
     "promote_experiment",
     "report_experiment",
+    "score_experiment_round",
     "train_experiment",
     "unarchive_experiment",
 ]

@@ -23,12 +23,9 @@ from numereng.features.submission.client import SubmissionClient, create_submiss
 NumeraiTournament = Literal["classic", "signals", "crypto"]
 
 _PREDICTIONS_CANDIDATES = (
-    "live_predictions.csv",
     "live_predictions.parquet",
-    "predictions.csv",
     "predictions.parquet",
     "val_predictions.parquet",
-    "val_predictions.csv",
 )
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CLASSIC_LIVE_DATASET_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?/live\.parquet$")
@@ -52,6 +49,10 @@ class SubmissionRunPredictionsNotFoundError(Exception):
 
 class SubmissionPredictionsReadError(Exception):
     """Raised when predictions file columns cannot be inspected."""
+
+
+class SubmissionPredictionsFormatUnsupportedError(Exception):
+    """Raised when predictions input is not parquet."""
 
 
 class SubmissionRunPredictionsNotLiveEligibleError(Exception):
@@ -93,6 +94,8 @@ def _resolve_predictions_path(predictions_path: str | Path) -> Path:
     path = Path(predictions_path)
     if not path.is_file():
         raise SubmissionPredictionsFileNotFoundError(str(path))
+    if path.suffix.lower() != ".parquet":
+        raise SubmissionPredictionsFormatUnsupportedError("submission_predictions_format_unsupported")
     return path.resolve()
 
 
@@ -165,7 +168,7 @@ def _resolve_run_predictions_path(*, store_root: Path, run_id: str) -> Path:
             return candidate.resolve()
 
     generic_candidates = sorted(
-        path for path in predictions_dir.iterdir() if path.is_file() and path.suffix.lower() in {".parquet", ".csv"}
+        path for path in predictions_dir.iterdir() if path.is_file() and path.suffix.lower() == ".parquet"
     )
     if len(generic_candidates) == 1:
         return generic_candidates[0].resolve()
@@ -176,13 +179,11 @@ def _resolve_run_predictions_path(*, store_root: Path, run_id: str) -> Path:
 def _read_predictions_frame(predictions_path: Path) -> pd.DataFrame:
     suffix = predictions_path.suffix.lower()
     try:
-        if suffix == ".csv":
-            return pd.read_csv(predictions_path)
         if suffix == ".parquet":
             return pd.read_parquet(predictions_path)
     except Exception as exc:
         raise SubmissionPredictionsReadError("submission_predictions_read_failed") from exc
-    raise SubmissionRunPredictionsNotLiveEligibleError("submission_run_predictions_not_live_eligible")
+    raise SubmissionPredictionsFormatUnsupportedError("submission_predictions_format_unsupported")
 
 
 def _resolve_classic_live_dataset_name(*, client: SubmissionClient) -> str:

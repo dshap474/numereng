@@ -17,9 +17,9 @@ def _write_manifest(run_dir: Path, *, predictions_relpath: str | None) -> None:
     (run_dir / "run.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_predictions_csv(path: Path, frame: pd.DataFrame) -> None:
+def _write_predictions_parquet(path: Path, frame: pd.DataFrame) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False)
+    frame.to_parquet(path, index=False)
 
 
 def test_load_ranked_components_requires_run_manifest(tmp_path: Path) -> None:
@@ -46,7 +46,7 @@ def test_load_ranked_components_rejects_invalid_manifest_json(tmp_path: Path) ->
 
 def test_load_ranked_components_requires_predictions_file(tmp_path: Path) -> None:
     run_dir = tmp_path / ".numereng" / "runs" / "run-a"
-    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.csv")
+    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.parquet")
 
     with pytest.raises(builder_module.EnsembleBuildError, match="ensemble_run_predictions_not_found:run-a"):
         builder_module.load_ranked_components(
@@ -59,9 +59,9 @@ def test_load_ranked_components_requires_predictions_file(tmp_path: Path) -> Non
 def test_load_ranked_components_rejects_missing_required_keys(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     run_dir = store_root / "runs" / "run-a"
-    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.csv")
-    _write_predictions_csv(
-        run_dir / "artifacts" / "predictions" / "predictions.csv",
+    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.parquet")
+    _write_predictions_parquet(
+        run_dir / "artifacts" / "predictions" / "predictions.parquet",
         pd.DataFrame({"id": ["a"], "prediction": [0.1]}),
     )
 
@@ -92,9 +92,9 @@ def test_load_ranked_components_rejects_unsupported_prediction_format(tmp_path: 
 def test_load_ranked_components_rejects_missing_prediction_column(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     run_dir = store_root / "runs" / "run-a"
-    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.csv")
-    _write_predictions_csv(
-        run_dir / "artifacts" / "predictions" / "predictions.csv",
+    _write_manifest(run_dir, predictions_relpath="artifacts/predictions/predictions.parquet")
+    _write_predictions_parquet(
+        run_dir / "artifacts" / "predictions" / "predictions.parquet",
         pd.DataFrame({"era": ["0001"], "id": ["a"], "label": ["x"]}),
     )
 
@@ -110,16 +110,16 @@ def test_load_ranked_components_rejects_empty_alignment(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
 
     run_a_dir = store_root / "runs" / "run-a"
-    _write_manifest(run_a_dir, predictions_relpath="artifacts/predictions/predictions.csv")
-    _write_predictions_csv(
-        run_a_dir / "artifacts" / "predictions" / "predictions.csv",
+    _write_manifest(run_a_dir, predictions_relpath="artifacts/predictions/predictions.parquet")
+    _write_predictions_parquet(
+        run_a_dir / "artifacts" / "predictions" / "predictions.parquet",
         pd.DataFrame({"era": ["0001"], "id": ["a"], "prediction": [0.1]}),
     )
 
     run_b_dir = store_root / "runs" / "run-b"
-    _write_manifest(run_b_dir, predictions_relpath="artifacts/predictions/predictions.csv")
-    _write_predictions_csv(
-        run_b_dir / "artifacts" / "predictions" / "predictions.csv",
+    _write_manifest(run_b_dir, predictions_relpath="artifacts/predictions/predictions.parquet")
+    _write_predictions_parquet(
+        run_b_dir / "artifacts" / "predictions" / "predictions.parquet",
         pd.DataFrame({"era": ["0001"], "id": ["b"], "prediction": [0.2]}),
     )
 

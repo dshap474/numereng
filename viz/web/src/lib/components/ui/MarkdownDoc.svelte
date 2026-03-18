@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { marked } from 'marked';
+	import ExperimentDocHeader from '$lib/components/ui/ExperimentDocHeader.svelte';
+	import {
+		extractExperimentDocHeader,
+		type ExperimentDocContext
+	} from '$lib/markdown/experiment';
 	import { renderMarkdown, type MarkdownSurface } from '$lib/markdown/render';
 
 	let {
@@ -12,6 +16,8 @@
 		borderless = false,
 		linkSurface = null,
 		linkCurrentPath = null,
+		variant = 'default',
+		experimentContext = null,
 		readOnly = false,
 		readOnlyMessage = 'Read-only mode: editing is disabled.'
 	}: {
@@ -24,6 +30,8 @@
 		borderless?: boolean;
 		linkSurface?: MarkdownSurface | null;
 		linkCurrentPath?: string | null;
+		variant?: 'default' | 'experiment';
+		experimentContext?: ExperimentDocContext | null;
 		readOnly?: boolean;
 		readOnlyMessage?: string;
 	} = $props();
@@ -36,12 +44,18 @@
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 
+	let experimentDoc = $derived.by(() => {
+		if (variant !== 'experiment') return null;
+		return extractExperimentDocHeader(content);
+	});
+
 	let rendered = $derived.by(() => {
 		try {
-			if (linkSurface) {
-				return renderMarkdown(content, { surface: linkSurface, currentPath: linkCurrentPath ?? label });
-			}
-			return marked.parse(content) as string;
+			const markdownBody = experimentDoc?.body ?? content;
+			return renderMarkdown(markdownBody, {
+				surface: linkSurface,
+				currentPath: linkCurrentPath ?? label
+			});
 		} catch {
 			return '<p>Failed to parse markdown.</p>';
 		}
@@ -176,9 +190,18 @@
 				bind:value={draft}
 			></textarea>
 		{:else if content}
-			<div class="prose-dark text-sm">
-				{@html rendered}
-			</div>
+			{#if variant === 'experiment' && experimentContext}
+				<ExperimentDocHeader
+					title={experimentDoc?.title ?? null}
+					headerEntries={experimentDoc?.headerEntries ?? []}
+					context={experimentContext}
+				/>
+			{/if}
+			{#if rendered.trim().length > 0}
+				<div class="prose-dark text-sm">
+					{@html rendered}
+				</div>
+			{/if}
 		{:else}
 			<p class="text-sm text-muted-foreground italic">
 				No {label.toLowerCase()} yet.{readOnly ? '' : ' Click Edit to create one.'}

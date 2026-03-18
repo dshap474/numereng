@@ -206,3 +206,134 @@ def test_build_full_history_predictions(monkeypatch) -> None:  # type: ignore[no
     assert cast(str, meta["mode"]) == "full_history_refit"
     assert cast(int, meta["folds_used"]) == 1
     assert "max_train_eras" not in meta
+
+
+def test_build_oof_predictions_invokes_fold_callback_serial(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: _FakeModel())
+
+    full = pd.DataFrame(
+        {
+            "id": [f"id-{idx}" for idx in range(12)],
+            "era": ["1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6"],
+            "target": [float(idx) / 10.0 for idx in range(12)],
+            "feature_1": list(range(12)),
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    completed: list[int] = []
+
+    def _on_fold_complete(predictions: pd.DataFrame, metadata: dict[str, object]) -> None:
+        assert "cv_fold" in predictions.columns
+        completed.append(int(metadata["fold"]))
+
+    cv_module.build_oof_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="LGBMRegressor",
+        model_params={},
+        model_config={},
+        cv_config={"embargo": 0, "mode": "official_walkforward", "chunk_size": 2, "min_train_size": 1},
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+        on_fold_complete=_on_fold_complete,
+    )
+
+    assert completed == [0, 1]
+
+
+def test_build_oof_predictions_invokes_fold_start_callback_serial(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: _FakeModel())
+
+    full = pd.DataFrame(
+        {
+            "id": [f"id-{idx}" for idx in range(12)],
+            "era": ["1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6"],
+            "target": [float(idx) / 10.0 for idx in range(12)],
+            "feature_1": list(range(12)),
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    started: list[tuple[int, object]] = []
+
+    def _on_fold_start(metadata: dict[str, object]) -> None:
+        started.append((int(metadata["fold"]), metadata["val_interval"]))
+
+    cv_module.build_oof_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="LGBMRegressor",
+        model_params={},
+        model_config={},
+        cv_config={"embargo": 0, "mode": "official_walkforward", "chunk_size": 2, "min_train_size": 1},
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+        on_fold_start=_on_fold_start,
+    )
+
+    assert started == [
+        (0, {"start": "3", "end": "4", "start_index": 2, "end_index": 3}),
+        (1, {"start": "5", "end": "6", "start_index": 4, "end_index": 5}),
+    ]
+
+
+def test_build_oof_predictions_invokes_fold_callback_parallel_in_order(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: _FakeModel())
+
+    full = pd.DataFrame(
+        {
+            "id": [f"id-{idx}" for idx in range(12)],
+            "era": ["1", "1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6"],
+            "target": [float(idx) / 10.0 for idx in range(12)],
+            "feature_1": list(range(12)),
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    completed: list[int] = []
+
+    def _on_fold_complete(predictions: pd.DataFrame, metadata: dict[str, object]) -> None:
+        assert "cv_fold" in predictions.columns
+        completed.append(int(metadata["fold"]))
+
+    cv_module.build_oof_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="LGBMRegressor",
+        model_params={},
+        model_config={},
+        cv_config={"embargo": 0, "mode": "official_walkforward", "chunk_size": 2, "min_train_size": 1},
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+        parallel_folds=2,
+        parallel_backend="joblib",
+        memmap_enabled=False,
+        on_fold_complete=_on_fold_complete,
+    )
+
+    assert completed == [0, 1]

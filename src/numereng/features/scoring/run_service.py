@@ -1,4 +1,4 @@
-"""Score persisted run predictions using canonical post-training scoring."""
+"""Score persisted run predictions using canonical run scoring."""
 
 from __future__ import annotations
 
@@ -10,12 +10,13 @@ from typing import cast
 import pandas as pd
 
 from numereng.features.scoring.models import (
+    CanonicalScoringStage,
     PostTrainingScoringRequest,
     ResolvedScoringPolicy,
 )
-from numereng.features.scoring.service import run_post_training_scoring
+from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run, resolve_store_root
-from numereng.features.training.client import create_training_data_client
+from numereng.features.training.client import TrainingDataClient, create_training_data_client
 from numereng.features.training.errors import TrainingConfigError, TrainingError
 from numereng.features.training.models import ScoreRunResult
 from numereng.features.training.repo import (
@@ -42,6 +43,8 @@ def score_run(
     *,
     run_id: str,
     store_root: str | Path = ".numereng",
+    stage: CanonicalScoringStage = "all",
+    client: TrainingDataClient | None = None,
 ) -> ScoreRunResult:
     """Recompute metrics/provenance for one persisted training run."""
     safe_run_id = _ensure_safe_run_id(run_id)
@@ -97,6 +100,9 @@ def score_run(
     )
 
     request = PostTrainingScoringRequest(
+        run_id=safe_run_id,
+        config_hash=str(_as_mapping(run_manifest.get("config")).get("hash", "")),
+        seed=None,
         predictions_path=predictions_path,
         pred_cols=("prediction",),
         target_col=target_col,
@@ -114,18 +120,20 @@ def score_run(
         data_root=DEFAULT_DATASETS_DIR,
         scoring_mode=scoring_mode,
         era_chunk_size=era_chunk_size,
+        stage=stage,
+        include_feature_neutral_metrics=_include_feature_neutral_metrics(stage),
     )
 
     log_info(
         run_log_path,
         event="run_scoring_started",
-        message=f"mode={scoring_mode} era_chunk_size={era_chunk_size}",
+        message=f"mode={scoring_mode} era_chunk_size={era_chunk_size} stage={stage}",
     )
 
     try:
-        scoring_result = run_post_training_scoring(
+        scoring_result = run_scoring(
             request=request,
-            client=create_training_data_client(),
+            client=client or create_training_data_client(),
         )
     except Exception as exc:
         log_error(run_log_path, event="run_scoring_failed", message=str(exc))
@@ -146,6 +154,7 @@ def score_run(
         scoring_result.artifacts,
         scoring_dir=scoring_dir,
         output_dir=run_dir,
+        selected_stage=scoring_result.requested_stage,
     )
 
     results_output = _as_mapping(results.get("output"))
@@ -161,6 +170,8 @@ def score_run(
         requested_chunk_size=era_chunk_size,
         effective_backend=scoring_result.effective_scoring_backend,
         policy=scoring_result.policy,
+        requested_stage=scoring_result.requested_stage,
+        refreshed_stages=scoring_result.refreshed_stages,
     )
     results["training"] = results_training
     save_results(results, results_path)
@@ -180,6 +191,8 @@ def score_run(
         requested_chunk_size=era_chunk_size,
         effective_backend=scoring_result.effective_scoring_backend,
         policy=scoring_result.policy,
+        requested_stage=scoring_result.requested_stage,
+        refreshed_stages=scoring_result.refreshed_stages,
     )
     run_manifest["training"] = manifest_training
     save_run_manifest(run_manifest, run_manifest_path)
@@ -192,7 +205,10 @@ def score_run(
     log_info(
         run_log_path,
         event="run_scoring_succeeded",
-        message=f"effective_backend={scoring_result.effective_scoring_backend}",
+        message=(
+            f"effective_backend={scoring_result.effective_scoring_backend} "
+            f"requested_stage={scoring_result.requested_stage}"
+        ),
     )
 
     return ScoreRunResult(
@@ -202,6 +218,8 @@ def score_run(
         metrics_path=metrics_path,
         score_provenance_path=score_provenance_path,
         effective_scoring_backend=scoring_result.effective_scoring_backend,
+        requested_stage=scoring_result.requested_stage,
+        refreshed_stages=scoring_result.refreshed_stages,
     )
 
 
@@ -270,11 +288,15 @@ def _updated_scoring_payload(
     requested_chunk_size: int,
     effective_backend: str,
     policy: ResolvedScoringPolicy,
+    requested_stage: CanonicalScoringStage,
+    refreshed_stages: tuple[str, ...],
 ) -> dict[str, object]:
     payload = dict(existing)
     payload["mode"] = requested_mode
     payload["era_chunk_size"] = requested_chunk_size
     payload["effective_backend"] = effective_backend
+    payload["requested_stage"] = requested_stage
+    payload["refreshed_stages"] = list(refreshed_stages)
     payload["policy"] = {
         "fnc_feature_set": policy.fnc_feature_set,
         "fnc_target_policy": policy.fnc_target_policy,
@@ -282,6 +304,7 @@ def _updated_scoring_payload(
         "include_feature_neutral_metrics": policy.include_feature_neutral_metrics,
     }
     return payload
+
 
 def _resolve_scoring_mode(value: object) -> str:
     if value is None:
@@ -338,6 +361,10 @@ def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: 
     if any(not item for item in resolved):
         raise TrainingConfigError("training_scoring_targets_invalid")
     return tuple(_dedupe_preserve_order(resolved))
+
+
+def _include_feature_neutral_metrics(stage: CanonicalScoringStage) -> bool:
+    return stage in {"all", "run_metric_series", "post_training_full"}
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

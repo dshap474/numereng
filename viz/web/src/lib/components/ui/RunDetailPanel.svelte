@@ -6,10 +6,10 @@
 		type DiagnosticsSources,
 		type ExperimentRun,
 		type FeatureImportanceRow,
-		type PerEraRow,
 		type ResourceSample,
 		type RunEvent,
-		type RunManifest
+		type RunManifest,
+		type ScoringDashboard
 	} from '$lib/api/client';
 	import CumulativeCorrChart from '$lib/components/charts/CumulativeCorrChart.svelte';
 	import FeatureImportanceChart from '$lib/components/charts/FeatureImportanceChart.svelte';
@@ -35,14 +35,6 @@
 
 	type MainTab = 'performance' | 'diagnostics' | 'artifacts' | 'timeline';
 	type ArtifactTab = 'config' | 'trials' | 'data' | 'notes';
-	type MetricKey =
-		| 'bmc_last_200_eras_mean'
-		| 'corr_sharpe'
-		| 'corr_mean'
-		| 'mmc_mean'
-		| 'mmc_coverage_ratio_rows'
-		| 'bmc_mean'
-		| 'max_drawdown';
 
 	type AsyncState<T> = {
 		runId: string | null;
@@ -53,7 +45,7 @@
 	};
 
 	type PerformanceData = {
-		perEraCorr: PerEraRow[] | null;
+		scoringDashboard: ScoringDashboard | null;
 		featureImportance: FeatureImportanceRow[] | null;
 	};
 
@@ -68,17 +60,6 @@
 		bestParams: Record<string, unknown> | null;
 	};
 
-	const keyMetrics: MetricKey[] = [
-		'bmc_last_200_eras_mean',
-		'corr_sharpe',
-		'corr_mean',
-		'mmc_mean',
-		'mmc_coverage_ratio_rows',
-		'bmc_mean',
-		'max_drawdown'
-	];
-
-	const lowerBetter = new Set<MetricKey>(['max_drawdown']);
 	const sectionControllers = new Map<string, AbortController>();
 
 	let mainTab = $state<MainTab>('performance');
@@ -129,15 +110,8 @@
 	});
 
 	let currentRun = $derived.by(() => runs.find((run) => run.run_id === runId) ?? null);
-	let championRun = $derived.by(() => runs.find((run) => run.is_champion) ?? null);
-	let shellMetrics = $derived.by(() => {
-		if (currentRun?.metrics && Object.keys(currentRun.metrics).length > 0) {
-			return currentRun.metrics;
-		}
-		return metricsState.value;
-	});
 	let manifest = $derived(manifestState.value);
-	let perEraCorr = $derived(performanceState.value?.perEraCorr ?? null);
+	let scoringDashboard = $derived(performanceState.value?.scoringDashboard ?? null);
 	let featureImportance = $derived(performanceState.value?.featureImportance ?? null);
 	let resources = $derived(diagnosticsState.value?.resources ?? []);
 	let diagnosticsSources = $derived(diagnosticsState.value?.diagnosticsSources ?? null);
@@ -152,38 +126,6 @@
 	let headerStatus = $derived(manifest?.status ?? currentRun?.status ?? null);
 	let headerCreatedAt = $derived(manifest?.created_at ?? currentRun?.created_at ?? null);
 	let experimentLabel = $derived(experimentName ?? experimentId);
-
-	let metricCards = $derived.by(() => {
-		return keyMetrics.map((key) => {
-			const value = metricValue(currentRun, key) ?? shellMetrics?.[key] ?? null;
-			const values = runs
-				.map((run) => metricValue(run, key))
-				.filter((candidate): candidate is number => candidate != null && Number.isFinite(candidate));
-			const total = values.length;
-			let rank: number | null = null;
-			if (value != null && total > 0) {
-				const sorted = [...values].sort((a, b) => (lowerBetter.has(key) ? a - b : b - a));
-				rank = sorted.findIndex((candidate) => candidate === value) + 1;
-				if (rank === 0) rank = null;
-			}
-			const championValue = metricValue(championRun, key);
-			const improvement =
-				value != null && championValue != null
-					? lowerBetter.has(key)
-						? championValue - value
-						: value - championValue
-					: null;
-			return {
-				key,
-				label: metricLabel(key),
-				value,
-				rank,
-				total,
-				improvement,
-				isChampion: championRun?.run_id === runId
-			};
-		});
-	});
 
 	let resourceStats = $derived.by(() => {
 		if (resources.length === 0) return null;
@@ -207,44 +149,134 @@
 		return resources[resources.length - 1];
 	});
 
-	function metricValue(run: ExperimentRun | null | undefined, key: MetricKey): number | null {
-		if (!run?.metrics) return null;
-		const value = run.metrics[key];
-		return typeof value === 'number' && Number.isFinite(value) ? value : null;
+	const performanceMetricOrder = [
+		'corr_native',
+		'corr_ender20',
+		'bmc_ender20',
+		'mmc_ender20',
+		'bmc_native',
+		'mmc_native',
+		'cwmm',
+		'corr_with_benchmark',
+		'baseline_corr_native',
+		'baseline_corr_ender20',
+		'corr_delta_vs_baseline_native',
+		'corr_delta_vs_baseline_ender20',
+		'fnc_native',
+		'fnc_ender20',
+		'feature_exposure',
+		'max_feature_exposure'
+	];
+
+	let visiblePerformanceMetrics = $derived.by(() => {
+		const available = new Set(availableMetricKeys());
+		return performanceMetricOrder.filter((key) => available.has(key) && !shouldHideMetric(key));
+	});
+
+	const foldMetricCharts: Array<{
+		key: 'corr_native' | 'corr_ender20' | 'bmc_ender20';
+		label: string;
+	}> = [
+		{ key: 'corr_native', label: 'CORR Native Fold Mean' },
+		{ key: 'corr_ender20', label: 'CORR Ender20 Fold Mean' },
+		{ key: 'bmc_ender20', label: 'BMC Ender20 Fold Mean' }
+	];
+
+	function availableMetricKeys(): string[] {
+		return scoringDashboard?.meta?.available_metric_keys ?? [];
 	}
 
-	function metricLabel(key: MetricKey): string {
-		switch (key) {
-			case 'bmc_last_200_eras_mean':
-				return 'BMC Mean (Last 200 Eras)';
-			case 'corr_sharpe':
-				return 'CORR Sharpe';
-			case 'corr_mean':
-				return 'CORR Mean';
-			case 'mmc_mean':
-				return 'MMC Mean';
-			case 'mmc_coverage_ratio_rows':
-				return 'MMC Coverage Ratio';
-			case 'bmc_mean':
-				return 'BMC Mean';
-			case 'max_drawdown':
-				return 'Max Drawdown';
-			default:
-				return key;
+	function shouldHideMetric(metricKey: string): boolean {
+		const meta = scoringDashboard?.meta;
+		if (!meta) return false;
+		if (metricKey.startsWith('fnc_') || metricKey.includes('feature_exposure')) {
+			if (meta.omissions?.post_training_features === 'feature_neutral_metrics_disabled') {
+				return true;
+			}
 		}
+		if (meta.target_col && meta.payout_target_col && meta.target_col === meta.payout_target_col) {
+			if (metricKey.endsWith('_ender20')) {
+				const nativeKey = metricKey.replace(/_ender20$/, '_native');
+				return availableMetricKeys().includes(nativeKey);
+			}
+		}
+		return false;
 	}
 
-	function improvementClass(value: number | null): string {
-		if (value == null || value === 0) return 'text-muted-foreground';
-		return value > 0 ? 'text-positive' : 'text-negative';
+	function metricRows(metricKey: string, seriesType: 'per_era' | 'cumulative'): Array<Record<string, string | number>> {
+		const rows = scoringDashboard?.series ?? [];
+		return rows
+			.filter((row) => row.metric_key === metricKey && row.series_type === seriesType)
+			.map((row, index) => ({
+				era: row.era ?? index + 1,
+				value: typeof row.value === 'number' ? row.value : 0
+			}));
 	}
 
-	function signed(value: number | null): string {
-		if (value == null) return 'n/a';
-		const abs = Math.abs(value).toFixed(4);
-		if (value > 0) return `+${abs}`;
-		if (value < 0) return `-${abs}`;
-		return '0.0000';
+	function foldMetricRows(metricKey: 'corr_native' | 'corr_ender20' | 'bmc_ender20'): Array<Record<string, string | number>> {
+		const rows = scoringDashboard?.fold_snapshots ?? [];
+		const valueKey =
+			metricKey === 'corr_native'
+				? 'corr_native_fold_mean'
+				: metricKey === 'corr_ender20'
+					? 'corr_ender20_fold_mean'
+					: 'bmc_ender20_fold_mean';
+		return rows
+			.filter((row) => typeof row[valueKey] === 'number')
+			.map((row) => ({
+				era: Number(row.cv_fold),
+				value: Number(row[valueKey])
+			}));
+	}
+
+	function metricDisplayLabel(metricKey: string): string {
+		const labels: Record<string, string> = {
+			corr_native: 'CORR Native',
+			corr_ender20: 'CORR Ender20',
+			bmc_native: 'BMC Native',
+			bmc_ender20: 'BMC Ender20',
+			mmc_native: 'MMC Native',
+			mmc_ender20: 'MMC Ender20',
+			fnc_native: 'FNC Native',
+			fnc_ender20: 'FNC Ender20',
+			cwmm: 'CWMM',
+			feature_exposure: 'Feature Exposure',
+			max_feature_exposure: 'Max Feature Exposure',
+			corr_with_benchmark: 'Corr vs Benchmark',
+			baseline_corr_native: 'Baseline Corr Native',
+			baseline_corr_ender20: 'Baseline Corr Ender20',
+			corr_delta_vs_baseline_native: 'Corr Delta vs Baseline Native',
+			corr_delta_vs_baseline_ender20: 'Corr Delta vs Baseline Ender20'
+		};
+		const label = labels[metricKey] ?? metricKey;
+		const meta = scoringDashboard?.meta;
+		if (meta?.target_col && meta?.payout_target_col && meta.target_col === meta.payout_target_col) {
+			if (metricKey.endsWith('_native')) {
+				return `${label} (Native = Ender20)`;
+			}
+		}
+		return label;
+	}
+
+	function metricSummaryRow(metricKey: string): Record<string, unknown> | null {
+		if (!scoringDashboard) return null;
+		if (metricKey.startsWith('fnc_') || metricKey.includes('feature_exposure')) {
+			return scoringDashboard.feature_summary;
+		}
+		return scoringDashboard.summary;
+	}
+
+	function metricSummaryChips(metricKey: string): Array<{ label: string; value: unknown }> {
+		const row = metricSummaryRow(metricKey);
+		if (!row) return [];
+		const chips: Array<{ label: string; value: unknown }> = [];
+		for (const suffix of ['mean', 'std', 'sharpe', 'max_drawdown']) {
+			const key = `${metricKey}_${suffix}`;
+			if (key in row) {
+				chips.push({ label: suffix.replace('_', ' '), value: row[key] });
+			}
+		}
+		return chips;
 	}
 
 	function statusClass(status?: string | null): string {
@@ -396,14 +428,14 @@
 		performanceState.error = null;
 		markTabFetchStart(id, 'performance');
 		try {
-			const [corr, importance] = await Promise.all([
-				api.getPerEraCorr(id, controller.signal).catch(() => null),
+			const [dashboard, importance] = await Promise.all([
+				api.getRunScoringDashboard(id, controller.signal).catch(() => null),
 				api.getFeatureImportance(id, 30, controller.signal).catch(() => null)
 			]);
 			if (controller.signal.aborted || runId !== id) return;
 			performanceState.runId = id;
 			performanceState.value = {
-				perEraCorr: corr,
+				scoringDashboard: dashboard,
 				featureImportance: importance
 			};
 			performanceState.loaded = true;
@@ -628,39 +660,6 @@
 		</div>
 	</header>
 
-	{#if shellMetrics}
-		<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3" aria-label="Key metrics">
-			{#each metricCards as card (card.key)}
-				<div class="bg-card border border-border rounded-lg p-3.5">
-					<p class="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">{card.label}</p>
-					<p class="text-2xl font-semibold tabular-nums">{fmt(card.value)}</p>
-					<p class="mt-1 text-[11px] text-muted-foreground">
-						{#if card.rank && card.total > 0}
-							rank #{card.rank} / {card.total}
-						{:else}
-							rank n/a
-						{/if}
-					</p>
-					<p class="text-[11px] {improvementClass(card.improvement)}">
-						{#if card.isChampion}
-							champion
-						{:else}
-							vs champion {signed(card.improvement)}
-						{/if}
-					</p>
-				</div>
-			{/each}
-		</div>
-	{:else if metricsState.loading}
-		<div class="bg-card border border-border rounded-lg p-6 text-center text-muted-foreground text-sm">
-			Loading metrics...
-		</div>
-	{:else}
-		<div class="bg-card border border-border rounded-lg p-6 text-center text-muted-foreground text-sm">
-			Metrics not available for this run.
-		</div>
-	{/if}
-
 	<div class="flex flex-wrap items-center gap-2 border-b border-border">
 		{#each [
 			{ key: 'performance', label: 'Performance' },
@@ -696,74 +695,72 @@
 						<p class="text-[11px] text-muted-foreground">Updating charts...</p>
 					</div>
 				{/if}
-				{#if perEraCorr}
-					<div class="bg-card border border-border rounded-lg p-5">
-						<div class="flex items-center justify-between gap-2 mb-3">
-							<h3 class="text-sm font-semibold">Cumulative Correlation</h3>
-							<p class="text-xs text-muted-foreground">Primary trajectory view</p>
+				<div class="space-y-5">
+					{#if scoringDashboard?.meta?.source === 'legacy_fallback'}
+						<div class="bg-card border border-border rounded-lg p-4">
+							<p class="text-sm text-muted-foreground">
+								This run predates canonical scoring series. Rescore the run to materialize MMC, FNC, and exposure charts.
+							</p>
 						</div>
-						<CumulativeCorrChart data={perEraCorr} height="360px" />
-					</div>
-				{/if}
-
-				<div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
-					<div class="xl:col-span-2 bg-card border border-border rounded-lg p-5">
-						<div class="flex items-center justify-between gap-2 mb-3">
-							<h3 class="text-sm font-semibold">Per-Era Correlation</h3>
-							<p class="text-xs text-muted-foreground">Volatility + consistency</p>
-						</div>
-						{#if perEraCorr}
-							<PerEraLineChart data={perEraCorr} height="300px" />
-						{:else}
-							<p class="text-sm text-muted-foreground">No per-era data available.</p>
-						{/if}
-					</div>
-
-					<div class="bg-card border border-border rounded-lg p-5">
-						<h3 class="text-sm font-semibold mb-3">Run Snapshot</h3>
-						<dl class="space-y-2 text-sm">
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Model</dt>
-								<dd class="font-medium text-right">
-									{manifest?.model_type ?? (typeof manifest?.model === 'object' ? manifest?.model?.type : manifest?.model) ?? currentRun?.model_type ?? 'N/A'}
-								</dd>
-							</div>
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Target</dt>
-								<dd class="font-medium text-right">
-									{manifest?.data?.target_payout ?? manifest?.data?.target_train ?? manifest?.data?.target_col ?? manifest?.target ?? currentRun?.target_payout ?? currentRun?.target_train ?? currentRun?.target_col ?? currentRun?.target ?? 'N/A'}
-								</dd>
-							</div>
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Feature Set</dt>
-								<dd class="font-medium text-right">{manifest?.data?.feature_set ?? currentRun?.feature_set ?? 'N/A'}</dd>
-							</div>
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Created</dt>
-								<dd class="font-medium text-right tabular-nums">{headerCreatedAt?.slice(0, 10) ?? 'N/A'}</dd>
-							</div>
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Champion</dt>
-								<dd class="font-medium text-right font-mono text-xs">{championRun?.run_id ?? 'N/A'}</dd>
-							</div>
-							<div class="flex justify-between gap-3">
-								<dt class="text-muted-foreground">Resource samples</dt>
-								<dd class="font-medium text-right tabular-nums">{resources.length > 0 ? resources.length : '—'}</dd>
-							</div>
-						</dl>
-					</div>
-				</div>
-
-				<div class="bg-card border border-border rounded-lg p-5">
-					<div class="flex items-center justify-between gap-2 mb-3">
-						<h3 class="text-sm font-semibold">Feature Importance</h3>
-						<p class="text-xs text-muted-foreground">Top weighted features</p>
-					</div>
-					{#if featureImportance}
-						<FeatureImportanceChart data={featureImportance} topN={15} />
-					{:else}
-						<p class="text-sm text-muted-foreground">Feature importance not available for this run.</p>
 					{/if}
+
+					<div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">
+						{#each visiblePerformanceMetrics as metricKey (metricKey)}
+							<div class="rounded-lg border border-border bg-card p-4 space-y-3">
+								<div class="flex items-start justify-between gap-3">
+									<div>
+										<h3 class="text-sm font-medium">{metricDisplayLabel(metricKey)}</h3>
+										<p class="text-[11px] text-muted-foreground">{metricRows(metricKey, 'per_era').length} eras</p>
+									</div>
+									{#if metricSummaryChips(metricKey).length > 0}
+										<div class="flex flex-wrap justify-end gap-1.5">
+											{#each metricSummaryChips(metricKey) as chip (`${metricKey}-${chip.label}`)}
+												<span class="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">
+													{chip.label}: {fmt(chip.value as number | null)}
+												</span>
+											{/each}
+										</div>
+									{/if}
+								</div>
+								<div class="grid grid-cols-1 gap-3 3xl:grid-cols-2">
+									<div class="rounded-md border border-border/60 p-2">
+										<p class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">Cumulative</p>
+										<CumulativeCorrChart data={metricRows(metricKey, 'cumulative')} height="220px" />
+									</div>
+									<div class="rounded-md border border-border/60 p-2">
+										<p class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">Per Era</p>
+										<PerEraLineChart data={metricRows(metricKey, 'per_era')} height="220px" />
+									</div>
+								</div>
+							</div>
+						{/each}
+
+						{#each foldMetricCharts as foldChart (`fold-${foldChart.key}`)}
+							{#if foldMetricRows(foldChart.key).length > 0}
+								<div class="rounded-lg border border-border bg-card p-4 space-y-3">
+									<div>
+										<h3 class="text-sm font-medium">{foldChart.label}</h3>
+										<p class="text-[11px] text-muted-foreground">{foldMetricRows(foldChart.key).length} folds</p>
+									</div>
+									<div class="rounded-md border border-border/60 p-2">
+										<PerEraLineChart data={foldMetricRows(foldChart.key)} height="220px" />
+									</div>
+								</div>
+							{/if}
+						{/each}
+
+						<div class="rounded-lg border border-border bg-card p-4 space-y-3 2xl:col-span-2">
+							<div>
+								<h3 class="text-sm font-medium">Feature Importance</h3>
+								<p class="text-[11px] text-muted-foreground">Top weighted features</p>
+							</div>
+							{#if featureImportance}
+								<FeatureImportanceChart data={featureImportance} topN={15} />
+							{:else}
+								<p class="text-sm text-muted-foreground">Feature importance not available for this run.</p>
+							{/if}
+						</div>
+					</div>
 				</div>
 			{/if}
 		</div>

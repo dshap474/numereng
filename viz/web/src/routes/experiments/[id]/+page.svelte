@@ -32,8 +32,9 @@
 		sampleStatusMessage,
 		scopeLabel
 	} from '$lib/monitor/samples';
+	import type { ExperimentDocContext } from '$lib/markdown/experiment';
 	import { fmt, fmtGb, fmtPercent } from '$lib/utils';
-	import SharpeBarChart from '$lib/components/charts/SharpeBarChart.svelte';
+	import BenchmarkSimilarityChart from '$lib/components/charts/BenchmarkSimilarityChart.svelte';
 	import ParetoChart from '$lib/components/charts/ParetoChart.svelte';
 	import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
 	import Select, { type SelectOption } from '$lib/components/ui/Select.svelte';
@@ -62,6 +63,7 @@
 	let sortColumn = $state('bmc_last_200_eras_mean');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
 	let chartTab = $state<'charts' | 'composite' | 'target-analysis'>('charts');
+	let benchmarkSimilarityBmcMode = $state<'last200' | 'full'>('last200');
 	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
 	let runOpsView = $state<'table' | 'chart'>('table');
 	let launchSectionOpen = $state(true);
@@ -98,6 +100,34 @@
 	type OpType = 'run' | 'hpo' | 'ensemble';
 	let selectedOp = $state<{ id: string; type: OpType } | null>(null);
 	let readOnly = $derived(Boolean(data.capabilities?.read_only));
+	const COMPLETED_RUN_STATUSES = new Set(['FINISHED', 'COMPLETED', 'COMPLETE']);
+	let experimentDocContext = $derived.by<ExperimentDocContext>(() => {
+		const roundIndexes = new Set<number>();
+		for (const result of data.roundResults) {
+			if (typeof result.round_index === 'number' && Number.isFinite(result.round_index)) {
+				roundIndexes.add(result.round_index);
+			}
+		}
+		const completedRuns = data.runs.filter((run) =>
+			COMPLETED_RUN_STATUSES.has((run.status ?? '').toUpperCase())
+		).length;
+		return {
+			experimentId: data.experiment.experiment_id,
+			name: data.experiment.name,
+			status: data.experiment.status,
+			createdAt: data.experiment.created_at,
+			updatedAt: data.experiment.updated_at,
+			championRunId: data.experiment.champion_run_id,
+			tags: data.experiment.tags ?? [],
+			stats: {
+				totalRuns: data.runs.length,
+				completedRuns,
+				roundCount: roundIndexes.size,
+				studyCount: data.studies.length,
+				ensembleCount: data.ensembles.length
+			}
+		};
+	});
 
 	let monitorTab = $state<'events' | 'logs' | 'resources'>('events');
 	let monitorLoading = $state(false);
@@ -222,23 +252,43 @@
 		return sortedOps.find((item) => item.op_id === current.id && item.op_type === current.type) ?? null;
 	});
 
-	let bmcRuns = $derived.by(() => {
+	let benchmarkSimilarityPoints = $derived.by(() => {
+		const metricKey =
+			benchmarkSimilarityBmcMode === 'full' ? 'bmc_mean' : 'bmc_last_200_eras_mean';
 		const runPoints = data.runs
-			.filter((r) => metricNumber(r.metrics, 'bmc_last_200_eras_mean') != null)
+			.filter(
+				(r) =>
+					metricNumber(r.metrics, metricKey) != null &&
+					metricNumber(r.metrics, 'corr_with_benchmark') != null
+			)
 			.map((r) => ({
-				run_id: r.run_id,
-				run_name: r.run_name ?? undefined,
-				composite: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
-				is_champion: r.is_champion
+				id: r.run_id,
+				name: r.run_name ?? configNameByRunId.get(r.run_id) ?? r.run_id,
+				model_type: r.model_type ?? 'unknown',
+				target: targetLabel(r),
+				corr_with_benchmark: metricNumber(r.metrics, 'corr_with_benchmark') ?? 0,
+				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
+				bmc_last_200_eras_mean: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
+				is_champion: r.is_champion,
+				source_type: 'run' as const
 			}));
 
 		const roundPoints = data.roundResults
-			.filter((r) => metricNumber(r.metrics, 'bmc_last_200_eras_mean') != null)
+			.filter(
+				(r) =>
+					metricNumber(r.metrics, metricKey) != null &&
+					metricNumber(r.metrics, 'corr_with_benchmark') != null
+			)
 			.map((r) => ({
-				run_id: r.run_id,
-				run_name: r.name,
-				composite: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
-				is_champion: false
+				id: r.result_id,
+				name: r.name,
+				model_type: r.model_type ?? 'derived',
+				target: r.target ?? '-',
+				corr_with_benchmark: metricNumber(r.metrics, 'corr_with_benchmark') ?? 0,
+				bmc_mean: metricNumber(r.metrics, 'bmc_mean'),
+				bmc_last_200_eras_mean: metricNumber(r.metrics, 'bmc_last_200_eras_mean') ?? 0,
+				is_champion: false,
+				source_type: 'round_result' as const
 			}));
 
 		return [...runPoints, ...roundPoints];
@@ -1100,15 +1150,17 @@
 					borderless
 					label="Experiment"
 					load={() => api.getExperimentDoc(data.experiment.experiment_id, 'EXPERIMENT.md')}
+					variant="experiment"
+					experimentContext={experimentDocContext}
 					readOnly={readOnly}
 					readOnlyMessage=""
 				/>
 
 			<div class="flex-1 min-h-0 p-4" aria-label="Charts wrapper">
 			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
-				<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
-					<div class="flex gap-0">
-						{#each [['charts', 'BMC Ranking'], ['composite', 'Payout Proxy'], ['target-analysis', 'Target Analysis']] as [key, label] (key)}
+					<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
+						<div class="flex gap-0">
+							{#each [['charts', 'Benchmark Similarity'], ['composite', 'Payout Proxy'], ['target-analysis', 'Target Analysis']] as [key, label] (key)}
 							<button
 								type="button"
 								class="px-3 py-2 text-xs font-medium transition-colors {chartTab === key
@@ -1118,10 +1170,25 @@
 							>{label}</button>
 						{/each}
 					</div>
-					{#if chartTab === 'composite'}
-						<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
-							{#each PARETO_COLOR_MODES as mode (mode)}
-								<button
+						{#if chartTab === 'charts'}
+							<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
+								{#each [
+									['last200', 'BMC Last 200'],
+									['full', 'BMC Mean']
+								] as [mode, label] (mode)}
+									<button
+										type="button"
+										class="px-2 py-0.5 transition-colors {benchmarkSimilarityBmcMode === mode
+											? 'bg-primary text-primary-foreground'
+											: 'bg-muted/40 text-muted-foreground hover:text-foreground'}"
+										onclick={() => (benchmarkSimilarityBmcMode = mode as 'last200' | 'full')}
+									>{label}</button>
+								{/each}
+							</div>
+						{:else if chartTab === 'composite'}
+							<div class="flex rounded-md border border-border overflow-hidden text-[10px]">
+								{#each PARETO_COLOR_MODES as mode (mode)}
+									<button
 									type="button"
 									class="px-2 py-0.5 transition-colors {paretoColorMode === mode
 										? 'bg-primary text-primary-foreground'
@@ -1145,18 +1212,24 @@
 				</div>
 
 				<div class="flex-1 min-h-0 p-5">
-					{#if chartTab === 'charts'}
-						<div class="flex flex-col h-full min-h-0">
-							<h3 class="mb-3 text-xs uppercase tracking-wider text-muted-foreground font-medium flex-shrink-0">
-								BMC Last 200 by Run
-							</h3>
-							{#if bmcRuns.length > 0}
-								<div class="flex-1 min-h-0 overflow-y-auto">
-									<SharpeBarChart runs={bmcRuns} championRunId={data.experiment.champion_run_id} />
+						{#if chartTab === 'charts'}
+							<div class="flex flex-col h-full min-h-0">
+								<div class="mb-3 flex-shrink-0">
+									<h3 class="text-xs uppercase tracking-wider text-muted-foreground font-medium">
+										{benchmarkSimilarityBmcMode === 'full'
+											? 'BMC Mean vs Corr With Benchmark'
+											: 'BMC Last 200 vs Corr With Benchmark'}
+									</h3>
 								</div>
-							{:else}
-								<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
-									No BMC last-200 data available.
+								{#if benchmarkSimilarityPoints.length > 0}
+									<BenchmarkSimilarityChart
+										points={benchmarkSimilarityPoints}
+										bmcMode={benchmarkSimilarityBmcMode}
+										class="h-full"
+									/>
+								{:else}
+									<div class="flex h-full items-center justify-center text-muted-foreground text-sm">
+										No benchmark-similarity data available.
 								</div>
 							{/if}
 						</div>

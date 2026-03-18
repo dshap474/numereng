@@ -58,7 +58,6 @@ Keep run outputs under `.numereng/runs/<run_id>/artifacts/predictions/` for dete
 When submission neutralization runs without an explicit `--output-path`, numereng writes sidecar artifacts such as:
 
 - `<original>.neutralized.parquet`
-- `<original>.neutralized.csv`
 
 The response metadata records the source path, neutralizer path, mode, proportion, and row-match counts.
 

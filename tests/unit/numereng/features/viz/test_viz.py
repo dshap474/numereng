@@ -159,6 +159,19 @@ def test_normalize_round_metrics_omits_payout_aliases_when_payout_metrics_are_mi
     assert "mmc_payout_mean" not in payload
 
 
+def test_normalize_round_metrics_promotes_corr_with_benchmark_alias() -> None:
+    payload = _normalize_round_metrics(
+        {
+            "bmc": {"mean": 0.03, "avg_corr_with_benchmark": 0.12},
+            "bmc_last_200_eras": {"mean": 0.05},
+        }
+    )
+
+    assert payload["bmc_mean"] == 0.03
+    assert payload["bmc_last_200_eras_mean"] == 0.05
+    assert payload["corr_with_benchmark"] == 0.12
+
+
 def test_get_run_metrics_uses_shared_scalar_metric_normalization(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     run_dir = store_root / "runs" / "run-1"
@@ -574,6 +587,84 @@ def test_list_experiment_runs_filesystem_uses_target_col(tmp_path: Path) -> None
     assert payload[0]["seed"] == 43
 
 
+def test_list_experiment_runs_includes_corr_with_benchmark_metric(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        """
+        {
+          "run_id": "run-1",
+          "experiment_id": "exp-1",
+          "created_at": "2026-02-22T00:00:00+00:00",
+          "status": "FINISHED",
+          "model": {"type": "LGBMRegressor"},
+          "data": {"target_col": "target_ender_20", "feature_set": "small"}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+    (run_dir / "metrics.json").write_text(
+        """
+        {
+          "bmc": {"mean": 0.04, "avg_corr_with_benchmark": 0.12},
+          "bmc_last_200_eras": {"mean": 0.06}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.list_experiment_runs("exp-1")
+
+    assert len(payload) == 1
+    assert payload[0]["metrics"]["corr_with_benchmark"] == pytest.approx(0.12)
+    assert payload[0]["metrics"]["bmc_last_200_eras_mean"] == pytest.approx(0.06)
+
+
+def test_list_experiment_round_results_includes_corr_with_benchmark_metric(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    exp_dir = store_root / "experiments" / "exp-1"
+    (exp_dir / "configs").mkdir(parents=True)
+    (exp_dir / "results").mkdir(parents=True)
+    (exp_dir / "experiment.json").write_text(
+        '{"experiment_id":"exp-1","name":"Experiment 1","status":"active","runs":[]}',
+        encoding="utf-8",
+    )
+    (exp_dir / "configs" / "r1_001_base.json").write_text(
+        '{"model":{"type":"LGBMRegressor"},"data":{"target":"target_ender_20","feature_set":"small"}}',
+        encoding="utf-8",
+    )
+    (exp_dir / "results" / "r1_base_metrics.json").write_text(
+        """
+        {
+          "bmc": {"mean": 0.04, "avg_corr_with_benchmark": 0.09},
+          "bmc_last_200_eras": {"mean": 0.07}
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.list_experiment_round_results("exp-1")
+
+    assert len(payload) == 1
+    assert payload[0]["metrics"]["corr_with_benchmark"] == pytest.approx(0.09)
+    assert payload[0]["metrics"]["bmc_last_200_eras_mean"] == pytest.approx(0.07)
+
+
 def test_get_run_metrics_enriches_mmc_coverage_ratio_from_provenance(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     run_dir = store_root / "runs" / "run-1"
@@ -918,7 +1009,7 @@ def test_get_ensemble_artifacts_endpoint_returns_payload(monkeypatch: pytest.Mon
             "lineage": {"ensemble_id": ensemble_id},
             "bootstrap_metrics": None,
             "heavy_component_predictions_available": False,
-            "available_files": ["weights.csv", "lineage.json"],
+            "available_files": ["weights.parquet", "lineage.json"],
         },
     )
 

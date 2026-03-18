@@ -52,13 +52,13 @@ def _write_run_predictions(store_root: Path, run_id: str, frame: pd.DataFrame) -
     predictions_dir = run_dir / "artifacts" / "predictions"
     predictions_dir.mkdir(parents=True, exist_ok=True)
 
-    predictions_path = predictions_dir / "predictions.csv"
-    frame.to_csv(predictions_path, index=False)
+    predictions_path = predictions_dir / "predictions.parquet"
+    frame.to_parquet(predictions_path, index=False)
 
     manifest = {
         "run_id": run_id,
         "artifacts": {
-            "predictions": "artifacts/predictions/predictions.csv",
+            "predictions": "artifacts/predictions/predictions.parquet",
         },
     }
     (run_dir / "run.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -149,7 +149,7 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert created.status == "completed"
     assert created.best_run_id == "run-1"
     assert created.storage_path is not None
-    assert Path(created.storage_path, "trials_live.csv").is_file()
+    assert Path(created.storage_path, "trials_live.parquet").is_file()
 
     listed = api_module.hpo_list(
         api_module.HpoStudyListRequest(
@@ -343,12 +343,12 @@ def test_ensemble_api_roundtrip_smoke(tmp_path: Path) -> None:
 
     artifacts_path = Path(created.artifacts_path)
     assert (artifacts_path / "predictions.parquet").is_file()
-    assert (artifacts_path / "correlation_matrix.csv").is_file()
+    assert (artifacts_path / "correlation_matrix.parquet").is_file()
     assert (artifacts_path / "metrics.json").is_file()
-    assert (artifacts_path / "weights.csv").is_file()
-    assert (artifacts_path / "component_metrics.csv").is_file()
-    assert (artifacts_path / "era_metrics.csv").is_file()
-    assert (artifacts_path / "regime_metrics.csv").is_file()
+    assert (artifacts_path / "weights.parquet").is_file()
+    assert (artifacts_path / "component_metrics.parquet").is_file()
+    assert (artifacts_path / "era_metrics.parquet").is_file()
+    assert (artifacts_path / "regime_metrics.parquet").is_file()
     assert (artifacts_path / "lineage.json").is_file()
 
     listed = api_module.ensemble_list(

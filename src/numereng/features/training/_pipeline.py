@@ -11,9 +11,13 @@ from typing import cast
 
 import pandas as pd
 
-from numereng.features.scoring.metrics import attach_benchmark_predictions, load_custom_benchmark_predictions
+from numereng.features.scoring.metrics import (
+    append_post_fold_artifacts,
+    attach_benchmark_predictions,
+    load_custom_benchmark_predictions,
+)
 from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest, default_scoring_policy
-from numereng.features.scoring.service import run_post_training_scoring
+from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run
 from numereng.features.telemetry import (
     LocalResourceSampler,
@@ -603,6 +607,79 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
+    on_fold_complete = None
+    on_fold_start = None
+    if (
+        state.scoring_dir is not None
+        and state.training_client is not None
+        and state.benchmark_source is not None
+        and not _is_full_history_refit_profile(engine_plan.mode)
+    ):
+        def _format_val_interval(fold_metadata: dict[str, object]) -> str:
+            val_interval = fold_metadata.get("val_interval")
+            if not isinstance(val_interval, dict):
+                return "unknown"
+            start = val_interval.get("start")
+            end = val_interval.get("end")
+            return f"{start}->{end}"
+
+        def _on_fold_start(fold_metadata: dict[str, object]) -> None:
+            log_info(
+                state.run_log_path,
+                event="fold_started",
+                message=(
+                    f"fold={fold_metadata.get('fold')} "
+                    f"train_eras={fold_metadata.get('train_eras')} "
+                    f"val_eras={fold_metadata.get('val_eras')} "
+                    f"val_interval={_format_val_interval(fold_metadata)}"
+                ),
+                attempt_id=state.run_attempt_id,
+            )
+
+        def _on_fold_complete(fold_predictions: pd.DataFrame, fold_metadata: dict[str, object]) -> None:
+            if state.benchmark_source is None or state.training_client is None or state.scoring_dir is None:
+                return
+            try:
+                append_post_fold_artifacts(
+                    predictions=fold_predictions,
+                    run_id=state.run_id,
+                    config_hash=state.config_hash,
+                    seed=None,
+                    target_col=state.target_col,
+                    benchmark_source=state.benchmark_source,
+                    client=state.training_client,
+                    data_version=state.data_version,
+                    dataset_variant=state.dataset_variant,
+                    feature_source_paths=state.source_paths,
+                    dataset_scope=state.dataset_scope,
+                    era_col=state.era_col,
+                    id_col=state.id_col,
+                    data_root=DEFAULT_DATASETS_DIR,
+                    scoring_dir=state.scoring_dir,
+                )
+            except Exception as exc:
+                log_error(
+                    state.run_log_path,
+                    event="post_fold_scoring_append_failed",
+                    message=str(exc),
+                    attempt_id=state.run_attempt_id,
+                )
+            log_info(
+                state.run_log_path,
+                event="fold_completed",
+                message=(
+                    f"fold={fold_metadata.get('fold')} "
+                    f"train_rows={fold_metadata.get('train_rows')} "
+                    f"val_rows={fold_metadata.get('val_rows')} "
+                    f"val_interval={_format_val_interval(fold_metadata)} "
+                    f"prediction_rows={len(fold_predictions)}"
+                ),
+                attempt_id=state.run_attempt_id,
+            )
+
+        on_fold_complete = _on_fold_complete
+        on_fold_start = _on_fold_start
+
     if _is_full_history_refit_profile(engine_plan.mode):
         state.predictions, state.cv_meta = build_full_history_predictions(
             state.all_eras,
@@ -632,6 +709,8 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             parallel_folds=cast(int, state.resource_policy["parallel_folds"]),
             parallel_backend=str(state.resource_policy["parallel_backend"]),
             memmap_enabled=bool(state.resource_policy["memmap_enabled"]),
+            on_fold_start=on_fold_start,
+            on_fold_complete=on_fold_complete,
         )
 
     state.effective_embargo_eras = _coerce_int(
@@ -662,18 +741,11 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
     )
-    if _is_full_history_refit_profile(engine_plan.mode):
-        state.metrics_status = {
-            "status": "not_applicable",
-            "reason": "training_profile_full_history_refit_no_validation_metrics",
-        }
-        state.effective_scoring_backend = "not_applicable"
-    else:
-        state.metrics_status = {
-            "status": "pending",
-            "reason": "post_run_metrics_pending",
-        }
-        state.effective_scoring_backend = "pending"
+    state.metrics_status = {
+        "status": "pending",
+        "reason": "post_run_metrics_pending",
+    }
+    state.effective_scoring_backend = "pending"
     state.training_runtime_metadata["scoring"] = {
         "mode": state.scoring_mode,
         "era_chunk_size": state.scoring_era_chunk_size,
@@ -761,8 +833,6 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     engine_plan = state.engine_plan
     if engine_plan is None:
         raise TrainingError("training_engine_plan_uninitialized")
-    if _is_full_history_refit_profile(engine_plan.mode):
-        return state
     if (
         state.output_root is None
         or state.predictions_path is None
@@ -796,8 +866,11 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     gc.collect()
 
     try:
-        scoring_result = run_post_training_scoring(
+        scoring_result = run_scoring(
             request=PostTrainingScoringRequest(
+                run_id=state.run_id,
+                config_hash=state.config_hash,
+                seed=None,
                 predictions_path=state.predictions_path,
                 pred_cols=("prediction",),
                 target_col=state.target_col,
@@ -818,6 +891,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 data_root=DEFAULT_DATASETS_DIR,
                 scoring_mode=state.scoring_mode,
                 era_chunk_size=state.scoring_era_chunk_size,
+                stage="all",
                 include_feature_neutral_metrics=state.include_feature_neutral_metrics,
             ),
             client=state.training_client,
@@ -846,6 +920,8 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         "mode": state.scoring_mode,
         "era_chunk_size": state.scoring_era_chunk_size,
         "effective_backend": state.effective_scoring_backend,
+        "requested_stage": scoring_result.requested_stage,
+        "refreshed_stages": list(scoring_result.refreshed_stages),
         "policy": _scoring_policy_payload(scoring_result.policy),
     }
     if (
@@ -863,6 +939,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         scoring_result.artifacts,
         scoring_dir=state.scoring_dir,
         output_dir=state.output_root,
+        selected_stage=scoring_result.requested_stage,
     )
     state.artifacts["scoring_manifest"] = str(persisted_scoring.manifest_relative)
     state.metrics_status = None
@@ -1046,7 +1123,7 @@ def run_training_pipeline(
     embargo_eras: int | None = None,
     experiment_id: str | None = None,
 ) -> TrainingRunResult:
-    """Execute the full local train -> score pipeline as explicit stages."""
+    """Execute the full local train pipeline and emit only post-fold scoring."""
     state = TrainingPipelineState(
         config_path=Path(config_path).expanduser().resolve(),
         output_dir=Path(output_dir).expanduser() if output_dir is not None else None,
@@ -1071,7 +1148,6 @@ def run_training_pipeline(
         )
         state = load_training_data(state)
         state = train_model(state)
-        state = score_predictions(state)
         return finalize_training_run(state)
     except Exception as exc:
         fail_training_run(state, exc)

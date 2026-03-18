@@ -30,11 +30,11 @@ Source map:
 - `src/numereng/config/hpo/*`: strict JSON HPO contracts + loader.
 - `src/numereng/platform/*`: boundary errors + Numerai adapter + forum scraper tooling.
 - `src/numereng/features/training/*`: deterministic run orchestration + artifacts.
-- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> score_predictions -> finalize`).
-- `src/numereng/features/scoring/*`: modular post-training scoring service + metric engines.
+- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> finalize`); training always emits `post_fold`, while deferred post-training scoring happens later from saved predictions.
+- `src/numereng/features/scoring/*`: canonical run-scoring service + metric engines; hot-path metric math is array-kernel based in `features/scoring/_fastops.py` and orchestrated from `metrics.py`.
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
-- `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report.
+- `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -61,6 +61,7 @@ Key artifacts:
 - `runs/<run_id>/metrics.json`
 - `runs/<run_id>/score_provenance.json`
 - `runs/<run_id>/artifacts/predictions/*.parquet`
+  - numereng-managed parquet artifacts use `ZSTD` compression level `3`
 - `experiments/<experiment_id>/experiment.json`
 - `experiments/<experiment_id>/EXPERIMENT.md`
 - `experiments/<experiment_id>/EXPERIMENT.pack.md`
@@ -75,9 +76,11 @@ Wiring map:
 - Public workflow entrypoint:
   `numereng.api.pipeline.run_training_pipeline(TrainRunRequest) -> internal API stages -> features.training._pipeline`
 - Re-score persisted run:
-  `cli run score -> bind cli metadata -> api.score_run -> features.scoring.run_service.score_run`
+  `cli run score [--stage <canonical-stage>] -> bind cli metadata -> api.score_run -> features.scoring.run_service.score_run`
 - Experiment train:
   `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
+- Experiment deferred round scoring:
+  `cli experiment score-round -> bind cli metadata -> api.experiment_score_round -> features.experiments.score_experiment_round -> features.scoring.batch_service.score_run_batch`
 - Experiment pack:
   `cli experiment pack -> api.experiment_pack -> features.experiments.pack_experiment`
 - Experiment archive:
@@ -140,8 +143,10 @@ Viz/frontend topology:
 - Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
 - Viz also exposes payout-target aliases `corr_payout_mean` and `mmc_payout_mean`, currently normalized from Ender20-backed scoring fields (`corr_ender20`, `mmc_ender20`) without overwriting native `corr_mean` / `mmc_mean`.
 - Run detail/chart APIs are read-only over persisted artifacts and section endpoints; the frontend no longer uses `/api/runs/{run_id}/bundle` as its primary path.
-- Training and `run score` persist canonical scoring artifacts under `artifacts/scoring/`, with `artifacts/scoring/manifest.json` as the run-local entrypoint.
-- Viz prefers persisted scoring artifacts, and historical runs can be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Request-time per-era CORR fallback is read-only and does not write legacy artifacts.
+- Training persists `post_fold` artifacts under `artifacts/scoring/`; `run score` and `experiment score-round` materialize deferred scoring artifacts there as well, with `artifacts/scoring/manifest.json` as the run-local entrypoint.
+- There is one official persisted-run scorer. It supports stage selection: `all`, `run_metric_series`, `post_fold`, `post_training_core`, `post_training_full`.
+- The canonical scorer preserves existing public contracts but now executes core per-era metric math through NumPy/Numba kernels instead of pandas `groupby.apply` callbacks.
+- Viz prefers persisted scoring artifacts, and historical runs can be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` is a deprecated alias to the same backfill path. Explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Legacy scoring fallback is read-only and does not write artifacts on request.
 
 Critical invariants:
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
@@ -157,8 +162,8 @@ Critical invariants:
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
 - Loading mode allowed only: `materialized|fold_lazy`.
 - Scoring mode allowed only: `materialized|era_stream`.
-- For non-`full_history_refit` runs, model fitting/prediction persistence completes first, then `features.scoring.run_post_training_scoring` executes in a post-run phase from saved predictions (to reduce peak training RAM).
-- Post-run scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle: native plus Ender20 `corr`/`bmc` per-era and cumulative series, `corr_with_benchmark`, baseline CORR series, and delta-vs-baseline cumulative CORR. `mmc` and `cwmm` remain scalar summary outputs when meta-model overlap exists.
+- Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV and finishes with deferred post-training metrics marked pending; later `run score` or `experiment score-round` executes the canonical scorer from saved predictions.
+- Deferred scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle. The bundle writes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when feature-neutral diagnostics are enabled. Historical runs may still have legacy `post_training_summary` / `post_training_features_summary` files, which remain readable.
 - `corr`, `fnc`, and `mmc` delegate directly to `numerai_tools`; `cwmm` uses the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - The experiment-page payout proxy chart is a research visualization only; it compares runs on the common payout-target plane (`corr_payout_mean`, `mmc_payout_mean`) so heterogeneous target runs are evaluated on the same Ender20-based basis.
@@ -166,7 +171,7 @@ Critical invariants:
 - Viz defaults rank/sort experiment views by `bmc_last_200_eras_mean`.
 - Feature exposure diagnostics are informational only: scoring computes rank-based exposures against `fncv3_features`, persists nested summaries for `feature_exposure` and `max_feature_exposure`, and viz normalizes `feature_exposure_mean` plus scalar `max_feature_exposure`.
 - Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
-- `features.scoring.run_service.score_run` can recompute the same scoring bundle for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including `artifacts/scoring/manifest.json`.
+- `features.scoring.run_service.score_run` can recompute the same staged scoring bundle for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including `artifacts/scoring/manifest.json`. Stage-selective rescoring overwrites only the requested canonical stage artifacts and leaves non-selected existing stage files in place.
 - Canonical FNC neutralizes against dataset feature set `fncv3_features`, independent of the run training feature set, then correlates against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `score_provenance.json` records `policy.fnc_feature_set=fncv3_features`, `policy.fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`, join row/era counts, benchmark/meta missing-row/era counts, and whether meta-dependent metrics were emitted.
 - Benchmark post-run scoring joins require strict era alignment, but `bmc` / `bmc_last_200_eras` are computed on the maximum available overlapping benchmark window whenever any overlap exists.
@@ -188,7 +193,7 @@ Critical invariants:
 - `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
 - In `train_plus_validation` mode (materialized or fold-lazy), `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
-- `full_history_refit` disables validation metrics and is final-fit only.
+- `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, and any deferred `post_training_core` / `post_training_full` scoring must be materialized later from saved predictions.
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
 - Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
 - Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.

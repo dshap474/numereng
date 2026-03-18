@@ -115,6 +115,8 @@ def build_oof_predictions(
     parallel_folds: int = 1,
     parallel_backend: str = "joblib",
     memmap_enabled: bool = True,
+    on_fold_start: Callable[[dict[str, object]], None] | None = None,
+    on_fold_complete: Callable[[pd.DataFrame, dict[str, object]], None] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Build out-of-fold predictions and CV metadata."""
     cv_mode = str(cv_config.get("mode", "official_walkforward"))
@@ -161,6 +163,18 @@ def build_oof_predictions(
 
     if parallel_folds == 1:
         for fold_idx, train_eras, val_eras, descriptor in fold_work:
+            if on_fold_start is not None:
+                on_fold_start(
+                    {
+                        "fold": fold_idx,
+                        "train_eras": len(train_eras),
+                        "val_eras": len(val_eras),
+                        "train_intervals": descriptor["train_intervals"],
+                        "val_interval": descriptor["val_interval"],
+                        "purge_intervals": descriptor["purge_intervals"],
+                        "embargo_intervals": descriptor["embargo_intervals"],
+                    }
+                )
             fold_result = _run_fold_prediction(
                 fold_idx=fold_idx,
                 train_eras=train_eras,
@@ -180,6 +194,8 @@ def build_oof_predictions(
             fold_prediction_frame, fold_metadata = fold_result
             predictions.append(fold_prediction_frame)
             fold_info.append(fold_metadata)
+            if on_fold_complete is not None:
+                on_fold_complete(fold_prediction_frame.copy(), dict(fold_metadata))
     else:
         if parallel_backend != "joblib":
             raise TrainingConfigError("training_cv_parallel_backend_invalid")
@@ -218,6 +234,8 @@ def build_oof_predictions(
             fold_prediction_frame, fold_metadata = fold_result
             predictions.append(fold_prediction_frame)
             fold_info.append(fold_metadata)
+            if on_fold_complete is not None:
+                on_fold_complete(fold_prediction_frame.copy(), dict(fold_metadata))
 
     if not predictions:
         raise TrainingConfigError("training_cv_no_predictions")

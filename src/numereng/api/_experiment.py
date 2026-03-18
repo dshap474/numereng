@@ -18,6 +18,8 @@ from numereng.api.contracts import (
     ExperimentReportRequest,
     ExperimentReportResponse,
     ExperimentReportRowResponse,
+    ExperimentScoreRoundRequest,
+    ExperimentScoreRoundResponse,
     ExperimentResponse,
     ExperimentTrainRequest,
     ExperimentTrainResponse,
@@ -229,6 +231,35 @@ def experiment_train(request: ExperimentTrainRequest) -> ExperimentTrainResponse
     )
 
 
+def experiment_score_round(request: ExperimentScoreRoundRequest) -> ExperimentScoreRoundResponse:
+    """Deferred-score one experiment round."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.score_experiment_round_record(
+            store_root=request.store_root,
+            experiment_id=request.experiment_id,
+            round=request.round,
+            stage=request.stage,
+        )
+    except (ExperimentNotFoundError, ExperimentRunNotFoundError, ExperimentValidationError, ExperimentError) as exc:
+        raise PackageError(str(exc)) from exc
+    except (
+        TrainingConfigError,
+        TrainingDataError,
+        TrainingMetricsError,
+        TrainingError,
+    ) as exc:
+        raise PackageError(str(exc)) from exc
+
+    return ExperimentScoreRoundResponse(
+        experiment_id=result.experiment_id,
+        round=result.round,
+        stage=result.stage,
+        run_ids=list(result.run_ids),
+    )
+
+
 def experiment_promote(request: ExperimentPromoteRequest) -> ExperimentPromoteResponse:
     """Promote one experiment run to champion."""
     from numereng import api as api_module
@@ -319,6 +350,7 @@ __all__ = [
     "experiment_pack",
     "experiment_promote",
     "experiment_report",
+    "experiment_score_round",
     "experiment_train",
     "experiment_unarchive",
 ]

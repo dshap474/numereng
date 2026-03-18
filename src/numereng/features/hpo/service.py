@@ -50,6 +50,9 @@ from numereng.features.training.repo import DEFAULT_DATASETS_DIR
 from numereng.features.training.service import resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
+_DEFAULT_HPO_METRIC = "post_fold_champion_objective"
+_POST_FOLD_CORR_WEIGHT = 0.25
+_POST_FOLD_BMC_WEIGHT = 2.25
 
 
 class HpoError(Exception):
@@ -87,6 +90,8 @@ def create_study(
         raise HpoValidationError("hpo_neutralization_proportion_invalid")
     if request.neutralization_mode not in {"era", "global"}:
         raise HpoValidationError("hpo_neutralization_mode_invalid")
+    if request.metric == _DEFAULT_HPO_METRIC and request.neutralize:
+        raise HpoValidationError("hpo_post_fold_objective_neutralization_not_supported")
     if request.neutralize and request.neutralizer_path is None:
         raise HpoValidationError("hpo_neutralizer_path_required")
     if request.experiment_id is not None and not _SAFE_ID.match(request.experiment_id):
@@ -206,7 +211,12 @@ def create_study(
                     experiment_id=request.experiment_id,
                 )
             index_run(store_root=resolved_root, run_id=training_result.run_id)
-            if request.neutralize:
+            if request.metric == _DEFAULT_HPO_METRIC:
+                metric_value = _extract_post_fold_objective_value(
+                    store_root=resolved_root,
+                    run_id=training_result.run_id,
+                )
+            elif request.neutralize:
                 if request.neutralizer_path is None:
                     raise HpoValidationError("hpo_neutralizer_path_required")
                 neutralized_result = neutralize_predictions_file(
@@ -454,6 +464,28 @@ def _extract_metric_value(*, results_path: Path, metric: str) -> float:
     return value
 
 
+def _extract_post_fold_objective_value(*, store_root: Path, run_id: str) -> float:
+    snapshot_path = store_root / "runs" / run_id / "artifacts" / "scoring" / "post_fold_snapshots.parquet"
+    if not snapshot_path.exists():
+        raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
+    try:
+        snapshot = pd.read_parquet(snapshot_path)
+    except Exception as exc:
+        raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
+    if snapshot.empty:
+        raise HpoExecutionError(f"hpo_post_fold_snapshots_empty:{snapshot_path}")
+    required_columns = ("corr_ender20_fold_mean", "bmc_ender20_fold_mean")
+    missing = [column for column in required_columns if column not in snapshot.columns]
+    if missing:
+        raise HpoExecutionError(f"hpo_post_fold_metric_missing:{','.join(missing)}")
+
+    corr_mean = float(pd.Series(snapshot["corr_ender20_fold_mean"], dtype="float64").dropna().mean())
+    bmc_mean = float(pd.Series(snapshot["bmc_ender20_fold_mean"], dtype="float64").dropna().mean())
+    if pd.isna(corr_mean) or pd.isna(bmc_mean):
+        raise HpoExecutionError("hpo_post_fold_metric_nan")
+    return (_POST_FOLD_CORR_WEIGHT * corr_mean) + (_POST_FOLD_BMC_WEIGHT * bmc_mean)
+
+
 def _extract_metric_value_from_predictions(
     *,
     predictions_path: Path,
@@ -488,6 +520,9 @@ def _extract_metric_value_from_predictions(
     try:
         scoring_result = run_post_training_scoring(
             request=PostTrainingScoringRequest(
+                run_id=predictions_path.stem,
+                config_hash="",
+                seed=None,
                 predictions_path=predictions_path,
                 pred_cols=("prediction",),
                 target_col=target_col,

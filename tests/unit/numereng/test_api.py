@@ -35,6 +35,8 @@ from numereng.api import (
     ExperimentReportResponse,
     ExperimentTrainRequest,
     ExperimentTrainResponse,
+    ExperimentScoreRoundRequest,
+    ExperimentScoreRoundResponse,
     HealthResponse,
     ModalDataSyncRequest,
     ModalDeployRequest,
@@ -77,6 +79,7 @@ from numereng.api import (
     experiment_pack,
     experiment_promote,
     experiment_report,
+    experiment_score_round,
     experiment_train,
     experiment_unarchive,
     get_health,
@@ -103,6 +106,7 @@ from numereng.features.experiments import (
     ExperimentRecord,
     ExperimentReport,
     ExperimentReportRow,
+    ExperimentScoreRoundResult,
     ExperimentTrainResult,
     ExperimentValidationError,
 )
@@ -873,9 +877,10 @@ def test_numerai_api_translates_client_errors(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
+    def fake_score_run_pipeline(*, run_id: str, store_root: str, stage: str) -> ScoreRunResult:
         assert run_id == "run-123"
         assert store_root == ".numereng"
+        assert stage == "all"
         return ScoreRunResult(
             run_id=run_id,
             predictions_path=Path("/tmp/preds.parquet"),
@@ -883,6 +888,8 @@ def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
             metrics_path=Path("/tmp/metrics.json"),
             score_provenance_path=Path("/tmp/score_provenance.json"),
             effective_scoring_backend="materialized",
+            requested_stage="all",
+            refreshed_stages=("run_metric_series", "post_training_core"),
         )
 
     monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
@@ -895,11 +902,13 @@ def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.metrics_path == "/tmp/metrics.json"
     assert response.score_provenance_path == "/tmp/score_provenance.json"
     assert response.effective_scoring_backend == "materialized"
+    assert response.requested_stage == "all"
+    assert response.refreshed_stages == ["run_metric_series", "post_training_core"]
 
 
 def test_score_run_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
-        _ = (run_id, store_root)
+    def fake_score_run_pipeline(*, run_id: str, store_root: str, stage: str) -> ScoreRunResult:
+        _ = (run_id, store_root, stage)
         launch_metadata = get_launch_metadata()
         assert launch_metadata is not None
         assert launch_metadata.source == "api.run.score"
@@ -912,6 +921,7 @@ def test_score_run_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.Mon
             metrics_path=Path("/tmp/metrics.json"),
             score_provenance_path=Path("/tmp/score_provenance.json"),
             effective_scoring_backend="materialized",
+            requested_stage="all",
         )
 
     monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
@@ -921,8 +931,8 @@ def test_score_run_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.Mon
 
 
 def test_score_run_translates_run_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_score_run_pipeline(*, run_id: str, store_root: str) -> ScoreRunResult:
-        _ = (run_id, store_root)
+    def fake_score_run_pipeline(*, run_id: str, store_root: str, stage: str) -> ScoreRunResult:
+        _ = (run_id, store_root, stage)
         raise TrainingError("training_score_run_not_found:run-404")
 
     monkeypatch.setattr(api_module, "score_run_pipeline", fake_score_run_pipeline)
@@ -1409,6 +1419,42 @@ def test_experiment_train_sets_api_launch_metadata_when_unbound(monkeypatch: pyt
 
     assert isinstance(response, ExperimentTrainResponse)
     assert response.run_id == "run-123"
+
+
+def test_experiment_score_round_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_score_experiment_round(
+        *,
+        store_root: str,
+        experiment_id: str,
+        round: str,
+        stage: str,
+    ) -> ExperimentScoreRoundResult:
+        assert store_root == ".numereng"
+        assert experiment_id == "2026-02-22_test-exp"
+        assert round == "r1"
+        assert stage == "post_training_full"
+        return ExperimentScoreRoundResult(
+            experiment_id=experiment_id,
+            round=round,
+            stage="post_training_full",
+            run_ids=("run-1", "run-2"),
+        )
+
+    monkeypatch.setattr(api_module, "score_experiment_round_record", fake_score_experiment_round)
+
+    response = experiment_score_round(
+        ExperimentScoreRoundRequest(
+            experiment_id="2026-02-22_test-exp",
+            round="r1",
+            stage="post_training_full",
+        )
+    )
+
+    assert isinstance(response, ExperimentScoreRoundResponse)
+    assert response.experiment_id == "2026-02-22_test-exp"
+    assert response.round == "r1"
+    assert response.stage == "post_training_full"
+    assert response.run_ids == ["run-1", "run-2"]
 
 
 def test_experiment_promote_and_report_success(monkeypatch: pytest.MonkeyPatch) -> None:

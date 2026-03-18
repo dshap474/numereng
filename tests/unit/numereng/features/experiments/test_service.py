@@ -24,12 +24,16 @@ def _write_run_artifacts(
     *,
     status: str = "FINISHED",
     created_at: str = "2026-02-22T00:00:00+00:00",
+    target_col: str | None = None,
     metrics: dict[str, object] | None = None,
     score_provenance: dict[str, object] | None = None,
 ) -> None:
     run_dir = store_root / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "run.json").write_text(json.dumps({"run_id": run_id, "status": status, "created_at": created_at}))
+    run_manifest: dict[str, object] = {"run_id": run_id, "status": status, "created_at": created_at}
+    if target_col is not None:
+        run_manifest["data"] = {"target_col": target_col}
+    (run_dir / "run.json").write_text(json.dumps(run_manifest))
     (run_dir / "metrics.json").write_text(json.dumps(metrics or {}))
     if score_provenance is not None:
         (run_dir / "score_provenance.json").write_text(json.dumps(score_provenance))
@@ -182,6 +186,88 @@ def test_train_experiment_wraps_index_errors(monkeypatch: pytest.MonkeyPatch, tm
         )
 
 
+def test_score_experiment_round_resolves_round_run_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    (experiment_dir / "run_plan.csv").write_text(
+        "\n".join(
+            [
+                "target,horizon,seed,config_path",
+                f"target_a,20d,42,{experiment_dir / 'configs' / 'r1_target_a_seed42.json'}",
+                f"target_b,20d,43,{experiment_dir / 'configs' / 'r1_target_b_seed43.json'}",
+                f"target_c,20d,44,{experiment_dir / 'configs' / 'r2_target_c_seed44.json'}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (experiment_dir / "configs" / "r1_target_a_seed42.json").write_text("{}", encoding="utf-8")
+    (experiment_dir / "configs" / "r1_target_b_seed43.json").write_text("{}", encoding="utf-8")
+    (experiment_dir / "configs" / "r2_target_c_seed44.json").write_text("{}", encoding="utf-8")
+
+    manifest_path = experiment_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = "active"
+    manifest["runs"] = ["run-a", "run-b", "run-c"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+
+    for run_id, config_name in (
+        ("run-a", "r1_target_a_seed42.json"),
+        ("run-b", "r1_target_b_seed43.json"),
+        ("run-c", "r2_target_c_seed44.json"),
+    ):
+        run_dir = store_root / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "status": "FINISHED",
+                    "config": {"path": str(experiment_dir / "configs" / config_name)},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    scored_batches: list[dict[str, object]] = []
+
+    def fake_score_run_batch(*, run_ids: tuple[str, ...], store_root: Path, stage: str) -> tuple[object, ...]:
+        scored_batches.append(
+            {
+                "run_ids": run_ids,
+                "store_root": store_root,
+                "stage": stage,
+            }
+        )
+        return ()
+
+    monkeypatch.setattr(service_module, "score_run_batch", fake_score_run_batch)
+
+    result = service_module.score_experiment_round(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        round="r1",
+        stage="post_training_core",
+    )
+
+    assert result.experiment_id == experiment_id
+    assert result.round == "r1"
+    assert result.stage == "post_training_core"
+    assert result.run_ids == ("run-a", "run-b")
+    assert scored_batches == [
+        {
+            "run_ids": ("run-a", "run-b"),
+            "store_root": store_root.resolve(),
+            "stage": "post_training_core",
+        }
+    ]
+
+
 def test_promote_experiment_selects_best_metric(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     experiment_id = "2026-02-22_test-exp"
@@ -287,14 +373,27 @@ def test_pack_experiment_writes_markdown_summary(tmp_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text())
     manifest["status"] = "complete"
     manifest["champion_run_id"] = "run-b"
-    manifest["runs"] = ["run-b", "run-a"]
+    manifest["runs"] = ["run-c", "run-b", "run-a"]
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
     (exp_dir / "EXPERIMENT.md").write_text("# Notes\n\nThis experiment converged.\n", encoding="utf-8")
 
     _write_run_artifacts(
         store_root,
+        "run-c",
+        created_at="2026-02-22T00:03:00+00:00",
+        target_col="target_alpha_20",
+        metrics={
+            "corr": {"mean": 0.13, "sharpe": 1.5},
+            "bmc": {"mean": 0.06},
+            "bmc_last_200_eras": {"mean": 0.09},
+            "cwmm": {"mean": 0.04},
+        },
+    )
+    _write_run_artifacts(
+        store_root,
         "run-b",
         created_at="2026-02-22T00:02:00+00:00",
+        target_col="target_alpha_20",
         metrics={
             "corr": {"mean": 0.11, "sharpe": 1.2, "max_drawdown": -0.03},
             "mmc": {"mean": 0.02},
@@ -311,6 +410,7 @@ def test_pack_experiment_writes_markdown_summary(tmp_path: Path) -> None:
         store_root,
         "run-a",
         created_at="2026-02-22T00:01:00+00:00",
+        target_col="target_alpha_20",
         metrics={
             "corr": {"mean": 0.09, "sharpe": 0.9},
             "bmc": {"mean": 0.04},
@@ -320,14 +420,15 @@ def test_pack_experiment_writes_markdown_summary(tmp_path: Path) -> None:
 
     result = service_module.pack_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    assert result.run_count == 2
+    assert result.run_count == 3
     assert result.output_path == exp_dir / "EXPERIMENT.pack.md"
     content = result.output_path.read_text(encoding="utf-8")
     assert "## Experiment Notes" in content
     assert "This experiment converged." in content
-    assert "| run-b | FINISHED | 2026-02-22T00:02:00+00:00 | yes |" in content
-    assert "| run-a | FINISHED | 2026-02-22T00:01:00+00:00 | no |" in content
-    assert content.index("| run-b |") < content.index("| run-a |")
+    assert "## Target Metrics Summary" in content
+    assert "| target_alpha_20 |" in content
+    assert "0.050000" in content
+    assert "0.060000" in content
     assert "0.250000" in content
     assert "n/a" in content
 
