@@ -561,6 +561,10 @@ def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: 
     return tuple(_dedupe_preserve_order(resolved))
 
 
+def _scoring_targets_explicit(*, data_config: dict[str, object]) -> bool:
+    return data_config.get("scoring_targets") is not None
+
+
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []

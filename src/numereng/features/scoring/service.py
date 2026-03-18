@@ -41,6 +41,7 @@ def run_scoring(
         pred_cols=list(request.pred_cols),
         target_col=request.target_col,
         scoring_target_cols=list(request.scoring_target_cols),
+        scoring_targets_explicit=request.scoring_targets_explicit,
         data_version=request.data_version,
         dataset_variant=request.dataset_variant,
         feature_set=request.feature_set,
@@ -50,6 +51,7 @@ def run_scoring(
         benchmark_model=request.benchmark_source.pred_col,
         benchmark_name=request.benchmark_source.name,
         benchmark_data_path=request.benchmark_source.predictions_path,
+        benchmark_metadata_path=request.benchmark_source.metadata_path,
         meta_model_data_path=request.meta_model_data_path,
         meta_model_col=request.meta_model_col,
         era_col=request.era_col,
@@ -67,6 +69,7 @@ def run_scoring(
         pred_cols=list(request.pred_cols),
         target_col=request.target_col,
         scoring_target_cols=list(request.scoring_target_cols),
+        scoring_targets_explicit=request.scoring_targets_explicit,
         summaries=summaries,
         metric_frames=metric_frames,
         benchmark_source=request.benchmark_source,
@@ -107,12 +110,24 @@ def run_scoring(
     if isinstance(columns_payload, dict):
         columns_payload["benchmark_prediction_col"] = request.benchmark_source.pred_col
         columns_payload["benchmark_scoring_col"] = request.benchmark_source.name
-        columns_payload["target_families_emitted"] = sorted(
-            {
-                "native",
-                *(["ender20"] if "corr_ender20" in metric_frames or "bmc_ender20" in metric_frames else []),
-            }
-        )
+        columns_payload["target_families_emitted"] = {
+            "corr_fnc": sorted(
+                {
+                    "native",
+                    *(["ender20"] if "corr_ender20" in metric_frames or "fnc_ender20" in metric_frames else []),
+                }
+            ),
+            "contribution": sorted(
+                {
+                    *(["ender20"] if "mmc" in summaries or "bmc" in summaries else []),
+                    *(
+                        ["aliased"]
+                        if any(key.startswith(("mmc_", "bmc_", "bmc_last_200_eras_")) for key in summaries)
+                        else []
+                    ),
+                }
+            ),
+        }
     joins_payload = score_provenance.setdefault("joins", {})
     if isinstance(joins_payload, dict):
         joins_payload["benchmark_source"] = benchmark_joins

@@ -60,8 +60,7 @@ Stage-selective rescoring:
 - Judge business value on `Ender20`.
 - Use cheap metrics early.
 - Use heavy feature-neutral and exposure diagnostics late.
-- Treat native-target `mmc` / `bmc` as debug or observability metrics, not the
-  default decision scorecard.
+- Treat payout-target `mmc` / `bmc` as the default decision scorecard.
 
 ## Implemented Metric Surface
 
@@ -75,9 +74,9 @@ Core metric families:
 - `mmc`
 - `mmc_<alias>`
 - `bmc`
-- `bmc_ender20`
 - `bmc_last_200_eras`
-- `bmc_ender20_last_200_eras`
+- `bmc_<alias>`
+- `bmc_last_200_eras_<alias>`
 
 Meta-dependent helper metric:
 
@@ -93,8 +92,12 @@ Feature diagnostics:
 Observability helpers:
 
 - `corr_with_benchmark`
-- `baseline_corr_*`
 - `corr_delta_vs_baseline_*`
+
+`baseline_corr` is now treated as an internal/shared benchmark helper rather
+than a run metric. Numereng still uses it to derive
+`corr_delta_vs_baseline`, but it is not shown as a per-run scorecard chart or
+persisted as a run metric family.
 
 No payout estimate fields are emitted.
 
@@ -108,7 +111,7 @@ Primary emitted metrics:
 
 - `corr_<native>`
 - `corr_ender20`
-- `bmc_ender20`
+- `bmc`
 
 Persisted artifacts:
 
@@ -129,8 +132,11 @@ Primary emitted metrics:
 
 - `corr_<native>`
 - `corr_ender20`
-- `mmc_ender20`
-- `bmc_ender20`
+- `mmc`
+- `bmc`
+- `bmc_last_200_eras`
+- `avg_corr_with_benchmark`
+- `corr_delta_vs_baseline`
 
 Persisted artifact:
 
@@ -175,8 +181,10 @@ Persisted artifact:
 - `run_metric_series.parquet`
 
 This contains per-era and cumulative series for the broader emitted metric
-surface, including debug and helper metrics. It is intentionally wider than the
-core scorecard.
+surface, including diagnostics such as `corr_with_benchmark`, `cwmm`, FNC, and
+exposure metrics. Contribution charts are intentionally narrowed to payout-backed
+`bmc`, `mmc`, and `corr_delta_vs_baseline`; legacy native/baseline contribution
+series remain read-compatible but hidden in viz.
 
 ## Default Practical Rule
 
@@ -213,16 +221,19 @@ For a non-Ender native target such as `Bravo20`:
 - `post_fold` per-era artifact:
   - `corr_bravo20`
   - `corr_ender20`
-  - `bmc_ender20`
+  - `bmc`
 - `post_fold` snapshot row:
   - `corr_bravo20.fold_mean`
   - `corr_ender20.fold_mean`
-  - `bmc_ender20.fold_mean`
+  - `bmc.fold_mean`
 - `post_training_core`:
   - `corr_bravo20`
   - `corr_ender20`
-  - `mmc_ender20`
-  - `bmc_ender20`
+  - `mmc`
+  - `bmc`
+  - `bmc_last_200_eras`
+  - `avg_corr_with_benchmark`
+  - `corr_delta_vs_baseline`
 - `post_training_full`:
   - `fnc_bravo20`
   - `fnc_ender20`

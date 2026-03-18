@@ -258,13 +258,13 @@ def _validate_stage_frame(key: str, frame: pd.DataFrame) -> None:
     elif key == "post_fold_per_era":
         _ensure_optional_stage_columns_are_complete(
             frame,
-            column_group=["corr_ender20", "bmc_ender20"],
+            column_group=["corr_ender20", "bmc"],
             key=key,
         )
     elif key == "post_fold_snapshots":
         _ensure_optional_stage_columns_are_complete(
             frame,
-            column_group=["corr_ender20_fold_mean", "bmc_ender20_fold_mean"],
+            column_group=["corr_ender20_fold_mean", "bmc_fold_mean"],
             key=key,
         )
     elif key == "post_training_core_summary":
@@ -276,16 +276,28 @@ def _validate_stage_frame(key: str, frame: pd.DataFrame) -> None:
                 "corr_ender20_max_drawdown",
             ],
             [
-                "mmc_ender20_mean",
-                "mmc_ender20_std",
-                "mmc_ender20_sharpe",
-                "mmc_ender20_max_drawdown",
+                "mmc_mean",
+                "mmc_std",
+                "mmc_sharpe",
+                "mmc_max_drawdown",
             ],
             [
-                "bmc_ender20_mean",
-                "bmc_ender20_std",
-                "bmc_ender20_sharpe",
-                "bmc_ender20_max_drawdown",
+                "bmc_mean",
+                "bmc_std",
+                "bmc_sharpe",
+                "bmc_max_drawdown",
+            ],
+            [
+                "bmc_last_200_eras_mean",
+                "bmc_last_200_eras_std",
+                "bmc_last_200_eras_sharpe",
+                "bmc_last_200_eras_max_drawdown",
+            ],
+            [
+                "corr_delta_vs_baseline_mean",
+                "corr_delta_vs_baseline_std",
+                "corr_delta_vs_baseline_sharpe",
+                "corr_delta_vs_baseline_max_drawdown",
             ],
         ):
             _ensure_optional_stage_columns_are_complete(

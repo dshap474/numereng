@@ -296,6 +296,8 @@ Data loading and CV rules:
 - `corr`, `fnc`, and `mmc` are delegated to `numerai_tools`; `cwmm` is computed locally using the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Scoring implementation is optimized behind the existing boundary: `features.scoring.metrics` orchestrates cached parquet reads and canonical artifact/provenance assembly, while `features.scoring._fastops` owns the NumPy/Numba per-era kernels that replace the older pandas callback hot path.
 - Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV, and later `run score` / `experiment score-round` writes deferred post-training artifacts from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when enabled. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Partial rescoring overwrites only the selected stage artifacts while still refreshing manifest/provenance/results/metrics metadata, and the refreshed provenance artifact block is rebuilt from the persisted scoring manifest so it matches the materialized bundle.
+- `post_training_core_summary` is the flattened decision scorecard: it carries native/payout CORR summaries plus payout-backed `mmc`, `bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and `corr_delta_vs_baseline` summary stats when the aligned benchmark/meta inputs exist.
+- `baseline_corr` is no longer persisted as a run metric; instead, provenance records whether payout-target baseline CORR came from the shared active-benchmark artifact or from transient fallback computation.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - Feature exposure diagnostics are computed during post-run scoring using the same `fncv3_features` join path as FNC. Training persists nested summaries for `feature_exposure` (RMS exposure) and `max_feature_exposure` (max absolute exposure), while viz exposes `feature_exposure_mean` and scalar `max_feature_exposure` from those nested payloads.
 - `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, `fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`), benchmark source metadata (`active` or explicit path), join row/era counts, benchmark/meta missing-row/era counts, and the persisted scoring-artifact manifest summary.
@@ -366,7 +368,7 @@ Metadata behavior in HPO:
 - If launch metadata is already bound, HPO reuses it.
 - Otherwise HPO sets default source `api.hpo.create` for trial runs.
 - Default champion-run HPO objective:
-  `0.25 * mean(corr_ender20_fold_mean) + 2.25 * mean(bmc_ender20_fold_mean)`
+  `0.25 * mean(corr_ender20_fold_mean) + 2.25 * mean(bmc_fold_mean)`
 
 ### 7.6 Ensemble
 ```text
@@ -506,13 +508,13 @@ Live monitor streaming route:
 
 Viz scoring contract:
 - Public viz metrics are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, `feature_exposure_*`, `max_feature_exposure`, `max_drawdown`, and `mmc_coverage_ratio_rows`.
-- Viz also publishes generic payout-target aliases `corr_payout_mean` and `mmc_payout_mean`, currently sourced from Ender20-backed scoring metrics (`corr_ender20`, `mmc_ender20`) while preserving native `corr_mean` / `mmc_mean`.
+- Viz also publishes generic payout-target aliases `corr_payout_mean` and `mmc_payout_mean`; `corr_payout_mean` comes from `corr_ender20`, while `mmc_mean` / `mmc_payout_mean` normalize to the payout-backed MMC surface with legacy `mmc_ender20` fallback for older runs.
 - Viz does not expose payout-derived metrics or payout-specific routes.
 - Per-era correlation payloads use `{ era, corr }`.
-- Run-detail section routes are independent (`manifest`, `metrics`, `per-era-corr`, `feature-importance`, `events`, `resources`, `trials`, `best-params`, `config`, `diagnostics-sources`); `/api/runs/{run_id}/bundle` remains compatibility-only.
+- Run-detail section routes are independent (`manifest`, `metrics`, `per-era-corr`, `events`, `resources`, `trials`, `best-params`, `config`, `diagnostics-sources`); `/api/runs/{run_id}/bundle` remains compatibility-only.
 - The experiment-page payout proxy scatter uses payout-target metrics (`corr_payout_mean`, `mmc_payout_mean`) rather than native-target metrics, so runs trained on different targets are compared on one common payout basis.
-- The experiment-page analysis panel also includes a target-scoped native scatter (`Target Analysis`) that filters to actual runs for one selected training target and compares native `corr_mean` vs native `mmc_mean`.
-- Run-detail scoring charts prefer persisted `artifacts/scoring/run_metric_series.parquet` and use read-only legacy-file composition only for older runs that predate the canonical chart artifact.
+- The experiment-page analysis panel also includes a target-scoped scatter (`Target Analysis`) that filters to actual runs for one selected training target and compares native `corr_mean` vs payout-backed `mmc_mean`.
+- Run-detail scoring charts prefer persisted `artifacts/scoring/run_metric_series.parquet` and use read-only legacy-file composition only for older runs that predate the canonical chart artifact. Legacy `bmc_ender20` / `mmc_ender20` / `corr_delta_vs_baseline_ender20` charts are normalized into `bmc` / `mmc` / `corr_delta_vs_baseline`, while `baseline_corr_*` and native contribution duplicates are hidden from the main performance panel.
 
 ### 9.2 Frontend route topology (`viz/web`)
 Current frontend routes:

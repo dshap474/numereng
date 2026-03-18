@@ -10,9 +10,9 @@ Training scoring emits these benchmark-contribution metric families when the
 required join sources are available:
 
 - `bmc`
-- `bmc_ender20`
+- `bmc_<alias>`
 - `bmc_last_200_eras`
-- `bmc_ender20_last_200_eras`
+- `bmc_last_200_eras_<alias>`
 
 Training scoring emits these meta-dependent metric families only when there is
 strictly era-aligned meta-model overlap:
@@ -36,8 +36,8 @@ targets:
 When there is strictly era-aligned meta-model overlap, training scoring also
 emits `mmc` families for the resolved scoring targets:
 
-- native run target uses the unsuffixed key `mmc`
-- non-native scoring targets use suffixed keys such as `mmc_ender20`,
+- the payout target uses the unsuffixed key `mmc`
+- explicit extra scoring targets use suffixed keys such as `mmc_target`,
   `mmc_agnes20`
 
 No payout estimate fields are emitted.
@@ -52,13 +52,13 @@ compatibility with the metrics below, not pandas callback execution.
 - `corr_<alias>`: the same metric against one non-native scoring target
 - `fnc`: per-era `numerai_tools.scoring.feature_neutral_corr` using `fncv3_features` against the native run target
 - `fnc_<alias>`: the same metric against one non-native scoring target
-- `mmc`: per-era `numerai_tools.scoring.correlation_contribution` against the meta model and native run target, computed on the overlapping meta-model window only
-- `mmc_<alias>`: the same metric against the meta model and one non-native scoring target, computed on the overlapping meta-model window only
+- `mmc`: per-era `numerai_tools.scoring.correlation_contribution` against the meta model and payout target, computed on the overlapping meta-model window only
+- `mmc_<alias>`: the same metric against the meta model and one explicit extra scoring target, computed on the overlapping meta-model window only
 - `cwmm`: per-era Pearson correlation between the Numerai-transformed submission and the raw meta-model series, computed on the overlapping meta-model window only
-- `bmc`: diagnostics-style benchmark contribution against a single selected benchmark model
-- `bmc_ender20`: the same benchmark contribution evaluated against `target_ender_20`
-- `bmc_last_200_eras`: the same BMC family restricted to the most recent 200 eras
-- `bmc_ender20_last_200_eras`: the same Ender20-evaluated BMC family restricted to the most recent 200 eras
+- `bmc`: diagnostics-style benchmark contribution against a single selected benchmark model, evaluated on the payout target
+- `bmc_<alias>`: the same benchmark contribution evaluated against one explicit extra scoring target
+- `bmc_last_200_eras`: the same payout-target BMC family restricted to the most recent 200 eras
+- `bmc_last_200_eras_<alias>`: the same explicit extra-target BMC family restricted to the most recent 200 eras
 
 ## Local Diagnostics
 
@@ -68,12 +68,22 @@ payout metrics:
 - `feature_exposure`: per-era RMS rank-based feature exposure across `fncv3_features`
 - `max_feature_exposure`: per-era max absolute rank-based feature exposure across `fncv3_features`
 - `avg_corr_with_benchmark`: local diagnostic attached to BMC summaries; computed as per-era `numerai_tools.scoring.numerai_corr` between the submission and the selected benchmark series, then averaged across eras
+- `corr_delta_vs_baseline` / `corr_delta_vs_baseline_<alias>`: the per-era difference between the model's CORR and the benchmark model's own CORR on the same scoring target; positive values mean the model outperformed the benchmark on that era
+
+`baseline_corr` is now an internal/shared helper rather than a persisted run
+metric:
+
+- active-benchmark payout delta reads `benchmark.json -> artifacts.per_era_corr_target_ender_20` when available
+- explicit `benchmark_source.source=path` runs fall back to transient local benchmark-CORR computation for delta only
+- `baseline_corr` is not persisted in `metrics.json`, `results.json`, summary parquet files, or `run_metric_series.parquet`
 
 ## Fixed Policy
 
-- default scoring targets: native run target plus opportunistic `target_ender_20`
+- default `corr` / `fnc` targets: native run target plus opportunistic `target_ender_20`
+- default contribution targets: payout target only (`target_ender_20`)
 - explicit config override: `data.scoring_targets`
-  - when present, this list becomes the entire scoring-target set
+  - `corr` / `fnc` keep using the resolved scoring-target set
+  - contribution families add alias-suffixed extra targets from the explicit list while reserving the unsuffixed keys for the payout target
 - `fnc_feature_set`: `fncv3_features`
 - `fnc_target_policy`: correlate the feature-neutralized submission against the scoring target being evaluated
 - `include_feature_neutral_metrics`: `true` by default; when `false`, `fnc`,
@@ -92,6 +102,7 @@ payout metrics:
 - non-native scoring targets are joined back from dataset files by `(id, era)`
 - explicitly configured scoring-target joins require full `(id, era)` coverage
 - opportunistic `target_ender_20` scoring is emitted only when the target column is available on the scoring universe
+- default contribution families are omitted when `target_ender_20` is unavailable
 - FNC feature joins require full `(id, era)` coverage.
 - Benchmark and meta-model joins require strict era alignment after matching on `id`.
 - Benchmark and meta-model joins must have non-zero overlap.
@@ -158,6 +169,17 @@ untouched. Each scoring invocation still refreshes `metrics.json`,
 `post_training_full` is inclusive and refreshes both the core summary and the
 feature-heavy full summary in one pass.
 
+`post_training_core_summary.parquet` is the flattened scorecard stage. For new
+runs it includes the native and payout CORR summaries, payout-backed `mmc`,
+`bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and
+`corr_delta_vs_baseline` summary stats when the required sources are available.
+
+`run_metric_series.parquet` is intentionally narrower for contribution metrics:
+
+- it charts payout-backed `bmc`, `mmc`, and unsuffixed `corr_delta_vs_baseline`
+- it does not chart `baseline_corr`
+- it hides legacy native-vs-Ender20 contribution duplication while keeping legacy runs read-compatible in viz
+
 All numereng-written parquet artifacts use `ZSTD` compression level `3`.
 
 New runs do not persist the legacy per-metric `*_per_era.parquet` /
@@ -168,13 +190,14 @@ historical runs that have not been rescored yet.
 
 `score_provenance.json` records:
 
-- selected prediction, native target, scoring-target list, id, era, benchmark,
+- selected prediction, native target, resolved scoring-target lists, id, era, benchmark,
   and meta-model columns
-- target-metric alias mapping used to derive `corr_<alias>` / `fnc_<alias>` / `mmc_<alias>` keys
+- target-metric alias mapping used to derive `corr_<alias>` / `fnc_<alias>` / `mmc_<alias>` / `bmc_<alias>` keys
 - `fnc_feature_set` and feature count
 - fingerprinted prediction, benchmark, and meta-model sources
 - feature source paths used for FNC
 - join row and era counts
+- baseline-delta provenance describing whether payout benchmark CORR came from the shared active-benchmark artifact or transient fallback computation
 - benchmark/meta missing row and era counts when applicable
 - overlap ratios for benchmark/meta joins
 - whether meta-dependent metrics were emitted, and the omission reason when they were not

@@ -103,10 +103,6 @@ export interface PerEraRow {
 	[key: string]: string | number;
 }
 
-export interface FeatureImportanceRow {
-	[key: string]: string | number;
-}
-
 export interface ScoringSeriesRow {
 	run_id?: string;
 	config_hash?: string;
@@ -158,7 +154,6 @@ export interface RunBundle {
 	metrics: Record<string, number> | null;
 	manifest: RunManifest | null;
 	scoring_dashboard: ScoringDashboard | null;
-	feature_importance: FeatureImportanceRow[] | null;
 	trials: Record<string, unknown>[] | null;
 	best_params: Record<string, unknown> | null;
 	resolved_config: { yaml: string } | null;
@@ -517,14 +512,6 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				'scoring-dashboard',
 				runId,
 				`/runs/${runId}/scoring-dashboard`,
-				fetchFn,
-				signal
-			),
-		getFeatureImportance: (runId: string, topN = 30, signal?: AbortSignal) =>
-			cachedGet<FeatureImportanceRow[]>(
-				`feature-importance:${topN}`,
-				runId,
-				`/runs/${runId}/feature-importance?top_n=${topN}`,
 				fetchFn,
 				signal
 			),

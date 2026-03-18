@@ -41,12 +41,7 @@ def test_list_experiments_fallback_without_db(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     (store_root / "experiments" / "exp-a").mkdir(parents=True)
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.list_experiments()
 
@@ -140,7 +135,7 @@ def test_normalize_round_metrics_adds_payout_aliases_without_overwriting_native_
     )
 
     assert payload["corr_mean"] == 0.11
-    assert payload["mmc_mean"] == 0.01
+    assert payload["mmc_mean"] == 0.02
     assert payload["corr_payout_mean"] == 0.21
     assert payload["mmc_payout_mean"] == 0.02
 
@@ -156,7 +151,7 @@ def test_normalize_round_metrics_omits_payout_aliases_when_payout_metrics_are_mi
     assert payload["corr_mean"] == 0.11
     assert payload["mmc_mean"] == 0.01
     assert "corr_payout_mean" not in payload
-    assert "mmc_payout_mean" not in payload
+    assert payload["mmc_payout_mean"] == 0.01
 
 
 def test_normalize_round_metrics_promotes_corr_with_benchmark_alias() -> None:
@@ -230,6 +225,151 @@ def test_get_run_metrics_uses_shared_scalar_metric_normalization(tmp_path: Path)
     assert payload["mmc_coverage_ratio_rows"] == 0.25
 
 
+def test_get_scoring_dashboard_normalizes_legacy_contribution_keys(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    scoring_dir = run_dir / "artifacts" / "scoring"
+    scoring_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "status": "FINISHED",
+                "data": {"target_col": "target_agnes_60"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (scoring_dir / "manifest.json").write_text(json.dumps({"stages": {"omissions": {}}}), encoding="utf-8")
+    pd.DataFrame(
+        [
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "bmc_ender20",
+                "series_type": "per_era",
+                "value": 0.1,
+            },
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "mmc_ender20",
+                "series_type": "per_era",
+                "value": 0.2,
+            },
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "bmc_native",
+                "series_type": "per_era",
+                "value": 0.3,
+            },
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "baseline_corr_ender20",
+                "series_type": "per_era",
+                "value": 0.4,
+            },
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "corr_delta_vs_baseline_ender20",
+                "series_type": "per_era",
+                "value": 0.5,
+            },
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "era": "era1",
+                "metric_key": "corr_delta_vs_baseline_native",
+                "series_type": "per_era",
+                "value": 0.6,
+            },
+        ]
+    ).to_parquet(scoring_dir / "run_metric_series.parquet", index=False)
+    pd.DataFrame(
+        [
+            {
+                "run_id": "run-1",
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_agnes_60",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "bmc_ender20_mean": 0.11,
+                "bmc_ender20_std": 0.21,
+                "bmc_last_200_eras_ender20_mean": 0.31,
+                "bmc_last_200_eras_ender20_std": 0.41,
+                "mmc_ender20_mean": 0.12,
+                "mmc_ender20_std": 0.22,
+                "corr_delta_vs_baseline_ender20_mean": 0.13,
+                "corr_delta_vs_baseline_ender20_std": 0.23,
+            }
+        ]
+    ).to_parquet(scoring_dir / "post_training_summary.parquet", index=False)
+    pd.DataFrame(
+        [
+            {
+                "cv_fold": 0,
+                "bmc_ender20_fold_mean": 0.14,
+            }
+        ]
+    ).to_parquet(scoring_dir / "post_fold_snapshots.parquet", index=False)
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.get_scoring_dashboard("run-1")
+
+    assert payload is not None
+    assert payload["meta"]["available_metric_keys"] == ["bmc", "corr_delta_vs_baseline", "mmc"]
+    series_metric_keys = sorted({str(row["metric_key"]) for row in payload["series"]})
+    assert series_metric_keys == ["bmc", "corr_delta_vs_baseline", "mmc"]
+    summary = payload["summary"]
+    assert isinstance(summary, dict)
+    assert summary["bmc_mean"] == pytest.approx(0.11)
+    assert summary["bmc_last_200_eras_mean"] == pytest.approx(0.31)
+    assert summary["mmc_mean"] == pytest.approx(0.12)
+    assert summary["corr_delta_vs_baseline_mean"] == pytest.approx(0.13)
+    fold_rows = payload["fold_snapshots"]
+    assert isinstance(fold_rows, list)
+    assert fold_rows[0]["bmc_fold_mean"] == pytest.approx(0.14)
+
+
 def _make_readonly_client(*, repo_root: Path, store_root: Path) -> TestClient:
     return _make_client(repo_root=repo_root, store_root=store_root)
 
@@ -262,12 +402,7 @@ def test_numereng_docs_tree_uses_docs_numereng_root_only(tmp_path: Path) -> None
     (numereng_docs / "README.md").write_text("# Numereng\n")
     (numereng_docs / "SUMMARY.md").write_text("## Getting Started\n* [Overview](README.md)\n")
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     tree = adapter.get_doc_tree("numereng")
     assert tree["sections"][0]["heading"] == "Getting Started"
@@ -298,12 +433,7 @@ def test_summary_tree_normalizes_relative_paths_and_blocks_escape(tmp_path: Path
         + "\n"
     )
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
     tree = adapter.get_doc_tree("numereng")
     items = tree["sections"][0]["items"]
     paths = [item["path"] for item in items]
@@ -382,19 +512,14 @@ def test_get_resolved_config_prefers_json_when_present(tmp_path: Path) -> None:
     run_dir = store_root / "runs" / "run-1"
     run_dir.mkdir(parents=True)
 
-    (run_dir / "resolved.json").write_text("{\"foo\": \"bar\"}")
+    (run_dir / "resolved.json").write_text('{"foo": "bar"}')
     (run_dir / "resolved.yaml").write_text("foo: legacy")
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.get_resolved_config("run-1")
 
-    assert payload == {"yaml": "{\"foo\": \"bar\"}"}
+    assert payload == {"yaml": '{"foo": "bar"}'}
 
 
 def test_get_metrics_for_runs_normalizes_store_aliases(tmp_path: Path) -> None:
@@ -428,12 +553,7 @@ def test_get_metrics_for_runs_normalizes_store_aliases(tmp_path: Path) -> None:
     finally:
         conn.close()
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.get_metrics_for_runs(
         ["run-1"],
@@ -465,12 +585,7 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
         encoding="utf-8",
     )
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
     payload = adapter.get_run_metrics("run-1")
 
     assert payload is not None
@@ -521,12 +636,7 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
     finally:
         conn.close()
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.get_run_metrics("run-1")
 
@@ -572,12 +682,7 @@ def test_list_experiment_runs_filesystem_uses_target_col(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.list_experiment_runs("exp-1")
     assert len(payload) == 1
@@ -687,12 +792,7 @@ def test_get_run_metrics_enriches_mmc_coverage_ratio_from_provenance(tmp_path: P
         encoding="utf-8",
     )
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     payload = adapter.get_run_metrics("run-1")
     assert payload is not None
@@ -768,12 +868,7 @@ def test_per_era_fallback_derives_corr_rows(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     result = adapter.get_per_era_corr_result("run-1")
     assert result.payload is not None
@@ -1071,11 +1166,6 @@ def test_adapter_rejects_ensemble_artifacts_path_outside_store(tmp_path: Path) -
     finally:
         conn.close()
 
-    adapter = VizStoreAdapter(
-        VizStoreConfig(
-            store_root=store_root,
-            repo_root=tmp_path
-        )
-    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     assert adapter.get_ensemble_artifacts("ens-1") is None

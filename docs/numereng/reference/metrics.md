@@ -24,7 +24,11 @@ For scored runs, the primary scoring artifacts are:
 - `mmc_<alias>`
 - `cwmm`
 - `bmc`
+- `bmc_<alias>`
 - `bmc_last_200_eras`
+- `bmc_last_200_eras_<alias>`
+- `corr_delta_vs_baseline`
+- `corr_delta_vs_baseline_<alias>`
 - `feature_exposure`
 - `max_feature_exposure`
 - `max_drawdown`
@@ -35,10 +39,15 @@ Numereng does not emit payout-estimate fields.
 
 - `corr`: Numerai correlation against the native or aliased scoring target
 - `fnc`: feature-neutral correlation using `fncv3_features`
-- `mmc`: meta-model contribution on the available overlapping meta window
+- `mmc`: payout-target meta-model contribution on the available overlapping meta window
+- `mmc_<alias>`: explicit extra-target meta-model contribution
 - `cwmm`: diagnostic correlation between Numerai-transformed predictions and the raw meta-model series
-- `bmc`: benchmark contribution against the configured benchmark model
-- `bmc_last_200_eras`: benchmark contribution restricted to the trailing 200 eras
+- `bmc`: payout-target benchmark contribution against the configured benchmark model
+- `bmc_<alias>`: explicit extra-target benchmark contribution
+- `bmc_last_200_eras`: payout-target benchmark contribution restricted to the trailing 200 eras
+- `bmc_last_200_eras_<alias>`: explicit extra-target trailing-200 benchmark contribution
+- `corr_delta_vs_baseline`: model payout-target CORR minus the benchmark model's payout-target CORR on the same scored eras
+- `corr_delta_vs_baseline_<alias>`: the same delta on one explicit extra scoring target
 - `feature_exposure`: rank-based exposure summary against `fncv3_features`
 - `max_feature_exposure`: maximum absolute exposure summary
 - `max_drawdown`: drawdown derived from the relevant per-era score series
@@ -61,12 +70,14 @@ Important fields include:
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
 - `policy.include_feature_neutral_metrics`
+- `baseline_corr.mode`
 
 Current rules:
 
 - benchmark and meta-model joins require strict era alignment
 - benchmark diagnostics score only overlapping rows
 - meta metrics are emitted whenever there is usable overlap
+- `baseline_corr` itself is no longer persisted as a run metric; payout-target benchmark CORR is read from the shared active-benchmark artifact when available, or computed transiently for delta fallback
 
 ## Dashboard Contract
 
@@ -79,6 +90,8 @@ The dashboard normalizes a subset of the metric space into common ranking fields
 - `bmc_mean`
 - `feature_exposure_mean`
 - `max_feature_exposure`
+
+`mmc_mean`, `bmc_mean`, and `bmc_last_200_eras_mean` normalize to the payout-backed surface for newly written runs, with legacy `*_ender20` fallback for historical runs.
 
 Aliased target families remain available in `metrics.json` even when the dashboard presents only canonical scalar keys.
 

@@ -11,11 +11,15 @@ Training config target keys:
 
 Scoring target resolution:
 
-1. use `data.scoring_targets` when present
-2. otherwise score the native target plus `target_ender_20`
+1. use `data.scoring_targets` when present to define the explicit extra scoring targets
+2. otherwise score the native target plus opportunistic `target_ender_20` for `corr` / `fnc`
 3. dedupe while preserving order
 
-The native target always keeps the unsuffixed metric keys (`corr`, `fnc`, `mmc`). Additional scoring targets use aliased keys such as `corr_ender20`, `fnc_ender20`, and `mmc_ender20`.
+Unsuffixed key policy:
+
+- `corr` and `fnc` keep native-target semantics
+- `mmc`, `bmc`, and `bmc_last_200_eras` keep payout-target semantics
+- additional explicit targets use aliased keys such as `corr_ender20`, `fnc_ender20`, `mmc_target`, and `bmc_target`
 
 ## Canonical Metric Families
 
@@ -25,8 +29,8 @@ Run scoring produces:
 - `fnc` / `fnc_<alias>`
 - `mmc` / `mmc_<alias>`
 - `cwmm`
-- `bmc`
-- `bmc_last_200_eras`
+- `bmc` / `bmc_<alias>`
+- `bmc_last_200_eras` / `bmc_last_200_eras_<alias>`
 - `feature_exposure`
 - `max_feature_exposure`
 
@@ -55,6 +59,11 @@ That means:
 - `joins.benchmark_missing_eras`
 - `joins.meta_overlap_rows`
 - `joins.meta_source_rows`
+- `columns.corr_target_cols`
+- `columns.fnc_target_cols`
+- `columns.contribution_target_cols`
+- `columns.requested_scoring_target_cols`
+- `columns.scoring_targets_explicit`
 - `policy.fnc_feature_set`
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
