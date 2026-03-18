@@ -21,11 +21,15 @@ SHARED_RUN_METRIC_NAMES: tuple[str, ...] = (
 )
 
 _SHARED_RUN_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
-    "bmc_last_200_eras_mean": ("bmc_last_200_eras_mean", "bmc_last_200_eras.mean"),
-    "bmc_mean": ("bmc_mean", "bmc.mean"),
+    "bmc_last_200_eras_mean": (
+        "bmc_last_200_eras_mean",
+        "bmc_ender20_last_200_eras.mean",
+        "bmc_last_200_eras.mean",
+    ),
+    "bmc_mean": ("bmc_mean", "bmc_ender20.mean", "bmc.mean"),
     "corr_sharpe": ("corr_sharpe", "corr.sharpe", "corr20v2_sharpe", "sharpe"),
     "corr_mean": ("corr_mean", "corr.mean", "corr20v2_mean"),
-    "mmc_mean": ("mmc_mean", "mmc.mean"),
+    "mmc_mean": ("mmc_mean", "mmc_ender20.mean", "mmc.mean"),
     "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
     "fnc_mean": ("fnc_mean", "fnc.mean"),
     "feature_exposure_mean": ("feature_exposure_mean", "feature_exposure.mean"),

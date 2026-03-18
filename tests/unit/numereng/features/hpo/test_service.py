@@ -62,7 +62,7 @@ def _write_post_fold_snapshots(store_root: Path, *, run_id: str, objective_value
                 "cv_fold": 0,
                 "corr_native_fold_mean": 0.0,
                 "corr_ender20_fold_mean": 0.0,
-                "bmc_ender20_fold_mean": objective_value / 2.25,
+                "bmc_fold_mean": objective_value / 2.25,
             }
         ]
     ).to_parquet(scoring_dir / "post_fold_snapshots.parquet", index=False)

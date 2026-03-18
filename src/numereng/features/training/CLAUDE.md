@@ -37,7 +37,6 @@ Conditionally required:
 
 Not guaranteed by the canonical training pipeline:
 
-- `artifacts/eval/feature_importance.parquet`
 - `artifacts/reports/trials.parquet`
 - `artifacts/reports/best_params.json`
 

@@ -5,14 +5,12 @@
 		api,
 		type DiagnosticsSources,
 		type ExperimentRun,
-		type FeatureImportanceRow,
 		type ResourceSample,
 		type RunEvent,
 		type RunManifest,
 		type ScoringDashboard
 	} from '$lib/api/client';
 	import CumulativeCorrChart from '$lib/components/charts/CumulativeCorrChart.svelte';
-	import FeatureImportanceChart from '$lib/components/charts/FeatureImportanceChart.svelte';
 	import PerEraLineChart from '$lib/components/charts/PerEraLineChart.svelte';
 	import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
 	import { fmt, fmtGb, fmtPercent } from '$lib/utils';
@@ -46,7 +44,6 @@
 
 	type PerformanceData = {
 		scoringDashboard: ScoringDashboard | null;
-		featureImportance: FeatureImportanceRow[] | null;
 	};
 
 	type DiagnosticsData = {
@@ -112,7 +109,6 @@
 	let currentRun = $derived.by(() => runs.find((run) => run.run_id === runId) ?? null);
 	let manifest = $derived(manifestState.value);
 	let scoringDashboard = $derived(performanceState.value?.scoringDashboard ?? null);
-	let featureImportance = $derived(performanceState.value?.featureImportance ?? null);
 	let resources = $derived(diagnosticsState.value?.resources ?? []);
 	let diagnosticsSources = $derived(diagnosticsState.value?.diagnosticsSources ?? null);
 	let resolvedConfig = $derived(artifactsState.value?.resolvedConfig ?? null);
@@ -152,16 +148,11 @@
 	const performanceMetricOrder = [
 		'corr_native',
 		'corr_ender20',
-		'bmc_ender20',
-		'mmc_ender20',
-		'bmc_native',
-		'mmc_native',
+		'bmc',
+		'mmc',
 		'cwmm',
 		'corr_with_benchmark',
-		'baseline_corr_native',
-		'baseline_corr_ender20',
-		'corr_delta_vs_baseline_native',
-		'corr_delta_vs_baseline_ender20',
+		'corr_delta_vs_baseline',
 		'fnc_native',
 		'fnc_ender20',
 		'feature_exposure',
@@ -174,12 +165,12 @@
 	});
 
 	const foldMetricCharts: Array<{
-		key: 'corr_native' | 'corr_ender20' | 'bmc_ender20';
+		key: 'corr_native' | 'corr_ender20' | 'bmc';
 		label: string;
 	}> = [
 		{ key: 'corr_native', label: 'CORR Native Fold Mean' },
 		{ key: 'corr_ender20', label: 'CORR Ender20 Fold Mean' },
-		{ key: 'bmc_ender20', label: 'BMC Ender20 Fold Mean' }
+		{ key: 'bmc', label: 'BMC Fold Mean' }
 	];
 
 	function availableMetricKeys(): string[] {
@@ -213,14 +204,14 @@
 			}));
 	}
 
-	function foldMetricRows(metricKey: 'corr_native' | 'corr_ender20' | 'bmc_ender20'): Array<Record<string, string | number>> {
+	function foldMetricRows(metricKey: 'corr_native' | 'corr_ender20' | 'bmc'): Array<Record<string, string | number>> {
 		const rows = scoringDashboard?.fold_snapshots ?? [];
 		const valueKey =
 			metricKey === 'corr_native'
 				? 'corr_native_fold_mean'
 				: metricKey === 'corr_ender20'
 					? 'corr_ender20_fold_mean'
-					: 'bmc_ender20_fold_mean';
+					: 'bmc_fold_mean';
 		return rows
 			.filter((row) => typeof row[valueKey] === 'number')
 			.map((row) => ({
@@ -233,20 +224,15 @@
 		const labels: Record<string, string> = {
 			corr_native: 'CORR Native',
 			corr_ender20: 'CORR Ender20',
-			bmc_native: 'BMC Native',
-			bmc_ender20: 'BMC Ender20',
-			mmc_native: 'MMC Native',
-			mmc_ender20: 'MMC Ender20',
+			bmc: 'BMC',
+			mmc: 'MMC',
 			fnc_native: 'FNC Native',
 			fnc_ender20: 'FNC Ender20',
 			cwmm: 'CWMM',
 			feature_exposure: 'Feature Exposure',
 			max_feature_exposure: 'Max Feature Exposure',
 			corr_with_benchmark: 'Corr vs Benchmark',
-			baseline_corr_native: 'Baseline Corr Native',
-			baseline_corr_ender20: 'Baseline Corr Ender20',
-			corr_delta_vs_baseline_native: 'Corr Delta vs Baseline Native',
-			corr_delta_vs_baseline_ender20: 'Corr Delta vs Baseline Ender20'
+			corr_delta_vs_baseline: 'Corr Delta vs Baseline'
 		};
 		const label = labels[metricKey] ?? metricKey;
 		const meta = scoringDashboard?.meta;
@@ -428,15 +414,11 @@
 		performanceState.error = null;
 		markTabFetchStart(id, 'performance');
 		try {
-			const [dashboard, importance] = await Promise.all([
-				api.getRunScoringDashboard(id, controller.signal).catch(() => null),
-				api.getFeatureImportance(id, 30, controller.signal).catch(() => null)
-			]);
+			const dashboard = await api.getRunScoringDashboard(id, controller.signal).catch(() => null);
 			if (controller.signal.aborted || runId !== id) return;
 			performanceState.runId = id;
 			performanceState.value = {
-				scoringDashboard: dashboard,
-				featureImportance: importance
+				scoringDashboard: dashboard
 			};
 			performanceState.loaded = true;
 			markTabFetchEnd(id, 'performance');
@@ -749,17 +731,6 @@
 							{/if}
 						{/each}
 
-						<div class="rounded-lg border border-border bg-card p-4 space-y-3 2xl:col-span-2">
-							<div>
-								<h3 class="text-sm font-medium">Feature Importance</h3>
-								<p class="text-[11px] text-muted-foreground">Top weighted features</p>
-							</div>
-							{#if featureImportance}
-								<FeatureImportanceChart data={featureImportance} topN={15} />
-							{:else}
-								<p class="text-sm text-muted-foreground">Feature importance not available for this run.</p>
-							{/if}
-						</div>
 					</div>
 				</div>
 			{/if}

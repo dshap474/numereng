@@ -72,7 +72,7 @@ def _write_feature_sources(
     )
     for feature_col in resolved_feature_cols:
         validation_frame[feature_col] = [0.0]
-    for col in (extra_cols or {}):
+    for col in extra_cols or {}:
         validation_frame[col] = [0.0]
     validation_frame.to_parquet(validation_path, index=False)
 
@@ -506,9 +506,10 @@ def test_ensure_full_benchmark_models_writes_to_derived_cache(tmp_path: Path) ->
 
     full_path = ensure_full_benchmark_models(_FakeClient(), "v5.2", data_root=data_root)
 
-    assert full_path == (
-        tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "full_benchmark_models.parquet"
-    ).resolve()
+    assert (
+        full_path
+        == (tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "full_benchmark_models.parquet").resolve()
+    )
     assert not (version_dir / "full_benchmark_models.parquet").exists()
 
     full = pd.read_parquet(full_path)
@@ -530,6 +531,7 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.45, 0.05, 0.35]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -616,6 +618,169 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     assert policy["fnc_feature_set"] == "fncv3_features"
     assert policy["fnc_target_policy"] == "scoring_target"
     assert policy["benchmark_min_overlap_ratio"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("scoring_mode", ["materialized", "era_stream"])
+def test_score_prediction_file_with_details_uses_shared_active_benchmark_corr_artifact_for_delta(
+    tmp_path: Path,
+    scoring_mode: str,
+) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "target": [0.2, 0.4, 0.1, 0.3],
+            "prediction": [0.1, 0.3, 0.2, 0.4],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+    _write_feature_sources(
+        tmp_path,
+        ids=predictions["id"].tolist(),
+        eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.45, 0.05, 0.35]},
+    )
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "prediction": [0.6, 0.7, 0.2, 0.3],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    meta_path = tmp_path / "meta.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "numerai_meta_model": [0.55, 0.65, 0.15, 0.25],
+        }
+    ).to_parquet(meta_path, index=False)
+
+    shared_corr_path = tmp_path / "shared_corr.parquet"
+    pd.DataFrame(
+        {
+            "era": ["era1", "era2"],
+            "corr": [0.01, -0.02],
+        }
+    ).to_parquet(shared_corr_path, index=False)
+    benchmark_metadata_path = tmp_path / "benchmark.json"
+    benchmark_metadata_path.write_text(
+        json.dumps(
+            {
+                "default_target": "target_ender_20",
+                "artifacts": {"per_era_corr_target_ender_20": str(shared_corr_path.resolve())},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summaries, provenance, metric_frames = metrics_module.score_prediction_file_with_details(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target"],
+        data_version="v5.2",
+        client=_FakeClient(),
+        feature_set="small",
+        dataset_scope="train_plus_validation",
+        benchmark_model="prediction",
+        benchmark_name="active_benchmark",
+        benchmark_data_path=benchmark_path,
+        benchmark_metadata_path=benchmark_metadata_path,
+        meta_model_data_path=meta_path,
+        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_mode=scoring_mode,
+        era_chunk_size=1,
+    )
+
+    corr_ender20 = metric_frames["corr_ender20"].sort_values("era").reset_index(drop=True)
+    corr_delta = metric_frames["corr_delta_vs_baseline"].sort_values("era").reset_index(drop=True)
+    expected_delta = corr_ender20["value"].to_numpy(dtype=float) - np.array([0.01, -0.02], dtype=float)
+
+    assert "baseline_corr" not in metric_frames
+    assert summaries["corr_delta_vs_baseline"].loc["prediction", "mean"] == pytest.approx(
+        float(np.mean(expected_delta))
+    )
+    assert corr_delta["value"].to_numpy(dtype=float) == pytest.approx(expected_delta)
+    baseline_corr = provenance["baseline_corr"]
+    assert isinstance(baseline_corr, dict)
+    assert baseline_corr["mode"] == "shared_artifact"
+    assert baseline_corr["artifact_path"] == str(shared_corr_path.resolve())
+
+
+@pytest.mark.parametrize("scoring_mode", ["materialized", "era_stream"])
+def test_score_prediction_file_with_details_falls_back_to_transient_baseline_corr_for_delta(
+    tmp_path: Path,
+    scoring_mode: str,
+) -> None:
+    predictions_path = tmp_path / "predictions.parquet"
+    predictions = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "target": [0.2, 0.4, 0.1, 0.3],
+            "prediction": [0.1, 0.3, 0.2, 0.4],
+        }
+    )
+    predictions.to_parquet(predictions_path, index=False)
+    _write_feature_sources(
+        tmp_path,
+        ids=predictions["id"].tolist(),
+        eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.45, 0.05, 0.35]},
+    )
+
+    benchmark_path = tmp_path / "benchmark.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "prediction": [0.6, 0.7, 0.2, 0.3],
+        }
+    ).to_parquet(benchmark_path, index=False)
+
+    meta_path = tmp_path / "meta.parquet"
+    pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["era1", "era1", "era2", "era2"],
+            "numerai_meta_model": [0.55, 0.65, 0.15, 0.25],
+        }
+    ).to_parquet(meta_path, index=False)
+
+    _, provenance, metric_frames = metrics_module.score_prediction_file_with_details(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target"],
+        data_version="v5.2",
+        client=_FakeClient(),
+        feature_set="small",
+        dataset_scope="train_plus_validation",
+        benchmark_model="prediction",
+        benchmark_name="custom_benchmark",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+        scoring_mode=scoring_mode,
+        era_chunk_size=1,
+    )
+
+    assert "baseline_corr" not in metric_frames
+    assert "corr_delta_vs_baseline" in metric_frames
+    baseline_corr = provenance["baseline_corr"]
+    assert isinstance(baseline_corr, dict)
+    assert baseline_corr["mode"] == "transient_computed"
 
 
 def test_score_prediction_file_with_details_uses_safe_benchmark_alias_for_path_sources(
@@ -722,9 +887,9 @@ def test_score_prediction_file_with_details_uses_safe_benchmark_alias_for_path_s
         scoring_mode="materialized",
     )
 
-    assert summaries["bmc_ender20"].loc["prediction", "mean"] != pytest.approx(0.0)
-    assert summaries["bmc_ender20"].loc["prediction", "avg_corr_with_benchmark"] < 0.999
-    assert not metric_frames["bmc_ender20"]["value"].eq(0.0).all()
+    assert summaries["bmc"].loc["prediction", "mean"] != pytest.approx(0.0)
+    assert summaries["bmc"].loc["prediction", "avg_corr_with_benchmark"] < 0.999
+    assert not metric_frames["bmc"]["value"].eq(0.0).all()
     assert not metric_frames["corr_with_benchmark"]["value"].eq(1.0).all()
 
 
@@ -868,6 +1033,7 @@ def test_summarize_prediction_file_with_scores_omits_meta_metrics_when_meta_miss
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -928,6 +1094,7 @@ def test_summarize_prediction_file_with_scores_era_stream_matches_materialized(t
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25, 0.45, 0.65]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1017,6 +1184,7 @@ def test_summarize_prediction_file_with_scores_allows_partial_benchmark_overlap(
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25, 0.45, 0.65]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1082,6 +1250,7 @@ def test_summarize_prediction_file_with_scores_emits_meta_metrics_on_overlap_win
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25, 0.45, 0.65]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1151,6 +1320,7 @@ def test_summarize_prediction_file_with_scores_omits_meta_metrics_without_overla
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1222,6 +1392,7 @@ def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_read
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1271,11 +1442,14 @@ def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_read
     )
     assert set(summaries) == {
         "corr",
+        "corr_ender20",
         "fnc",
+        "fnc_ender20",
         "feature_exposure",
         "max_feature_exposure",
         "bmc",
         "bmc_last_200_eras",
+        "corr_delta_vs_baseline",
         "mmc",
         "cwmm",
     }
@@ -1309,6 +1483,7 @@ def test_summarize_prediction_file_with_scores_materialized_reads_predictions_on
         tmp_path,
         ids=predictions["id"].tolist(),
         eras=predictions["era"].tolist(),
+        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25]},
     )
 
     benchmark_path = tmp_path / "benchmark.parquet"
@@ -1449,6 +1624,7 @@ def test_summarize_prediction_file_with_scores_emits_extra_target_metrics_from_d
             target_col="target",
             scoring_target_cols=["target", "target_ender_20"],
             data_version="v5.2",
+            scoring_targets_explicit=True,
             client=_FakeClient(),
             benchmark_model="v52_lgbm_ender20",
             benchmark_data_path=benchmark_path,
@@ -1463,12 +1639,17 @@ def test_summarize_prediction_file_with_scores_emits_extra_target_metrics_from_d
         assert "corr" in summaries
         assert "fnc" in summaries
         assert "mmc" in summaries
+        assert "mmc_target" in summaries
+        assert "bmc" in summaries
+        assert "bmc_target" in summaries
+        assert "bmc_last_200_eras" in summaries
+        assert "bmc_last_200_eras_target" in summaries
         assert "corr_ender20" in summaries
         assert "fnc_ender20" in summaries
-        assert "mmc_ender20" in summaries
         columns = provenance["columns"]
         assert isinstance(columns, dict)
         assert columns["scoring_target_cols"] == ["target", "target_ender_20"]
+        assert columns["contribution_target_cols"] == ["target_ender_20", "target"]
 
 
 def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> None:
@@ -1497,13 +1678,16 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
     summaries = {
         "corr": _summary_frame(0.1),
         "corr_ender20": _summary_frame(0.2),
-        "mmc_ender20": _summary_frame(0.03),
-        "bmc_ender20": _summary_frame(0.04),
+        "mmc": _summary_frame(0.03),
+        "bmc": _summary_frame(0.04),
+        "bmc_last_200_eras": _summary_frame(0.045),
+        "corr_delta_vs_baseline": _summary_frame(0.015),
         "fnc": _summary_frame(0.05),
         "fnc_ender20": _summary_frame(0.06),
         "feature_exposure": _summary_frame(0.07),
         "max_feature_exposure": _summary_frame(0.08),
     }
+    summaries["bmc"].loc["prediction", "avg_corr_with_benchmark"] = 0.12
 
     bundle, _ = build_scoring_artifact_bundle(
         run_id="run-123",
@@ -1513,12 +1697,20 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         pred_cols=["prediction"],
         target_col="target",
         scoring_target_cols=["target", "target_ender_20"],
+        scoring_targets_explicit=True,
         summaries=summaries,
         metric_frames={
             "corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}, {"era": "era2", "value": 0.2}]),
             "corr_ender20": pd.DataFrame([{"era": "era1", "value": 0.2}, {"era": "era2", "value": 0.3}]),
-            "bmc_ender20": pd.DataFrame([{"era": "era1", "value": 0.03}, {"era": "era2", "value": 0.05}]),
-            "mmc_ender20": pd.DataFrame([{"era": "era1", "value": 0.01}, {"era": "era2", "value": 0.02}]),
+            "bmc": pd.DataFrame([{"era": "era1", "value": 0.03}, {"era": "era2", "value": 0.05}]),
+            "bmc_target": pd.DataFrame([{"era": "era1", "value": 0.13}, {"era": "era2", "value": 0.15}]),
+            "mmc": pd.DataFrame([{"era": "era1", "value": 0.01}, {"era": "era2", "value": 0.02}]),
+            "mmc_target": pd.DataFrame([{"era": "era1", "value": 0.11}, {"era": "era2", "value": 0.12}]),
+            "baseline_corr": pd.DataFrame([{"era": "era1", "value": 0.07}, {"era": "era2", "value": 0.08}]),
+            "corr_delta_vs_baseline": pd.DataFrame([{"era": "era1", "value": 0.02}, {"era": "era2", "value": 0.01}]),
+            "corr_delta_vs_baseline_target": pd.DataFrame(
+                [{"era": "era1", "value": 0.12}, {"era": "era2", "value": 0.11}]
+            ),
             "fnc_native": pd.DataFrame([{"era": "era1", "value": 0.04}, {"era": "era2", "value": 0.05}]),
             "fnc_ender20": pd.DataFrame([{"era": "era1", "value": 0.05}, {"era": "era2", "value": 0.06}]),
             "feature_exposure": pd.DataFrame([{"era": "era1", "value": 0.07}, {"era": "era2", "value": 0.08}]),
@@ -1564,6 +1756,14 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         "series_type",
         "value",
     ]
+    run_metric_keys = set(bundle.stage_frames["run_metric_series"]["metric_key"].astype(str))
+    assert "bmc" in run_metric_keys
+    assert "mmc" in run_metric_keys
+    assert "corr_delta_vs_baseline" in run_metric_keys
+    assert "baseline_corr" not in run_metric_keys
+    assert "bmc_target" not in run_metric_keys
+    assert "mmc_target" not in run_metric_keys
+    assert "corr_delta_vs_baseline_target" not in run_metric_keys
 
     post_fold = bundle.stage_frames["post_fold_per_era"]
     assert list(post_fold.columns) == [
@@ -1576,7 +1776,7 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         "era",
         "corr_native",
         "corr_ender20",
-        "bmc_ender20",
+        "bmc",
     ]
     assert list(post_fold["cv_fold"]) == [0, 1]
 
@@ -1591,14 +1791,18 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         "cv_fold",
         "corr_native_fold_mean",
         "corr_ender20_fold_mean",
-        "bmc_ender20_fold_mean",
+        "bmc_fold_mean",
     ]
 
     post_training = bundle.stage_frames["post_training_core_summary"]
     assert "corr_native_mean" in post_training.columns
     assert "corr_ender20_mean" in post_training.columns
-    assert "mmc_ender20_mean" in post_training.columns
-    assert "bmc_ender20_mean" in post_training.columns
+    assert "mmc_mean" in post_training.columns
+    assert "bmc_mean" in post_training.columns
+    assert "bmc_last_200_eras_mean" in post_training.columns
+    assert "avg_corr_with_benchmark" in post_training.columns
+    assert "corr_delta_vs_baseline_mean" in post_training.columns
+    assert post_training.loc[0, "avg_corr_with_benchmark"] == pytest.approx(0.12)
 
     post_training_features = bundle.stage_frames["post_training_full_summary"]
     assert "fnc_native_mean" in post_training_features.columns

@@ -1,0 +1,70 @@
+# Numereng
+- `corr`
+- `corr_<alias>`
+- `mmc`
+- `mmc_<alias>`
+- `bmc`
+- `bmc_last_200_eras`
+- `bmc_<alias>`
+- `bmc_last_200_eras_<alias>`
+- `cwmm`
+- `fnc`
+- `fnc_<alias>`
+- `feature_exposure`
+- `max_feature_exposure`
+- `corr_with_benchmark`
+- `baseline_corr_*`
+- `corr_delta_vs_baseline_*`
+- `avg_corr_with_benchmark`
+- Summary stats on emitted families: `mean`, `std`, `sharpe`, `max_drawdown`
+
+
+# Numerai
+- `/path/to/numereng/vendor/_howto-notebooks`:
+  - `CORR`
+  - `CORR20V2`
+  - `MMC`
+  - `BMC`
+  - `feature exposure`
+  - `max feature exposure`
+  - `mean`
+  - `std`
+  - `sharpe`
+  - `max_drawdown`
+  - `delta`
+
+- `/path/to/numereng/vendor/example-scripts/numerai`:
+  - `CORR`
+  - `CORR20V2`
+  - `MMC`
+  - `BMC`
+  - `bmc_last_200_eras`
+  - `avg_corr_with_benchmark`
+  - `feature exposure`
+  - `max feature exposure`
+  - `mean`
+  - `std`
+  - `sharpe`
+  - `max_drawdown`
+  - `delta`
+  - `corr_mean`
+  - `corr_sharpe`
+  - `bmc_mean`
+  - `bmc_sharpe`
+
+- `/path/to/numereng/vendor/numerai-tools`:
+  - `correlation`
+  - `tie_broken_rank_correlation`
+  - `spearman_correlation`
+  - `pearson_correlation`
+  - `sharpe_ratio`
+  - `correlation_contribution`
+  - `numerai_corr`
+  - `feature_neutral_corr`
+  - `max_feature_correlation`
+  - `alpha`
+  - `meta_portfolio_contribution`
+  - `churn`
+  - `turnover`
+  - `max_churn`
+  - `max_turnover`

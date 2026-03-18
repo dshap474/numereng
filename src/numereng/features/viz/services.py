@@ -215,9 +215,6 @@ class VizService:
     def get_scoring_dashboard(self, run_id: str) -> dict[str, Any] | None:
         return self.adapter.get_scoring_dashboard(run_id)
 
-    def get_feature_importance(self, run_id: str, *, top_n: int) -> list[dict[str, Any]] | None:
-        return self.adapter.get_feature_importance(run_id, top_n=top_n)
-
     def get_trials(self, run_id: str) -> list[dict[str, Any]] | None:
         return self.adapter.get_trials(run_id)
 
@@ -238,7 +235,6 @@ class VizService:
         events_task = asyncio.to_thread(self.adapter.list_run_events, run_id, limit=50)
         resources_task = asyncio.to_thread(self.adapter.list_run_resources, run_id, limit=50)
         scoring_dashboard_task = asyncio.to_thread(self.adapter.get_scoring_dashboard, run_id)
-        fi_task = asyncio.to_thread(self.adapter.get_feature_importance, run_id, top_n=30)
         trials_task = asyncio.to_thread(self.adapter.get_trials, run_id)
         params_task = asyncio.to_thread(self.adapter.get_best_params, run_id)
         config_task = asyncio.to_thread(self.adapter.get_resolved_config, run_id)
@@ -250,7 +246,6 @@ class VizService:
             events,
             resources,
             scoring_dashboard,
-            feature_importance,
             trials,
             best_params,
             resolved_config,
@@ -261,7 +256,6 @@ class VizService:
             events_task,
             resources_task,
             scoring_dashboard_task,
-            fi_task,
             trials_task,
             params_task,
             config_task,
@@ -272,7 +266,6 @@ class VizService:
             "metrics": metrics,
             "manifest": manifest,
             "scoring_dashboard": scoring_dashboard,
-            "feature_importance": feature_importance,
             "trials": trials,
             "best_params": best_params,
             "resolved_config": resolved_config,

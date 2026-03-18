@@ -53,16 +53,20 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "fnc_mean": ("fnc_mean", "fnc.mean"),
     "fnc_std": ("fnc_std", "fnc.std"),
     "fnc_sharpe": ("fnc_sharpe", "fnc.sharpe"),
-    "mmc_mean": ("mmc_mean", "mmc.mean"),
-    "mmc_payout_mean": ("mmc_payout_mean", "mmc_ender20.mean", "mmc_ender20"),
-    "mmc_std": ("mmc_std", "mmc.std"),
-    "mmc_sharpe": ("mmc_sharpe", "mmc.sharpe"),
-    "mmc_n_eras": ("mmc_n_eras", "mmc.n_eras"),
-    "bmc_mean": ("bmc_mean", "bmc.mean"),
-    "bmc_std": ("bmc_std", "bmc.std"),
-    "bmc_sharpe": ("bmc_sharpe", "bmc.sharpe"),
-    "bmc_n_eras": ("bmc_n_eras", "bmc.n_eras"),
-    "bmc_last_200_eras_mean": ("bmc_last_200_eras_mean", "bmc_last_200_eras.mean"),
+    "mmc_mean": ("mmc_mean", "mmc_ender20.mean", "mmc.mean"),
+    "mmc_payout_mean": ("mmc_payout_mean", "mmc.mean", "mmc_ender20.mean", "mmc_ender20"),
+    "mmc_std": ("mmc_std", "mmc_ender20.std", "mmc.std"),
+    "mmc_sharpe": ("mmc_sharpe", "mmc_ender20.sharpe", "mmc.sharpe"),
+    "mmc_n_eras": ("mmc_n_eras", "mmc_ender20.n_eras", "mmc.n_eras"),
+    "bmc_mean": ("bmc_mean", "bmc_ender20.mean", "bmc.mean"),
+    "bmc_std": ("bmc_std", "bmc_ender20.std", "bmc.std"),
+    "bmc_sharpe": ("bmc_sharpe", "bmc_ender20.sharpe", "bmc.sharpe"),
+    "bmc_n_eras": ("bmc_n_eras", "bmc_ender20.n_eras", "bmc.n_eras"),
+    "bmc_last_200_eras_mean": (
+        "bmc_last_200_eras_mean",
+        "bmc_ender20_last_200_eras.mean",
+        "bmc_last_200_eras.mean",
+    ),
     "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
     "cwmm_std": ("cwmm_std", "cwmm.std"),
     "cwmm_sharpe": ("cwmm_sharpe", "cwmm.sharpe"),
@@ -91,6 +95,18 @@ _LEGACY_SCORING_SERIES_SPECS: tuple[tuple[str, str, str], ...] = (
     ("corr_delta_vs_baseline_cumulative.parquet", "corr_delta_vs_baseline_native", "cumulative"),
     ("corr_delta_vs_baseline_ender20_per_era.parquet", "corr_delta_vs_baseline_ender20", "per_era"),
     ("corr_delta_vs_baseline_ender20_cumulative.parquet", "corr_delta_vs_baseline_ender20", "cumulative"),
+)
+
+_CANONICAL_DASHBOARD_METRIC_KEY_ALIASES: dict[str, str] = {
+    "bmc_ender20": "bmc",
+    "mmc_ender20": "mmc",
+    "corr_delta_vs_baseline_ender20": "corr_delta_vs_baseline",
+}
+_HIDDEN_DASHBOARD_METRIC_PREFIXES: tuple[str, ...] = (
+    "baseline_corr",
+    "bmc_",
+    "mmc_",
+    "corr_delta_vs_baseline_",
 )
 
 
@@ -173,6 +189,79 @@ def _to_non_empty_str(value: Any) -> str | None:
     return cleaned if cleaned else None
 
 
+def _normalize_dashboard_metric_key(metric_key: str) -> str | None:
+    canonical = _CANONICAL_DASHBOARD_METRIC_KEY_ALIASES.get(metric_key)
+    if canonical is not None:
+        return canonical
+    if any(metric_key.startswith(prefix) for prefix in _HIDDEN_DASHBOARD_METRIC_PREFIXES):
+        return None
+    return metric_key
+
+
+def _normalize_scoring_dashboard_series(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    raw_metric_keys = {str(row.get("metric_key")) for row in rows if isinstance(row.get("metric_key"), str)}
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        raw_metric_key = row.get("metric_key")
+        if not isinstance(raw_metric_key, str):
+            continue
+        metric_key = _normalize_dashboard_metric_key(raw_metric_key)
+        if metric_key is None:
+            continue
+        if raw_metric_key != metric_key and metric_key in raw_metric_keys:
+            continue
+        normalized_row = dict(row)
+        normalized_row["metric_key"] = metric_key
+        dedupe_key = (
+            metric_key,
+            str(normalized_row.get("series_type", "")),
+            str(normalized_row.get("era", "")),
+        )
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized.append(normalized_row)
+    return normalized
+
+
+def _normalize_scoring_dashboard_summary_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    normalized = dict(row)
+    legacy_prefixes: dict[str, tuple[str, ...]] = {
+        "bmc": ("bmc_ender20",),
+        "mmc": ("mmc_ender20",),
+        "corr_delta_vs_baseline": ("corr_delta_vs_baseline_ender20",),
+        "bmc_last_200_eras": ("bmc_last_200_eras_ender20", "bmc_ender20_last_200_eras"),
+    }
+    for metric_name, prefixes in legacy_prefixes.items():
+        for suffix in ("mean", "std", "sharpe", "max_drawdown"):
+            canonical_key = f"{metric_name}_{suffix}"
+            if canonical_key in normalized:
+                continue
+            for legacy_prefix in prefixes:
+                legacy_key = f"{legacy_prefix}_{suffix}"
+                if legacy_key in normalized:
+                    normalized[canonical_key] = normalized[legacy_key]
+                    break
+    return normalized
+
+
+def _normalize_scoring_dashboard_fold_rows(
+    rows: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if rows is None:
+        return None
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = dict(row)
+        if "bmc_fold_mean" not in normalized and "bmc_ender20_fold_mean" in normalized:
+            normalized["bmc_fold_mean"] = normalized["bmc_ender20_fold_mean"]
+        normalized_rows.append(normalized)
+    return normalized_rows
+
+
 def _parse_json_object(value: Any) -> dict[str, Any]:
     """Parse JSON object payloads defensively."""
 
@@ -249,9 +338,8 @@ def _resolve_run_targets(manifest: dict[str, Any]) -> tuple[str | None, str | No
 
     data_raw = manifest.get("data")
     data_info = data_raw if isinstance(data_raw, dict) else {}
-    target_train = (
-        _first_present_str(data_info, ("target_train", "target_col", "target"))
-        or _first_present_str(manifest, ("target_col", "target_train", "target"))
+    target_train = _first_present_str(data_info, ("target_train", "target_col", "target")) or _first_present_str(
+        manifest, ("target_col", "target_train", "target")
     )
     target_payout = _first_present_str(data_info, ("target_payout",))
     target = target_payout or target_train
@@ -492,13 +580,12 @@ def _normalize_round_metrics(
         ("corr_n_eras", ("corr.n_eras", "corr_n_eras", "corr20v2_n_eras", "n_eras"), True),
         ("fnc_std", ("fnc.std", "fnc_std"), False),
         ("fnc_sharpe", ("fnc.sharpe", "fnc_sharpe"), False),
-        ("mmc_payout_mean", ("mmc_ender20.mean", "mmc_ender20", "mmc_payout_mean"), False),
-        ("mmc_std", ("mmc.std", "mmc_std"), False),
-        ("mmc_sharpe", ("mmc.sharpe", "mmc_sharpe"), False),
-        ("mmc_n_eras", ("mmc.n_eras", "mmc_n_eras"), True),
-        ("bmc_std", ("bmc.std", "bmc_std"), False),
-        ("bmc_sharpe", ("bmc.sharpe", "bmc_sharpe"), False),
-        ("bmc_n_eras", ("bmc.n_eras", "bmc_n_eras"), True),
+        ("mmc_std", ("mmc_ender20.std", "mmc.std", "mmc_std"), False),
+        ("mmc_sharpe", ("mmc_ender20.sharpe", "mmc.sharpe", "mmc_sharpe"), False),
+        ("mmc_n_eras", ("mmc_ender20.n_eras", "mmc.n_eras", "mmc_n_eras"), True),
+        ("bmc_std", ("bmc_ender20.std", "bmc.std", "bmc_std"), False),
+        ("bmc_sharpe", ("bmc_ender20.sharpe", "bmc.sharpe", "bmc_sharpe"), False),
+        ("bmc_n_eras", ("bmc_ender20.n_eras", "bmc.n_eras", "bmc_n_eras"), True),
         ("cwmm_std", ("cwmm.std", "cwmm_std"), False),
         ("cwmm_sharpe", ("cwmm.sharpe", "cwmm_sharpe"), False),
         ("feature_exposure_std", ("feature_exposure.std", "feature_exposure_std"), False),
@@ -510,6 +597,14 @@ def _normalize_round_metrics(
         if value is None:
             continue
         normalized[output_key] = int(value) if cast_int else value
+
+    mmc_payout_mean = normalized.get("mmc_mean")
+    if isinstance(mmc_payout_mean, Real) and not isinstance(mmc_payout_mean, bool):
+        normalized["mmc_payout_mean"] = float(mmc_payout_mean)
+    else:
+        value = _extract_numeric_metric(flattened, "mmc_payout_mean", "mmc_ender20.mean", "mmc_ender20")
+        if value is not None:
+            normalized["mmc_payout_mean"] = value
 
     return normalized
 
@@ -1110,9 +1205,7 @@ class VizStoreAdapter:
         manifest = _parse_json_object(row.get("manifest_json"))
         run_id = row.get("run_id")
         resolved = (
-            _read_json_dict(self.store_root / "runs" / run_id / "resolved.json")
-            if isinstance(run_id, str)
-            else {}
+            _read_json_dict(self.store_root / "runs" / run_id / "resolved.json") if isinstance(run_id, str) else {}
         )
         model_raw = manifest.get("model")
         model_info: dict[str, Any] = model_raw if isinstance(model_raw, dict) else {}
@@ -1740,6 +1833,7 @@ class VizStoreAdapter:
         else:
             series = self._legacy_scoring_dashboard_series(run_dir)
             source = "legacy_fallback"
+        series = _normalize_scoring_dashboard_series(series)
 
         fold_snapshots = None
         fold_path = scoring_dir / "post_fold_snapshots.parquet"
@@ -1747,14 +1841,19 @@ class VizStoreAdapter:
             fold_frame = self._read_table_frame(fold_path)
             if fold_frame is not None and not fold_frame.empty:
                 fold_snapshots = _frame_to_records(fold_frame)
+        fold_snapshots = _normalize_scoring_dashboard_fold_rows(fold_snapshots)
 
-        summary = self._summary_row_from_any(
-            scoring_dir / "post_training_core_summary.parquet",
-            scoring_dir / "post_training_summary.parquet",
+        summary = _normalize_scoring_dashboard_summary_row(
+            self._summary_row_from_any(
+                scoring_dir / "post_training_core_summary.parquet",
+                scoring_dir / "post_training_summary.parquet",
+            )
         )
-        feature_summary = self._summary_row_from_any(
-            scoring_dir / "post_training_full_summary.parquet",
-            scoring_dir / "post_training_features_summary.parquet",
+        feature_summary = _normalize_scoring_dashboard_summary_row(
+            self._summary_row_from_any(
+                scoring_dir / "post_training_full_summary.parquet",
+                scoring_dir / "post_training_features_summary.parquet",
+            )
         )
 
         target_train, target_payout, target_col = _resolve_run_targets(manifest)
@@ -1789,27 +1888,9 @@ class VizStoreAdapter:
                 "payout_target_col": meta_payout_col,
                 "available_metric_keys": available_metric_keys,
                 "source": source,
-                "omissions": {
-                    str(key): _coerce_json_value(value)
-                    for key, value in omissions.items()
-                },
+                "omissions": {str(key): _coerce_json_value(value) for key, value in omissions.items()},
             },
         }
-
-    def get_feature_importance(self, run_id: str, top_n: int) -> list[dict[str, Any]] | None:
-        _ensure_safe_id(run_id, label="run_id")
-        run_dir = self._resolve_run_dir(run_id)
-        path = run_dir / "artifacts" / "eval" / "feature_importance.parquet"
-        if not path.exists():
-            return None
-        records = _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
-        if top_n <= 0:
-            return records
-        frame = pd.DataFrame(records)
-        numeric_columns = frame.select_dtypes(include="number").columns
-        if len(numeric_columns) > 0:
-            frame = frame.nlargest(top_n, numeric_columns[-1])
-        return _frame_to_records(frame)
 
     def get_trials(self, run_id: str) -> list[dict[str, Any]] | None:
         _ensure_safe_id(run_id, label="run_id")
@@ -1906,16 +1987,10 @@ class VizStoreAdapter:
         payload: dict[str, Any] = {}
         columns_raw = provenance.get("columns")
         if isinstance(columns_raw, dict):
-            payload["columns"] = {
-                str(key): _coerce_json_value(value)
-                for key, value in columns_raw.items()
-            }
+            payload["columns"] = {str(key): _coerce_json_value(value) for key, value in columns_raw.items()}
         joins_raw = provenance.get("joins")
         if isinstance(joins_raw, dict):
-            payload["joins"] = {
-                str(key): _coerce_json_value(value)
-                for key, value in joins_raw.items()
-            }
+            payload["joins"] = {str(key): _coerce_json_value(value) for key, value in joins_raw.items()}
 
         sources_payload: dict[str, Any] = {}
         sources_raw = provenance.get("sources")
@@ -2344,9 +2419,7 @@ class VizStoreAdapter:
             params.append(status)
         where_sql = " WHERE " + " AND ".join(clauses)
         rows = self._query(
-            "SELECT * FROM logical_runs"
-            + where_sql
-            + " ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM logical_runs" + where_sql + " ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             tuple(params + [limit, offset]),
         )
         return [dict(row) for row in rows]
@@ -2821,11 +2894,7 @@ class VizStoreAdapter:
             year_index_path = year_dir / "INDEX.md"
             year_node: dict[str, Any] = {
                 "title": year,
-                "path": (
-                    f"{_FORUM_POSTS_RELATIVE_PATH}/{year}/INDEX.md"
-                    if year_index_path.exists()
-                    else None
-                ),
+                "path": (f"{_FORUM_POSTS_RELATIVE_PATH}/{year}/INDEX.md" if year_index_path.exists() else None),
             }
             months: list[dict[str, Any]] = []
             month_dirs = sorted(

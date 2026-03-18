@@ -61,6 +61,7 @@ class PostTrainingScoringRequest:
     data_root: Path
     scoring_mode: str
     era_chunk_size: int
+    scoring_targets_explicit: bool = False
     stage: CanonicalScoringStage = "all"
     include_feature_neutral_metrics: bool = True
 

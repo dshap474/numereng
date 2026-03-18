@@ -474,13 +474,13 @@ def _extract_post_fold_objective_value(*, store_root: Path, run_id: str) -> floa
         raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
     if snapshot.empty:
         raise HpoExecutionError(f"hpo_post_fold_snapshots_empty:{snapshot_path}")
-    required_columns = ("corr_ender20_fold_mean", "bmc_ender20_fold_mean")
+    required_columns = ("corr_ender20_fold_mean", "bmc_fold_mean")
     missing = [column for column in required_columns if column not in snapshot.columns]
     if missing:
         raise HpoExecutionError(f"hpo_post_fold_metric_missing:{','.join(missing)}")
 
     corr_mean = float(pd.Series(snapshot["corr_ender20_fold_mean"], dtype="float64").dropna().mean())
-    bmc_mean = float(pd.Series(snapshot["bmc_ender20_fold_mean"], dtype="float64").dropna().mean())
+    bmc_mean = float(pd.Series(snapshot["bmc_fold_mean"], dtype="float64").dropna().mean())
     if pd.isna(corr_mean) or pd.isna(bmc_mean):
         raise HpoExecutionError("hpo_post_fold_metric_nan")
     return (_POST_FOLD_CORR_WEIGHT * corr_mean) + (_POST_FOLD_BMC_WEIGHT * bmc_mean)
@@ -527,6 +527,7 @@ def _extract_metric_value_from_predictions(
                 pred_cols=("prediction",),
                 target_col=target_col,
                 scoring_target_cols=(target_col, "target_ender_20"),
+                scoring_targets_explicit=False,
                 data_version=data_version,
                 dataset_variant=dataset_variant,
                 feature_set=feature_set,

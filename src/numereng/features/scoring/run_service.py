@@ -107,6 +107,7 @@ def score_run(
         pred_cols=("prediction",),
         target_col=target_col,
         scoring_target_cols=_resolve_scoring_target_cols(data_config=data_config, target_col=target_col),
+        scoring_targets_explicit=_scoring_targets_explicit(data_config=data_config),
         data_version=data_version,
         dataset_variant=str(data_config.get("dataset_variant", _DEFAULT_DATASET_VARIANT)),
         feature_set=feature_set,
@@ -393,6 +394,10 @@ def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: 
     if any(not item for item in resolved):
         raise TrainingConfigError("training_scoring_targets_invalid")
     return tuple(_dedupe_preserve_order(resolved))
+
+
+def _scoring_targets_explicit(*, data_config: dict[str, object]) -> bool:
+    return data_config.get("scoring_targets") is not None
 
 
 def _include_feature_neutral_metrics(stage: CanonicalScoringStage) -> bool:
