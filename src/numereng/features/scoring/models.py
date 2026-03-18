@@ -1,11 +1,20 @@
-"""Data structures for modular post-training scoring."""
+"""Data structures for canonical run-scoring workflows."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
+
+CanonicalScoringStage = Literal[
+    "all",
+    "run_metric_series",
+    "post_fold",
+    "post_training_core",
+    "post_training_full",
+]
 
 
 @dataclass(frozen=True)
@@ -25,12 +34,16 @@ class ScoringArtifactBundle:
 
     series_frames: dict[str, pd.DataFrame]
     manifest: dict[str, object]
+    stage_frames: dict[str, pd.DataFrame] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PostTrainingScoringRequest:
-    """Inputs required to compute post-training scoring artifacts."""
+    """Inputs required to compute canonical run-scoring artifacts."""
 
+    run_id: str
+    config_hash: str
+    seed: int | None
     predictions_path: Path
     pred_cols: tuple[str, ...]
     target_col: str
@@ -48,6 +61,7 @@ class PostTrainingScoringRequest:
     data_root: Path
     scoring_mode: str
     era_chunk_size: int
+    stage: CanonicalScoringStage = "all"
     include_feature_neutral_metrics: bool = True
 
 
@@ -90,3 +104,9 @@ class PostTrainingScoringResult:
     effective_scoring_backend: str
     policy: ResolvedScoringPolicy
     artifacts: ScoringArtifactBundle
+    requested_stage: CanonicalScoringStage = "all"
+    refreshed_stages: tuple[str, ...] = ()
+
+
+RunScoringRequest = PostTrainingScoringRequest
+RunScoringResult = PostTrainingScoringResult

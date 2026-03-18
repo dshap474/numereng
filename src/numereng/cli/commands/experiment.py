@@ -337,6 +337,60 @@ def handle_experiment_command(args: Sequence[str]) -> int:
         print(train_payload.model_dump_json())
         return 0
 
+    if args[0] == "score-round":
+        values, _, parse_error = _parse_simple_options(
+            args[1:],
+            value_flags={"--id", "--round", "--stage", "--store-root"},
+        )
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        experiment_id = values.get("--id")
+        round_label = values.get("--round")
+        stage = values.get("--stage")
+        if experiment_id is None:
+            print("missing required argument: --id", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if round_label is None:
+            print("missing required argument: --round", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if stage is None:
+            print("missing required argument: --stage", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if stage not in {"post_training_core", "post_training_full"}:
+            print(
+                "invalid value for --stage: expected post_training_core|post_training_full",
+                file=sys.stderr,
+            )
+            print(USAGE, file=sys.stderr)
+            return 2
+        try:
+            with bind_launch_metadata(source="cli.experiment.score-round", operation_type="run", job_type="run"):
+                payload = api.experiment_score_round(
+                    api.ExperimentScoreRoundRequest(
+                        experiment_id=experiment_id,
+                        round=round_label,
+                        stage=stage,
+                        store_root=values.get("--store-root", ".numereng"),
+                    )
+                )
+        except ValidationError as exc:
+            print(_validation_error_message(exc), file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(payload.model_dump_json())
+        return 0
+
     if args[0] == "promote":
         values, _, parse_error = _parse_simple_options(
             args[1:],

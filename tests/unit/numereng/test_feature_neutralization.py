@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 from numereng.features.feature_neutralization import (
@@ -65,6 +66,7 @@ def test_neutralize_predictions_file_writes_sidecar(tmp_path: Path) -> None:
     neutralized = pd.read_parquet(result.output_path)
     assert len(neutralized) == len(source)
     assert "prediction" in neutralized.columns
+    assert pq.ParquetFile(result.output_path).metadata.row_group(0).column(0).compression == "ZSTD"
 
 
 def test_neutralize_predictions_file_rejects_missing_neutralizer_cols(tmp_path: Path) -> None:

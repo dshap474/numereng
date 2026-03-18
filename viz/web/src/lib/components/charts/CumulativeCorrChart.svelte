@@ -20,16 +20,12 @@
 	});
 
 	let cumulativeData = $derived.by(() => {
-		let sum = 0;
-		return data.map((d, index) => {
-			sum += Number(d[corrKey]) || 0;
-			return {
-				...d,
-				__idx: index + 1,
-				__era: String(d[eraKey] ?? index + 1),
-				cumulative: sum
-			};
-		});
+		return data.map((d, index) => ({
+			...d,
+			__idx: index + 1,
+			__era: String(d[eraKey] ?? index + 1),
+			cumulative: Number(d[corrKey]) || 0
+		}));
 	});
 </script>
 

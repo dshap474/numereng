@@ -8,13 +8,12 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.platform.parquet import write_parquet
+
 _PREDICTIONS_CANDIDATES = (
-    "live_predictions.csv",
     "live_predictions.parquet",
-    "predictions.csv",
     "predictions.parquet",
     "val_predictions.parquet",
-    "val_predictions.csv",
 )
 
 
@@ -24,6 +23,8 @@ def resolve_predictions_path(predictions_path: str | Path) -> Path:
     path = Path(predictions_path).expanduser().resolve()
     if not path.is_file():
         raise ValueError(f"neutralization_predictions_file_not_found:{path}")
+    if path.suffix.lower() != ".parquet":
+        raise ValueError(f"neutralization_predictions_format_unsupported:{path.suffix}")
     return path
 
 
@@ -50,7 +51,7 @@ def resolve_run_predictions_path(*, store_root: str | Path, run_id: str) -> Path
             return candidate.resolve()
 
     generic_candidates = sorted(
-        path for path in predictions_dir.iterdir() if path.is_file() and path.suffix.lower() in {".parquet", ".csv"}
+        path for path in predictions_dir.iterdir() if path.is_file() and path.suffix.lower() == ".parquet"
     )
     if len(generic_candidates) == 1:
         return generic_candidates[0].resolve()
@@ -59,26 +60,21 @@ def resolve_run_predictions_path(*, store_root: str | Path, run_id: str) -> Path
 
 
 def read_table(path: Path) -> pd.DataFrame:
-    """Read parquet/csv into a dataframe."""
+    """Read parquet into a dataframe."""
 
     suffix = path.suffix.lower()
     if suffix == ".parquet":
         return pd.read_parquet(path)
-    if suffix == ".csv":
-        return pd.read_csv(path)
     raise ValueError(f"neutralization_predictions_format_unsupported:{path.suffix}")
 
 
 def write_table(*, frame: pd.DataFrame, path: Path) -> None:
-    """Write dataframe to parquet/csv based on file suffix."""
+    """Write dataframe to parquet using the canonical numereng policy."""
 
     suffix = path.suffix.lower()
     path.parent.mkdir(parents=True, exist_ok=True)
     if suffix == ".parquet":
-        frame.to_parquet(path, index=False)
-        return
-    if suffix == ".csv":
-        frame.to_csv(path, index=False)
+        write_parquet(frame, path, index=False)
         return
     raise ValueError(f"neutralization_output_format_unsupported:{path.suffix}")
 
@@ -86,9 +82,7 @@ def write_table(*, frame: pd.DataFrame, path: Path) -> None:
 def default_sidecar_output_path(source_path: Path) -> Path:
     """Build default sidecar output path beside source predictions."""
 
-    suffix = source_path.suffix.lower()
-    output_suffix = suffix if suffix in {".parquet", ".csv"} else ".parquet"
-    return source_path.with_name(f"{source_path.stem}.neutralized{output_suffix}")
+    return source_path.with_name(f"{source_path.stem}.neutralized.parquet")
 
 
 def _resolve_manifest_predictions_path(*, run_dir: Path, manifest_path: Path) -> Path | None:
@@ -125,6 +119,8 @@ def resolve_neutralizer_path(neutralizer_path: str | Path) -> Path:
     path = Path(neutralizer_path).expanduser().resolve()
     if not path.is_file():
         raise ValueError(f"neutralization_neutralizer_file_not_found:{path}")
+    if path.suffix.lower() != ".parquet":
+        raise ValueError(f"neutralization_predictions_format_unsupported:{path.suffix}")
     return path
 
 
@@ -133,7 +129,10 @@ def resolve_output_path(*, source_path: Path, output_path: str | Path | None) ->
 
     if output_path is None:
         return default_sidecar_output_path(source_path)
-    return Path(output_path).expanduser().resolve()
+    resolved = Path(output_path).expanduser().resolve()
+    if resolved.suffix.lower() != ".parquet":
+        raise ValueError(f"neutralization_output_format_unsupported:{resolved.suffix}")
+    return resolved
 
 
 def ensure_unique_join_keys(frame: pd.DataFrame, *, keys: tuple[str, str] = ("era", "id")) -> None:

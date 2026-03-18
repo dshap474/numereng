@@ -10,6 +10,7 @@ from numereng.features.submission.service import (
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
     SubmissionPredictionsFileNotFoundError,
+    SubmissionPredictionsFormatUnsupportedError,
     SubmissionPredictionsReadError,
     SubmissionRunIdInvalidError,
     SubmissionRunNotFoundError,
@@ -84,7 +85,7 @@ def _write_predictions_file(
 
 
 def test_submit_predictions_file_success(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.csv"
+    predictions_path = tmp_path / "predictions.parquet"
     _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"main": "model-1"})
 
@@ -107,14 +108,14 @@ def test_submit_predictions_file_missing_file(tmp_path: Path) -> None:
 
     with pytest.raises(SubmissionPredictionsFileNotFoundError):
         submit_predictions_file(
-            predictions_path=tmp_path / "missing.csv",
+            predictions_path=tmp_path / "missing.parquet",
             model_name="main",
             client=client,
         )
 
 
 def test_submit_predictions_file_missing_model(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.csv"
+    predictions_path = tmp_path / "predictions.parquet"
     _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"other": "model-2"})
 
@@ -188,23 +189,19 @@ def test_submit_run_predictions_resolves_single_generic_predictions_file(tmp_pat
     assert client.upload_calls == [(expected_path, "model-1")]
 
 
-def test_submit_run_predictions_resolves_uppercase_generic_predictions_file(tmp_path: Path) -> None:
+def test_submit_run_predictions_rejects_csv_only_generic_predictions_file(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     predictions_path = store_root / "runs" / "run-1" / "artifacts" / "predictions" / "engine_run.CSV"
     _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"main": "model-1"})
 
-    result = submit_run_predictions(
-        run_id="run-1",
-        model_name="main",
-        store_root=store_root,
-        client=client,
-    )
-
-    expected_path = str(predictions_path.resolve())
-    assert result.run_id == "run-1"
-    assert str(result.predictions_path) == expected_path
-    assert client.upload_calls == [(expected_path, "model-1")]
+    with pytest.raises(SubmissionRunPredictionsNotFoundError):
+        submit_run_predictions(
+            run_id="run-1",
+            model_name="main",
+            store_root=store_root,
+            client=client,
+        )
 
 
 def test_submit_run_predictions_missing_run(tmp_path: Path) -> None:
@@ -323,7 +320,7 @@ def test_submit_predictions_file_rejects_predictions_not_in_live_universe(tmp_pa
 
 
 def test_submit_predictions_file_allows_non_classic_tournament_without_classic_live_validation(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.csv"
+    predictions_path = tmp_path / "predictions.parquet"
     _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"main": "model-1"}, dataset_names=())
 
@@ -338,7 +335,7 @@ def test_submit_predictions_file_allows_non_classic_tournament_without_classic_l
 
 
 def test_submit_predictions_file_surfaces_live_universe_unavailable(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.csv"
+    predictions_path = tmp_path / "predictions.parquet"
     _write_predictions_file(predictions_path)
     client = _FakeSubmissionClient(models={"main": "model-1"}, dataset_names=())
 
@@ -383,3 +380,16 @@ def test_submit_run_predictions_allows_non_live_columns_with_override(tmp_path: 
     assert result.run_id == "run-1"
     assert str(result.predictions_path) == expected_path
     assert client.upload_calls == [(expected_path, "model-1")]
+
+
+def test_submit_predictions_file_rejects_csv_input(tmp_path: Path) -> None:
+    predictions_path = tmp_path / "predictions.csv"
+    _write_predictions_file(predictions_path)
+    client = _FakeSubmissionClient(models={"main": "model-1"})
+
+    with pytest.raises(SubmissionPredictionsFormatUnsupportedError):
+        submit_predictions_file(
+            predictions_path=predictions_path,
+            model_name="main",
+            client=client,
+        )

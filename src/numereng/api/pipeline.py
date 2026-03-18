@@ -26,7 +26,7 @@ from numereng.platform.errors import NumeraiClientError, PackageError
 
 
 def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
-    """Run the full local train -> score workflow through explicit API stages."""
+    """Run the full local train workflow through explicit API stages."""
     launch_scope = (
         nullcontext()
         if get_launch_metadata() is not None
@@ -38,7 +38,6 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
             state = prepare_training_run(request)
             state = load_training_data(state)
             state = train_model(state)
-            state = score_predictions(state)
             run_id, predictions_path, results_path = finalize_training_run(state)
     except TrainingConfigError as exc:
         if state is not None:

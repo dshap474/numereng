@@ -1,13 +1,13 @@
 # Scoring Contract
 
-This package defines the canonical post-training scoring contract for Numereng.
+This package defines the canonical run-scoring contract for Numereng.
 Training artifacts produced from this package are intended for local model
 evaluation and diagnostics, not stake sizing or expected-payout estimation.
 
 ## Implemented Metric Families
 
-Training scoring emits these native-target metric families when the required
-join sources are available:
+Training scoring emits these benchmark-contribution metric families when the
+required join sources are available:
 
 - `bmc`
 - `bmc_ender20`
@@ -44,6 +44,10 @@ No payout estimate fields are emitted.
 
 ## Canonical Metric Semantics
 
+Implementation note: these semantics are preserved by an internal NumPy/Numba
+kernel layer in `features/scoring/_fastops.py`; the contract is mathematical
+compatibility with the metrics below, not pandas callback execution.
+
 - `corr`: per-era `numerai_tools.scoring.numerai_corr` against the native run target
 - `corr_<alias>`: the same metric against one non-native scoring target
 - `fnc`: per-era `numerai_tools.scoring.feature_neutral_corr` using `fncv3_features` against the native run target
@@ -54,6 +58,7 @@ No payout estimate fields are emitted.
 - `bmc`: diagnostics-style benchmark contribution against a single selected benchmark model
 - `bmc_ender20`: the same benchmark contribution evaluated against `target_ender_20`
 - `bmc_last_200_eras`: the same BMC family restricted to the most recent 200 eras
+- `bmc_ender20_last_200_eras`: the same Ender20-evaluated BMC family restricted to the most recent 200 eras
 
 ## Local Diagnostics
 
@@ -62,7 +67,7 @@ payout metrics:
 
 - `feature_exposure`: per-era RMS rank-based feature exposure across `fncv3_features`
 - `max_feature_exposure`: per-era max absolute rank-based feature exposure across `fncv3_features`
-- `avg_corr_with_benchmark`: local diagnostic attached to `bmc` and `bmc_last_200_eras`; computed as per-era `numerai_tools.scoring.numerai_corr` between the submission and the selected benchmark series, then averaged across eras
+- `avg_corr_with_benchmark`: local diagnostic attached to BMC summaries; computed as per-era `numerai_tools.scoring.numerai_corr` between the submission and the selected benchmark series, then averaged across eras
 
 ## Fixed Policy
 
@@ -93,6 +98,9 @@ payout metrics:
 - Benchmark joins do not require a whole-run minimum-overlap threshold; `bmc` /
   `bmc_last_200_eras` are computed on the available overlapping benchmark
   window whenever any strictly era-aligned overlap exists.
+- Boundary-era partial benchmark coverage is expected in some local datasets;
+  this does not invalidate native CORR scoring and benchmark-relative metrics
+  are computed on the aligned overlap window only.
 - Meta-model joins do not require a whole-run minimum-overlap threshold; `mmc` /
   `cwmm` are computed on the available overlapping meta-model window whenever
   any strictly era-aligned overlap exists.
@@ -107,7 +115,7 @@ Each emitted metric family persists a nested summary for each prediction column:
 - `sharpe`
 - `max_drawdown`
 
-`bmc` and `bmc_last_200_eras` also persist:
+BMC summary families also persist:
 
 - `avg_corr_with_benchmark`
 
@@ -120,7 +128,41 @@ This package writes or refreshes the following scoring artifacts:
 - `run.json`
 - `score_provenance.json`
 - `artifacts/scoring/manifest.json`
-- `artifacts/scoring/*.parquet`
+- `artifacts/scoring/run_metric_series.parquet`
+- `artifacts/scoring/post_fold_per_era.parquet`
+- `artifacts/scoring/post_fold_snapshots.parquet`
+- `artifacts/scoring/post_training_core_summary.parquet`
+- `artifacts/scoring/post_training_full_summary.parquet` when feature-neutral diagnostics are enabled
+
+Training itself only guarantees `post_fold` artifacts during CV. Deferred
+`post_training_core` / `post_training_full` artifacts are materialized later by
+`run score` or `experiment score-round`. Historical runs may still expose the
+legacy filenames `post_training_summary.parquet` and
+`post_training_features_summary.parquet`, which remain read-compatible.
+
+There is one official persisted-run scorer. It supports these canonical stage
+selectors:
+
+- `all`
+- `run_metric_series`
+- `post_fold`
+- `post_training_core`
+- `post_training_full`
+
+Stage-selective rescoring writes only the selected canonical stage artifacts
+into `artifacts/scoring/` and leaves non-selected existing stage files
+untouched. Each scoring invocation still refreshes `metrics.json`,
+`results.json`, `run.json`, `score_provenance.json`, and
+`artifacts/scoring/manifest.json`.
+
+`post_training_full` is inclusive and refreshes both the core summary and the
+feature-heavy full summary in one pass.
+
+All numereng-written parquet artifacts use `ZSTD` compression level `3`.
+
+New runs do not persist the legacy per-metric `*_per_era.parquet` /
+`*_cumulative.parquet` fanout. Viz adapts those older files read-only for
+historical runs that have not been rescored yet.
 
 ## Provenance Contract
 
@@ -138,6 +180,9 @@ This package writes or refreshes the following scoring artifacts:
 - whether meta-dependent metrics were emitted, and the omission reason when they were not
 - fixed policy settings for benchmark/meta overlap behavior
 - requested and effective scoring backend details for era-stream/materialized execution
+- requested canonical stage selection and refreshed canonical stages
+- preserved benchmark alias metadata used by Numereng consumers even though the
+  underlying scorer executes through array kernels
 
 ## Payout Contract
 

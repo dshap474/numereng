@@ -107,6 +107,39 @@ export interface FeatureImportanceRow {
 	[key: string]: string | number;
 }
 
+export interface ScoringSeriesRow {
+	run_id?: string;
+	config_hash?: string;
+	seed?: number | null;
+	target_col?: string | null;
+	payout_target_col?: string | null;
+	prediction_col?: string | null;
+	era: string | number;
+	metric_key: string;
+	series_type: 'per_era' | 'cumulative';
+	value: number | null;
+}
+
+export interface FoldSnapshotRow {
+	[key: string]: string | number | null;
+}
+
+export interface ScoringDashboardMeta {
+	target_col?: string | null;
+	payout_target_col?: string | null;
+	available_metric_keys: string[];
+	source: 'canonical' | 'legacy_fallback';
+	omissions: Record<string, unknown>;
+}
+
+export interface ScoringDashboard {
+	series: ScoringSeriesRow[];
+	fold_snapshots: FoldSnapshotRow[] | null;
+	summary: Record<string, unknown> | null;
+	feature_summary: Record<string, unknown> | null;
+	meta: ScoringDashboardMeta;
+}
+
 export interface DiagnosticsSourceItem {
 	path?: string | null;
 	exists?: boolean | null;
@@ -124,7 +157,7 @@ export interface DiagnosticsSources {
 export interface RunBundle {
 	metrics: Record<string, number> | null;
 	manifest: RunManifest | null;
-	per_era_corr: PerEraRow[] | null;
+	scoring_dashboard: ScoringDashboard | null;
 	feature_importance: FeatureImportanceRow[] | null;
 	trials: Record<string, unknown>[] | null;
 	best_params: Record<string, unknown> | null;
@@ -479,8 +512,14 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 			cachedGet<RunManifest>('manifest', runId, `/runs/${runId}/manifest`, fetchFn, signal),
 		getRunMetrics: (runId: string, signal?: AbortSignal) =>
 			cachedGet<Record<string, number>>('metrics', runId, `/runs/${runId}/metrics`, fetchFn, signal),
-		getPerEraCorr: (runId: string, signal?: AbortSignal) =>
-			cachedGet<PerEraRow[]>('per-era-corr', runId, `/runs/${runId}/per-era-corr`, fetchFn, signal),
+		getRunScoringDashboard: (runId: string, signal?: AbortSignal) =>
+			cachedGet<ScoringDashboard>(
+				'scoring-dashboard',
+				runId,
+				`/runs/${runId}/scoring-dashboard`,
+				fetchFn,
+				signal
+			),
 		getFeatureImportance: (runId: string, topN = 30, signal?: AbortSignal) =>
 			cachedGet<FeatureImportanceRow[]>(
 				`feature-importance:${topN}`,

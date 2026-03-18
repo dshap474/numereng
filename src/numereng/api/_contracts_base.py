@@ -12,6 +12,8 @@ from numereng.features.training import TrainingEngineMode, TrainingProfile
 
 NumeraiTournament = Literal["classic", "signals", "crypto"]
 NeutralizationMode = Literal["era", "global"]
+ScoringStage = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
+ExperimentScoreRoundStage = Literal["post_training_core", "post_training_full"]
 
 
 class HealthResponse(BaseModel):
@@ -154,6 +156,7 @@ class TrainRunResponse(BaseModel):
 class ScoreRunRequest(BaseModel):
     run_id: str = Field(min_length=1)
     store_root: str = ".numereng"
+    stage: ScoringStage = "all"
 
 
 class ScoreRunResponse(BaseModel):
@@ -163,6 +166,8 @@ class ScoreRunResponse(BaseModel):
     metrics_path: str
     score_provenance_path: str
     effective_scoring_backend: str
+    requested_stage: ScoringStage = "all"
+    refreshed_stages: list[str] = Field(default_factory=list)
 
 
 class ExperimentCreateRequest(BaseModel):
@@ -243,6 +248,20 @@ class ExperimentTrainResponse(BaseModel):
     results_path: str
 
 
+class ExperimentScoreRoundRequest(BaseModel):
+    experiment_id: str
+    round: str
+    stage: ExperimentScoreRoundStage
+    store_root: str = ".numereng"
+
+
+class ExperimentScoreRoundResponse(BaseModel):
+    experiment_id: str
+    round: str
+    stage: ExperimentScoreRoundStage
+    run_ids: list[str] = Field(default_factory=list)
+
+
 class ExperimentPromoteRequest(BaseModel):
     experiment_id: str
     run_id: str | None = None
@@ -309,6 +328,8 @@ __all__ = [
     "ExperimentListResponse",
     "ExperimentPromoteRequest",
     "ExperimentPromoteResponse",
+    "ExperimentScoreRoundRequest",
+    "ExperimentScoreRoundResponse",
     "ExperimentPackRequest",
     "ExperimentPackResponse",
     "ExperimentReportRequest",

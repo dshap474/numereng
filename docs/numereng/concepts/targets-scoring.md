@@ -7,7 +7,7 @@ Numereng keeps target/scoring behavior aligned with persisted run provenance.
 Training config target keys:
 
 - `data.target_col`: native training target used for model fit and native scoring outputs.
-- `data.scoring_targets` (optional): explicit list of scoring targets to evaluate in post-run scoring.
+- `data.scoring_targets` (optional): explicit list of scoring targets to evaluate in deferred run scoring.
 
 Scoring target resolution:
 

@@ -311,7 +311,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
         if isinstance(configured_metric, str):
             metric = configured_metric
         else:
-            metric = "bmc_last_200_eras.mean"
+            metric = "post_fold_champion_objective"
 
     try:
         create_payload = api.hpo_create(

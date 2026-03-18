@@ -149,7 +149,7 @@ Boundary behavior:
 
 Command families:
 - `run`: `train`, `score`, `submit`
-- `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `promote`, `report`
+- `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `score-round`, `promote`, `report`
 - `hpo`: `create`, `list`, `details`, `trials`
 - `ensemble`: `build`, `list`, `details`
 - `neutralize`: `apply`
@@ -191,6 +191,7 @@ Dynamic top-level dirs may also appear:
       metrics.json
       score_provenance.json
       artifacts/predictions/*.parquet
+        numereng-managed parquet artifacts use ZSTD level 3
 
   experiments/
     <experiment_id>/
@@ -250,15 +251,14 @@ cli run train
       2) prepare run identity, output paths, lock, manifest bootstrap, telemetry
       3) load training data + prepare model data loader
       4) train model + persist predictions/results/metrics placeholders
-      5) index run (mandatory pre-finalization)
-      6) for non-`full_history_refit`, call `features.scoring.run_post_training_scoring` from saved predictions and refresh run artifacts (`corr`, `fnc`, `feature_exposure`, `max_feature_exposure`, `bmc`, `bmc_last_200_eras`, canonical per-era CORR files, `score_provenance.json`, plus `mmc` / `cwmm` when meta-model overlap exists)
-      7) scoring failures are fail-closed (`FAILED` manifest + command failure)
-      8) write FINISHED/FAILED manifest and release run lock
+      5) append `post_fold` pruning artifacts during CV when fold outputs exist
+      6) index run (mandatory pre-finalization)
+      7) write FINISHED/FAILED manifest and release run lock
 ```
 
 ### 7.2b Run Re-Scoring
 Entry points:
-- CLI: `numereng run score --run-id <id>`
+- CLI: `numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>]`
 - API: `api.score_run(ScoreRunRequest)`
 - Feature: `features.scoring.run_service.score_run`
 
@@ -270,8 +270,8 @@ cli run score
       (default metadata source=api.run.score only when unbound)
   -> features.scoring.run_service.score_run
       1) load persisted run artifacts (`run.json`, `resolved.json`, `results.json`, predictions parquet)
-      2) execute canonical post-training scoring from saved predictions
-      3) persist refreshed `results.json`, `metrics.json`, canonical per-era CORR files, and `score_provenance.json`
+      2) execute the canonical persisted-run scorer from saved predictions
+      3) persist refreshed `results.json`, `metrics.json`, the staged `artifacts/scoring/` bundle, and `score_provenance.json`
       4) refresh run manifest metrics/artifact links
       5) re-index run in store
 ```
@@ -294,7 +294,8 @@ Data loading and CV rules:
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set, then correlating against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `corr`, `fnc`, and `mmc` are delegated to `numerai_tools`; `cwmm` is computed locally using the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
-- Canonical scoring artifacts are materialized under `artifacts/scoring/` during training and `run score`, with `manifest.json` as the run-local entrypoint and fixed parquet names for native/Ender20 CORR, BMC, benchmark-correlation, baseline CORR, and delta-vs-baseline cumulative series.
+- Scoring implementation is optimized behind the existing boundary: `features.scoring.metrics` orchestrates cached parquet reads and canonical artifact/provenance assembly, while `features.scoring._fastops` owns the NumPy/Numba per-era kernels that replace the older pandas callback hot path.
+- Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV, and later `run score` / `experiment score-round` writes deferred post-training artifacts from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when enabled. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Partial rescoring overwrites only the selected stage artifacts while still refreshing manifest/provenance/results/metrics metadata.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - Feature exposure diagnostics are computed during post-run scoring using the same `fncv3_features` join path as FNC. Training persists nested summaries for `feature_exposure` (RMS exposure) and `max_feature_exposure` (max absolute exposure), while viz exposes `feature_exposure_mean` and scalar `max_feature_exposure` from those nested payloads.
 - `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, `fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`), benchmark source metadata (`active` or explicit path), join row/era counts, benchmark/meta missing-row/era counts, and the emitted scoring-artifact manifest.
@@ -323,6 +324,17 @@ cli experiment train
       - link run into experiment manifest/store
 ```
 
+```text
+cli experiment score-round
+  -> bind launch metadata source=cli.experiment.score-round
+  -> api.experiment_score_round
+  -> features.experiments.score_experiment_round
+      - resolve round label (`rN`) to config stems from `run_plan.csv` or `configs/rN_*.json`
+      - map those config stems back to completed experiment run ids
+      - call `features.scoring.batch_service.score_run_batch`
+      - persist `post_training_core` or inclusive `post_training_full` artifacts for the selected round
+```
+
 ### 7.4 Experiment Archive / Unarchive
 ```text
 cli experiment archive|unarchive
@@ -345,13 +357,16 @@ cli hpo create
       - validate config + search space
       - execute Optuna trials
       - each trial runs training + index_run
-      - optional neutralization + metric extraction
+      - extract the HPO objective from `post_fold_snapshots.parquet` by default
+      - optional neutralization + custom metric extraction only for explicit non-default metrics
       - persist trial rows + study summary
 ```
 
 Metadata behavior in HPO:
 - If launch metadata is already bound, HPO reuses it.
 - Otherwise HPO sets default source `api.hpo.create` for trial runs.
+- Default champion-run HPO objective:
+  `0.25 * mean(corr_ender20_fold_mean) + 2.25 * mean(bmc_ender20_fold_mean)`
 
 ### 7.6 Ensemble
 ```text
@@ -497,7 +512,7 @@ Viz scoring contract:
 - Run-detail section routes are independent (`manifest`, `metrics`, `per-era-corr`, `feature-importance`, `events`, `resources`, `trials`, `best-params`, `config`, `diagnostics-sources`); `/api/runs/{run_id}/bundle` remains compatibility-only.
 - The experiment-page payout proxy scatter uses payout-target metrics (`corr_payout_mean`, `mmc_payout_mean`) rather than native-target metrics, so runs trained on different targets are compared on one common payout basis.
 - The experiment-page analysis panel also includes a target-scoped native scatter (`Target Analysis`) that filters to actual runs for one selected training target and compares native `corr_mean` vs native `mmc_mean`.
-- Per-era correlation reads prefer persisted scoring artifacts and use request-time read-only derivation only for legacy runs missing `artifacts/scoring/corr_per_era.parquet`.
+- Run-detail scoring charts prefer persisted `artifacts/scoring/run_metric_series.parquet` and use read-only legacy-file composition only for older runs that predate the canonical chart artifact.
 
 ### 9.2 Frontend route topology (`viz/web`)
 Current frontend routes:
@@ -515,7 +530,7 @@ Important UI contract:
 - Experiment ranking defaults to `bmc_last_200_eras_mean`.
 - Run detail loading is progressive: the shell renders immediately from the selected run list row, and tab sections fetch lazily with localized loading states.
 - Run Ops and the dedicated run page no longer block on `/api/runs/{run_id}/bundle`; they share the same section-based loader and request cache/abort behavior.
-- Run detail/chart reads are artifact-backed first; legacy per-era CORR misses are materialized once and reused on subsequent requests.
+- Run detail/chart reads are artifact-backed first; older runs that only have legacy scoring files are adapted in memory to the canonical dashboard payload, and rescoring remains the canonical backfill path.
 - Normal experiment/config catalogs exclude archived experiments by default.
 - Direct experiment lookups remain archive-aware, so `/experiments/[id]` can still render an archived experiment when addressed directly.
 
@@ -574,7 +589,7 @@ success/help
 24. Canonical `model.x_groups` / `model.data_needed` are features-only; identifier groups (`era`, `id`) and benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) are rejected.
 25. Canonical FNC uses dataset feature set `fncv3_features` and correlates against the scoring target being evaluated; if feature-neutral metrics are enabled and `features.json` does not define `fncv3_features`, post-run scoring fails.
 26. Benchmark post-run scoring requires nonzero `(id, era)` overlap with strict era alignment and emits `bmc` / `bmc_last_200_eras` on the maximum available overlapping benchmark window; meta-model scoring also requires strict era alignment but emits `mmc` / `cwmm` on the maximum available overlapping meta-model window whenever any overlap exists.
-27. `full_history_refit` is final-fit only and does not emit validation metrics.
+27. `full_history_refit` is final-fit only for training and does not emit `post_fold`; deferred `post_training_core` / `post_training_full` scoring can still be materialized later from saved predictions.
 28. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
 29. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
 30. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.

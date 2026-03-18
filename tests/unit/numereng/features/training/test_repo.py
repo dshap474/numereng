@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 from numereng.features.training.errors import TrainingConfigError
@@ -20,6 +21,7 @@ from numereng.features.training.repo import (
     resolve_fold_lazy_source_paths,
     resolve_output_locations,
     resolve_score_provenance_path,
+    save_predictions,
     save_score_provenance,
     select_prediction_columns,
 )
@@ -93,6 +95,35 @@ def test_resolve_output_locations_rejects_nested_store_root() -> None:
             None,
             "run-1",
         )
+
+
+def test_save_predictions_writes_zstd_parquet(tmp_path: Path) -> None:
+    predictions = pd.DataFrame(
+        {
+            "id": ["id_1", "id_2"],
+            "era": ["001", "002"],
+            "target": [0.1, 0.2],
+            "prediction": [0.3, 0.4],
+        }
+    )
+    config = {"output": {"predictions_name": "predictions"}}
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    output_dir = tmp_path / "run-1"
+    predictions_dir = output_dir / "artifacts" / "predictions"
+
+    predictions_path, predictions_relative = save_predictions(
+        predictions=predictions,
+        config=config,
+        config_path=config_path,
+        predictions_dir=predictions_dir,
+        output_dir=output_dir,
+    )
+
+    assert predictions_path.is_file()
+    assert predictions_relative == Path("artifacts/predictions/predictions.parquet")
+    parquet_file = pq.ParquetFile(predictions_path)
+    assert parquet_file.metadata.row_group(0).column(0).compression == "ZSTD"
 
 
 def test_resolve_data_path_rooted_relative_path_not_double_prefixed(tmp_path: Path) -> None:

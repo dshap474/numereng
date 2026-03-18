@@ -17,19 +17,19 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Fallback computations viz relies on
 
-- `artifacts/scoring/manifest.json` is the canonical persisted scoring entrypoint for run-level performance charts. Viz exposes per-era CORR as `{ era, corr }`, prefers `artifacts/scoring/corr_per_era.parquet`, and only derives a read-only fallback payload on request for legacy runs that predate scoring-artifact persistence.
+- `artifacts/scoring/manifest.json` is the canonical persisted scoring entrypoint for run-level performance charts. Viz prefers `artifacts/scoring/run_metric_series.parquet` plus the staged summary/fold artifacts, and only derives a read-only fallback payload from legacy scoring files for runs that predate the canonical chart artifact.
 - `mmc_coverage_ratio_rows` is computed on demand from `score_provenance.json --> joins.meta_overlap_rows / joins.predictions_rows` when the metric isn’t persisted. That ratio is surfaced within `get_run_metrics` so the dashboard shows MMC coverage even if the training run never stored that field.
 
 ## Provenance, diagnostics, and artefact resolution
 
 - `score_provenance.json` (or `manifest.artifacts.score_provenance`) is the trust source for `columns`, `joins`, and `sources`. Viz exposes that information through `diagnostics_sources`, reporting column names, join counts, artifact paths, and existence/sha256 metadata so users can trace how a metric was computed.
-- Predictions and meta-model artifacts are resolved by checking, in order: the score provenance `sources` map, explicit `artifacts` entries in `run.json`, the `results.json` output, and then the `artifacts/predictions/` directory for parquet/csv blobs. Losing any link in that chain means viz cannot show provenance/coverage diagnostics, so experiment runs must annotate artifacts consistently.
+- Predictions and meta-model artifacts are resolved by checking, in order: the score provenance `sources` map, explicit `artifacts` entries in `run.json`, the `results.json` output, and then the `artifacts/predictions/` directory for parquet blobs. Losing any link in that chain means viz cannot show provenance/coverage diagnostics, so experiment runs must annotate artifacts consistently.
 - Meta-model resolution also accepts dataset-level pointers (`datasets/<version>/meta_model.parquet`) when the run manifest supplies `data.version`/`data.data_version`. Experiments that upgrade dataset snapshots must still write a deterministic pointer so viz can find the meta model without exploring the entire dataset tree.
 
 ## Read-path resilience
 
 - `get_run_manifest` and `get_run_metrics` prefer SQLite-backed rows but gracefully read `run.json`/`metrics.json` when the DB is missing. That means offline experiments (without the index) still show up in viz if their directories contain the canonical files.
-- The live run-detail path is section-based rather than bundle-based. Read-only UI/API surfaces may derive missing per-era CORR in memory for legacy runs, but the canonical backfill path is store rescoring (`store materialize-viz-artifacts --kind scoring-artifacts`), not request-time write-through.
+- The live run-detail path is section-based rather than bundle-based. Read-only UI/API surfaces may adapt legacy scoring files into the canonical dashboard payload in memory for older runs, but the canonical backfill path is store rescoring (`store materialize-viz-artifacts --kind scoring-artifacts`), not request-time write-through.
 
 ## Maintenance & anti-drift
 

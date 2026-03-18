@@ -887,7 +887,6 @@ def materialize_viz_artifacts(
     resolved_kind = kind.strip()
     if resolved_kind not in {"per-era-corr", "scoring-artifacts"}:
         raise StoreError(f"store_viz_artifact_kind_unsupported:{kind}")
-
     scope_flags = int(run_id is not None) + int(experiment_id is not None) + int(all_runs)
     if scope_flags != 1:
         raise StoreError("store_viz_artifact_scope_invalid")
@@ -2032,7 +2031,7 @@ def _build_artifact_rows(
     predictions_dir = run_dir / "artifacts" / "predictions"
     if predictions_dir.is_dir():
         for artifact in sorted(predictions_dir.iterdir(), key=lambda path: path.name):
-            if artifact.is_file() and artifact.suffix.lower() in {".parquet", ".csv"}:
+            if artifact.is_file() and artifact.suffix.lower() == ".parquet":
                 try:
                     relative = artifact.resolve().relative_to(run_dir.resolve()).as_posix()
                 except ValueError:

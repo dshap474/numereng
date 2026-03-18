@@ -22,22 +22,26 @@ Required artifacts:
 - `metrics.json`
 - `results.json`
 - `artifacts/predictions/<predictions_name>.parquet`
+  - parquet artifacts are written with `ZSTD` compression level `3`
 
 Conditionally required:
 
 - `score_provenance.json`
-  - Present when post-run scoring succeeds.
-  - May be absent if post-run scoring fails.
+  - Present when deferred scoring has been materialized by `run score` or `experiment score-round`.
+  - New training runs may legitimately omit it until deferred scoring happens.
 - `artifacts/scoring/manifest.json`
 - `artifacts/scoring/*.parquet`
-  - Present when post-run scoring succeeds for new or rescored runs.
+  - Training guarantees only `post_fold` scoring artifacts during CV.
+  - Deferred `post_training_core` / `post_training_full` artifacts appear after later scoring passes.
   - This bundle is the canonical persisted scoring surface for viz/report consumers.
 
 Not guaranteed by the canonical training pipeline:
 
-- `artifacts/eval/feature_importance.csv`
-- `artifacts/reports/trials.csv`
+- `artifacts/eval/feature_importance.parquet`
+- `artifacts/reports/trials.parquet`
 - `artifacts/reports/best_params.json`
+
+CSV-only auxiliary artifacts are not part of the supported contract.
 
 Consumers should treat `artifacts/scoring/manifest.json` as the scoring
 artifact entrypoint and may use the store rescoring backfill path for legacy

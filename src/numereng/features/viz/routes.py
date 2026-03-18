@@ -489,6 +489,24 @@ def create_router(service: VizService) -> APIRouter:
             },
         )
 
+    @router.get("/runs/{run_id}/scoring-dashboard")
+    def get_scoring_dashboard(run_id: str) -> JSONResponse:
+        started_at = time.perf_counter()
+        try:
+            payload = service.get_scoring_dashboard(run_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if payload is None:
+            raise HTTPException(404, f"Scoring dashboard for run {run_id} not found")
+        return _cached_response(
+            payload,
+            extra_headers={
+                "Server-Timing": _server_timing_header(
+                    {"run_scoring_dashboard": (time.perf_counter() - started_at) * 1000.0}
+                )
+            },
+        )
+
     @router.get("/runs/{run_id}/feature-importance")
     def get_feature_importance(run_id: str, top_n: int = 30) -> JSONResponse:
         started_at = time.perf_counter()
@@ -659,7 +677,7 @@ def create_router(service: VizService) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         if payload is None:
-            raise HTTPException(404, "correlation_matrix.csv not found")
+            raise HTTPException(404, "correlation_matrix.parquet not found")
         return _nocache_response(payload)
 
     @router.get("/ensembles/{ensemble_id}/artifacts")

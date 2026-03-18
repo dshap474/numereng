@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 
 import numereng.features.scoring.run_service as run_score_module
@@ -107,7 +108,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(run_score_module, "create_training_data_client", lambda: object())
     monkeypatch.setattr(
         run_score_module,
-        "run_post_training_scoring",
+        "run_scoring",
         lambda **kwargs: PostTrainingScoringResult(
             summaries=_scoring_summaries(),
             score_provenance={"execution": {"effective_scoring_mode": "materialized"}},
@@ -119,9 +120,45 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 include_feature_neutral_metrics=True,
             ),
             artifacts=ScoringArtifactBundle(
-                series_frames={"corr_per_era": pd.DataFrame([{"era": "era1", "value": 0.12}])},
+                series_frames={},
                 manifest={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.12,
+                            }
+                        ]
+                    ),
+                    "post_training_core_summary": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "corr_native_mean": 0.1,
+                                "corr_native_std": 0.2,
+                                "corr_native_sharpe": 0.5,
+                                "corr_native_max_drawdown": 0.1,
+                            }
+                        ]
+                    )
+                },
             ),
+            requested_stage="all",
+            refreshed_stages=("run_metric_series", "post_training_core"),
         ),
     )
     indexed_runs: list[str] = []
@@ -144,6 +181,8 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert "payout_estimate_mean" not in saved_results["metrics"]
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
     assert saved_results["training"]["scoring"]["effective_backend"] == "materialized"
+    assert saved_results["training"]["scoring"]["requested_stage"] == "all"
+    assert saved_results["training"]["scoring"]["refreshed_stages"] == ["run_metric_series", "post_training_core"]
     assert saved_results["training"]["scoring"]["policy"]["fnc_target_policy"] == "scoring_target"
     assert saved_results["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
 
@@ -152,9 +191,131 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert saved_manifest["artifacts"]["scoring_manifest"] == "artifacts/scoring/manifest.json"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
     assert saved_manifest["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
-    assert (run_dir / "artifacts" / "scoring" / "corr_per_era.parquet").is_file()
+    assert saved_manifest["training"]["scoring"]["requested_stage"] == "all"
+    assert (run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
+    assert (run_dir / "artifacts" / "scoring" / "post_training_core_summary.parquet").is_file()
+    scoring_manifest = json.loads((run_dir / "artifacts" / "scoring" / "manifest.json").read_text(encoding="utf-8"))
+    assert scoring_manifest["requested_stage"] == "all"
+    assert scoring_manifest["current_canonical_stages"] == ["run_metric_series", "post_training_core"]
+    run_metric_parquet = pq.ParquetFile(run_dir / "artifacts" / "scoring" / "run_metric_series.parquet")
+    summary_parquet = pq.ParquetFile(run_dir / "artifacts" / "scoring" / "post_training_core_summary.parquet")
+    assert run_metric_parquet.metadata.row_group(0).column(0).compression == "ZSTD"
+    assert summary_parquet.metadata.row_group(0).column(0).compression == "ZSTD"
 
 
 def test_score_run_requires_existing_run(tmp_path: Path) -> None:
     with pytest.raises(TrainingError, match="training_score_run_not_found:run-missing"):
         run_score_module.score_run(run_id="run-missing", store_root=tmp_path / "store")
+
+
+def test_score_run_partial_stage_preserves_existing_unselected_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / "store"
+    run_id = "run-123"
+    run_dir = store_root / "runs" / run_id
+    predictions_path = run_dir / "artifacts" / "predictions" / "pred.parquet"
+    scoring_dir = run_dir / "artifacts" / "scoring"
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions_path.write_text("placeholder", encoding="utf-8")
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    existing_stage = scoring_dir / "post_training_core_summary.parquet"
+    pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "config_hash": "abc123",
+                "seed": None,
+                "target_col": "target",
+                "payout_target_col": "target_ender_20",
+                "prediction_col": "prediction",
+                "corr_native_mean": 0.2,
+                "corr_native_std": 0.1,
+                "corr_native_sharpe": 0.4,
+                "corr_native_max_drawdown": 0.2,
+            }
+        ]
+    ).to_parquet(existing_stage, index=False)
+
+    _write_json(
+        run_dir / "run.json",
+        {
+            "run_id": run_id,
+            "status": "FINISHED",
+            "data": {"version": "v5.2", "feature_set": "medium", "target_col": "target"},
+            "artifacts": {
+                "predictions": "artifacts/predictions/pred.parquet",
+                "resolved_config": "resolved.json",
+                "results": "results.json",
+            },
+        },
+    )
+    _write_json(
+        run_dir / "resolved.json",
+        {
+            "data": {
+                "data_version": "v5.2",
+                "dataset_variant": "non_downsampled",
+                "dataset_scope": "train_plus_validation",
+                "feature_set": "medium",
+                "target_col": "target",
+                "benchmark_source": {"source": "active"},
+                "meta_model_col": "numerai_meta_model",
+                "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
+            },
+            "output": {"predictions_name": "pred"},
+        },
+    )
+    _write_json(run_dir / "results.json", {"output": {}, "training": {}})
+
+    monkeypatch.setattr(run_score_module, "create_training_data_client", lambda: object())
+    monkeypatch.setattr(
+        run_score_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries=_scoring_summaries(),
+            score_provenance={"execution": {"effective_scoring_mode": "materialized"}},
+            effective_scoring_backend="materialized",
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+                include_feature_neutral_metrics=True,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                manifest={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.12,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            requested_stage="run_metric_series",
+            refreshed_stages=("run_metric_series",),
+        ),
+    )
+    monkeypatch.setattr(run_score_module, "index_run", lambda **kwargs: None)
+
+    run_score_module.score_run(run_id=run_id, store_root=store_root, stage="run_metric_series")
+
+    assert (scoring_dir / "run_metric_series.parquet").is_file()
+    assert existing_stage.is_file()
+    scoring_manifest = json.loads((scoring_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert scoring_manifest["requested_stage"] == "run_metric_series"
+    assert scoring_manifest["current_canonical_stages"] == ["run_metric_series", "post_training_core"]
+    assert scoring_manifest["refreshed_canonical_stages"] == ["run_metric_series"]

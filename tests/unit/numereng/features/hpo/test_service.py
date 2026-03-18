@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pyarrow.parquet as pq
 import pytest
+import pandas as pd
 
 import numereng.features.hpo.service as service_module
 from numereng.features.hpo import HpoStudyCreateRequest
@@ -46,6 +48,26 @@ def _write_base_config(path: Path) -> None:
     )
 
 
+def _write_post_fold_snapshots(store_root: Path, *, run_id: str, objective_value: float) -> None:
+    scoring_dir = store_root / "runs" / run_id / "artifacts" / "scoring"
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_ender_20",
+                "payout_target_col": "target_ender_20",
+                "cv_fold": 0,
+                "corr_native_fold_mean": 0.0,
+                "corr_ender20_fold_mean": 0.0,
+                "bmc_ender20_fold_mean": objective_value / 2.25,
+            }
+        ]
+    ).to_parquet(scoring_dir / "post_fold_snapshots.parquet", index=False)
+
+
 def test_create_study_runs_trials_and_persists_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     config_path = tmp_path / "base.json"
@@ -75,6 +97,7 @@ def test_create_study_runs_trials_and_persists_rows(monkeypatch: pytest.MonkeyPa
         )
         predictions_path = tmp_path / f"preds_{idx}.parquet"
         predictions_path.write_bytes(b"PAR1")
+        _write_post_fold_snapshots(store_root, run_id=run_id, objective_value=metric_values[idx])
         return TrainingRunResult(
             run_id=run_id,
             predictions_path=predictions_path,
@@ -139,7 +162,9 @@ def test_create_study_runs_trials_and_persists_rows(monkeypatch: pytest.MonkeyPa
     assert trial_rows[0].trial_number == 0
     assert trial_rows[1].trial_number == 1
 
-    assert (result.storage_path / "trials_live.csv").is_file()
+    trials_path = result.storage_path / "trials_live.parquet"
+    assert trials_path.is_file()
+    assert pq.ParquetFile(trials_path).metadata.row_group(0).column(0).compression == "ZSTD"
     assert indexed_calls == [(store_root.resolve(), "run-0"), (store_root.resolve(), "run-1")]
 
 
@@ -201,6 +226,7 @@ def test_create_study_fails_fast_on_invalid_neutralizer_path(tmp_path: Path) -> 
                 study_name="bad-neutralizer",
                 experiment_id="exp-1",
                 config_path=config_path,
+                metric="bmc_last_200_eras.mean",
                 neutralize=True,
                 neutralizer_path=tmp_path / "missing_neutralizers.parquet",
             ),
@@ -307,6 +333,7 @@ def test_create_study_uses_minimize_fallback_when_optuna_returns_no_best(
         )
         predictions_path = tmp_path / f"preds_{idx}.parquet"
         predictions_path.write_bytes(b"PAR1")
+        _write_post_fold_snapshots(store_root, run_id=run_id, objective_value=metric_values[idx])
         return TrainingRunResult(run_id=run_id, predictions_path=predictions_path, results_path=results_path)
 
     def fake_run_optuna_study(

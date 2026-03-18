@@ -51,11 +51,11 @@ Canonical files include:
 
 - `predictions.parquet`
 - `metrics.json`
-- `weights.csv`
-- `correlation_matrix.csv`
-- `component_metrics.csv`
-- `era_metrics.csv`
-- `regime_metrics.csv`
+- `weights.parquet`
+- `correlation_matrix.parquet`
+- `component_metrics.parquet`
+- `era_metrics.parquet`
+- `regime_metrics.parquet`
 - `lineage.json`
 
 Optional files:
@@ -63,6 +63,8 @@ Optional files:
 - `component_predictions.parquet`
 - `bootstrap_metrics.json`
 - `predictions_pre_neutralization.parquet`
+
+Numereng-managed parquet artifacts are written with `ZSTD` compression level `3`.
 
 ## High-Risk Gotchas
 

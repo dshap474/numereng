@@ -37,6 +37,16 @@ class ExperimentTrainResult:
 
 
 @dataclass(frozen=True)
+class ExperimentScoreRoundResult:
+    """Result payload for deferred batch scoring of one experiment round."""
+
+    experiment_id: str
+    round: str
+    stage: Literal["post_training_core", "post_training_full"]
+    run_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ExperimentArchiveResult:
     """Result payload for archiving or unarchiving an experiment."""
 

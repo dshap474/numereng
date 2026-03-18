@@ -38,6 +38,7 @@ from numereng.features.feature_neutralization import (
     neutralize_prediction_frame,
 )
 from numereng.features.store import resolve_store_root
+from numereng.platform.parquet import write_parquet
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _MAX_SELECTION_NOTE_LEN = 2000
@@ -382,18 +383,22 @@ def _write_artifacts(
             "prediction": blended,
         }
     )
-    prediction_frame.to_parquet(artifacts_path / "predictions.parquet", index=False)
+    write_parquet(prediction_frame, artifacts_path / "predictions.parquet", index=False)
     if pre_neutralized_blended is not None:
-        pd.DataFrame(
+        write_parquet(
+            pd.DataFrame(
             {
                 "era": era_series.values,
                 "id": id_series.values,
                 "prediction": pre_neutralized_blended,
             }
-        ).to_parquet(pre_neutralized_path, index=False)
+            ),
+            pre_neutralized_path,
+            index=False,
+        )
     elif pre_neutralized_path.exists():
         pre_neutralized_path.unlink()
-    corr_matrix.to_csv(artifacts_path / "correlation_matrix.csv", index=True)
+    write_parquet(corr_matrix, artifacts_path / "correlation_matrix.parquet", index=True)
 
     metrics_payload: dict[str, Any] = {
         "metrics": metrics,
@@ -405,16 +410,20 @@ def _write_artifacts(
         encoding="utf-8",
     )
 
-    pd.DataFrame(
+    write_parquet(
+        pd.DataFrame(
         {
             "run_id": list(run_ids),
             "weight": [float(value) for value in weights],
             "rank": list(range(len(run_ids))),
         }
-    ).to_csv(artifacts_path / "weights.csv", index=False)
-    component_metrics.to_csv(artifacts_path / "component_metrics.csv", index=False)
-    era_metrics.to_csv(artifacts_path / "era_metrics.csv", index=False)
-    regime_metrics.to_csv(artifacts_path / "regime_metrics.csv", index=False)
+        ),
+        artifacts_path / "weights.parquet",
+        index=False,
+    )
+    write_parquet(component_metrics, artifacts_path / "component_metrics.parquet", index=False)
+    write_parquet(era_metrics, artifacts_path / "era_metrics.parquet", index=False)
+    write_parquet(regime_metrics, artifacts_path / "regime_metrics.parquet", index=False)
 
     heavy_files: list[str] = []
     if include_heavy_artifacts:
@@ -423,7 +432,7 @@ def _write_artifacts(
         component_predictions.insert(0, "id", id_series.astype(str).tolist())
         component_predictions.insert(0, "era", era_series.astype(str).tolist())
         component_predictions["prediction"] = blended
-        component_predictions.to_parquet(component_predictions_path, index=False)
+        write_parquet(component_predictions, component_predictions_path, index=False)
         heavy_files.append("component_predictions.parquet")
 
         bootstrap_payload = bootstrap_metric_summary(per_era_corr=per_era_corr)
@@ -440,12 +449,12 @@ def _write_artifacts(
 
     always_files = [
         "predictions.parquet",
-        "correlation_matrix.csv",
+        "correlation_matrix.parquet",
         "metrics.json",
-        "weights.csv",
-        "component_metrics.csv",
-        "era_metrics.csv",
-        "regime_metrics.csv",
+        "weights.parquet",
+        "component_metrics.parquet",
+        "era_metrics.parquet",
+        "regime_metrics.parquet",
         "lineage.json",
     ]
     if pre_neutralized_blended is not None:

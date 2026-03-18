@@ -297,6 +297,7 @@ def test_cli_run_score_success(
     def fake_score_run(request: api_module.ScoreRunRequest) -> api_module.ScoreRunResponse:
         assert request.run_id == "run-123"
         assert request.store_root == ".numereng"
+        assert request.stage == "all"
         return api_module.ScoreRunResponse(
             run_id="run-123",
             predictions_path="/tmp/preds.parquet",
@@ -304,6 +305,8 @@ def test_cli_run_score_success(
             metrics_path="/tmp/metrics.json",
             score_provenance_path="/tmp/score_provenance.json",
             effective_scoring_backend="materialized",
+            requested_stage="all",
+            refreshed_stages=["run_metric_series", "post_training_core"],
         )
 
     monkeypatch.setattr(api_module, "score_run", fake_score_run)
@@ -315,6 +318,34 @@ def test_cli_run_score_success(
     assert exit_code == 0
     assert payload["run_id"] == "run-123"
     assert payload["metrics_path"] == "/tmp/metrics.json"
+    assert payload["requested_stage"] == "all"
+
+
+def test_cli_run_score_stage_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_score_run(request: api_module.ScoreRunRequest) -> api_module.ScoreRunResponse:
+        assert request.stage == "post_training_core"
+        return api_module.ScoreRunResponse(
+            run_id="run-123",
+            predictions_path="/tmp/preds.parquet",
+            results_path="/tmp/results.json",
+            metrics_path="/tmp/metrics.json",
+            score_provenance_path="/tmp/score_provenance.json",
+            effective_scoring_backend="materialized",
+            requested_stage="post_training_core",
+            refreshed_stages=["post_training_core"],
+        )
+
+    monkeypatch.setattr(api_module, "score_run", fake_score_run)
+
+    exit_code = cli.main(["run", "score", "--run-id", "run-123", "--stage", "post_training_core"])
+    captured = capsys.readouterr()
+    payload = _parse_stdout_json(captured.out)
+
+    assert exit_code == 0
+    assert payload["requested_stage"] == "post_training_core"
 
 
 def test_cli_run_score_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -323,6 +354,14 @@ def test_cli_run_score_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exit_code == 2
     assert "missing required argument: --run-id" in captured.err
+
+
+def test_cli_run_score_invalid_stage(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["run", "score", "--run-id", "run-123", "--stage", "unknown"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "invalid value for --stage" in captured.err
 
 
 def test_cli_run_score_boundary_error(
@@ -467,6 +506,51 @@ def test_cli_experiment_train_sets_cli_launch_metadata(
 
     assert exit_code == 0
     assert payload["run_id"] == "run-123"
+
+
+def test_cli_experiment_score_round_sets_cli_launch_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_experiment_score_round(
+        request: api_module.ExperimentScoreRoundRequest,
+    ) -> api_module.ExperimentScoreRoundResponse:
+        launch_metadata = get_launch_metadata()
+        assert launch_metadata is not None
+        assert launch_metadata.source == "cli.experiment.score-round"
+        assert launch_metadata.operation_type == "run"
+        assert launch_metadata.job_type == "run"
+        assert request.experiment_id == "2026-02-22_test-exp"
+        assert request.round == "r1"
+        assert request.stage == "post_training_full"
+        return api_module.ExperimentScoreRoundResponse(
+            experiment_id=request.experiment_id,
+            round=request.round,
+            stage=request.stage,
+            run_ids=["run-1", "run-2"],
+        )
+
+    monkeypatch.setattr(api_module, "experiment_score_round", fake_experiment_score_round)
+
+    exit_code = cli.main(
+        [
+            "experiment",
+            "score-round",
+            "--id",
+            "2026-02-22_test-exp",
+            "--round",
+            "r1",
+            "--stage",
+            "post_training_full",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["experiment_id"] == "2026-02-22_test-exp"
+    assert payload["round"] == "r1"
+    assert payload["stage"] == "post_training_full"
+    assert payload["run_ids"] == ["run-1", "run-2"]
 
 
 def test_cli_experiment_report_json_success(

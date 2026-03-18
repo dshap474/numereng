@@ -20,7 +20,7 @@ from numereng.features.scoring.models import (
     ResolvedScoringPolicy,
     default_scoring_policy,
 )
-from numereng.features.scoring.service import run_post_training_scoring  # noqa: F401
+from numereng.features.scoring.service import run_post_training_scoring, run_scoring  # noqa: F401
 from numereng.features.store import index_run  # noqa: F401
 from numereng.features.telemetry import (
     LocalRunTelemetrySession,
@@ -356,6 +356,7 @@ def run_training(
         "resolve_score_provenance_path",
         "resolve_training_engine",
         "run_post_training_scoring",
+        "run_scoring",
         "save_metrics",
         "save_predictions",
         "save_resolved_config",

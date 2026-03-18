@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import re
 import shutil
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from numereng.features.experiments.contracts import (
     ExperimentArchiveResult,
@@ -18,15 +20,18 @@ from numereng.features.experiments.contracts import (
     ExperimentRecord,
     ExperimentReport,
     ExperimentReportRow,
+    ExperimentScoreRoundResult,
     ExperimentStatus,
     ExperimentTrainResult,
 )
+from numereng.features.scoring.batch_service import score_run_batch
 from numereng.features.scoring.summary_metrics import SHARED_RUN_METRIC_NAMES, normalize_shared_run_metrics
 from numereng.features.store import StoreError, index_run, resolve_store_root, upsert_experiment
 from numereng.features.training import TrainingProfile, run_training
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _EXPERIMENT_ID_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9][a-z0-9-]*$")
+_ROUND_LABEL_RE = re.compile(r"^r\d+$")
 _DEFAULT_PROMOTION_METRIC = "bmc_last_200_eras.mean"
 _ARCHIVE_DIRNAME = "_archive"
 _PRE_ARCHIVE_STATUS_KEY = "pre_archive_status"
@@ -209,6 +214,43 @@ def train_experiment(
         run_id=result.run_id,
         predictions_path=result.predictions_path,
         results_path=result.results_path,
+    )
+
+
+def score_experiment_round(
+    *,
+    store_root: str | Path = ".numereng",
+    experiment_id: str,
+    round: str,
+    stage: Literal["post_training_core", "post_training_full"],
+) -> ExperimentScoreRoundResult:
+    """Deferred-score all completed runs for one experiment round."""
+
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    safe_round = _ensure_round_label(round)
+    root = resolve_store_root(store_root)
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
+    manifest = _load_manifest(manifest_path)
+    _ensure_experiment_mutable(manifest)
+
+    run_ids = _resolve_round_run_ids(root=root, experiment_id=safe_experiment_id, manifest=manifest, round=safe_round)
+    if not run_ids:
+        raise ExperimentRunNotFoundError(f"experiment_round_has_no_completed_runs:{safe_experiment_id}:{safe_round}")
+
+    score_run_batch(
+        run_ids=run_ids,
+        store_root=root,
+        stage=stage,
+    )
+
+    manifest["updated_at"] = _utc_now_iso()
+    _save_manifest(manifest_path, manifest)
+    _index_experiment_manifest(root, manifest)
+    return ExperimentScoreRoundResult(
+        experiment_id=safe_experiment_id,
+        round=safe_round,
+        stage=stage,
+        run_ids=tuple(run_ids),
     )
 
 
@@ -457,6 +499,13 @@ def _ensure_experiment_id_format(experiment_id: str) -> None:
         raise ExperimentValidationError("experiment_id_format_invalid:expected_YYYY-MM-DD_slug")
 
 
+def _ensure_round_label(value: str) -> str:
+    candidate = value.strip()
+    if not candidate or not _ROUND_LABEL_RE.match(candidate):
+        raise ExperimentValidationError(f"experiment_round_invalid:{value}")
+    return candidate
+
+
 def _live_experiment_dir(root: Path, experiment_id: str) -> Path:
     return root / "experiments" / experiment_id
 
@@ -496,6 +545,56 @@ def _resolved_experiment_dir(root: Path, experiment_id: str) -> Path:
     if paths.active_dir is None:
         raise ExperimentNotFoundError(f"experiment_not_found:{experiment_id}")
     return paths.active_dir
+
+
+def _resolve_round_run_ids(
+    *,
+    root: Path,
+    experiment_id: str,
+    manifest: dict[str, object],
+    round: str,
+) -> tuple[str, ...]:
+    experiment_dir = _resolved_experiment_dir(root, experiment_id)
+    round_stems = _load_round_config_stems(experiment_dir=experiment_dir, round=round)
+    if not round_stems:
+        raise ExperimentValidationError(f"experiment_round_not_found:{experiment_id}:{round}")
+
+    run_by_stem: dict[str, str] = {}
+    expected_stems = set(round_stems)
+    for run_id in _normalize_run_ids(manifest.get("runs")):
+        run_manifest = _load_json_mapping(root / "runs" / run_id / "run.json")
+        config_path = _as_str(_as_mapping(run_manifest.get("config")).get("path"))
+        if config_path is None:
+            continue
+        stem = Path(config_path).stem
+        if stem in expected_stems and stem not in run_by_stem:
+            run_by_stem[stem] = run_id
+    return tuple(run_by_stem[stem] for stem in round_stems if stem in run_by_stem)
+
+
+def _load_round_config_stems(*, experiment_dir: Path, round: str) -> tuple[str, ...]:
+    run_plan_path = experiment_dir / "run_plan.csv"
+    stems: list[str] = []
+    if run_plan_path.is_file():
+        try:
+            with run_plan_path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    config_path = row.get("config_path")
+                    if not isinstance(config_path, str) or not config_path.strip():
+                        continue
+                    stem = Path(config_path).stem
+                    if stem.startswith(f"{round}_"):
+                        stems.append(stem)
+        except OSError as exc:
+            raise ExperimentError(f"experiment_run_plan_read_failed:{run_plan_path}") from exc
+    if stems:
+        return tuple(stems)
+
+    config_dir = experiment_dir / "configs"
+    if not config_dir.is_dir():
+        return ()
+    return tuple(path.stem for path in sorted(config_dir.glob(f"{round}_*.json"), key=lambda item: item.name))
 
 
 def _iter_experiment_manifest_paths(root: Path, *, include_archived: bool = False) -> tuple[Path, ...]:
@@ -716,6 +815,12 @@ def _as_str(value: object) -> str | None:
     return stripped or None
 
 
+def _as_mapping(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return cast(dict[str, object], value)
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -759,39 +864,58 @@ def _render_packed_experiment_markdown(
         "",
         notes_body or "_Empty_",
         "",
-        "## Run Metrics Summary",
+        "## Target Metrics Summary",
         "",
     ]
-    header_lines.extend(_render_run_metrics_table(root=root, run_ids=run_ids, champion_run_id=champion_run_id))
+    header_lines.extend(_render_target_metrics_table(root=root, run_ids=run_ids, champion_run_id=champion_run_id))
     header_lines.append("")
     return "\n".join(header_lines)
 
 
-def _render_run_metrics_table(*, root: Path, run_ids: list[str], champion_run_id: str | None) -> list[str]:
-    columns = ("run_id", "status", "created_at", "champion", *SHARED_RUN_METRIC_NAMES)
+def _render_target_metrics_table(*, root: Path, run_ids: list[str], champion_run_id: str | None) -> list[str]:
+    _ = champion_run_id
+    columns = ("target", *SHARED_RUN_METRIC_NAMES)
     lines = [
         "| " + " | ".join(columns) + " |",
         "| " + " | ".join("---" for _ in columns) + " |",
     ]
+    grouped_metrics: dict[str, list[dict[str, object]]] = defaultdict(list)
     for run_id in run_ids:
         run_dir = root / "runs" / run_id
         run_manifest = _require_json_mapping(run_dir / "run.json", error_code="experiment_pack_run_manifest_invalid")
         run_metrics = _require_json_mapping(run_dir / "metrics.json", error_code="experiment_pack_run_metrics_invalid")
         score_provenance = _load_json_mapping(run_dir / "score_provenance.json")
         normalized = normalize_shared_run_metrics(run_metrics, score_provenance=score_provenance)
+        target_name = _target_name_from_run_manifest(run_manifest, run_id=run_id)
+        grouped_metrics[target_name].append(normalized)
 
+    for target_name in sorted(grouped_metrics):
         row = [
-            _markdown_cell(run_id),
-            _markdown_cell(_as_str(run_manifest.get("status")) or "n/a"),
-            _markdown_cell(_as_str(run_manifest.get("created_at")) or "n/a"),
-            _markdown_cell("yes" if champion_run_id == run_id else "no"),
+            _markdown_cell(target_name),
         ]
         for metric_name in SHARED_RUN_METRIC_NAMES:
-            row.append(_format_metric_cell(normalized.get(metric_name)))
+            row.append(_format_metric_cell(_average_metric(grouped_metrics[target_name], metric_name)))
         lines.append("| " + " | ".join(row) + " |")
     if len(lines) == 2:
-        lines.append("| _none_ | n/a | n/a | no | " + " | ".join("n/a" for _ in SHARED_RUN_METRIC_NAMES) + " |")
+        lines.append("| _none_ | " + " | ".join("n/a" for _ in SHARED_RUN_METRIC_NAMES) + " |")
     return lines
+
+
+def _target_name_from_run_manifest(run_manifest: dict[str, object], *, run_id: str) -> str:
+    data = run_manifest.get("data")
+    if isinstance(data, dict):
+        target_name = _as_str(data.get("target_col"))
+        if target_name:
+            return target_name
+    return run_id
+
+
+def _average_metric(rows: list[dict[str, object]], metric_name: str) -> float | None:
+    values = [_coerce_float(row.get(metric_name)) for row in rows]
+    numbers = [value for value in values if value is not None]
+    if not numbers:
+        return None
+    return sum(numbers) / len(numbers)
 
 
 def _format_metric_cell(value: object) -> str:

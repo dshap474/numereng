@@ -10,6 +10,7 @@ from typing import Protocol, runtime_checkable
 import pandas as pd
 
 from numereng.features.scoring.metrics import attach_benchmark_predictions
+from numereng.features.scoring.models import CanonicalScoringStage
 from numereng.features.training.repo import list_lazy_source_eras, load_fold_data_lazy
 
 _KNOWN_X_GROUPS = {
@@ -134,6 +135,8 @@ class ScoreRunResult:
     metrics_path: Path
     score_provenance_path: Path
     effective_scoring_backend: str
+    requested_stage: CanonicalScoringStage = "all"
+    refreshed_stages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
