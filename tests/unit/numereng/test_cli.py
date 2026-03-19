@@ -1714,7 +1714,7 @@ def test_cli_cloud_modal_deploy_success(
         assert request.function_name == "train_remote"
         assert (
             request.ecr_image_uri
-            == "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+            == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
         )
         assert request.environment_name == "main"
         assert request.aws_profile == "default"
@@ -1743,7 +1743,7 @@ def test_cli_cloud_modal_deploy_success(
             "--function-name",
             "train_remote",
             "--ecr-image-uri",
-            "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
             "--environment-name",
             "main",
             "--aws-profile",
@@ -2019,7 +2019,7 @@ def test_cli_cloud_modal_deploy_parse_and_boundary_errors(
             "modal",
             "deploy",
             "--ecr-image-uri",
-            "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
             "--cpu",
             "bad",
         ]
@@ -2039,7 +2039,7 @@ def test_cli_cloud_modal_deploy_parse_and_boundary_errors(
             "modal",
             "deploy",
             "--ecr-image-uri",
-            "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
         ]
     )
     deploy_err = capsys.readouterr()

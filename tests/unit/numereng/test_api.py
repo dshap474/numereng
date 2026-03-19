@@ -2134,7 +2134,7 @@ class _CloudModalServiceRecorder:
         (
             api_module.cloud_modal_deploy,
             ModalDeployRequest(
-                ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
             ),
             "deploy",
         ),
@@ -2173,7 +2173,7 @@ def test_cloud_modal_api_functions_delegate_to_service(
         (
             api_module.cloud_modal_deploy,
             ModalDeployRequest(
-                ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
             ),
         ),
         (api_module.cloud_modal_train_status, ModalTrainStatusRequest(call_id="fc-1")),
@@ -2223,7 +2223,7 @@ def test_cloud_modal_api_translates_cloud_error(
         (
             api_module.cloud_modal_deploy,
             ModalDeployRequest(
-                ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
             ),
         ),
         (api_module.cloud_modal_train_submit, ModalTrainSubmitRequest(config_path="config.json")),

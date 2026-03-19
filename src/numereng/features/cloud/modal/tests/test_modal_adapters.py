@@ -243,7 +243,7 @@ def test_deploy_training_uses_ecr_image_and_returns_deploy_result(monkeypatch: p
     result = adapter.deploy_training(
         app_name="numereng-train",
         function_name="train_remote",
-        ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+        ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
         environment_name="main",
         aws_profile="default",
         timeout_seconds=600,
@@ -253,7 +253,7 @@ def test_deploy_training_uses_ecr_image_and_returns_deploy_result(monkeypatch: p
         data_volume_name="numereng-v52",
     )
 
-    assert captured["ecr_tag"] == "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+    assert captured["ecr_tag"] == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
     assert captured["image_kwargs"]["setup_dockerfile_commands"] == ["ENTRYPOINT []", "CMD []"]
     assert captured["function_kwargs"]["name"] == "train_remote"
     assert captured["function_kwargs"]["timeout"] == 600
@@ -322,7 +322,7 @@ def test_deploy_training_maps_deploy_failure(monkeypatch: pytest.MonkeyPatch) ->
         adapter.deploy_training(
             app_name="numereng-train",
             function_name="train_remote",
-            ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
             environment_name=None,
             aws_profile=None,
             timeout_seconds=None,
