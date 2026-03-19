@@ -82,6 +82,18 @@ Important fields:
 - `loading.scoring_mode`: `materialized|era_stream`
 - `loading.era_chunk_size`: integer >= 1
 
+Benchmark source clarification:
+
+- default `benchmark_source.source = "active"` requires a seeded shared
+  artifact under `.numereng/datasets/baselines/active_benchmark/`
+- use `benchmark_source.source = "path"` when bootstrapping a new machine or
+  when you want scoring to use one explicit baseline parquet without changing
+  the shared default
+- the official `.numereng/datasets/<data_version>/*benchmark_models.parquet`
+  files are separate dataset inputs and are not the same thing as the active
+  benchmark scoring artifact
+- see [Baselines & Active Benchmark](../workflows/baselines.md)
+
 Dataset path behavior:
 
 - `non_downsampled` defaults resolve under `.numereng/datasets/<data_version>/`

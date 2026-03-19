@@ -10,11 +10,14 @@
       "target_horizon": "20d",
       "era_col": "era",
       "id_col": "id",
-      "full_data_path": null,
-      "benchmark_data_path": null,
+      "benchmark_source": {
+        "source": "active",
+        "predictions_path": null,
+        "pred_col": "prediction",
+        "name": null
+      },
       "meta_model_data_path": null,
       "meta_model_col": "numerai_meta_model",
-      "benchmark_model": "v52_lgbm_ender20",
       "embargo_eras": null,
       "baselines_dir": null,
       "loading": {
@@ -140,20 +143,28 @@
           "id"
         ]
       },
-      "full_data_path": {
-        "type": "string_or_null",
+      "benchmark_source": {
+        "type": "object",
+        "shape": {
+          "source": "active|path",
+          "predictions_path": "string_or_null",
+          "pred_col": "string (default: prediction)",
+          "name": "string_or_null"
+        },
         "examples": [
-          null,
-          "v5.2/full.parquet",
-          "/abs/path/full.parquet"
-        ]
-      },
-      "benchmark_data_path": {
-        "type": "string_or_null",
-        "examples": [
-          null,
-          "v5.2/full_benchmark_models.parquet"
-        ]
+          {
+            "source": "active",
+            "pred_col": "prediction",
+            "name": null
+          },
+          {
+            "source": "path",
+            "predictions_path": ".numereng/datasets/baselines/my_baseline/predictions.parquet",
+            "pred_col": "prediction",
+            "name": "my_baseline"
+          }
+        ],
+        "note": "Default active mode requires a seeded .numereng/datasets/baselines/active_benchmark artifact."
       },
       "meta_model_data_path": {
         "type": "string_or_null",
@@ -166,12 +177,6 @@
         "type": "string",
         "examples": [
           "numerai_meta_model"
-        ]
-      },
-      "benchmark_model": {
-        "type": "string",
-        "examples": [
-          "v52_lgbm_ender20"
         ]
       },
       "embargo_eras": {

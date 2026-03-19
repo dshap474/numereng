@@ -23,3 +23,7 @@ Primary schema and loader paths:
 - make file names reflect the changed variable
 - change one variable at a time within a research round unless the round is intentionally testing an interaction
 - keep dataset variant, feature scope, and benchmark reference explicit in the config
+- prefer `data.benchmark_source.source = "path"` when a machine has not yet seeded
+  `.numereng/datasets/baselines/active_benchmark/`
+- use default `benchmark_source.source = "active"` only when the shared active
+  benchmark artifact is known to exist

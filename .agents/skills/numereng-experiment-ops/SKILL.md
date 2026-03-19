@@ -14,6 +14,7 @@ This is the source of truth for:
 - how experiment IDs and config files are organized
 - what `EXPERIMENT.md` should contain
 - where training schema and templates live
+- how baseline directories and the active benchmark fit into experiment-time scoring
 - which numereng commands are valid for experiment execution
 - what run outputs and metrics files should exist
 
@@ -32,6 +33,7 @@ In scope:
 - config file naming and placement
 - `EXPERIMENT.md` and round-log formatting
 - training config schema entrypoints
+- baseline-directory and active-benchmark setup guidance for benchmark-relative scoring
 - current CLI/API command contract for experiment execution
 - run output and metric artifact expectations
 - deciding when to hand off to `store-ops`
@@ -148,6 +150,10 @@ For manual sweeps:
 - start from `assets/training-config-template.json`
 - change one variable at a time per config inside a round
 - keep the baseline config in the same experiment directory
+- use explicit `data.benchmark_source={source:\"path\", ...}` when the repo has
+  not yet seeded `.numereng/datasets/baselines/active_benchmark/`
+- use default `benchmark_source.source=active` only when the shared
+  `active_benchmark` artifact is already present
 
 For HPO study definitions:
 
@@ -293,6 +299,7 @@ Hand off to `store-ops` when the task involves:
 |---|---|
 | Experiment directories, manifests, command families, artifact expectations | `references/experiment-contract.md` |
 | Training schema source paths, template alignment, config authoring rules | `references/config-schema-and-template.md` |
+| Baseline directories, `active_benchmark`, benchmark-source choice | `references/baseline-workflow.md` |
 
 If a task spans multiple domains, load each relevant reference and avoid unrelated files.
 

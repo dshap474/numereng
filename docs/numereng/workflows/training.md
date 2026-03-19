@@ -2,6 +2,21 @@
 
 Use this workflow for a single local run that is not being launched through experiment metadata.
 
+## Benchmark Scoring Prerequisite
+
+Benchmark-relative metrics do not come from the official
+`*benchmark_models.parquet` dataset files directly.
+
+By default, Numereng resolves `data.benchmark_source.source = "active"` and
+expects a seeded active benchmark artifact at:
+
+- `.numereng/datasets/baselines/active_benchmark/predictions.parquet`
+- `.numereng/datasets/baselines/active_benchmark/benchmark.json`
+
+If that shared artifact has not been seeded yet, prefer an explicit
+`data.benchmark_source = { "source": "path", ... }` config for the run. See
+[Baselines & Active Benchmark](baselines.md).
+
 ## Minimal Config
 
 Training configs are strict JSON and validated against `src/numereng/config/training/contracts.py`.
@@ -13,6 +28,12 @@ Training configs are strict JSON and validated against `src/numereng/config/trai
     "dataset_variant": "non_downsampled",
     "feature_set": "small",
     "target_col": "target",
+    "benchmark_source": {
+      "source": "path",
+      "predictions_path": ".numereng/datasets/baselines/medium_ender20_ender60_6run_blend/pred_medium_ender20_ender60_6run_blend.parquet",
+      "pred_col": "prediction",
+      "name": "medium_ender20_ender60_6run_blend"
+    },
     "loading": {
       "mode": "materialized",
       "scoring_mode": "materialized"
@@ -80,5 +101,7 @@ Run indexing is mandatory. If indexing fails, the command fails.
 - if `target_horizon` is omitted and `target_col` is ambiguous, training fails
 - `simple` requires split train/validation sources and does not accept downsampled variants
 - `full_history_refit` is final-fit only and emits no validation metrics
+- default benchmark scoring requires a seeded active benchmark artifact unless
+  the config uses `benchmark_source.source = "path"`
 - post-run FNC always neutralizes to `fncv3_features`
 - numereng does not emit `payout_estimate_mean`
