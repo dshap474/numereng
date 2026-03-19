@@ -474,13 +474,14 @@ def _extract_post_fold_objective_value(*, store_root: Path, run_id: str) -> floa
         raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
     if snapshot.empty:
         raise HpoExecutionError(f"hpo_post_fold_snapshots_empty:{snapshot_path}")
-    required_columns = ("corr_ender20_fold_mean", "bmc_fold_mean")
-    missing = [column for column in required_columns if column not in snapshot.columns]
-    if missing:
-        raise HpoExecutionError(f"hpo_post_fold_metric_missing:{','.join(missing)}")
+    if "corr_ender20_fold_mean" not in snapshot.columns:
+        raise HpoExecutionError("hpo_post_fold_metric_missing:corr_ender20_fold_mean")
+    bmc_column = "bmc_fold_mean" if "bmc_fold_mean" in snapshot.columns else "bmc_ender20_fold_mean"
+    if bmc_column not in snapshot.columns:
+        raise HpoExecutionError("hpo_post_fold_metric_missing:bmc_fold_mean,bmc_ender20_fold_mean")
 
     corr_mean = float(pd.Series(snapshot["corr_ender20_fold_mean"], dtype="float64").dropna().mean())
-    bmc_mean = float(pd.Series(snapshot["bmc_fold_mean"], dtype="float64").dropna().mean())
+    bmc_mean = float(pd.Series(snapshot[bmc_column], dtype="float64").dropna().mean())
     if pd.isna(corr_mean) or pd.isna(bmc_mean):
         raise HpoExecutionError("hpo_post_fold_metric_nan")
     return (_POST_FOLD_CORR_WEIGHT * corr_mean) + (_POST_FOLD_BMC_WEIGHT * bmc_mean)

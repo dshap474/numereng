@@ -68,6 +68,26 @@ def _write_post_fold_snapshots(store_root: Path, *, run_id: str, objective_value
     ).to_parquet(scoring_dir / "post_fold_snapshots.parquet", index=False)
 
 
+def _write_legacy_post_fold_snapshots(store_root: Path, *, run_id: str, objective_value: float) -> None:
+    scoring_dir = store_root / "runs" / run_id / "artifacts" / "scoring"
+    scoring_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "config_hash": "cfg",
+                "seed": None,
+                "target_col": "target_ender_20",
+                "payout_target_col": "target_ender_20",
+                "cv_fold": 0,
+                "corr_native_fold_mean": 0.0,
+                "corr_ender20_fold_mean": 0.0,
+                "bmc_ender20_fold_mean": objective_value / 2.25,
+            }
+        ]
+    ).to_parquet(scoring_dir / "post_fold_snapshots.parquet", index=False)
+
+
 def test_create_study_runs_trials_and_persists_rows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     config_path = tmp_path / "base.json"
@@ -376,6 +396,15 @@ def test_create_study_uses_minimize_fallback_when_optuna_returns_no_best(
     assert result.best_trial_number == 1
     assert result.best_value == pytest.approx(0.2)
     assert result.best_run_id == "run-1"
+
+
+def test_extract_post_fold_objective_value_accepts_legacy_bmc_column(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    _write_legacy_post_fold_snapshots(store_root, run_id="run-legacy", objective_value=0.45)
+
+    value = service_module._extract_post_fold_objective_value(store_root=store_root, run_id="run-legacy")
+
+    assert value == pytest.approx(0.45)
 
 
 def test_create_study_translates_optuna_dependency_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

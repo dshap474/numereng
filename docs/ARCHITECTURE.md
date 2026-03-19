@@ -369,6 +369,7 @@ Metadata behavior in HPO:
 - Otherwise HPO sets default source `api.hpo.create` for trial runs.
 - Default champion-run HPO objective:
   `0.25 * mean(corr_ender20_fold_mean) + 2.25 * mean(bmc_fold_mean)`
+  with read-time legacy fallback to `bmc_ender20_fold_mean` for older `post_fold_snapshots.parquet` artifacts.
 
 ### 7.6 Ensemble
 ```text
