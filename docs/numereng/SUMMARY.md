@@ -8,6 +8,7 @@
 
 ## Workflows
 * [Training Models](workflows/training.md)
+* [Baselines & Active Benchmark](workflows/baselines.md)
 * [Experiments](workflows/experiments.md)
 * [Hyperparameter Optimization](workflows/optimization.md)
 * [Ensembles](workflows/ensembles.md)
