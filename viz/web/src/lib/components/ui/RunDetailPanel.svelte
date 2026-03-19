@@ -163,6 +163,31 @@
 		const available = new Set(availableMetricKeys());
 		return performanceMetricOrder.filter((key) => available.has(key) && !shouldHideMetric(key));
 	});
+	let scalarScorecardCards = $derived.by(() => {
+		const summary = scoringDashboard?.summary;
+		if (!summary) return [];
+		const cards: Array<{
+			key: string;
+			label: string;
+			chips: Array<{ label: string; value: unknown }>;
+		}> = [];
+		const bmcLast200Chips = metricSummaryChips('bmc_last_200_eras');
+		if (bmcLast200Chips.length > 0) {
+			cards.push({
+				key: 'bmc_last_200_eras',
+				label: 'BMC Last 200 Eras',
+				chips: bmcLast200Chips
+			});
+		}
+		if (typeof summary.avg_corr_with_benchmark === 'number') {
+			cards.push({
+				key: 'avg_corr_with_benchmark',
+				label: 'Avg Corr with Benchmark',
+				chips: [{ label: 'value', value: summary.avg_corr_with_benchmark }]
+			});
+		}
+		return cards;
+	});
 
 	const foldMetricCharts: Array<{
 		key: 'corr_native' | 'corr_ender20' | 'bmc';
@@ -261,6 +286,9 @@
 			if (key in row) {
 				chips.push({ label: suffix.replace('_', ' '), value: row[key] });
 			}
+		}
+		if (metricKey === 'bmc' && typeof row.avg_corr_with_benchmark === 'number') {
+			chips.push({ label: 'avg corr vs bench', value: row.avg_corr_with_benchmark });
 		}
 		return chips;
 	}
@@ -683,6 +711,25 @@
 							<p class="text-sm text-muted-foreground">
 								This run predates canonical scoring series. Rescore the run to materialize MMC, FNC, and exposure charts.
 							</p>
+						</div>
+					{/if}
+
+					{#if scalarScorecardCards.length > 0}
+						<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+							{#each scalarScorecardCards as card (card.key)}
+								<div class="rounded-lg border border-border bg-card p-4 space-y-3">
+									<div>
+										<h3 class="text-sm font-medium">{card.label}</h3>
+									</div>
+									<div class="flex flex-wrap gap-1.5">
+										{#each card.chips as chip (`${card.key}-${chip.label}`)}
+											<span class="rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground">
+												{chip.label}: {fmt(chip.value as number | null)}
+											</span>
+										{/each}
+									</div>
+								</div>
+							{/each}
 						</div>
 					{/if}
 
