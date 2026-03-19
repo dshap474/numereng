@@ -255,7 +255,7 @@ def test_deploy_persists_state(tmp_path: Path) -> None:
         ModalDeployRequest(
             app_name="numereng-train",
             function_name="train_remote",
-            ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
             environment_name="main",
             aws_profile="default",
             timeout_seconds=900,
@@ -277,7 +277,7 @@ def test_deploy_persists_state(tmp_path: Path) -> None:
     assert response.state.call_id is None
     assert response.state.deployment_id == "ap-1"
     assert response.state.artifacts == {}
-    assert response.state.ecr_image_uri == "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+    assert response.state.ecr_image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
     assert response.state.data_volume_name == "numereng-v52"
     assert response.state.metadata["owner"] == "daniel"
     assert adapter.deploy_payloads
@@ -299,7 +299,7 @@ def test_deploy_uses_synced_volume_from_state(tmp_path: Path) -> None:
 
     response = service.deploy(
         ModalDeployRequest(
-            ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+            ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
             state_path=str(state_path),
         )
     )
@@ -588,7 +588,7 @@ def test_deploy_translates_adapter_error(tmp_path: Path) -> None:
     with pytest.raises(CloudModalError, match="modal_deploy_failed"):
         service.deploy(
             ModalDeployRequest(
-                ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
+                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
             )
         )
 

@@ -13,9 +13,9 @@ from numereng.features.cloud.modal.contracts import (
 
 
 def test_parse_ecr_image_uri_accepts_expected_shape() -> None:
-    ref = parse_ecr_image_uri("699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest")
+    ref = parse_ecr_image_uri("123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest")
 
-    assert ref.account_id == "699475917808"
+    assert ref.account_id == "123456789012"
     assert ref.region == "us-east-2"
     assert ref.repository == "numereng-training"
     assert ref.tag == "latest"
@@ -24,7 +24,7 @@ def test_parse_ecr_image_uri_accepts_expected_shape() -> None:
 def test_parse_ecr_image_uri_rejects_digest_form() -> None:
     with pytest.raises(ValueError, match="invalid ecr_image_uri"):
         parse_ecr_image_uri(
-            "699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training@sha256:deadbeef"
+            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training@sha256:deadbeef"
         )
 
 
@@ -35,7 +35,7 @@ def test_modal_deploy_request_rejects_invalid_ecr_uri() -> None:
 
 def test_modal_deploy_request_allows_runtime_options() -> None:
     request = ModalDeployRequest(
-        ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+        ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
         timeout_seconds=600,
         gpu="T4",
         cpu=2.0,
@@ -50,7 +50,7 @@ def test_modal_deploy_request_allows_runtime_options() -> None:
 
 def test_modal_deploy_request_allows_data_volume_name() -> None:
     request = ModalDeployRequest(
-        ecr_image_uri="699475917808.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
+        ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest",
         data_volume_name="numereng-v52",
     )
 
