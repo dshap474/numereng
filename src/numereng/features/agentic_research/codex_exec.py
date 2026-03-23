@@ -10,7 +10,11 @@ import time
 from pathlib import Path
 from typing import Final
 
-from numereng.features.agentic_research.contracts import CodexPlannerAttempt, CodexPlannerExecution
+from numereng.features.agentic_research.contracts import (
+    CodexPlannerAttempt,
+    CodexPlannerExecution,
+    RawPlannerExecution,
+)
 from numereng.features.agentic_research.state import decision_from_dict
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -87,82 +91,107 @@ def run_codex_planner(
     command: list[str],
     schema_path: Path,
     artifact_dir: Path,
-    validation_feedback: str | None = None,
 ) -> CodexPlannerExecution:
-    """Run headless Codex once, retrying a single time on invalid structured output."""
-    attempts: list[CodexPlannerAttempt] = []
-    stdout_chunks: list[str] = []
-    stderr_chunks: list[str] = []
-    current_feedback = validation_feedback
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    """Run headless Codex once with a structured JSON schema contract."""
+    raw_execution = _run_codex_exec(
+        prompt=prompt,
+        command=[*command, "--output-schema", str(schema_path)],
+        artifact_dir=artifact_dir,
+    )
     last_message_path = artifact_dir / "codex_last_message.json"
-    current_prompt = _render_attempt_prompt(prompt=prompt, validation_feedback=current_feedback)
+    try:
+        last_message = _load_last_message(last_message_path)
+        decision = decision_from_dict(last_message)
+    except Exception as exc:
+        raise AgenticResearchCodexError("agentic_research_codex_output_invalid") from exc
+    return CodexPlannerExecution(
+        decision=decision,
+        attempts=raw_execution.attempts,
+        stdout_jsonl=raw_execution.stdout_jsonl,
+        stderr_text=raw_execution.stderr_text,
+        last_message=last_message,
+        raw_response_text=raw_execution.stdout_jsonl or json.dumps(last_message, indent=2, sort_keys=True),
+    )
 
-    for attempt_number in range(1, 3):
-        if last_message_path.exists():
-            last_message_path.unlink()
-        started = time.perf_counter()
-        try:
-            completed = subprocess.run(
-                [*command, "--output-schema", str(schema_path), "-o", str(last_message_path)],
-                input=current_prompt,
-                text=True,
-                capture_output=True,
-                cwd=_REPO_ROOT,
-                check=False,
-                env=_planner_env(),
-            )
-        except OSError as exc:  # pragma: no cover - subprocess creation failure is rare
-            raise AgenticResearchCodexError("agentic_research_codex_exec_failed") from exc
-        elapsed_seconds = time.perf_counter() - started
-        stdout_chunks.append(completed.stdout)
-        stderr_chunks.append(f"=== attempt {attempt_number} ===\n{completed.stderr}")
-        parsed_lines = _parse_jsonl(completed.stdout)
-        attempts.append(
-            CodexPlannerAttempt(
-                attempt_number=attempt_number,
-                elapsed_seconds=elapsed_seconds,
-                returncode=completed.returncode,
-                thread_id=_find_thread_id(parsed_lines),
-                input_tokens=_find_usage_value(parsed_lines, "input_tokens"),
-                cached_input_tokens=_find_usage_value(parsed_lines, "cached_input_tokens"),
-                output_tokens=_find_usage_value(parsed_lines, "output_tokens"),
-                stdout_line_count=len([line for line in completed.stdout.splitlines() if line.strip()]),
-                validation_feedback=current_feedback,
-            )
+
+def run_codex_raw_planner(
+    *,
+    prompt: str,
+    command: list[str],
+    artifact_dir: Path,
+) -> RawPlannerExecution:
+    """Run headless Codex once and capture the raw final text response."""
+    raw_execution = _run_codex_exec(prompt=prompt, command=command, artifact_dir=artifact_dir)
+    last_message_path = artifact_dir / "codex_last_message.txt"
+    try:
+        response_text = last_message_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AgenticResearchCodexError("agentic_research_codex_output_invalid") from exc
+    return RawPlannerExecution(
+        attempts=raw_execution.attempts,
+        stdout_jsonl=raw_execution.stdout_jsonl,
+        stderr_text=raw_execution.stderr_text,
+        raw_response_text=response_text,
+    )
+
+
+def _run_codex_exec(
+    *,
+    prompt: str,
+    command: list[str],
+    artifact_dir: Path,
+) -> RawPlannerExecution:
+    """Run the underlying headless Codex command once and capture telemetry."""
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    attempts: list[CodexPlannerAttempt] = []
+    output_name = "codex_last_message.json" if "--output-schema" in command else "codex_last_message.txt"
+    output_path = artifact_dir / output_name
+    if output_path.exists():
+        output_path.unlink()
+    started = time.perf_counter()
+    try:
+        completed = subprocess.run(
+            [*command, "-o", str(output_path)],
+            input=prompt,
+            text=True,
+            capture_output=True,
+            cwd=_REPO_ROOT,
+            check=False,
+            env=_planner_env(),
         )
-        if completed.returncode != 0:
-            raise AgenticResearchCodexError(
-                f"agentic_research_codex_exec_failed:{completed.returncode}:{completed.stderr.strip()}"
-            )
-        try:
-            last_message = _load_last_message(last_message_path)
-            decision = decision_from_dict(last_message)
-            return CodexPlannerExecution(
-                decision=decision,
-                attempts=attempts,
-                stdout_jsonl="".join(stdout_chunks),
-                stderr_text="\n".join(stderr_chunks).strip(),
-                last_message=last_message,
-            )
-        except Exception as exc:
-            if attempt_number >= 2:
-                raise AgenticResearchCodexError("agentic_research_codex_output_invalid") from exc
-            current_feedback = _validation_feedback_from_error(exc)
-            current_prompt = _render_attempt_prompt(prompt=prompt, validation_feedback=current_feedback)
-    raise AgenticResearchCodexError("agentic_research_codex_output_invalid")
+    except OSError as exc:  # pragma: no cover - subprocess creation failure is rare
+        raise AgenticResearchCodexError("agentic_research_codex_exec_failed") from exc
+    elapsed_seconds = time.perf_counter() - started
+    parsed_lines = _parse_jsonl(completed.stdout)
+    attempts.append(
+        CodexPlannerAttempt(
+            attempt_number=1,
+            elapsed_seconds=elapsed_seconds,
+            returncode=completed.returncode,
+            thread_id=_find_thread_id(parsed_lines),
+            input_tokens=_find_usage_value(parsed_lines, "input_tokens"),
+            cached_input_tokens=_find_usage_value(parsed_lines, "cached_input_tokens"),
+            output_tokens=_find_usage_value(parsed_lines, "output_tokens"),
+            stdout_line_count=len([line for line in completed.stdout.splitlines() if line.strip()]),
+            validation_feedback=None,
+        )
+    )
+    if completed.returncode != 0:
+        raise AgenticResearchCodexError(
+            f"agentic_research_codex_exec_failed:{completed.returncode}:{completed.stderr.strip()}"
+        )
+    return RawPlannerExecution(
+        attempts=attempts,
+        stdout_jsonl=completed.stdout,
+        stderr_text=completed.stderr.strip(),
+        raw_response_text="",
+    )
 
 
 def _planner_env() -> dict[str, str]:
     env = dict(os.environ)
     env["CODEX_HOME"] = str(ensure_learner_codex_home())
     return env
-
-
-def _render_attempt_prompt(*, prompt: str, validation_feedback: str | None) -> str:
-    if validation_feedback is None:
-        return prompt
-    return f"{prompt}\n\nValidation feedback:\n{validation_feedback}\n"
 
 
 def _load_last_message(path: Path) -> dict[str, object]:
@@ -239,12 +268,3 @@ def _deep_find_value(payload: object, key: str) -> object | None:
             if found is not None:
                 return found
     return None
-
-
-def _validation_feedback_from_error(exc: Exception) -> str:
-    if isinstance(exc, json.JSONDecodeError):
-        return "Return strict JSON that matches the output schema."
-    message = str(exc).strip()
-    if message:
-        return message
-    return "Return valid planner fields only."

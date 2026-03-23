@@ -76,6 +76,7 @@ The CLI command families are:
 Python users can call the same flows through typed request/response contracts in `numereng.api.contracts`.
 
 Agentic research defaults to a headless `codex exec` planner. To use OpenRouter instead, switch `ACTIVE_MODEL_SOURCE` in `src/numereng/config/openrouter/active-model.py` to `openrouter`.
+The default `numerai-experiment-loop` strategy is now config-centric: each autonomous iteration picks one parent config, asks the planner for a small validated mutation, materializes one child config, and trains that single child run. The phase-aware `kaggle-gm-loop` strategy still uses the structured multi-config planning contract.
 
 ## Architecture
 

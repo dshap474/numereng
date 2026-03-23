@@ -1,5 +1,7 @@
 {
   "title": "Numerai Experiment Loop",
   "description": "Round-based experiment loop mirroring the experiment-design skill: 4-5 configs per round, focused one-variable sweeps, scout-to-scale, plateau logic, and pivot-by-path when a line of inquiry maxes out.",
+  "planner_contract": "config_mutation",
+  "prompt_template": "mutation_prompt.md",
   "phase_aware": false
 }

@@ -1,6 +1,9 @@
 {
   "title": "Kaggle GM Loop",
   "description": "Phase-aware campaign strategy mirroring the kaggle-gm-workflow skill. It advances through the 7-phase Kaggle GM playbook while still executing supported work as experiment rounds inside the existing agentic research runtime.",
+  "planner_contract": "structured_json",
+  "prompt_template": "planner_prompt.md",
+  "schema_filename": "planner_output.schema.json",
   "phase_aware": true,
   "phases": [
     {
