@@ -11,6 +11,8 @@ from typing import cast
 from numereng.features.agentic_research.contracts import (
     CodexConfigPayload,
     CodexDecision,
+    MutationChange,
+    MutationProposal,
     ResearchBestRun,
     ResearchLineageLink,
     ResearchLineageState,
@@ -113,6 +115,11 @@ def decision_to_dict(decision: CodexDecision) -> dict[str, object]:
     return asdict(decision)
 
 
+def proposal_to_dict(proposal: MutationProposal) -> dict[str, object]:
+    """Convert one mutation proposal into a JSON-safe payload."""
+    return asdict(proposal)
+
+
 def decision_from_dict(payload: dict[str, object]) -> CodexDecision:
     """Build one Codex decision object from decoded JSON."""
     configs_raw = payload.get("configs")
@@ -138,6 +145,24 @@ def decision_from_dict(payload: dict[str, object]) -> CodexDecision:
         phase_action=cast(str | None, _as_str(payload.get("phase_action"))),
         phase_transition_rationale=_as_str(payload.get("phase_transition_rationale")),
         configs=configs,
+    )
+
+
+def proposal_from_text_payload(payload: dict[str, object]) -> MutationProposal:
+    """Build one mutation proposal object from decoded JSON."""
+    changes_raw = payload.get("changes")
+    changes: list[MutationChange] = []
+    if isinstance(changes_raw, list):
+        for item in changes_raw:
+            if not isinstance(item, dict):
+                continue
+            path = _as_str(item.get("path"))
+            if path is None:
+                continue
+            changes.append(MutationChange(path=path, value=item.get("value")))
+    return MutationProposal(
+        rationale=_as_str(payload.get("rationale")) or "",
+        changes=tuple(changes),
     )
 
 
@@ -214,6 +239,10 @@ def _round_from_obj(payload: object) -> ResearchRoundState | None:
         decision_rationale=_as_str(payload.get("decision_rationale")),
         decision_path_hypothesis=_as_str(payload.get("decision_path_hypothesis")),
         decision_path_slug=_as_str(payload.get("decision_path_slug")),
+        parent_run_id=_as_str(payload.get("parent_run_id")),
+        parent_config_filename=_as_str(payload.get("parent_config_filename")),
+        change_set=_as_dict_list(payload.get("change_set")),
+        llm_rationale=_as_str(payload.get("llm_rationale")),
         phase_id=_as_str(payload.get("phase_id")),
         phase_action=cast(str | None, _as_str(payload.get("phase_action"))),
         phase_transition_rationale=_as_str(payload.get("phase_transition_rationale")),
@@ -317,6 +346,16 @@ def _as_str_list(value: object) -> list[str]:
         stripped = item.strip()
         if stripped:
             items.append(stripped)
+    return items
+
+
+def _as_dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, object]] = []
+    for item in value:
+        if isinstance(item, dict):
+            items.append(cast(dict[str, object], item))
     return items
 
 

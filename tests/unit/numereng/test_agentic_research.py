@@ -13,10 +13,17 @@ from numereng.features.agentic_research.codex_exec import (
     learner_codex_home,
     run_codex_planner,
 )
+from numereng.features.agentic_research.config_evolution import (
+    build_candidate_filename,
+    materialize_mutation_config,
+    parse_mutation_response,
+    select_parent_config,
+)
 from numereng.features.agentic_research.contracts import (
     CodexConfigPayload,
     CodexDecision,
     CodexPlannerExecution,
+    RawPlannerExecution,
     ResearchBestRun,
     ResearchLineageLink,
     ResearchLineageState,
@@ -32,6 +39,7 @@ from numereng.features.agentic_research.planner import (
     update_path_after_round,
     validate_decision,
 )
+from numereng.features.agentic_research.prompting import render_prompt_template
 from numereng.features.agentic_research.service import init_research, run_research
 from numereng.features.agentic_research.state import (
     load_lineage_state,
@@ -185,7 +193,25 @@ def _planner_execution(decision: CodexDecision | None = None) -> CodexPlannerExe
                 for item in resolved.configs
             ],
         },
+        raw_response_text='{"next_action":"continue"}',
     )
+
+
+def _raw_planner_execution(response_text: str) -> RawPlannerExecution:
+    return RawPlannerExecution(
+        attempts=[],
+        stdout_jsonl=response_text,
+        stderr_text="",
+        raw_response_text=response_text,
+    )
+
+
+def _seed_config(store_root: Path, experiment_id: str, filename: str = "base.json") -> Path:
+    config_dir = store_root / "experiments" / experiment_id / "configs"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / filename
+    config_path.write_text(json.dumps(_valid_training_config(), indent=2, sort_keys=True), encoding="utf-8")
+    return config_path
 
 
 def test_state_roundtrip(tmp_path: Path) -> None:
@@ -266,9 +292,12 @@ def test_strategy_registry_loads_both_profiles() -> None:
     numerai = get_strategy_definition("numerai-experiment-loop")
     kaggle = get_strategy_definition("kaggle-gm-loop")
 
+    assert numerai.planner_contract == "config_mutation"
     assert numerai.phase_aware is False
+    assert numerai.prompt_path.name == "mutation_prompt.md"
     assert kaggle.phase_aware is True
     assert kaggle.phases[0].phase_id == "phase1_eda_baseline"
+    assert kaggle.schema_path is not None
     assert kaggle.schema_path.name == "planner_output.schema.json"
 
 
@@ -311,21 +340,14 @@ def test_ensure_learner_codex_home_writes_minimal_profile(
     assert (learner_home / "auth.json").read_text(encoding="utf-8") == '{"token":"abc"}'
 
 
-def test_run_codex_planner_parses_jsonl_and_retries_on_invalid_last_message(
+def test_run_codex_planner_parses_jsonl_and_last_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls = {"count": 0}
-
     def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        calls["count"] += 1
         command = list(args[0]) if args else []
         output_index = command.index("-o")
         output_path = Path(command[output_index + 1])
-        if calls["count"] == 1:
-            output_path.write_text("not-json", encoding="utf-8")
-            stdout = json.dumps({"type": "thread.started", "thread_id": "thread_1"}) + "\n"
-            return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="warning")
         output_path.write_text(
             json.dumps(
                 {
@@ -400,18 +422,62 @@ def test_run_codex_planner_parses_jsonl_and_retries_on_invalid_last_message(
     execution = run_codex_planner(
         prompt="hello",
         command=default_codex_command(),
-        schema_path=get_strategy_definition("numerai-experiment-loop").schema_path,
+        schema_path=get_strategy_definition("kaggle-gm-loop").schema_path,
         artifact_dir=tmp_path,
     )
 
-    assert calls["count"] == 2
     assert execution.decision.next_action == "continue"
     assert len(execution.decision.configs) == 4
-    assert len(execution.attempts) == 2
+    assert len(execution.attempts) == 1
     assert execution.attempts[-1].thread_id == "thread_2"
     assert execution.attempts[-1].input_tokens == 123
     assert execution.attempts[-1].cached_input_tokens == 45
     assert execution.attempts[-1].output_tokens == 67
+    assert "thread.started" in execution.raw_response_text
+
+
+def test_render_prompt_template_requires_explicit_placeholder_replacement(tmp_path: Path) -> None:
+    template_path = tmp_path / "prompt.md"
+    template_path.write_text("Prompt\n$NAME\n$VALUE\n", encoding="utf-8")
+
+    rendered = render_prompt_template(template_path, {"NAME": "alpha", "VALUE": "42"})
+
+    assert rendered == "Prompt\nalpha\n42\n"
+
+    with pytest.raises(ValueError, match="agentic_research_prompt_placeholders_unresolved"):
+        render_prompt_template(template_path, {"NAME": "alpha"})
+
+
+def test_parse_mutation_response_accepts_path_equals_json_literal() -> None:
+    proposal = parse_mutation_response(
+        
+            "RATIONALE:\n"
+            "Tighten LR while keeping the rest stable.\n\n"
+            "CHANGES:\n"
+            "config.model.params.learning_rate = 0.005\n"
+            'config.data.feature_set = "medium"'
+        
+    )
+
+    assert proposal.rationale.startswith("Tighten LR")
+    assert [item.path for item in proposal.changes] == [
+        "model.params.learning_rate",
+        "data.feature_set",
+    ]
+    assert proposal.changes[0].value == 0.005
+    assert proposal.changes[1].value == "medium"
+
+
+def test_parse_mutation_response_rejects_invalid_or_disallowed_paths() -> None:
+    with pytest.raises(ValueError, match="agentic_research_mutation_value_invalid:model.params.learning_rate"):
+        parse_mutation_response(
+            "RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = nope"
+        )
+
+    with pytest.raises(ValueError, match="agentic_research_mutation_path_not_allowed:output.output_dir"):
+        parse_mutation_response(
+            "RATIONALE:\nTest.\n\nCHANGES:\nconfig.output.output_dir = \"/tmp/out\""
+        )
 
 
 def test_validate_decision_requires_4_to_5_configs() -> None:
@@ -473,6 +539,46 @@ def test_select_reference_configs_falls_back_to_validated_default(tmp_path: Path
     assert examples[1]["materialized_config"]["model"]["params"]["learning_rate"] == 0.005
 
 
+def test_materialize_mutation_config_retries_duplicate_fingerprint(tmp_path: Path) -> None:
+    experiment = create_experiment(store_root=tmp_path, experiment_id="2026-03-20_cfg-exp")
+    config_dir = tmp_path / "experiments" / experiment.experiment_id / "configs"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    parent_path = config_dir / "base.json"
+    parent_path.write_text(json.dumps(_valid_training_config(), indent=2, sort_keys=True), encoding="utf-8")
+    parent = select_parent_config(
+        root=tmp_path,
+        experiment=experiment,
+        report=None,
+        config_dirs=[config_dir],
+    )
+
+    with pytest.raises(ValueError, match="agentic_research_candidate_duplicate"):
+        materialize_mutation_config(
+            round_label="r1",
+            config_dir=config_dir,
+            parent=parent,
+            proposal=parse_mutation_response(
+                "RATIONALE:\nKeep it identical.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.01"
+            ),
+            comparison_dirs=[config_dir],
+        )
+
+
+def test_build_candidate_filename_is_deterministic() -> None:
+    proposal = parse_mutation_response(
+        "RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005"
+    )
+
+    filename = build_candidate_filename(
+        round_label="r7",
+        config_dir=Path("/tmp"),
+        parent_filename="base.json",
+        proposal=proposal,
+    )
+
+    assert filename == "r7_base__model-params-learning-rate-0p005.json"
+
+
 def test_plateau_logic_requires_scale_confirmation_before_pivot() -> None:
     path = ResearchPathState(
         path_id="p00",
@@ -508,6 +614,7 @@ def test_run_research_executes_one_full_round(
 ) -> None:
     store_root = tmp_path / ".numereng"
     root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
+    _seed_config(store_root, root_exp.experiment_id)
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
@@ -517,8 +624,15 @@ def test_run_research_executes_one_full_round(
     run_ids: list[str] = []
 
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_planner",
-        lambda **_: _planner_execution(),
+        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        lambda **_: _raw_planner_execution(
+            
+                "RATIONALE:\n"
+                "Lower learning rate slightly while keeping the rest of the config stable.\n\n"
+                "CHANGES:\n"
+                "config.model.params.learning_rate = 0.005"
+            
+        ),
     )
 
     def fake_train_experiment(
@@ -589,7 +703,7 @@ def test_run_research_executes_one_full_round(
     state = load_program_state(program_path)
     assert state.total_rounds_completed == 1
     assert state.next_round_number == 2
-    assert state.best_overall.run_id == "run-4"
+    assert state.best_overall.run_id == "run-1"
     assert state.strategy == "numerai-experiment-loop"
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     assert (round_dir / "round_summary.json").is_file()
@@ -606,6 +720,8 @@ def test_run_research_executes_one_full_round(
     assert "### Raw LLM Response" in trace_markdown
     assert "### Parsed Final Response" in trace_markdown
     assert "`codex-exec`" in trace_markdown
+    assert "schema-valid JSON object" not in trace_markdown
+    assert "config.model.params.learning_rate = 0.005" in trace_markdown
     trace_lines = [
         json.loads(line)
         for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
@@ -617,15 +733,19 @@ def test_run_research_executes_one_full_round(
     assert trace_lines[0]["status"] == "succeeded"
     assert trace_lines[0]["planner_source"] == "codex-exec"
     assert trace_lines[0]["round_label"] == "r1"
-    assert trace_lines[0]["decision"]["next_action"] == "continue"
+    assert trace_lines[0]["parsed_response"]["changes"][0]["path"] == "model.params.learning_rate"
+    round_summary = json.loads((round_dir / "round_summary.json").read_text(encoding="utf-8"))
+    assert round_summary["parent_config_filename"] == "base.json"
+    assert round_summary["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
 
 
-def test_run_research_resumes_after_interrupt(
+def test_run_research_retries_once_when_mutation_is_duplicate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_resume-exp")
+    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_duplicate-exp")
+    _seed_config(store_root, root_exp.experiment_id)
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
@@ -633,12 +753,22 @@ def test_run_research_resumes_after_interrupt(
     )
 
     run_ids: list[str] = []
-    train_calls = {"count": 0}
+    planner_calls = {"count": 0}
 
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_planner",
-        lambda **_: _planner_execution(),
-    )
+    def fake_raw_planner(**_: object) -> RawPlannerExecution:
+        planner_calls["count"] += 1
+        if planner_calls["count"] == 1:
+            return _raw_planner_execution(
+                "RATIONALE:\nKeep the parent identical.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.01"
+            )
+        return _raw_planner_execution(
+            
+                "RATIONALE:\n"
+                "Lower learning rate to create a real child.\n\n"
+                "CHANGES:\n"
+                "config.model.params.learning_rate = 0.005"
+            
+        )
 
     def fake_train_experiment(
         *,
@@ -647,9 +777,6 @@ def test_run_research_resumes_after_interrupt(
         config_path: str | Path,
     ) -> ExperimentTrainResult:
         _ = (store_root, experiment_id)
-        train_calls["count"] += 1
-        if train_calls["count"] == 2:
-            raise KeyboardInterrupt()
         run_id = f"run-{len(run_ids) + 1}"
         run_ids.append(run_id)
         return ExperimentTrainResult(
@@ -699,19 +826,45 @@ def test_run_research_resumes_after_interrupt(
             rows=rows,
         )
 
+    monkeypatch.setattr("numereng.features.agentic_research.service.run_codex_raw_planner", fake_raw_planner)
     monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
     monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
     monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
 
-    first = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-    assert first.interrupted is True
-    interrupted_state = load_program_state(
-        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "program.json"
-    )
-    assert interrupted_state.current_round is not None
-    assert interrupted_state.current_round.next_config_index == 1
+    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
-    def resumed_train_experiment(
+    assert result.status == "stopped"
+    assert planner_calls["count"] == 2
+    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    assert "agentic_research_candidate_duplicate" in (round_dir / "codex_validation_error.txt").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_run_research_resumes_after_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_resume-exp")
+    _seed_config(store_root, root_exp.experiment_id)
+    init_research(
+        store_root=store_root,
+        experiment_id=root_exp.experiment_id,
+        strategy="numerai-experiment-loop",
+    )
+
+    run_ids: list[str] = []
+    score_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        lambda **_: _raw_planner_execution(
+            "RATIONALE:\nNudge learning rate down.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005"
+        ),
+    )
+
+    def fake_train_experiment(
         *,
         store_root: str | Path,
         experiment_id: str,
@@ -727,7 +880,60 @@ def test_run_research_resumes_after_interrupt(
             results_path=Path(config_path).with_suffix(".results.json"),
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", resumed_train_experiment)
+    def fake_score_round(
+        *,
+        store_root: str | Path,
+        experiment_id: str,
+        round: str,
+        stage: str,
+    ) -> ExperimentScoreRoundResult:
+        _ = (store_root, experiment_id, stage)
+        score_calls["count"] += 1
+        if score_calls["count"] == 1:
+            raise KeyboardInterrupt()
+        return ExperimentScoreRoundResult(
+            experiment_id=experiment_id,
+            round=round,
+            stage="post_training_full",
+            run_ids=tuple(run_ids),
+        )
+
+    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
+        _ = (store_root, experiment_id, metric, limit)
+        rows = tuple(
+            ExperimentReportRow(
+                run_id=run_id,
+                status="FINISHED",
+                created_at="2026-03-20T00:00:00+00:00",
+                metric_value=0.10 + (idx * 0.01),
+                corr_mean=0.01,
+                mmc_mean=0.02,
+                cwmm_mean=0.03,
+                bmc_mean=0.04 + (idx * 0.01),
+                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
+                is_champion=False,
+            )
+            for idx, run_id in enumerate(run_ids)
+        )
+        return ExperimentReport(
+            experiment_id=experiment_id,
+            metric="bmc_last_200_eras.mean",
+            total_runs=len(rows),
+            champion_run_id=None,
+            rows=rows,
+        )
+
+    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+
+    first = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
+    assert first.interrupted is True
+    interrupted_state = load_program_state(
+        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "program.json"
+    )
+    assert interrupted_state.current_round is not None
+    assert interrupted_state.current_round.next_config_index == 1
 
     second = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
     assert second.interrupted is False
@@ -849,6 +1055,7 @@ def test_run_research_uses_openrouter_planner_when_configured(
 ) -> None:
     store_root = tmp_path / ".numereng"
     root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_openrouter-exp")
+    _seed_config(store_root, root_exp.experiment_id)
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
@@ -860,15 +1067,20 @@ def test_run_research_uses_openrouter_planner_when_configured(
 
     monkeypatch.setattr("numereng.features.agentic_research.service.active_model_source", lambda: "openrouter")
 
-    def fake_openrouter_planner(**_: object) -> CodexPlannerExecution:
+    def fake_openrouter_planner(**_: object) -> RawPlannerExecution:
         planner_calls["openrouter"] += 1
-        return _planner_execution()
+        return _raw_planner_execution(
+            "RATIONALE:\nIncrease leaves modestly.\n\nCHANGES:\nconfig.model.params.num_leaves = 96"
+        )
 
-    def fail_codex_planner(**_: object) -> CodexPlannerExecution:
+    def fail_codex_planner(**_: object) -> RawPlannerExecution:
         raise AssertionError("codex planner should not run when openrouter is selected")
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.run_openrouter_planner", fake_openrouter_planner)
-    monkeypatch.setattr("numereng.features.agentic_research.service.run_codex_planner", fail_codex_planner)
+    monkeypatch.setattr(
+        "numereng.features.agentic_research.service.run_openrouter_raw_planner",
+        fake_openrouter_planner,
+    )
+    monkeypatch.setattr("numereng.features.agentic_research.service.run_codex_raw_planner", fail_codex_planner)
 
     def fake_train_experiment(
         *,

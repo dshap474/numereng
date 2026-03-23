@@ -13,6 +13,7 @@ ResearchDecisionAction = Literal["continue", "scale", "pivot", "stop"]
 ResearchStrategyId = Literal["numerai-experiment-loop", "kaggle-gm-loop"]
 ResearchPhaseStatus = Literal["active", "completed"]
 ResearchPhaseAction = Literal["stay", "advance", "complete"]
+ResearchPlannerContract = Literal["config_mutation", "structured_json"]
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,10 @@ class ResearchRoundState:
     decision_rationale: str | None = None
     decision_path_hypothesis: str | None = None
     decision_path_slug: str | None = None
+    parent_run_id: str | None = None
+    parent_config_filename: str | None = None
+    change_set: list[dict[str, object]] = field(default_factory=list)
+    llm_rationale: str | None = None
     phase_id: str | None = None
     phase_action: ResearchPhaseAction | None = None
     phase_transition_rationale: str | None = None
@@ -148,6 +153,22 @@ class CodexConfigPayload:
 
 
 @dataclass(frozen=True)
+class MutationChange:
+    """One dotted-path config mutation proposed by the LLM."""
+
+    path: str
+    value: object
+
+
+@dataclass(frozen=True)
+class MutationProposal:
+    """Minimal config mutation response returned by the numerai planner."""
+
+    rationale: str
+    changes: tuple[MutationChange, ...]
+
+
+@dataclass(frozen=True)
 class CodexDecision:
     """Structured planning response returned by headless Codex."""
 
@@ -186,6 +207,29 @@ class CodexPlannerExecution:
     stdout_jsonl: str
     stderr_text: str
     last_message: dict[str, object]
+    raw_response_text: str
+
+
+@dataclass(frozen=True)
+class RawPlannerExecution:
+    """One completed raw-text planner execution plus persisted telemetry artifacts."""
+
+    attempts: list[CodexPlannerAttempt]
+    stdout_jsonl: str
+    stderr_text: str
+    raw_response_text: str
+
+
+@dataclass(frozen=True)
+class MutationPlannerExecution:
+    """One completed mutation-planner execution plus persisted telemetry artifacts."""
+
+    proposal: MutationProposal
+    attempts: list[CodexPlannerAttempt]
+    stdout_jsonl: str
+    stderr_text: str
+    last_message: dict[str, object]
+    raw_response_text: str
 
 
 @dataclass(frozen=True)

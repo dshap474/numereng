@@ -93,7 +93,7 @@ src/numereng/
     submission/                # run/file artifact resolution + Numerai upload
     feature_neutralization/    # prediction neutralization
     experiments/               # experiment lifecycle + run linkage
-    agentic_research/          # strategy-driven continuous research supervisor + planner assets
+    agentic_research/          # strategy-driven continuous research supervisor + prompt-backed planner flows
     hpo/                       # Optuna study execution + trial persistence
     ensemble/                  # rank-average build + diagnostics
     dataset-tools/             # local dataset downsampling tools
@@ -390,14 +390,20 @@ cli research init|status|run
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - isolate planner runtime under a dedicated learner `CODEX_HOME` with lean headless defaults (`gpt-5.4`, low reasoning, read-only sandbox, shell tool disabled, no apps/multi-agent/js_repl) when the source is `codex-exec`
-      - load prompt/schema assets from the selected strategy package under `features/agentic_research/assets/<strategy-id>/`
-      - feed the selected planner backend a closed-world context bundle: metric policy, strategy context, best/prior round summaries, one authoritative base config snapshot, allowed override paths, and validated config examples
-      - validate planner output against the checked-in strategy schema, then materialize full configs locally by applying override-only deltas onto the authoritative base config before `TrainingConfig` validation
+      - load prompt templates from `features/agentic_research/prompts/<strategy-id>/`; metadata/schema files remain under `features/agentic_research/assets/<strategy-id>/`
+      - `numerai-experiment-loop` is config-centric:
+        - Python selects one parent config from the active-path lineage using `bmc_last_200_eras_mean`, `bmc_mean`, then `corr_mean`
+        - the planner sees one parent config JSON, one compact lineage summary, and only the three core metrics
+        - the planner returns a minimal `RATIONALE:` + `CHANGES:` text block instead of a dense planner JSON object
+        - Python parses dotted `config.path = <json-literal>` edits, clones the parent config, validates the child `TrainingConfig`, names it deterministically, and retries once on invalid or duplicate mutations
+        - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
+      - `kaggle-gm-loop` remains phase-aware and still uses the structured planner JSON/schema contract
       - persist planner telemetry per round (`codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`) so prompt cost and latency are measurable; artifact names remain `codex_*` for compatibility even when the planner source is OpenRouter
       - append planner trace entries to `.numereng/experiments/<root>/agentic_research/llm_trace.jsonl` and copy the same entry into `rounds/rN/llm_trace.jsonl`
       - render a human-readable markdown companion at `.numereng/experiments/<root>/agentic_research/llm_trace.md` and `rounds/rN/llm_trace.md`
       - the markdown companion is deliberately literal: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
-      - write 4-5 configs into the active experiment, train sequentially, deferred-score the round, and persist summary artifacts
+      - numerai rounds persist mutation lineage in round state/artifacts (`parent_run_id`, `parent_config_filename`, `change_set`, `llm_rationale`)
+      - structured planner strategies can still write 4-5 configs, but numerai mutation rounds now write one child config into the active experiment, train it, deferred-score the round, and persist summary artifacts
       - track plateau streak on `bmc_last_200_eras.mean` with `bmc.mean` tie-break
       - let strategy policy decide whether the next round stays in the current phase, advances phase, or completes the campaign
       - after two failed rounds, force one scale-confirmation round; if that also fails, create a fresh child experiment and continue there

@@ -9,8 +9,10 @@ from typing import Final
 
 from numereng.features.agentic_research.contracts import (
     ResearchPhaseState,
+    ResearchPlannerContract,
     ResearchStrategyId,
 )
+from numereng.features.agentic_research.prompting import prompts_root
 from numereng.features.agentic_research.state import utc_now_iso
 
 _ASSETS_ROOT = Path(__file__).resolve().parent / "assets"
@@ -33,9 +35,10 @@ class ResearchStrategyDefinition:
     strategy_id: ResearchStrategyId
     title: str
     description: str
+    planner_contract: ResearchPlannerContract
     phase_aware: bool
     prompt_path: Path
-    schema_path: Path
+    schema_path: Path | None
     phases: tuple[ResearchStrategyPhase, ...] = ()
 
 
@@ -56,9 +59,7 @@ def get_strategy_definition(strategy_id: str) -> ResearchStrategyDefinition:
         raise ValueError(f"agentic_research_strategy_invalid:{strategy_id}")
     asset_dir = _ASSETS_ROOT / strategy_id
     metadata_path = asset_dir / "metadata.json"
-    prompt_path = asset_dir / "planner_prompt.txt"
-    schema_path = asset_dir / "planner_output.schema.json"
-    if not metadata_path.is_file() or not prompt_path.is_file() or not schema_path.is_file():
+    if not metadata_path.is_file():
         raise ValueError(f"agentic_research_strategy_assets_missing:{strategy_id}")
     try:
         payload = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -68,12 +69,22 @@ def get_strategy_definition(strategy_id: str) -> ResearchStrategyDefinition:
         raise ValueError(f"agentic_research_strategy_metadata_invalid:{metadata_path}")
     title = str(payload.get("title") or strategy_id)
     description = str(payload.get("description") or title)
+    planner_contract = _planner_contract_from_payload(payload.get("planner_contract"), strategy_id=strategy_id)
     phase_aware = bool(payload.get("phase_aware"))
+    prompt_template = _coerce_text(payload.get("prompt_template")) or "planner_prompt.md"
+    prompt_path = prompts_root() / strategy_id / prompt_template
+    schema_filename = _coerce_text(payload.get("schema_filename"))
+    schema_path = asset_dir / schema_filename if schema_filename is not None else None
+    if not prompt_path.is_file():
+        raise ValueError(f"agentic_research_strategy_assets_missing:{strategy_id}")
+    if planner_contract == "structured_json" and (schema_path is None or not schema_path.is_file()):
+        raise ValueError(f"agentic_research_strategy_assets_missing:{strategy_id}")
     phases = _phases_from_payload(payload.get("phases"))
     return ResearchStrategyDefinition(
         strategy_id=strategy_id,
         title=title,
         description=description,
+        planner_contract=planner_contract,
         phase_aware=phase_aware,
         prompt_path=prompt_path,
         schema_path=schema_path,
@@ -149,3 +160,23 @@ def _phases_from_payload(value: object) -> tuple[ResearchStrategyPhase, ...]:
             )
         )
     return tuple(phases)
+
+
+def _planner_contract_from_payload(
+    value: object,
+    *,
+    strategy_id: str,
+) -> ResearchPlannerContract:
+    contract = _coerce_text(value)
+    if contract in {"config_mutation", "structured_json"}:
+        return contract
+    if strategy_id == "numerai-experiment-loop":
+        return "config_mutation"
+    return "structured_json"
+
+
+def _coerce_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None

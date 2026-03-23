@@ -3,6 +3,8 @@
 from numereng.features.agentic_research.contracts import (
     CodexConfigPayload,
     CodexDecision,
+    MutationChange,
+    MutationProposal,
     ResearchBestRun,
     ResearchInitResult,
     ResearchLineageLink,
@@ -30,6 +32,8 @@ __all__ = [
     "AgenticResearchValidationError",
     "CodexConfigPayload",
     "CodexDecision",
+    "MutationChange",
+    "MutationProposal",
     "ResearchBestRun",
     "ResearchInitResult",
     "ResearchLineageLink",

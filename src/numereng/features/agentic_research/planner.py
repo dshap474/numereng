@@ -19,6 +19,10 @@ from numereng.features.agentic_research.contracts import (
     ResearchProgramState,
     ResearchRoundState,
 )
+from numereng.features.agentic_research.prompting import (
+    render_prompt_template,
+    render_validation_feedback_block,
+)
 from numereng.features.agentic_research.state import utc_now_iso
 from numereng.features.agentic_research.strategy import (
     ResearchStrategyDefinition,
@@ -171,9 +175,9 @@ def render_prompt(
     base_config_snapshot: dict[str, object],
     base_config_source: str,
     valid_config_examples: list[dict[str, object]],
+    validation_feedback: str | None = None,
 ) -> str:
     """Render the Codex planning prompt from compact structured context."""
-    template = strategy.prompt_path.read_text(encoding="utf-8")
     report_rows: list[dict[str, object]] = []
     if report is not None:
         report_rows = [_row_to_dict(row) for row in report.rows[:10]]
@@ -249,7 +253,13 @@ def render_prompt(
         },
         "valid_config_examples": [_prompt_ready_example(item) for item in valid_config_examples],
     }
-    return template.replace("$CONTEXT_JSON", json.dumps(context, indent=2, sort_keys=True))
+    return render_prompt_template(
+        strategy.prompt_path,
+        {
+            "CONTEXT_JSON": json.dumps(context, indent=2, sort_keys=True),
+            "VALIDATION_FEEDBACK_BLOCK": render_validation_feedback_block(validation_feedback),
+        },
+    )
 
 
 def validate_decision(
@@ -440,6 +450,10 @@ def round_summary_from_report(
         "experiment_question": round_state.experiment_question,
         "winner_criteria": round_state.winner_criteria,
         "decision_rationale": round_state.decision_rationale,
+        "parent_run_id": round_state.parent_run_id,
+        "parent_config_filename": round_state.parent_config_filename,
+        "change_set": list(round_state.change_set),
+        "llm_rationale": round_state.llm_rationale,
         "phase_id": round_state.phase_id,
         "phase_action": round_state.phase_action,
         "phase_transition_rationale": round_state.phase_transition_rationale,
