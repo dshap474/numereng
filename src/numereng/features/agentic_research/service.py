@@ -46,8 +46,10 @@ from numereng.features.agentic_research.planner import (
 )
 from numereng.features.agentic_research.state import (
     append_jsonl_artifact,
+    append_text_artifact,
     ensure_agentic_research_dirs,
     lineage_path,
+    llm_trace_markdown_path,
     llm_trace_path,
     load_lineage_state,
     load_program_state,
@@ -989,6 +991,60 @@ def _append_planner_trace(
     )
     append_jsonl_artifact(llm_trace_path(auto_dir), payload)
     append_jsonl_artifact(round_artifact_dir / "llm_trace.jsonl", payload)
+    append_text_artifact(llm_trace_markdown_path(auto_dir), _render_planner_trace_markdown(payload))
+    append_text_artifact(round_artifact_dir / "llm_trace.md", _render_planner_trace_markdown(payload))
+
+
+def _render_planner_trace_markdown(payload: dict[str, object]) -> str:
+    prompt_text = _read_trace_text(payload.get("prompt_path"))
+    raw_response_text = _read_trace_text(payload.get("stdout_path"))
+    stderr_text = _read_trace_text(payload.get("stderr_path"))
+    decision = payload.get("decision")
+    decision_text = json.dumps(decision, indent=2, sort_keys=True) if isinstance(decision, dict) else ""
+    lines = [
+        f"## {payload.get('timestamp', '')} {payload.get('round_label', '')}",
+        "",
+        f"- Status: `{payload.get('status', '')}`",
+        f"- Planner source: `{payload.get('planner_source', '')}`",
+        f"- Planner model: `{payload.get('planner_model', '')}`",
+        "",
+        "### Sent To LLM",
+        "",
+        "```text",
+        prompt_text,
+        "```",
+        "",
+        "### Raw LLM Response",
+        "",
+        "```jsonl",
+        raw_response_text,
+        "```",
+        "",
+        "### Parsed Final Response",
+        "",
+        "```json",
+        decision_text,
+        "```",
+    ]
+    if stderr_text:
+        lines.extend(["", "### Raw Stderr", "", "```text", stderr_text, "```"])
+    error = payload.get("error")
+    if error:
+        lines.extend(["", "### Error", "", str(error)])
+    lines.extend(["", "---", ""])
+    return "\n".join(lines)
+
+
+def _read_trace_text(path_value: object) -> str:
+    if not isinstance(path_value, str) or not path_value.strip():
+        return ""
+    path = Path(path_value)
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _run_planner(

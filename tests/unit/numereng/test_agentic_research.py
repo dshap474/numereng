@@ -596,8 +596,16 @@ def test_run_research_executes_one_full_round(
     assert (round_dir / "codex_usage.json").is_file()
     assert (round_dir / "codex_last_message.json").is_file()
     assert (round_dir / "llm_trace.jsonl").is_file()
+    assert (round_dir / "llm_trace.md").is_file()
     usage = json.loads((round_dir / "codex_usage.json").read_text(encoding="utf-8"))
     assert "attempts" in usage
+    trace_markdown = (
+        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.md"
+    ).read_text(encoding="utf-8")
+    assert "### Sent To LLM" in trace_markdown
+    assert "### Raw LLM Response" in trace_markdown
+    assert "### Parsed Final Response" in trace_markdown
+    assert "`codex-exec`" in trace_markdown
     trace_lines = [
         json.loads(line)
         for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
