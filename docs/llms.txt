@@ -71,8 +71,9 @@ Key artifacts:
 - `experiments/<experiment_id>/agentic_research/program.json`
 - `experiments/<experiment_id>/agentic_research/lineage.json`
 - `experiments/<experiment_id>/agentic_research/llm_trace.jsonl`
+- `experiments/<experiment_id>/agentic_research/llm_trace.md`
 - `experiments/<experiment_id>/agentic_research/rounds/rN/*`
-  - planner round artifacts include `codex_prompt.txt`, `codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`, `codex_decision.json`, `planned_configs.json`, `report.json`, `round_summary.json`, `llm_trace.jsonl`
+  - planner round artifacts include `codex_prompt.txt`, `codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`, `codex_decision.json`, `planned_configs.json`, `report.json`, `round_summary.json`, `llm_trace.jsonl`, `llm_trace.md`
 - `experiments/_archive/<experiment_id>/...`
 
 Wiring map:
@@ -99,7 +100,8 @@ Wiring map:
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime is isolated from the user’s interactive Codex defaults via a feature-managed learner `CODEX_HOME`
   - the selected planner backend receives a compact closed-world bundle: metric policy, path state, strategy context, base config snapshot, allowed override paths, and validated config examples
   - the selected planner backend returns override-only config specs plus strategy decisions; Python materializes and validates full `TrainingConfig` JSON before writing configs
-  - planner trace logs are append-only JSONL under `agentic_research/llm_trace.jsonl` and copied into each round as `rounds/rN/llm_trace.jsonl`; each entry records planner source/model, attempt telemetry, parsed decision, and pointers to the raw prompt/response artifacts
+  - planner trace logs are append-only JSONL under `agentic_research/llm_trace.jsonl` and copied into each round as `rounds/rN/llm_trace.jsonl`; a human-readable markdown companion is also written to `agentic_research/llm_trace.md` and `rounds/rN/llm_trace.md`
+  - the markdown view is intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
