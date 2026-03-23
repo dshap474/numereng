@@ -40,7 +40,11 @@ from numereng.features.agentic_research.planner import (
     validate_decision,
 )
 from numereng.features.agentic_research.prompting import render_prompt_template
-from numereng.features.agentic_research.service import init_research, run_research
+from numereng.features.agentic_research.service import (
+    _planner_reference_config_dirs,
+    init_research,
+    run_research,
+)
 from numereng.features.agentic_research.state import (
     load_lineage_state,
     load_program_state,
@@ -197,10 +201,14 @@ def _planner_execution(decision: CodexDecision | None = None) -> CodexPlannerExe
     )
 
 
-def _raw_planner_execution(response_text: str) -> RawPlannerExecution:
+def _raw_planner_execution(
+    response_text: str,
+    *,
+    stdout_jsonl: str | None = None,
+) -> RawPlannerExecution:
     return RawPlannerExecution(
         attempts=[],
-        stdout_jsonl=response_text,
+        stdout_jsonl=response_text if stdout_jsonl is None else stdout_jsonl,
         stderr_text="",
         raw_response_text=response_text,
     )
@@ -450,13 +458,11 @@ def test_render_prompt_template_requires_explicit_placeholder_replacement(tmp_pa
 
 def test_parse_mutation_response_accepts_path_equals_json_literal() -> None:
     proposal = parse_mutation_response(
-        
-            "RATIONALE:\n"
-            "Tighten LR while keeping the rest stable.\n\n"
-            "CHANGES:\n"
-            "config.model.params.learning_rate = 0.005\n"
-            'config.data.feature_set = "medium"'
-        
+        "RATIONALE:\n"
+        "Tighten LR while keeping the rest stable.\n\n"
+        "CHANGES:\n"
+        "config.model.params.learning_rate = 0.005\n"
+        'config.data.feature_set = "medium"'
     )
 
     assert proposal.rationale.startswith("Tighten LR")
@@ -470,14 +476,10 @@ def test_parse_mutation_response_accepts_path_equals_json_literal() -> None:
 
 def test_parse_mutation_response_rejects_invalid_or_disallowed_paths() -> None:
     with pytest.raises(ValueError, match="agentic_research_mutation_value_invalid:model.params.learning_rate"):
-        parse_mutation_response(
-            "RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = nope"
-        )
+        parse_mutation_response("RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = nope")
 
     with pytest.raises(ValueError, match="agentic_research_mutation_path_not_allowed:output.output_dir"):
-        parse_mutation_response(
-            "RATIONALE:\nTest.\n\nCHANGES:\nconfig.output.output_dir = \"/tmp/out\""
-        )
+        parse_mutation_response('RATIONALE:\nTest.\n\nCHANGES:\nconfig.output.output_dir = "/tmp/out"')
 
 
 def test_validate_decision_requires_4_to_5_configs() -> None:
@@ -565,9 +567,7 @@ def test_materialize_mutation_config_retries_duplicate_fingerprint(tmp_path: Pat
 
 
 def test_build_candidate_filename_is_deterministic() -> None:
-    proposal = parse_mutation_response(
-        "RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005"
-    )
+    proposal = parse_mutation_response("RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005")
 
     filename = build_candidate_filename(
         round_label="r7",
@@ -577,6 +577,101 @@ def test_build_candidate_filename_is_deterministic() -> None:
     )
 
     assert filename == "r7_base__model-params-learning-rate-0p005.json"
+
+
+def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
+    child_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_child-exp")
+    grandchild_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_grandchild-exp")
+    now = "2026-03-20T00:00:00+00:00"
+    state = ResearchProgramState(
+        root_experiment_id=root_exp.experiment_id,
+        program_experiment_id=root_exp.experiment_id,
+        strategy="numerai-experiment-loop",
+        strategy_description="Numerai Experiment Loop",
+        status="running",
+        active_path_id="p02",
+        active_experiment_id=grandchild_exp.experiment_id,
+        next_round_number=3,
+        total_rounds_completed=2,
+        total_paths_created=3,
+        improvement_threshold=0.0002,
+        scoring_stage="post_training_full",
+        codex_command=default_codex_command(),
+        last_checkpoint="round_created",
+        stop_reason=None,
+        current_round=None,
+        current_phase=None,
+        best_overall=ResearchBestRun(),
+        paths=[
+            ResearchPathState(
+                path_id="p00",
+                experiment_id=root_exp.experiment_id,
+                parent_experiment_id=None,
+                generation=0,
+                hypothesis="root",
+                status="completed",
+                pivot_reason=None,
+                source_round=None,
+                rounds_completed=1,
+                plateau_streak=0,
+                scale_confirmation_used=False,
+                needs_scale_confirmation=False,
+                best_run_id=None,
+                created_at=now,
+                updated_at=now,
+            ),
+            ResearchPathState(
+                path_id="p01",
+                experiment_id=child_exp.experiment_id,
+                parent_experiment_id=root_exp.experiment_id,
+                generation=1,
+                hypothesis="child",
+                status="completed",
+                pivot_reason="plateau",
+                source_round="r1",
+                rounds_completed=1,
+                plateau_streak=0,
+                scale_confirmation_used=False,
+                needs_scale_confirmation=False,
+                best_run_id=None,
+                created_at=now,
+                updated_at=now,
+            ),
+            ResearchPathState(
+                path_id="p02",
+                experiment_id=grandchild_exp.experiment_id,
+                parent_experiment_id=child_exp.experiment_id,
+                generation=2,
+                hypothesis="grandchild",
+                status="active",
+                pivot_reason="plateau",
+                source_round="r2",
+                rounds_completed=0,
+                plateau_streak=0,
+                scale_confirmation_used=False,
+                needs_scale_confirmation=False,
+                best_run_id=None,
+                created_at=now,
+                updated_at=now,
+            ),
+        ],
+        created_at=now,
+        updated_at=now,
+    )
+
+    config_dirs = _planner_reference_config_dirs(
+        root=store_root,
+        state=state,
+        active_path=state.paths[-1],
+    )
+
+    assert config_dirs == [
+        store_root / "experiments" / grandchild_exp.experiment_id / "configs",
+        store_root / "experiments" / child_exp.experiment_id / "configs",
+        store_root / "experiments" / root_exp.experiment_id / "configs",
+    ]
 
 
 def test_plateau_logic_requires_scale_confirmation_before_pivot() -> None:
@@ -626,12 +721,10 @@ def test_run_research_executes_one_full_round(
     monkeypatch.setattr(
         "numereng.features.agentic_research.service.run_codex_raw_planner",
         lambda **_: _raw_planner_execution(
-            
-                "RATIONALE:\n"
-                "Lower learning rate slightly while keeping the rest of the config stable.\n\n"
-                "CHANGES:\n"
-                "config.model.params.learning_rate = 0.005"
-            
+            "RATIONALE:\n"
+            "Lower learning rate slightly while keeping the rest of the config stable.\n\n"
+            "CHANGES:\n"
+            "config.model.params.learning_rate = 0.005"
         ),
     )
 
@@ -739,6 +832,143 @@ def test_run_research_executes_one_full_round(
     assert round_summary["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
 
 
+def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_empty-exp")
+    init_research(
+        store_root=store_root,
+        experiment_id=root_exp.experiment_id,
+        strategy="numerai-experiment-loop",
+    )
+
+    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
+
+    assert result.status == "stopped"
+    assert result.stop_reason == "codex_planning_failed"
+    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    assert (round_dir / "codex_failure.txt").read_text(encoding="utf-8").strip() == (
+        f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
+    )
+    trace_lines = [
+        json.loads(line)
+        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(trace_lines) == 1
+    assert trace_lines[0]["status"] == "failed"
+    assert trace_lines[0]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
+    assert trace_lines[0]["attempts"] == []
+    assert trace_lines[0]["prompt_text"] == ""
+    assert trace_lines[0]["raw_response_text"] == ""
+
+
+def test_run_research_trace_prefers_raw_response_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_trace-exp")
+    _seed_config(store_root, root_exp.experiment_id)
+    init_research(
+        store_root=store_root,
+        experiment_id=root_exp.experiment_id,
+        strategy="numerai-experiment-loop",
+    )
+
+    run_ids: list[str] = []
+    raw_response = (
+        "RATIONALE:\n"
+        "Use the raw response body in the persisted trace.\n\n"
+        "CHANGES:\n"
+        "config.model.params.learning_rate = 0.005"
+    )
+    transport_stream = '{"type":"thread.delta","delta":"transport"}\n'
+
+    monkeypatch.setattr(
+        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        lambda **_: _raw_planner_execution(raw_response, stdout_jsonl=transport_stream),
+    )
+
+    def fake_train_experiment(
+        *,
+        store_root: str | Path,
+        experiment_id: str,
+        config_path: str | Path,
+    ) -> ExperimentTrainResult:
+        _ = (store_root, experiment_id)
+        run_id = f"run-{len(run_ids) + 1}"
+        run_ids.append(run_id)
+        return ExperimentTrainResult(
+            experiment_id=experiment_id,
+            run_id=run_id,
+            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
+            results_path=Path(config_path).with_suffix(".results.json"),
+        )
+
+    def fake_score_round(
+        *,
+        store_root: str | Path,
+        experiment_id: str,
+        round: str,
+        stage: str,
+    ) -> ExperimentScoreRoundResult:
+        _ = (store_root, experiment_id, stage)
+        return ExperimentScoreRoundResult(
+            experiment_id=experiment_id,
+            round=round,
+            stage="post_training_full",
+            run_ids=tuple(run_ids),
+        )
+
+    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
+        _ = (store_root, experiment_id, metric, limit)
+        rows = tuple(
+            ExperimentReportRow(
+                run_id=run_id,
+                status="FINISHED",
+                created_at="2026-03-20T00:00:00+00:00",
+                metric_value=0.10 + (idx * 0.01),
+                corr_mean=0.01,
+                mmc_mean=0.02,
+                cwmm_mean=0.03,
+                bmc_mean=0.04 + (idx * 0.01),
+                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
+                is_champion=False,
+            )
+            for idx, run_id in enumerate(run_ids)
+        )
+        return ExperimentReport(
+            experiment_id=experiment_id,
+            metric="bmc_last_200_eras.mean",
+            total_runs=len(rows),
+            champion_run_id=None,
+            rows=rows,
+        )
+
+    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+
+    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
+
+    assert result.status == "stopped"
+    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    trace_lines = [
+        json.loads(line)
+        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert trace_lines[0]["raw_response_text"] == raw_response
+    assert trace_lines[0]["raw_response_text"] != transport_stream
+    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
+    assert raw_response in trace_markdown
+    assert transport_stream not in trace_markdown
+
+
 def test_run_research_retries_once_when_mutation_is_duplicate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -762,12 +992,10 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
                 "RATIONALE:\nKeep the parent identical.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.01"
             )
         return _raw_planner_execution(
-            
-                "RATIONALE:\n"
-                "Lower learning rate to create a real child.\n\n"
-                "CHANGES:\n"
-                "config.model.params.learning_rate = 0.005"
-            
+            "RATIONALE:\n"
+            "Lower learning rate to create a real child.\n\n"
+            "CHANGES:\n"
+            "config.model.params.learning_rate = 0.005"
         )
 
     def fake_train_experiment(
