@@ -7,19 +7,27 @@ training model factory.
 
 If you want to add a custom model that works with numereng, use this path first:
 
-1. Copy `src/numereng/features/models/custom_models/template_model.py` to a new file in the same
-   directory.
-2. Rename the class and `MODEL_REGISTRY` key to the real model type you want to expose.
-3. Replace the placeholder `fit` and `predict` bodies with your estimator logic.
-4. Add a config with:
+1. Check `src/numereng/features/models/custom_models/` to see whether the estimator already has a
+   tracked wrapper.
+2. Start from the closest wrapper:
+   - use `template_model.py` for a novel estimator API
+   - use the nearest sklearn-style wrapper when the estimator shape is similar
+   - use `xgboost_model.py` or `catboost_model.py` when the backend is optional and should raise
+     a backend-missing error
+3. Rename the class and `MODEL_REGISTRY` key to the real model type you want to expose.
+4. Replace the placeholder or copied `fit` and `predict` bodies with your estimator logic.
+5. Add a config with:
    - `model.type`
    - `model.params`
    - optional `model.module_path`
-5. Run a smoke test:
+6. Run a smoke test:
    - `uv run numereng run train --config <config.json>`
+7. Run the focused custom-model tests:
+   - `uv run pytest src/numereng/features/models/custom_models/tests/test_sklearn_custom_model_factory.py`
+   - `uv run pytest src/numereng/features/models/custom_models/tests/test_sklearn_custom_model_wrappers.py`
+   - `uv run pytest src/numereng/features/models/custom_models/tests/test_custom_model_wrappers.py`
 
-Start with `template_model.py`. Treat the other files in this directory as optional local examples,
-not the main onboarding path.
+Start with the nearest wrapper. `template_model.py` remains the canonical lowest-level fallback.
 
 ## Built-in model
 
@@ -29,8 +37,9 @@ not the main onboarding path.
 ## Custom model directory
 
 - Place custom files under `src/numereng/features/models/custom_models/`.
-- The directory is ignored by git by default so custom work stays modular.
+- The directory is ignored by git for new files by default so custom work stays modular.
 - `template_model.py` is the tracked exception and is the canonical example to copy from.
+- This repo also contains many tracked wrapper examples and tests under `custom_models/`.
 - Discovery happens from:
   - explicit `model.module_path` in config, or
   - scanning `src/numereng/features/models/custom_models/**/*.py` when `module_path` is not set.
@@ -83,18 +92,31 @@ omitted and numereng will discover it automatically.
 ## Tracked vs local files
 
 - `template_model.py` is tracked on purpose so the repo has one stable reference example.
-- User-specific model files in `custom_models/` stay local by default because the directory is
-  gitignored.
+- User-specific new model files in `custom_models/` stay local by default because the directory is
+  gitignored for new files.
+- Many wrappers already committed in this repo are tracked examples and valid starting points.
 - Commit a custom model file only when it is intended to become shared repo behavior.
 
-## Optional local examples
+## Tracked example wrappers
 
-If present in your local checkout, these files show backend-specific wrappers:
+These files show real wrapper patterns already used in this repo:
 
+- `linear_regression_model.py`
+- `random_forest_model.py`
+- `mlp_regressor_model.py`
 - `xgboost_model.py`
 - `catboost_model.py`
 
-They are useful examples, but `template_model.py` is the canonical onboarding file.
+They are useful examples when the estimator shape is similar. Use `template_model.py` when the API
+does not match an existing wrapper well.
+
+## Focused tests
+
+When you add or change a tracked wrapper, update the matching tests here:
+
+- `src/numereng/features/models/custom_models/tests/test_sklearn_custom_model_factory.py`
+- `src/numereng/features/models/custom_models/tests/test_sklearn_custom_model_wrappers.py`
+- `src/numereng/features/models/custom_models/tests/test_custom_model_wrappers.py`
 
 ## Error behavior
 

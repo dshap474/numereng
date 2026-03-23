@@ -90,8 +90,6 @@ def create_study(
         raise HpoValidationError("hpo_neutralization_proportion_invalid")
     if request.neutralization_mode not in {"era", "global"}:
         raise HpoValidationError("hpo_neutralization_mode_invalid")
-    if request.metric == _DEFAULT_HPO_METRIC and request.neutralize:
-        raise HpoValidationError("hpo_post_fold_objective_neutralization_not_supported")
     if request.neutralize and request.neutralizer_path is None:
         raise HpoValidationError("hpo_neutralizer_path_required")
     if request.experiment_id is not None and not _SAFE_ID.match(request.experiment_id):
@@ -211,12 +209,7 @@ def create_study(
                     experiment_id=request.experiment_id,
                 )
             index_run(store_root=resolved_root, run_id=training_result.run_id)
-            if request.metric == _DEFAULT_HPO_METRIC:
-                metric_value = _extract_post_fold_objective_value(
-                    store_root=resolved_root,
-                    run_id=training_result.run_id,
-                )
-            elif request.neutralize:
+            if request.neutralize:
                 if request.neutralizer_path is None:
                     raise HpoValidationError("hpo_neutralizer_path_required")
                 neutralized_result = neutralize_predictions_file(
@@ -237,6 +230,12 @@ def create_study(
                     trial_config_path=trial_config_path,
                     metric=request.metric,
                     scoring_client=neutralized_metric_client,
+                )
+            elif request.metric == _DEFAULT_HPO_METRIC:
+                metric_value = _extract_post_fold_objective_value(
+                    store_root=resolved_root,
+                    run_id=training_result.run_id,
+                    results_path=training_result.results_path,
                 )
             else:
                 metric_value = _extract_metric_value(results_path=training_result.results_path, metric=request.metric)
@@ -464,10 +463,17 @@ def _extract_metric_value(*, results_path: Path, metric: str) -> float:
     return value
 
 
-def _extract_post_fold_objective_value(*, store_root: Path, run_id: str) -> float:
+def _extract_post_fold_objective_value(
+    *,
+    store_root: Path,
+    run_id: str,
+    results_path: Path | None = None,
+) -> float:
     snapshot_path = store_root / "runs" / run_id / "artifacts" / "scoring" / "post_fold_snapshots.parquet"
     if not snapshot_path.exists():
-        raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
+        if results_path is None:
+            raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
+        return _extract_default_hpo_metric_from_results(results_path=results_path)
     try:
         snapshot = pd.read_parquet(snapshot_path)
     except Exception as exc:
@@ -549,9 +555,12 @@ def _extract_metric_value_from_predictions(
         raise HpoExecutionError(f"hpo_neutralized_metric_compute_failed:{exc}") from exc
 
     metrics_payload = _metrics_payload_from_summaries(summaries=scoring_result.summaries)
-    value = _metric_lookup({"metrics": metrics_payload}, metric)
-    if value is None and not metric.startswith("metrics."):
-        value = _metric_lookup({"metrics": metrics_payload}, f"metrics.{metric}")
+    if metric == _DEFAULT_HPO_METRIC:
+        value = _default_hpo_metric_from_payload(metrics_payload)
+    else:
+        value = _metric_lookup({"metrics": metrics_payload}, metric)
+        if value is None and not metric.startswith("metrics."):
+            value = _metric_lookup({"metrics": metrics_payload}, f"metrics.{metric}")
     if value is None:
         raise HpoExecutionError(f"hpo_metric_not_found:{metric}")
     return value
@@ -567,6 +576,57 @@ def _metrics_payload_from_summaries(*, summaries: dict[str, Any]) -> dict[str, A
             continue
         payload[key] = summary.loc["prediction"].to_dict()
     return payload
+
+
+def _extract_default_hpo_metric_from_results(*, results_path: Path) -> float:
+    if not results_path.exists():
+        raise HpoExecutionError(f"hpo_results_not_found:{results_path}")
+
+    try:
+        payload = json.loads(results_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HpoExecutionError("hpo_results_invalid") from exc
+
+    metrics_payload = payload.get("metrics")
+    if not isinstance(metrics_payload, dict):
+        raise HpoExecutionError(f"hpo_metric_not_found:{_DEFAULT_HPO_METRIC}")
+
+    value = _default_hpo_metric_from_payload(metrics_payload)
+    if value is None:
+        raise HpoExecutionError(f"hpo_metric_not_found:{_DEFAULT_HPO_METRIC}")
+    return value
+
+
+def _default_hpo_metric_from_payload(metrics_payload: dict[str, Any]) -> float | None:
+    payload = {"metrics": metrics_payload}
+    corr_value = _metric_lookup(payload, "metrics.corr.mean")
+    bmc_value = _metric_lookup(payload, "metrics.bmc_last_200_eras.mean")
+    if bmc_value is None:
+        bmc_value = _metric_lookup(payload, "metrics.bmc.mean")
+    if bmc_value is None:
+        bmc_value = _metric_lookup(payload, _aliased_metric_path(metrics_payload, "bmc_last_200_eras"))
+    if bmc_value is None:
+        bmc_value = _metric_lookup(payload, _aliased_metric_path(metrics_payload, "bmc"))
+
+    if corr_value is None and bmc_value is None:
+        return None
+    if corr_value is None:
+        return bmc_value
+    if bmc_value is None:
+        return corr_value
+    return (_POST_FOLD_CORR_WEIGHT * corr_value) + (_POST_FOLD_BMC_WEIGHT * bmc_value)
+
+
+def _aliased_metric_path(metrics_payload: dict[str, Any], metric_name: str) -> str:
+    if metric_name == "bmc":
+        alias_keys = [
+            key for key in metrics_payload if key.startswith("bmc_") and not key.startswith("bmc_last_200_eras_")
+        ]
+    else:
+        alias_keys = [key for key in metrics_payload if key.startswith(f"{metric_name}_")]
+    if len(alias_keys) != 1:
+        return ""
+    return f"metrics.{alias_keys[0]}.mean"
 
 
 def _as_mapping(value: object) -> dict[str, object]:

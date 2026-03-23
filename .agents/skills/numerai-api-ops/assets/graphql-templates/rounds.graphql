@@ -1,0 +1,43 @@
+query CurrentRound($tournament: Int!) {
+  rounds(tournament: $tournament, number: 0) {
+    number
+    openTime
+    resolveTime
+    resolvedGeneral
+    resolvedStaking
+  }
+}
+
+query CompetitionRounds($tournament: Int!) {
+  rounds(tournament: $tournament) {
+    number
+    openTime
+    resolveTime
+    resolvedGeneral
+    resolvedStaking
+  }
+}
+
+query RoundDetails($roundNumber: Int!, $tournament: Int!) {
+  roundDetails(roundNumber: $roundNumber, tournament: $tournament) {
+    roundNumber
+    tournament
+    status
+    isDaily
+    roundTarget
+    openTime
+    closeTime
+    closeStakingTime
+    scoreTime
+    scoresUpdatedTime
+    roundResolveTime
+    roundResolved
+    payoutFactor
+    totalSubmitted
+    totalStakes
+    totalAtStake
+    totalPayout
+    totalEarned
+    totalBurned
+  }
+}

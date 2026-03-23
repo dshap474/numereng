@@ -75,9 +75,7 @@ def infer_bucket(*, config_s3_uri: str | None, output_s3_uri: str | None) -> str
 
 def _candidate_config_paths(channel_dir: Path) -> list[Path]:
     candidates = [
-        path
-        for path in channel_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in _CONFIG_EXTENSIONS
+        path for path in channel_dir.rglob("*") if path.is_file() and path.suffix.lower() in _CONFIG_EXTENSIONS
     ]
     candidates.sort(key=lambda value: str(value))
     return candidates

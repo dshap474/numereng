@@ -33,10 +33,10 @@ from numereng.api import (
     ExperimentPromoteResponse,
     ExperimentReportRequest,
     ExperimentReportResponse,
-    ExperimentTrainRequest,
-    ExperimentTrainResponse,
     ExperimentScoreRoundRequest,
     ExperimentScoreRoundResponse,
+    ExperimentTrainRequest,
+    ExperimentTrainResponse,
     HealthResponse,
     ModalDataSyncRequest,
     ModalDeployRequest,
@@ -55,6 +55,12 @@ from numereng.api import (
     NumeraiModelsResponse,
     NumeraiTournament,
     PackageError,
+    ResearchInitRequest,
+    ResearchInitResponse,
+    ResearchRunRequest,
+    ResearchRunResponse,
+    ResearchStatusRequest,
+    ResearchStatusResponse,
     ScoreRunRequest,
     ScoreRunResponse,
     StoreDoctorRequest,
@@ -86,6 +92,9 @@ from numereng.api import (
     get_numerai_current_round,
     list_numerai_datasets,
     list_numerai_models,
+    research_init,
+    research_run,
+    research_status,
     run_bootstrap_check,
     run_training,
     score_run,
@@ -95,6 +104,12 @@ from numereng.api import (
     store_materialize_viz_artifacts,
     store_rebuild,
     submit_predictions,
+)
+from numereng.features.agentic_research import (
+    ResearchBestRun,
+    ResearchInitResult,
+    ResearchRunResult,
+    ResearchStatusResult,
 )
 from numereng.features.cloud.aws import CloudAwsError, CloudEc2Error
 from numereng.features.cloud.modal import CloudModalError
@@ -1605,6 +1620,86 @@ def test_experiment_train_translates_validation_error(monkeypatch: pytest.Monkey
         )
 
 
+def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "init_research_program",
+        lambda *, store_root, experiment_id, strategy, improvement_threshold: ResearchInitResult(
+            root_experiment_id=experiment_id,
+            strategy=strategy,
+            strategy_description="Numerai Experiment Loop",
+            status="initialized",
+            active_experiment_id=experiment_id,
+            active_path_id="p00",
+            improvement_threshold=improvement_threshold,
+            current_phase=None,
+            agentic_research_dir=Path("/tmp/agentic_research"),
+            program_path=Path("/tmp/agentic_research/program.json"),
+            lineage_path=Path("/tmp/agentic_research/lineage.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "get_research_program_status",
+        lambda *, store_root, experiment_id: ResearchStatusResult(
+            root_experiment_id=experiment_id,
+            strategy="numerai-experiment-loop",
+            strategy_description="Numerai Experiment Loop",
+            status="running",
+            active_experiment_id=experiment_id,
+            active_path_id="p00",
+            next_round_number=2,
+            total_rounds_completed=1,
+            total_paths_created=1,
+            improvement_threshold=0.0002,
+            last_checkpoint="round_completed",
+            stop_reason=None,
+            best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
+            current_round=None,
+            current_phase=None,
+            program_path=Path("/tmp/agentic_research/program.json"),
+            lineage_path=Path("/tmp/agentic_research/lineage.json"),
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "run_research_program",
+        lambda *, store_root, experiment_id, max_rounds, max_paths: ResearchRunResult(
+            root_experiment_id=experiment_id,
+            strategy="numerai-experiment-loop",
+            strategy_description="Numerai Experiment Loop",
+            status="stopped",
+            active_experiment_id=experiment_id,
+            active_path_id="p00",
+            next_round_number=3,
+            total_rounds_completed=2,
+            total_paths_created=1,
+            last_checkpoint="stopped",
+            stop_reason="max_rounds_reached",
+            current_phase=None,
+            interrupted=False,
+        ),
+    )
+
+    init_payload = research_init(
+        ResearchInitRequest(
+            experiment_id="2026-02-22_test-exp",
+            strategy="numerai-experiment-loop",
+        )
+    )
+    assert isinstance(init_payload, ResearchInitResponse)
+    assert init_payload.active_path_id == "p00"
+    assert init_payload.strategy == "numerai-experiment-loop"
+
+    status_payload = research_status(ResearchStatusRequest(experiment_id="2026-02-22_test-exp"))
+    assert isinstance(status_payload, ResearchStatusResponse)
+    assert status_payload.best_overall.run_id == "run-4"
+
+    run_payload = research_run(ResearchRunRequest(experiment_id="2026-02-22_test-exp", max_rounds=1))
+    assert isinstance(run_payload, ResearchRunResponse)
+    assert run_payload.stop_reason == "max_rounds_reached"
+
+
 def test_store_init_success(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_init_store_db(*, store_root: str) -> StoreInitResult:
         assert store_root == ".numereng"
@@ -2133,9 +2228,7 @@ class _CloudModalServiceRecorder:
         ),
         (
             api_module.cloud_modal_deploy,
-            ModalDeployRequest(
-                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
-            ),
+            ModalDeployRequest(ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"),
             "deploy",
         ),
         (
@@ -2172,9 +2265,7 @@ def test_cloud_modal_api_functions_delegate_to_service(
         ),
         (
             api_module.cloud_modal_deploy,
-            ModalDeployRequest(
-                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
-            ),
+            ModalDeployRequest(ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"),
         ),
         (api_module.cloud_modal_train_status, ModalTrainStatusRequest(call_id="fc-1")),
         (api_module.cloud_modal_train_logs, ModalTrainLogsRequest(call_id="fc-1")),
@@ -2222,9 +2313,7 @@ def test_cloud_modal_api_translates_cloud_error(
         ),
         (
             api_module.cloud_modal_deploy,
-            ModalDeployRequest(
-                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
-            ),
+            ModalDeployRequest(ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"),
         ),
         (api_module.cloud_modal_train_submit, ModalTrainSubmitRequest(config_path="config.json")),
         (api_module.cloud_modal_train_status, ModalTrainStatusRequest(call_id="fc-1")),

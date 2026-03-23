@@ -1,8 +1,0 @@
-name: "skill:NumeraiModelImplementation"
-
-interface:
-  display_name: "skill:NumeraiModelImplementation"
-  default_prompt: "Use the numerai-model-implementation skill to add a numereng model type by starting from the tracked custom-model template and validating it with the current training pipeline."
-
-policy:
-  allow_implicit_invocation: true

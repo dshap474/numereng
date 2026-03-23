@@ -31,10 +31,13 @@ Optional extras:
 ## Common checks
 
 ```bash
+# auto-fix lint issues and normalize formatting
+make fmt
+
 # repo hygiene and high-confidence secret scan
 make oss-preflight
 
-# fast gate: lint + types + non-slow tests
+# fast gate: format check + lint + scoped ty + non-slow tests
 make test
 
 # full gate: includes slow tests
@@ -47,10 +50,14 @@ uv build
 For targeted work, prefer direct `uv run` commands:
 
 ```bash
+uv run ruff format --check .
 uv run ruff check .
-uv run mypy --strict src tests
+uv run ty check
 uv run pytest -q tests/path/to/test_file.py
 ```
+
+`ty` is the canonical repo type gate. Its first enforced surface is intentionally scoped via
+`[tool.ty.src].include` in `pyproject.toml` while broader repo cleanup is deferred.
 
 ## Pull requests
 

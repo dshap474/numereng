@@ -11,8 +11,8 @@ Note: run commands from `<repo>` with `uv run numereng ...`.
 
 Use `numereng-experiment-ops` for numereng-specific experiment layout, config templates, schema
 questions, `EXPERIMENT.md` formatting, and run artifact expectations. Use `store-ops` for drift,
-reindex, reset, or cleanup. Use `numerai-model-implementation` when the model type is new. Use
-`numerai-model-upload` after a champion is finalized and submission work is needed.
+reindex, reset, or cleanup. Use `implement-custom-model` when the model type is new. Use
+`numereng-experiment-ops` after a champion is finalized and submission handoff is needed.
 
 ## Use when
 - the user wants experiment strategy, round design, scout-to-scale decisions, plateau logic, or
@@ -24,8 +24,8 @@ reindex, reset, or cleanup. Use `numerai-model-implementation` when the model ty
 - the user needs experiment folder, manifest, schema, or template rules; use
   `numereng-experiment-ops`
 - the user needs drift diagnosis, reindex, reset, or cleanup; use `store-ops`
-- the user needs a new model type implemented; use `numerai-model-implementation`
-- the user needs live submission steps; use `numerai-model-upload`
+- the user needs a new custom model type implemented; use `implement-custom-model`
+- the user needs the concrete numereng submission handoff after champion selection; use `numereng-experiment-ops`
 
 ## Persistence expectation (required)
 
@@ -59,7 +59,7 @@ If the user's request is unclear or underspecified:
 
 ## Workflow
 Core loop (repeat for each experiment round):
-1. If the model type is new, implement it with the `numerai-model-implementation` skill.
+1. If the model type is new, implement it with the `implement-custom-model` skill.
 2. Create or update **4-5 configs** for the current round:
    - one base
    - single-variable variants
@@ -166,13 +166,13 @@ question of whether this idea can produce a model with high BMC.
 
 ## Deployment (after experiments complete)
 Once you have finalized your best model and have a submission-ready run artifact or predictions
-source using the `numerai-model-upload` skill:
+source using the `numereng-experiment-ops` skill:
 
 1. **Offer deployment**: Ask the user if they want to submit the champion through numereng.
 2. **Deployment options**:
-   - submit from the winning run artifact
+   - submit from a live-eligible winning run artifact
    - submit from an explicit predictions file
-3. **Follow the `numerai-model-upload` skill** for the concrete submission workflow.
+3. **Follow the `numereng-experiment-ops` skill** for the final refit and submission workflow.
 
 This allows the full research-to-submission workflow to happen in a single session.
 

@@ -172,9 +172,7 @@ def test_ensure_full_dataset_writes_to_derived_cache(tmp_path: Path) -> None:
 
     full_path = ensure_full_dataset(_NoDownloadClient(), "v5.2", data_root=data_root)
 
-    assert full_path == (
-        tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "full.parquet"
-    ).resolve()
+    assert full_path == (tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "full.parquet").resolve()
     assert not (version_dir / "full.parquet").exists()
 
     full = pd.read_parquet(full_path)
@@ -201,9 +199,7 @@ def test_ensure_full_dataset_downsampled_uses_downsampled_full_path(tmp_path: Pa
         data_root=data_root,
     )
     assert resolved == downsampled_full_path.resolve()
-    assert not (
-        tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "downsampled_full.parquet"
-    ).exists()
+    assert not (tmp_path / ".numereng" / "cache" / "derived_datasets" / "v5.2" / "downsampled_full.parquet").exists()
 
 
 def test_ensure_train_dataset_returns_train_parquet_path(tmp_path: Path) -> None:

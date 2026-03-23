@@ -16,6 +16,10 @@ USAGE = (
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng experiment pack --id <id> [--store-root <path>]\n"
+    "  numereng research init --experiment-id <id> "
+    "--strategy <numerai-experiment-loop|kaggle-gm-loop> [--store-root <path>]\n"
+    "  numereng research status --experiment-id <id> [--format <table|json>] [--store-root <path>]\n"
+    "  numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--store-root <path>]\n"  # noqa: E501
     "  numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--store-root <path>]\n"  # noqa: E501
     "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
     "  numereng hpo details --study-id <id> [--format <table|json>] [--store-root <path>]\n"

@@ -36,6 +36,7 @@ In scope:
 - baseline-directory and active-benchmark setup guidance for benchmark-relative scoring
 - current CLI/API command contract for experiment execution
 - run output and metric artifact expectations
+- champion handoff for final refit and official Numerai submission
 - deciding when to hand off to `store-ops`
 
 Out of scope:
@@ -230,6 +231,30 @@ The packed markdown includes:
 Do not treat the pack file as a replacement for `EXPERIMENT.md`.
 It is a generated snapshot and should not include per-era or other time-series metrics.
 
+## Champion Handoff And Submission
+
+When an experiment has a clear winner and the user wants an official Numerai submission:
+
+1. pick the winning run or config from the experiment based on the recorded experiment metric
+2. treat `purged_walk_forward` runs as evaluation artifacts only; do not directly submit their CV prediction parquet
+3. rerun the winning config with `training.engine.profile = "full_history_refit"` to produce the final-fit model artifact
+4. generate a live predictions parquet for the current Numerai round from that final-fit model
+5. submit the live predictions through numereng
+
+Current numereng contract:
+
+- numereng supports official submission of a live predictions parquet through:
+  - `uv run numereng run submit --model-name <model_name> --predictions <live_predictions.parquet>`
+- numereng also supports submission by run ID only when the referenced run already contains a live-eligible predictions artifact:
+  - `uv run numereng run submit --model-name <model_name> --run-id <run_id>`
+- numereng does not currently expose a first-class command that downloads `live.parquet`, runs live inference, and writes the submission parquet for you
+- numereng submission is predictions-based, not Numerai Compute pickle upload
+
+Practical handoff rule:
+
+- if the task is "how do I choose the winner and get it ready for submission?", keep the task in this skill
+- if the task is "how do I inspect models, rounds, tournaments, diagnostics, or direct Numerai API operations?", use `numerai-api-ops`
+
 ## Run Output Contract
 
 Each completed run should have a run directory under:
@@ -254,6 +279,10 @@ Expect `run.json` to carry:
 At minimum, artifact paths declared in `run.json` should exist on disk for successful runs.
 Prediction parquet outputs should match the recorded artifact paths.
 Archiving does not move or delete `.numereng/runs/<run_id>/`; only experiment-local files move.
+
+High-signal submission caveat:
+- a run-local predictions artifact is only submittable when it is a live-eligible predictions file for the active Numerai round
+- historical validation/CV prediction artifacts from experiment training are not the same thing as live submission files
 
 For experiment progress, the manifest in `experiment.json` is the source of truth for run order
 and completion count.

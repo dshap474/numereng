@@ -22,10 +22,7 @@ def _resolve_custom_models_root() -> Path:
 
 def _load_model_registry(module_path: Path) -> dict[str, Any]:
     """Load a module and return its MODEL_REGISTRY mapping."""
-    module_name = (
-        "numereng_custom_"
-        + hashlib.md5(str(module_path.resolve()).encode("utf-8")).hexdigest()[:12]
-    )
+    module_name = "numereng_custom_" + hashlib.md5(str(module_path.resolve()).encode("utf-8")).hexdigest()[:12]
 
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
@@ -36,15 +33,11 @@ def _load_model_registry(module_path: Path) -> dict[str, Any]:
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001
-        raise TrainingModelError(
-            f"training_model_custom_module_load_failed:{module_path}"
-        ) from exc
+        raise TrainingModelError(f"training_model_custom_module_load_failed:{module_path}") from exc
 
     registry = getattr(module, "MODEL_REGISTRY", None)
     if not isinstance(registry, dict):
-        raise TrainingModelError(
-            f"training_model_registry_missing_or_invalid:{module_path}"
-        )
+        raise TrainingModelError(f"training_model_registry_missing_or_invalid:{module_path}")
     return registry
 
 
@@ -80,9 +73,7 @@ def _iter_module_paths(module_path: str | None) -> list[Path]:
     if normalized:
         return normalized
 
-    raise TrainingModelError(
-        f"training_model_custom_module_not_found:{module_path}"
-    )
+    raise TrainingModelError(f"training_model_custom_module_not_found:{module_path}")
 
 
 def _resolve_model_class(

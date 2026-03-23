@@ -1,0 +1,49 @@
+{
+  "title": "Kaggle GM Loop",
+  "description": "Phase-aware campaign strategy mirroring the kaggle-gm-workflow skill. It advances through the 7-phase Kaggle GM playbook while still executing supported work as experiment rounds inside the existing agentic research runtime.",
+  "phase_aware": true,
+  "phases": [
+    {
+      "phase_id": "phase1_eda_baseline",
+      "title": "Phase 1 - EDA & Baseline",
+      "summary": "Establish a payout-target LightGBM floor on scout-friendly data and verify the basic data/config setup is sane.",
+      "gate": "Baseline is trained, data issues are clear, and the campaign is ready to move into a diversity campaign."
+    },
+    {
+      "phase_id": "phase2_diversity_campaign",
+      "title": "Phase 2 - Diversity Campaign",
+      "summary": "Expand across targets, model families, and feature scope to build a diverse set of promising candidates.",
+      "gate": "There is a credible diverse pool of candidates, not just one narrow local optimum."
+    },
+    {
+      "phase_id": "phase3_hpo_refinement",
+      "title": "Phase 3 - HPO Refinement",
+      "summary": "Refine the strongest candidate families with controlled hyperparameter sweeps.",
+      "gate": "The best families have been tested for meaningful improvement over defaults."
+    },
+    {
+      "phase_id": "phase4_seed_ensembling",
+      "title": "Phase 4 - Seed Ensembling",
+      "summary": "Reduce variance by testing multi-seed versions of the strongest candidates.",
+      "gate": "Seed-averaged candidates show a better stability profile than single-seed versions."
+    },
+    {
+      "phase_id": "phase5_ensemble_construction",
+      "title": "Phase 5 - Ensemble Construction",
+      "summary": "Use the campaign learnings to define which candidates should be blended or stacked next.",
+      "gate": "There is a clear ensemble direction or a reason to stop instead of forcing one."
+    },
+    {
+      "phase_id": "phase6_postprocessing",
+      "title": "Phase 6 - Post-Processing",
+      "summary": "Plan neutralization and prediction-shape checks that should be run on the leading candidates.",
+      "gate": "There is a defensible post-processing policy for the candidate set."
+    },
+    {
+      "phase_id": "phase7_validation_submission",
+      "title": "Phase 7 - Validation & Submission",
+      "summary": "Decide whether the campaign is submission-ready or should stop for user review.",
+      "gate": "The campaign is ready for user review and optional submission. Do not auto-submit."
+    }
+  ]
+}

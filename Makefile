@@ -1,4 +1,4 @@
-.PHONY: test test-all viz kill-viz oss-preflight
+.PHONY: ci fmt test test-all viz kill-viz oss-preflight
 
 API_PORT ?= 8502
 VITE_PORT ?= 5173
@@ -7,14 +7,22 @@ VIZ_WEB := $(VIZ_DIR)/web
 API_PID_FILE := $(VIZ_DIR)/api.pid
 VITE_PID_FILE := $(VIZ_DIR)/vite.pid
 
+ci: test
+
+fmt:
+	uv run ruff check --fix-only .
+	uv run ruff format .
+
 test:
+	uv run ruff format --check .
 	uv run ruff check .
-	uv run mypy --strict src tests
+	uv run ty check
 	uv run pytest -q -m "not slow"
 
 test-all:
+	uv run ruff format --check .
 	uv run ruff check .
-	uv run mypy --strict src tests
+	uv run ty check
 	uv run pytest -q
 
 oss-preflight:

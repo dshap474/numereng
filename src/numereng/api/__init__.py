@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from numereng.api._agentic_research import research_init, research_run, research_status
 from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
 from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
 from numereng.api._experiment import (
@@ -97,9 +98,9 @@ from numereng.api.contracts import (
     ExperimentReportRequest,
     ExperimentReportResponse,
     ExperimentReportRowResponse,
+    ExperimentResponse,
     ExperimentScoreRoundRequest,
     ExperimentScoreRoundResponse,
-    ExperimentResponse,
     ExperimentStatus,
     ExperimentTrainRequest,
     ExperimentTrainResponse,
@@ -124,6 +125,17 @@ from numereng.api.contracts import (
     NumeraiModelsRequest,
     NumeraiModelsResponse,
     NumeraiTournament,
+    ResearchBestRunResponse,
+    ResearchInitRequest,
+    ResearchInitResponse,
+    ResearchPhaseResponse,
+    ResearchRoundResponse,
+    ResearchRunRequest,
+    ResearchRunResponse,
+    ResearchStatusRequest,
+    ResearchStatusResponse,
+    ResearchStrategy,
+    ResearchSupervisorStatus,
     ScoreRunRequest,
     ScoreRunResponse,
     StoreDoctorRequest,
@@ -144,6 +156,15 @@ from numereng.api.contracts import (
     TrainingProfile,
     TrainRunRequest,
     TrainRunResponse,
+)
+from numereng.features.agentic_research import (
+    get_research_status as get_research_program_status,
+)
+from numereng.features.agentic_research import (
+    init_research as init_research_program,
+)
+from numereng.features.agentic_research import (
+    run_research as run_research_program,
 )
 from numereng.features.cloud.aws import (
     AwsImageBuildPushRequest,
@@ -217,6 +238,8 @@ _COMPAT_EXPORTS = (
     _create_cloud_modal_service,
     _create_numerai_client,
     _default_dataset_dest_path,
+    get_research_program_status,
+    init_research_program,
     archive_experiment_record,
     create_experiment_record,
     get_experiment_record,
@@ -244,6 +267,7 @@ _COMPAT_EXPORTS = (
     neutralize_run_prediction_artifact,
     score_run_pipeline,
     run_training_pipeline,
+    run_research_program,
     scrape_forum_posts,
 )
 
@@ -286,6 +310,17 @@ __all__ = [
     "ExperimentStatus",
     "ExperimentTrainRequest",
     "ExperimentTrainResponse",
+    "ResearchBestRunResponse",
+    "ResearchInitRequest",
+    "ResearchInitResponse",
+    "ResearchPhaseResponse",
+    "ResearchRoundResponse",
+    "ResearchRunRequest",
+    "ResearchRunResponse",
+    "ResearchStatusRequest",
+    "ResearchStatusResponse",
+    "ResearchStrategy",
+    "ResearchSupervisorStatus",
     "Ec2ConfigUploadRequest",
     "Ec2InitIamRequest",
     "Ec2InstallRequest",
@@ -433,6 +468,9 @@ __all__ = [
     "pack_experiment_record",
     "rebuild_run_index",
     "report_experiment_record",
+    "research_init",
+    "research_run",
+    "research_status",
     "score_run_pipeline",
     "run_training_pipeline",
     "score_run",
@@ -443,6 +481,9 @@ __all__ = [
     "store_rebuild",
     "run_training",
     "run_bootstrap_check",
+    "init_research_program",
+    "get_research_program_status",
+    "run_research_program",
     "neutralize_prediction_artifact",
     "neutralize_run_prediction_artifact",
     "submit_predictions_file",

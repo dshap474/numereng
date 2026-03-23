@@ -35,6 +35,7 @@ Source map:
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
+- `src/numereng/features/agentic_research/*`: foreground supervisor that plans 4-5 config rounds, persists program state under one root experiment, pivots into child experiments when a path plateaus, and now selects a persisted research strategy at `research init`. Current strategies are `numerai-experiment-loop` and the phase-aware `kaggle-gm-loop`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); `codex-exec` uses the dedicated lean `CODEX_HOME`, while `openrouter` uses the configured `ACTIVE_MODEL`.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -66,6 +67,10 @@ Key artifacts:
 - `experiments/<experiment_id>/EXPERIMENT.md`
 - `experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `experiments/<experiment_id>/configs/*.json`
+- `experiments/<experiment_id>/agentic_research/program.json`
+- `experiments/<experiment_id>/agentic_research/lineage.json`
+- `experiments/<experiment_id>/agentic_research/rounds/rN/*`
+  - planner round artifacts include `codex_prompt.txt`, `codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`, `codex_decision.json`, `planned_configs.json`, `report.json`, `round_summary.json`
 - `experiments/_archive/<experiment_id>/...`
 
 Wiring map:
@@ -83,6 +88,15 @@ Wiring map:
   `cli experiment score-round -> bind cli metadata -> api.experiment_score_round -> features.experiments.score_experiment_round -> features.scoring.batch_service.score_run_batch`
 - Experiment pack:
   `cli experiment pack -> api.experiment_pack -> features.experiments.pack_experiment`
+- Agentic research:
+  `cli research init|status|run -> api.research_init|research_status|research_run -> features.agentic_research.init_research|get_research_status|run_research`
+  - `research init` now requires `strategy`
+  - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`)
+  - strategy is persisted in `program.json`; old initialized programs without a strategy must be re-initialized
+  - phase-aware strategies expose `current_phase` in API/CLI status and run responses
+  - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime is isolated from the user’s interactive Codex defaults via a feature-managed learner `CODEX_HOME`
+  - the selected planner backend receives a compact closed-world bundle: metric policy, path state, strategy context, base config snapshot, allowed override paths, and validated config examples
+  - the selected planner backend returns override-only config specs plus strategy decisions; Python materializes and validates full `TrainingConfig` JSON before writing configs
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
@@ -224,7 +238,8 @@ Critical invariants:
 
 CLI families:
 - `numereng run train|score|submit`
-- `numereng experiment create|list|details|archive|unarchive|train|promote|report|pack`
+- `numereng experiment create|list|details|archive|unarchive|train|score-round|promote|report|pack`
+- `numereng research init|status|run`
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`
 - `numereng neutralize apply`
@@ -236,10 +251,18 @@ CLI families:
 - `numereng numerai datasets (list|download) | models | round | forum scrape`
 
 Verification anchors:
+- Format: `uv run ruff format --check .`
+- Lint: `uv run ruff check .`
+- Types: `uv run ty check`
 - Fast: `make test`
 - Full: `make test-all`
 - Build: `uv build`
 - Surface smoke: `tests/integration/test_smoke_structure.py`
+
+Tooling notes:
+- Canonical local toolchain: `uv` + Ruff + `ty` + `pytest`.
+- Ruff remains minimal: formatter plus lint families `E`, `F`, `I`, `UP`.
+- `ty` adoption is intentionally staged through `[tool.ty.src].include` in `pyproject.toml`; do not widen the enforced surface casually.
 
 When changing flows/contracts:
 1) Preserve API/CLI compatibility unless intentionally versioned.

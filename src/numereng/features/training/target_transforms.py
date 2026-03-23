@@ -78,9 +78,7 @@ def residualize_to_column(
 ) -> pd.Series:
     """Residualize target values to one benchmark column."""
     if benchmark_col not in X.columns:
-        raise TrainingModelError(
-            f"training_target_transform_benchmark_col_missing:{benchmark_col}"
-        )
+        raise TrainingModelError(f"training_target_transform_benchmark_col_missing:{benchmark_col}")
 
     if per_era and era_col not in X.columns:
         raise TrainingModelError(f"training_target_transform_era_col_missing:{era_col}")
@@ -107,9 +105,7 @@ def subtract_scaled_zscore_column(
 ) -> pd.Series:
     """Subtract scaled benchmark z-score from target."""
     if benchmark_col not in X.columns:
-        raise TrainingModelError(
-            f"training_target_transform_benchmark_col_missing:{benchmark_col}"
-        )
+        raise TrainingModelError(f"training_target_transform_benchmark_col_missing:{benchmark_col}")
 
     if era_col not in X.columns:
         raise TrainingModelError(f"training_target_transform_era_col_missing:{era_col}")

@@ -57,9 +57,7 @@ class CloudAwsError(Exception):
 
 DEFAULT_REGION = os.getenv("NUMERENG_AWS_REGION", "us-east-2") or "us-east-2"
 DEFAULT_BUCKET = os.getenv("NUMERENG_S3_BUCKET", "numereng-artifacts") or "numereng-artifacts"
-DEFAULT_ECR_REPOSITORY = (
-    os.getenv("NUMERENG_AWS_ECR_REPOSITORY", "numereng-training") or "numereng-training"
-)
+DEFAULT_ECR_REPOSITORY = os.getenv("NUMERENG_AWS_ECR_REPOSITORY", "numereng-training") or "numereng-training"
 DEFAULT_SAGEMAKER_ROLE_ARN = os.getenv("NUMERENG_AWS_SAGEMAKER_ROLE_ARN", "")
 DEFAULT_BATCH_JOB_QUEUE = os.getenv("NUMERENG_AWS_BATCH_JOB_QUEUE", "")
 DEFAULT_BATCH_JOB_DEFINITION = os.getenv("NUMERENG_AWS_BATCH_JOB_DEFINITION", "")

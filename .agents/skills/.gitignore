@@ -10,10 +10,10 @@
 !experiment-design/**
 !numereng-experiment-ops/
 !numereng-experiment-ops/**
-!numerai-model-implementation/
-!numerai-model-implementation/**
-!numerai-model-upload/
-!numerai-model-upload/**
+!numerai-api-ops/
+!numerai-api-ops/**
+!implement-custom-model/
+!implement-custom-model/**
 !store-ops/
 !store-ops/**
 

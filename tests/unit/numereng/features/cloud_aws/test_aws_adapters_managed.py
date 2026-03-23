@@ -125,12 +125,12 @@ def test_sagemaker_start_training_builds_expected_request(
             {
                 "ChannelName": "training",
                 "DataSource": {
-                        "S3DataSource": {
-                            "S3DataType": "S3Prefix",
-                            "S3Uri": "s3://numereng-artifacts/runs/run-1/config/train.json",
-                            "S3DataDistributionType": "FullyReplicated",
-                        }
-                    },
+                    "S3DataSource": {
+                        "S3DataType": "S3Prefix",
+                        "S3Uri": "s3://numereng-artifacts/runs/run-1/config/train.json",
+                        "S3DataDistributionType": "FullyReplicated",
+                    }
+                },
             }
         ],
         "OutputDataConfig": {"S3OutputPath": "s3://numereng-artifacts/runs/run-1/managed-output/"},

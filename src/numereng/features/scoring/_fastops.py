@@ -248,9 +248,7 @@ def feature_exposure_matrices(
             rms[pred_idx] = np.nan
             max_abs[pred_idx] = np.nan
             continue
-        corr = (pred_centered[:, None] * feature_centered).sum(axis=0) / (
-            (n_rows - 1) * pred_std * feature_std
-        )
+        corr = (pred_centered[:, None] * feature_centered).sum(axis=0) / ((n_rows - 1) * pred_std * feature_std)
         corr = np.abs(corr[np.isfinite(corr)])
         if corr.size == 0:
             rms[pred_idx] = np.nan

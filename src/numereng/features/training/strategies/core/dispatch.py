@@ -148,8 +148,7 @@ def _raise_if_legacy_custom_knobs_present(
     embargo_eras: int | None,
 ) -> None:
     has_legacy_config_knobs = any(
-        key in engine_config and engine_config.get(key) is not None
-        for key in ("window_size_eras", "embargo_eras")
+        key in engine_config and engine_config.get(key) is not None for key in ("window_size_eras", "embargo_eras")
     )
     if has_legacy_config_knobs or window_size_eras is not None or embargo_eras is not None:
         raise TrainingConfigError("training_profile_disallows_custom_parameters")

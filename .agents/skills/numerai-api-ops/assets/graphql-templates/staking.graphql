@@ -1,0 +1,35 @@
+mutation ChangeStake(
+  $value: String!,
+  $type: String!,
+  $tournamentNumber: Int!,
+  $modelId: String
+) {
+  v2ChangeStake(
+    value: $value,
+    type: $type,
+    tournamentNumber: $tournamentNumber,
+    modelId: $modelId
+  ) {
+    dueDate
+    requestedAmount
+    status
+    type
+  }
+}
+
+mutation DrainStake($drain: Boolean!, $amount: String, $modelId: String) {
+  releaseStake(drain: $drain, amount: $amount, modelId: $modelId) {
+    id
+    dueDate
+    status
+    type
+    requestedAmount
+    drain
+  }
+}
+
+query StakeFromProfile($modelName: String!) {
+  v3UserProfile(modelName: $modelName) {
+    stakeValue
+  }
+}

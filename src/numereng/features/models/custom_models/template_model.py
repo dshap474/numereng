@@ -6,6 +6,8 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.features.training.errors import TrainingModelError
+
 
 class TemplateModel:
     """Rename this class and registry key before using it in a real config."""
@@ -34,6 +36,13 @@ class TemplateModel:
     ) -> pd.DataFrame:
         if not feature_cols or not hasattr(X, "columns"):
             return X
+
+        missing = [col for col in feature_cols if col not in X.columns]
+        if missing:
+            raise TrainingModelError(
+                "training_model_feature_columns_missing:" + ",".join(missing[:5]) + (",..." if len(missing) > 5 else "")
+            )
+
         return X[feature_cols]
 
 

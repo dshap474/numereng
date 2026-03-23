@@ -138,9 +138,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
     study_config: dict[str, object] = {}
     if "--study-config" in values:
         try:
-            study_config = load_hpo_study_config_json(
-                Path(values["--study-config"]).expanduser().resolve()
-            )
+            study_config = load_hpo_study_config_json(Path(values["--study-config"]).expanduser().resolve())
         except HpoConfigLoaderError as exc:
             print(str(exc), file=sys.stderr)
             print(USAGE, file=sys.stderr)

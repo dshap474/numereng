@@ -156,14 +156,10 @@ def persist_scoring_artifacts(
     manifest_payload = dict(bundle.manifest)
     manifest_payload.pop("files", None)
     current_chart_files = {
-        key: filename
-        for key, filename in SCORING_CHART_FILENAMES.items()
-        if (scoring_dir / filename).is_file()
+        key: filename for key, filename in SCORING_CHART_FILENAMES.items() if (scoring_dir / filename).is_file()
     }
     current_stage_files = {
-        key: filename
-        for key, filename in SCORING_STAGE_FILENAMES.items()
-        if (scoring_dir / filename).is_file()
+        key: filename for key, filename in SCORING_STAGE_FILENAMES.items() if (scoring_dir / filename).is_file()
     }
     manifest_payload["chart_files"] = current_chart_files
     manifest_payload["stage_files"] = current_stage_files

@@ -18,9 +18,9 @@ from numereng.api.contracts import (
     ExperimentReportRequest,
     ExperimentReportResponse,
     ExperimentReportRowResponse,
+    ExperimentResponse,
     ExperimentScoreRoundRequest,
     ExperimentScoreRoundResponse,
-    ExperimentResponse,
     ExperimentTrainRequest,
     ExperimentTrainResponse,
 )

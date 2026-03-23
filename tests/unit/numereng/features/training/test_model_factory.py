@@ -25,7 +25,7 @@ class _DummyModel:
 
 def _write_model_file(path: Path, class_name: str = "PluginModel") -> None:
     path.write_text(
-        f'''
+        f"""
 class {class_name}:
     def __init__(self, feature_cols=None, **kwargs):
         self.feature_cols = feature_cols
@@ -38,7 +38,7 @@ class {class_name}:
         return []
 
 MODEL_REGISTRY = {{{class_name!r}: {class_name}}}
-'''
+"""
     )
 
 
@@ -179,6 +179,66 @@ def test_build_model_missing_explicit_module_path_is_error(tmp_path: Path) -> No
             "MissingModel",
             {},
             {"module_path": str(missing_module)},
+        )
+
+
+def test_build_model_invalid_module_path_type_is_error() -> None:
+    with pytest.raises(
+        TrainingModelError,
+        match="training_model_invalid_module_path",
+    ):
+        model_factory.build_model(
+            "MissingModel",
+            {},
+            {"module_path": 123},
+        )
+
+
+def test_build_model_invalid_module_file_is_error(tmp_path: Path) -> None:
+    invalid_module = tmp_path / "not_a_python_module"
+    invalid_module.mkdir()
+
+    with pytest.raises(
+        TrainingModelError,
+        match="training_model_custom_module_invalid",
+    ):
+        model_factory.build_model(
+            "MissingModel",
+            {},
+            {"module_path": str(invalid_module)},
+        )
+
+
+def test_build_model_module_load_failure_is_error(tmp_path: Path) -> None:
+    broken_module = tmp_path / "broken_model.py"
+    broken_module.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+
+    with pytest.raises(
+        TrainingModelError,
+        match="training_model_custom_module_load_failed",
+    ):
+        model_factory.build_model(
+            "BrokenModel",
+            {},
+            {"module_path": str(broken_module)},
+        )
+
+
+def test_build_model_invalid_registry_entry_is_error(tmp_path: Path) -> None:
+    invalid_registry_module = tmp_path / "invalid_registry.py"
+    invalid_registry_module.write_text(
+        'MODEL_REGISTRY = {"BadModel": 123}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        TrainingModelError,
+        match="training_model_invalid_registry_entry",
+    ):
+        model_factory.build_model(
+            "BadModel",
+            {},
+            {"module_path": str(invalid_registry_module)},
         )
 
 

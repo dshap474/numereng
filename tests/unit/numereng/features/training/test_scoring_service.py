@@ -67,9 +67,13 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
         _ = args
         call_args.update(kwargs)
-        return {
-            "corr": pd.DataFrame(index=["prediction"]),
-        }, {}, {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}])}
+        return (
+            {
+                "corr": pd.DataFrame(index=["prediction"]),
+            },
+            {},
+            {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}])},
+        )
 
     monkeypatch.setattr(scoring_service_module, "score_prediction_file_with_details", _fake_score)
     monkeypatch.setattr(
@@ -117,9 +121,13 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
         _ = args
         call_args.update(kwargs)
-        return {
-            "corr": pd.DataFrame(index=["prediction"]),
-        }, {}, {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.2}])}
+        return (
+            {
+                "corr": pd.DataFrame(index=["prediction"]),
+            },
+            {},
+            {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.2}])},
+        )
 
     monkeypatch.setattr(scoring_service_module, "score_prediction_file_with_details", _fake_score)
     monkeypatch.setattr(

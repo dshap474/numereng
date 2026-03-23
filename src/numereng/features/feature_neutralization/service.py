@@ -68,9 +68,7 @@ def load_neutralizer_table(
     required_cols = ["era", "id"]
     missing = [col for col in required_cols if col not in frame.columns]
     if missing:
-        raise NeutralizationValidationError(
-            f"neutralization_neutralizer_missing_columns:{','.join(missing)}"
-        )
+        raise NeutralizationValidationError(f"neutralization_neutralizer_missing_columns:{','.join(missing)}")
 
     normalized = normalize_join_keys(frame)
     try:
@@ -106,9 +104,7 @@ def neutralize_prediction_frame(
     required_pred_cols = ["era", "id", "prediction"]
     missing_pred_cols = [col for col in required_pred_cols if col not in predictions.columns]
     if missing_pred_cols:
-        raise NeutralizationValidationError(
-            f"neutralization_predictions_missing_columns:{','.join(missing_pred_cols)}"
-        )
+        raise NeutralizationValidationError(f"neutralization_predictions_missing_columns:{','.join(missing_pred_cols)}")
 
     if not neutralizer_cols:
         raise NeutralizationValidationError("neutralization_neutralizer_columns_empty")
@@ -267,9 +263,7 @@ def _resolve_neutralizer_columns(
 
         missing = [col for col in cleaned if col not in frame.columns]
         if missing:
-            raise NeutralizationValidationError(
-                f"neutralization_neutralizer_columns_missing:{','.join(missing)}"
-            )
+            raise NeutralizationValidationError(f"neutralization_neutralizer_columns_missing:{','.join(missing)}")
 
         non_numeric = [col for col in cleaned if not pd.api.types.is_numeric_dtype(frame[col])]
         if non_numeric:

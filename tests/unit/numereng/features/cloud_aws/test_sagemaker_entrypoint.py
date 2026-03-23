@@ -115,6 +115,7 @@ def test_required_dataset_keys_defaults_to_downsampled_full_for_downsampled_vari
         "baselines/active_benchmark/predictions.parquet",
     ]
 
+
 def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -178,7 +179,6 @@ def test_stage_required_data_rejects_quantized_variant(
         )
 
     assert fake_s3.calls == []
-
 
 
 def test_sanitize_output_dir_removes_store_db_files(tmp_path: Path) -> None:

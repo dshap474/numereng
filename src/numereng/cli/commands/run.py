@@ -181,8 +181,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
         if arg in {"--method", "--method-overrides-json"}:
             return (
                 None,
-                f"legacy training option is no longer supported: {arg}; "
-                "use --profile",
+                f"legacy training option is no longer supported: {arg}; use --profile",
             )
         if arg in {"--engine-mode", "--window-size-eras", "--embargo-eras"}:
             return (

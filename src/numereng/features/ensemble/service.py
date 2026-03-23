@@ -387,11 +387,11 @@ def _write_artifacts(
     if pre_neutralized_blended is not None:
         write_parquet(
             pd.DataFrame(
-            {
-                "era": era_series.values,
-                "id": id_series.values,
-                "prediction": pre_neutralized_blended,
-            }
+                {
+                    "era": era_series.values,
+                    "id": id_series.values,
+                    "prediction": pre_neutralized_blended,
+                }
             ),
             pre_neutralized_path,
             index=False,
@@ -412,11 +412,11 @@ def _write_artifacts(
 
     write_parquet(
         pd.DataFrame(
-        {
-            "run_id": list(run_ids),
-            "weight": [float(value) for value in weights],
-            "rank": list(range(len(run_ids))),
-        }
+            {
+                "run_id": list(run_ids),
+                "weight": [float(value) for value in weights],
+                "rank": list(range(len(run_ids))),
+            }
         ),
         artifacts_path / "weights.parquet",
         index=False,

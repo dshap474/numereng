@@ -10,7 +10,6 @@ from numereng.api._pipeline import (
     finalize_training_run,
     load_training_data,
     prepare_training_run,
-    score_predictions,
     train_model,
 )
 from numereng.api.contracts import TrainRunRequest, TrainRunResponse

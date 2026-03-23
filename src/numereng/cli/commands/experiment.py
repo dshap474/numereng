@@ -36,13 +36,7 @@ def _print_experiment_list_table(payload: api.ExperimentListResponse) -> None:
     print("-" * len(header))
     for item in payload.experiments:
         champion = item.champion_run_id or "-"
-        print(
-            f"{item.experiment_id:<32} "
-            f"{item.status:<10} "
-            f"{len(item.runs):<5} "
-            f"{champion:<12} "
-            f"{item.updated_at}"
-        )
+        print(f"{item.experiment_id:<32} {item.status:<10} {len(item.runs):<5} {champion:<12} {item.updated_at}")
 
 
 def _print_experiment_details_table(payload: api.ExperimentResponse) -> None:

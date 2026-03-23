@@ -446,9 +446,7 @@ def _write_post_markdown(*, output_dir: Path, entry: Mapping[str, Any], body: st
 
     created_at = _coerce_str(entry.get("created_at")) or ""
     created_timestamp = _parse_timestamp(created_at)
-    relative_path = (
-        f"{_POSTS_DIRNAME}/{created_timestamp.year:04d}/{created_timestamp.month:02d}/{post_id}.md"
-    )
+    relative_path = f"{_POSTS_DIRNAME}/{created_timestamp.year:04d}/{created_timestamp.month:02d}/{post_id}.md"
     post_path = output_dir / relative_path
 
     lines = [
@@ -481,7 +479,7 @@ def _write_index(
     *,
     output_dir: Path,
     index_path: Path,
-    entries: list[dict[str, Any]],
+    entries: Sequence[Mapping[str, Any]],
     generated_at: str,
     mode: str,
     new_posts: int,
@@ -502,9 +500,7 @@ def _write_index(
 
     for year, month_map in grouped_entries.items():
         year_post_count = sum(len(month_entries) for month_entries in month_map.values())
-        lines.append(
-            f"- [{year}]({_POSTS_DIRNAME}/{year}/{_INDEX_FILENAME}) — `{year_post_count}` posts"
-        )
+        lines.append(f"- [{year}]({_POSTS_DIRNAME}/{year}/{_INDEX_FILENAME}) — `{year_post_count}` posts")
 
     lines.append("")
     _write_text(index_path, "\n".join(lines))
@@ -515,8 +511,10 @@ def _write_index(
     )
 
 
-def _group_entries_by_year_month(entries: Sequence[dict[str, Any]]) -> dict[str, dict[str, list[dict[str, Any]]]]:
-    grouped: dict[str, dict[str, list[dict[str, Any]]]] = {}
+def _group_entries_by_year_month(
+    entries: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, list[Mapping[str, Any]]]]:
+    grouped: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
     for entry in entries:
         created_at = _coerce_str(entry.get("created_at")) or ""
         created_timestamp = _parse_timestamp(created_at)
@@ -524,16 +522,13 @@ def _group_entries_by_year_month(entries: Sequence[dict[str, Any]]) -> dict[str,
         month = f"{created_timestamp.month:02d}"
         grouped.setdefault(year, {}).setdefault(month, []).append(entry)
 
-    return {
-        year: {month: grouped[year][month] for month in sorted(grouped[year])}
-        for year in sorted(grouped)
-    }
+    return {year: {month: grouped[year][month] for month in sorted(grouped[year])} for year in sorted(grouped)}
 
 
 def _write_year_month_indexes(
     *,
     output_dir: Path,
-    grouped_entries: Mapping[str, Mapping[str, Sequence[dict[str, Any]]]],
+    grouped_entries: Mapping[str, Mapping[str, Sequence[Mapping[str, Any]]]],
     generated_at: str,
 ) -> None:
     for year, month_map in grouped_entries.items():
@@ -548,9 +543,7 @@ def _write_year_month_indexes(
         ]
 
         for month, month_entries in month_map.items():
-            year_lines.append(
-                f"- [{year}/{month}]({month}/{_INDEX_FILENAME}) — `{len(month_entries)}` posts"
-            )
+            year_lines.append(f"- [{year}/{month}]({month}/{_INDEX_FILENAME}) — `{len(month_entries)}` posts")
             _write_month_index(
                 output_dir=output_dir,
                 year=year,
@@ -575,7 +568,7 @@ def _write_month_index(
     output_dir: Path,
     year: str,
     month: str,
-    entries: Sequence[dict[str, Any]],
+    entries: Sequence[Mapping[str, Any]],
     generated_at: str,
 ) -> None:
     lines = [
@@ -593,9 +586,7 @@ def _write_month_index(
         username = _coerce_str(entry.get("username")) or "unknown"
         post_id = _coerce_int(entry.get("post_id")) or 0
         created_at = _coerce_str(entry.get("created_at")) or ""
-        lines.append(
-            f"- {created_at} — [{topic_title}]({post_id}.md) — `@{username}` — post `{post_id}`"
-        )
+        lines.append(f"- {created_at} — [{topic_title}]({post_id}.md) — `@{username}` — post `{post_id}`")
 
     lines.extend(
         [

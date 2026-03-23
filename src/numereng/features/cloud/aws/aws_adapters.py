@@ -196,15 +196,9 @@ class AwsEc2Adapter(Ec2Adapter):
                         state=str((instance.get("State") or {}).get("Name") or "unknown"),
                         instance_type=str(instance.get("InstanceType") or "unknown"),
                         run_id=tags.get("RunId"),
-                        public_ip=(
-                            str(instance.get("PublicIpAddress"))
-                            if instance.get("PublicIpAddress")
-                            else None
-                        ),
+                        public_ip=(str(instance.get("PublicIpAddress")) if instance.get("PublicIpAddress") else None),
                         private_ip=(
-                            str(instance.get("PrivateIpAddress"))
-                            if instance.get("PrivateIpAddress")
-                            else None
+                            str(instance.get("PrivateIpAddress")) if instance.get("PrivateIpAddress") else None
                         ),
                         launch_time=launch_time_str,
                     )
@@ -345,9 +339,7 @@ class AwsSsmAdapter(SsmAdapter):
     def wait_for_ssm(self, instance_id: str, timeout_seconds: int) -> None:
         start = time.time()
         while time.time() - start < timeout_seconds:
-            response = self.ssm.describe_instance_information(
-                Filters=[{"Key": "InstanceIds", "Values": [instance_id]}]
-            )
+            response = self.ssm.describe_instance_information(Filters=[{"Key": "InstanceIds", "Values": [instance_id]}])
             instances = response.get("InstanceInformationList") or []
             if instances and instances[0].get("PingStatus") == "Online":
                 return
@@ -387,9 +379,7 @@ class AwsSsmAdapter(SsmAdapter):
         stderr = str(invocation.get("StandardErrorContent") or "")
 
         if status != "Success":
-            raise RuntimeError(
-                f"ssm_command_failed status={status} exit_code={exit_code} stderr={stderr[:500]}"
-            )
+            raise RuntimeError(f"ssm_command_failed status={status} exit_code={exit_code} stderr={stderr[:500]}")
 
         return SsmCommandResult(exit_code=exit_code, stdout=stdout, stderr=stderr)
 

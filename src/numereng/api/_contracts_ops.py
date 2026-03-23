@@ -120,9 +120,7 @@ class EnsembleBuildRequest(BaseModel):
     @model_validator(mode="after")
     def _validate_neutralization(self) -> EnsembleBuildRequest:
         if (self.neutralize_members or self.neutralize_final) and self.neutralizer_path is None:
-            raise ValueError(
-                "neutralizer_path is required when neutralize_members or neutralize_final is true"
-            )
+            raise ValueError("neutralizer_path is required when neutralize_members or neutralize_final is true")
         return self
 
 

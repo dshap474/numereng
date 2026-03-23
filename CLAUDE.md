@@ -12,7 +12,7 @@ Read order:
 
 ## Environment Rules
 - Use only the project-managed env (`.venv`) via `uv sync --extra dev`.
-- Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `mypy`, `numereng`, etc.).
+- Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `ty`, `numereng`, etc.).
 - If direct Python is required, use `.venv/bin/python`.
 - Do not create ad-hoc virtual envs.
 - Numerai MCP auth is project-local via `.codex/config.toml` and expects `NUMERAI_MCP_AUTH` in the launching shell environment.
@@ -31,7 +31,8 @@ Read order:
 - Python entrypoint: `import numereng.api as api_module`.
 - Stable contracts live in `src/numereng/api/contracts.py`.
 - Full local train/score pipeline entrypoint: `src/numereng/api/pipeline.py::run_training_pipeline(request)`.
-  It runs `prepare_training_run -> load_training_data -> train_model -> score_predictions -> finalize_training_run`, then maps internal failures to `PackageError` and always performs cleanup.
+  It runs `prepare_training_run -> load_training_data -> train_model -> finalize_training_run`, maps internal failures to `PackageError`, and always performs cleanup.
+  Deferred post-training scoring is materialized later from saved predictions via `run score` or `experiment score-round`.
 - API boundary must translate internal errors to `PackageError`.
 - CLI exit codes are fixed: `0` success/help, `1` runtime/boundary error, `2` parse/usage error.
 
@@ -49,6 +50,8 @@ Read order:
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
 - `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
+- `research init` requires `--strategy`; initialized programs persist that strategy in `agentic_research/program.json`.
+- Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
 - Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
