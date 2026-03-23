@@ -67,9 +67,7 @@ def test_cli_run_submit_success(
 
     monkeypatch.setattr(api_module, "submit_predictions", fake_submit_predictions)
 
-    exit_code = cli.main(
-        ["run", "submit", "--run-id", "run-1", "--model-name", "main", "--tournament", "signals"]
-    )
+    exit_code = cli.main(["run", "submit", "--run-id", "run-1", "--model-name", "main", "--tournament", "signals"])
     captured = capsys.readouterr()
     payload = _parse_stdout_json(captured.out)
 
@@ -116,6 +114,8 @@ def test_cli_run_submit_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exit_code == 2
     assert "missing required argument: --model-name" in captured.err
+
+
 def test_cli_run_submit_boundary_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -1712,10 +1712,7 @@ def test_cli_cloud_modal_deploy_success(
     def fake_cloud_modal_deploy(request: api_module.ModalDeployRequest) -> api_module.CloudModalResponse:
         assert request.app_name == "numereng-train"
         assert request.function_name == "train_remote"
-        assert (
-            request.ecr_image_uri
-            == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
-        )
+        assert request.ecr_image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
         assert request.environment_name == "main"
         assert request.aws_profile == "default"
         assert request.timeout_seconds == 900
@@ -1920,9 +1917,7 @@ def test_cli_cloud_modal_train_status_logs_cancel_pull_success(
     monkeypatch.setattr(api_module, "cloud_modal_train_cancel", fake_cloud_modal_train_cancel)
     monkeypatch.setattr(api_module, "cloud_modal_train_pull", fake_cloud_modal_train_pull)
 
-    status_exit = cli.main(
-        ["cloud", "modal", "train", "status", "--call-id", "fc-7", "--timeout-seconds", "1.5"]
-    )
+    status_exit = cli.main(["cloud", "modal", "train", "status", "--call-id", "fc-7", "--timeout-seconds", "1.5"])
     status_payload = _parse_stdout_json(capsys.readouterr().out)
     assert status_exit == 0
     assert status_payload["result"]["status"] == "running"
@@ -2854,3 +2849,89 @@ def test_cli_neutralize_apply_requires_source(capsys: pytest.CaptureFixture[str]
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "exactly one of --run-id or --predictions is required" in captured.err
+
+
+def test_cli_research_commands_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "research_init",
+        lambda request: api_module.ResearchInitResponse(
+            root_experiment_id=request.experiment_id,
+            strategy=request.strategy,
+            strategy_description="Numerai Experiment Loop",
+            status="initialized",
+            active_experiment_id=request.experiment_id,
+            active_path_id="p00",
+            improvement_threshold=0.0002,
+            current_phase=None,
+            agentic_research_dir="/tmp/agentic_research",
+            program_path="/tmp/agentic_research/program.json",
+            lineage_path="/tmp/agentic_research/lineage.json",
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "research_status",
+        lambda request: api_module.ResearchStatusResponse(
+            root_experiment_id=request.experiment_id,
+            strategy="numerai-experiment-loop",
+            strategy_description="Numerai Experiment Loop",
+            status="running",
+            active_experiment_id=request.experiment_id,
+            active_path_id="p00",
+            next_round_number=2,
+            total_rounds_completed=1,
+            total_paths_created=1,
+            improvement_threshold=0.0002,
+            last_checkpoint="round_completed",
+            stop_reason=None,
+            best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
+            current_round=None,
+            current_phase=None,
+            program_path="/tmp/agentic_research/program.json",
+            lineage_path="/tmp/agentic_research/lineage.json",
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "research_run",
+        lambda request: api_module.ResearchRunResponse(
+            root_experiment_id=request.experiment_id,
+            strategy="numerai-experiment-loop",
+            strategy_description="Numerai Experiment Loop",
+            status="stopped",
+            active_experiment_id=request.experiment_id,
+            active_path_id="p00",
+            next_round_number=3,
+            total_rounds_completed=2,
+            total_paths_created=1,
+            last_checkpoint="stopped",
+            stop_reason="max_rounds_reached",
+            current_phase=None,
+            interrupted=False,
+        ),
+    )
+
+    exit_code = cli.main(
+        [
+            "research",
+            "init",
+            "--experiment-id",
+            "2026-02-22_test-exp",
+            "--strategy",
+            "numerai-experiment-loop",
+        ]
+    )
+    assert exit_code == 0
+    assert _parse_stdout_json(capsys.readouterr().out)["active_path_id"] == "p00"
+
+    exit_code = cli.main(["research", "status", "--experiment-id", "2026-02-22_test-exp"])
+    assert exit_code == 0
+    assert "status: running" in capsys.readouterr().out
+
+    exit_code = cli.main(["research", "run", "--experiment-id", "2026-02-22_test-exp", "--max-rounds", "1"])
+    assert exit_code == 0
+    assert _parse_stdout_json(capsys.readouterr().out)["stop_reason"] == "max_rounds_reached"

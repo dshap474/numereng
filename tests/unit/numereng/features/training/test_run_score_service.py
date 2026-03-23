@@ -75,9 +75,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 "resolved_config": "resolved.json",
                 "results": "results.json",
             },
-            "training": {
-                "scoring": {"mode": "materialized", "era_chunk_size": 64, "effective_backend": "failed"}
-            },
+            "training": {"scoring": {"mode": "materialized", "era_chunk_size": 64, "effective_backend": "failed"}},
         },
     )
     _write_json(
@@ -154,7 +152,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                                 "corr_native_max_drawdown": 0.1,
                             }
                         ]
-                    )
+                    ),
                 },
             ),
             requested_stage="all",

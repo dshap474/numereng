@@ -1,4 +1,9 @@
-from numereng.platform.errors import ForumScraperError, NumeraiClientError, PackageError
+from numereng.platform.errors import (
+    ForumScraperError,
+    NumeraiClientError,
+    OpenRouterClientError,
+    PackageError,
+)
 
 
 def test_package_error_is_exception() -> None:
@@ -11,6 +16,10 @@ def test_numerai_client_error_is_exception() -> None:
 
 def test_forum_scraper_error_is_exception() -> None:
     assert issubclass(ForumScraperError, PackageError)
+
+
+def test_openrouter_client_error_is_exception() -> None:
+    assert issubclass(OpenRouterClientError, PackageError)
 
 
 def test_forum_scraper_error_message_round_trips() -> None:

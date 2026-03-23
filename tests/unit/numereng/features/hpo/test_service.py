@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-import pandas as pd
 
 import numereng.features.hpo.service as service_module
 from numereng.features.hpo import HpoStudyCreateRequest

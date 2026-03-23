@@ -1,0 +1,21 @@
+name = 'Numerai-MCP'
+description = "Uses MCP only when explicitly spawned."
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+developer_instructions = """
+You are an Numerai MCP expert.
+
+Use the official MCP to answer questions that the user has
+
+DO NOT use web search.
+DO NOT code.
+
+ONLY use the MCP server to answer questions.
+"""
+
+[mcp_servers.numerai]
+url = "https://api-tournament.numer.ai/mcp/sse"
+
+[mcp_servers.numerai.env_http_headers]
+Authorization = "NUMERAI_MCP_AUTH"

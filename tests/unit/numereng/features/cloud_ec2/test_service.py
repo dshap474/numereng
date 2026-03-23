@@ -358,8 +358,9 @@ def test_install_cuda_profile_runs_lightgbm_cuda_reinstall(tmp_path: Path) -> No
     assert response.state is not None
     assert response.state.runtime_profile == "lgbm-cuda"
     assert len(ssm.command_calls) == 4
-    assert "CMAKE_ARGS='-DUSE_CUDA=ON' uv pip install --force-reinstall --no-binary lightgbm lightgbm" in (
-        ssm.command_calls[2][1]
+    assert (
+        "CMAKE_ARGS='-DUSE_CUDA=ON' uv pip install --force-reinstall --no-binary lightgbm lightgbm"
+        in (ssm.command_calls[2][1])
     )
 
 
@@ -429,9 +430,7 @@ def test_logs_pull_terminate_and_status_flows(tmp_path: Path) -> None:
     assert "follow mode" in logs.message
 
     s3.keys[("bucket-8", "runs/run-8/")] = ["runs/run-8/a.json", "runs/run-8/b.json"]
-    pull = service.pull(
-        Ec2PullRequest(run_id="run-8", instance_id="i-8", bucket="bucket-8", output_dir=str(tmp_path))
-    )
+    pull = service.pull(Ec2PullRequest(run_id="run-8", instance_id="i-8", bucket="bucket-8", output_dir=str(tmp_path)))
     assert pull.result["downloaded_count"] == 2
 
     terminate = service.terminate(Ec2TerminateRequest(instance_id="i-8", region="us-east-2"))
@@ -498,16 +497,12 @@ def test_s3_operations_and_edge_cases(tmp_path: Path) -> None:
 
     s3.keys[("bucket-a", "runs/prefix/")] = ["runs/prefix/a.txt", "runs/prefix/b.txt"]
     dst_dir = tmp_path / "downloads"
-    dl = service.s3_copy(
-        Ec2S3CopyRequest(src="s3://bucket-a/runs/prefix/", dst=str(dst_dir), region="us-east-2")
-    )
+    dl = service.s3_copy(Ec2S3CopyRequest(src="s3://bucket-a/runs/prefix/", dst=str(dst_dir), region="us-east-2"))
     assert dl.result["count"] == 2
 
     local_file = tmp_path / "metrics.json"
     local_file.write_text("{}", encoding="utf-8")
-    ul = service.s3_copy(
-        Ec2S3CopyRequest(src=str(local_file), dst="s3://bucket-u/runs/", region="us-east-2")
-    )
+    ul = service.s3_copy(Ec2S3CopyRequest(src=str(local_file), dst="s3://bucket-u/runs/", region="us-east-2"))
     assert str(ul.result["destination"]).endswith("/metrics.json")
 
     with pytest.raises(CloudEc2Error, match="source path does not exist"):

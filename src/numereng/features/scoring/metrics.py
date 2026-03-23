@@ -25,6 +25,8 @@ from numereng.features.scoring.models import (
     BenchmarkSource,
     ResolvedScoringPolicy,
     ScoringArtifactBundle,
+)
+from numereng.features.scoring.models import (
     default_scoring_policy as default_scoring_policy,
 )
 from numereng.features.training.client import TrainingDataClient
@@ -128,9 +130,7 @@ def _filter_missing_scoring_targets(
     if unavailable_required:
         raise TrainingDataError(f"training_scoring_target_missing_cols:{','.join(unavailable_required)}")
     resolved_available_targets = [
-        col
-        for col in resolved_scoring_targets
-        if col in available_column_set or col not in optional_scoring_targets
+        col for col in resolved_scoring_targets if col in available_column_set or col not in optional_scoring_targets
     ]
     return resolved_available_targets, available_missing_targets
 
@@ -164,7 +164,13 @@ def _target_metric_key(*, metric_name: str, target_col: str, native_target_col: 
     return f"{metric_name}_{aliases[target_col]}"
 
 
-def _contribution_metric_key(*, metric_name: str, target_col: str, payout_target_col: str, aliases: dict[str, str]) -> str:
+def _contribution_metric_key(
+    *,
+    metric_name: str,
+    target_col: str,
+    payout_target_col: str,
+    aliases: dict[str, str],
+) -> str:
     if target_col == payout_target_col:
         return metric_name
     return f"{metric_name}_{aliases[target_col]}"
@@ -386,9 +392,7 @@ def per_era_corr(
                 pred_col=pred_col,
                 required_cols=(target_col,),
                 era_col=era_col,
-                scorer=lambda pred, extra: float(
-                    numerai_corr_matrix_vs_target(pred.reshape(-1, 1), extra[:, 0])[0]
-                ),
+                scorer=lambda pred, extra: float(numerai_corr_matrix_vs_target(pred.reshape(-1, 1), extra[:, 0])[0]),
             )
         )
     if not per_col:
@@ -434,9 +438,7 @@ def per_era_cwmm(
                 pred_col=pred_col,
                 required_cols=(reference_col,),
                 era_col=era_col,
-                scorer=lambda pred, extra: float(
-                    cwmm_matrix_vs_reference(pred.reshape(-1, 1), extra[:, 0])[0]
-                ),
+                scorer=lambda pred, extra: float(cwmm_matrix_vs_reference(pred.reshape(-1, 1), extra[:, 0])[0]),
             )
         )
     if not per_col:
@@ -477,9 +479,7 @@ def per_era_reference_corr(
                 pred_col=pred_col,
                 required_cols=(reference_col,),
                 era_col=era_col,
-                scorer=lambda pred, extra: float(
-                    numerai_corr_matrix_vs_target(pred.reshape(-1, 1), extra[:, 0])[0]
-                ),
+                scorer=lambda pred, extra: float(numerai_corr_matrix_vs_target(pred.reshape(-1, 1), extra[:, 0])[0]),
             )
         )
     if not per_col:
@@ -955,7 +955,9 @@ def build_scoring_artifact_bundle(
         "benchmark": benchmark_overlap,
         "scoring_rows": int(len(prepared_for_benchmark)) if prepared_for_benchmark is not None else int(len(prepared)),
         "scoring_eras": (
-            int(prepared_for_benchmark[era_col].nunique()) if prepared_for_benchmark is not None else int(prepared[era_col].nunique())
+            int(prepared_for_benchmark[era_col].nunique())
+            if prepared_for_benchmark is not None
+            else int(prepared[era_col].nunique())
         ),
     }
     if benchmark_frame is not None:
@@ -1261,9 +1263,7 @@ def _load_shared_benchmark_corr_series_frame(
         value_col = "value"
     else:
         numeric_candidates = [
-            str(col)
-            for col in frame.columns
-            if str(col) != era_col and pd.api.types.is_numeric_dtype(frame[col])
+            str(col) for col in frame.columns if str(col) != era_col and pd.api.types.is_numeric_dtype(frame[col])
         ]
         if len(numeric_candidates) == 1:
             value_col = numeric_candidates[0]
@@ -2298,11 +2298,7 @@ def _build_post_fold_snapshot_frame(post_fold_per_era: pd.DataFrame) -> pd.DataF
         "corr_ender20": "corr_ender20_fold_mean",
         "bmc": "bmc_fold_mean",
     }
-    agg_map = {
-        source: "mean"
-        for source in value_map
-        if source in post_fold_per_era.columns
-    }
+    agg_map = {source: "mean" for source in value_map if source in post_fold_per_era.columns}
     snapshots = (
         post_fold_per_era.groupby(
             ["run_id", "config_hash", "seed", "target_col", "payout_target_col", "cv_fold"],
@@ -2558,9 +2554,7 @@ def _summarize_prediction_file_with_scores_materialized(
             ] = _single_series_frame(fnc_per_era, resolved_pred_cols[0])
         if not feature_exposure_chunks or not max_feature_exposure_chunks:
             raise TrainingDataError("training_feature_exposure_no_overlapping_ids")
-        feature_exposure_per_era = cast(
-            pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0))
-        )
+        feature_exposure_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0)))
         max_feature_exposure_per_era = cast(
             pd.DataFrame, _sort_era_index(pd.concat(max_feature_exposure_chunks, axis=0))
         )
@@ -2625,7 +2619,9 @@ def _summarize_prediction_file_with_scores_materialized(
         benchmark_corr_recent_mean = benchmark_corr_recent.mean()
         shared_payout_baseline_frame, shared_payout_baseline_provenance = _load_shared_benchmark_corr_series_frame(
             benchmark_metadata_path=(
-                resolve_data_path(benchmark_metadata_path, data_root=data_root) if benchmark_metadata_path is not None else None
+                resolve_data_path(benchmark_metadata_path, data_root=data_root)
+                if benchmark_metadata_path is not None
+                else None
             ),
             target_col=DEFAULT_PAYOUT_TARGET_COL,
             data_root=data_root,
@@ -3198,7 +3194,9 @@ def _summarize_prediction_file_with_scores_era_stream(
     max_feature_exposure_chunks: list[pd.DataFrame] = []
     shared_payout_baseline_frame, shared_payout_baseline_provenance = _load_shared_benchmark_corr_series_frame(
         benchmark_metadata_path=(
-            resolve_data_path(benchmark_metadata_path, data_root=data_root) if benchmark_metadata_path is not None else None
+            resolve_data_path(benchmark_metadata_path, data_root=data_root)
+            if benchmark_metadata_path is not None
+            else None
         ),
         target_col=DEFAULT_PAYOUT_TARGET_COL,
         data_root=data_root,
@@ -3413,9 +3411,7 @@ def _summarize_prediction_file_with_scores_era_stream(
     summaries: dict[str, pd.DataFrame] = {}
     metric_frames: dict[str, pd.DataFrame] = {}
     if feature_neutral_metrics_enabled:
-        feature_exposure_per_era = cast(
-            pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0))
-        )
+        feature_exposure_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0)))
         max_feature_exposure_per_era = cast(
             pd.DataFrame, _sort_era_index(pd.concat(max_feature_exposure_chunks, axis=0))
         )
@@ -3502,9 +3498,7 @@ def _summarize_prediction_file_with_scores_era_stream(
             bmc_recent = cast(pd.DataFrame, _last_n_eras(bmc_per_era, 200))
             bmc_recent_summary = summarize_scores(bmc_recent)
             for col in bmc_recent_summary.index:
-                bmc_recent_summary.loc[col, "avg_corr_with_benchmark"] = float(
-                    bmc_corr_recent_mean.get(col, np.nan)
-                )
+                bmc_recent_summary.loc[col, "avg_corr_with_benchmark"] = float(bmc_corr_recent_mean.get(col, np.nan))
             summaries[bmc_recent_key] = bmc_recent_summary
             if scoring_target_col != DEFAULT_PAYOUT_TARGET_COL:
                 continue

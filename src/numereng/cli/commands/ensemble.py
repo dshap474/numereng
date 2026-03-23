@@ -83,10 +83,7 @@ def _print_ensembles_table(payload: api.EnsembleListResponse) -> None:
     print(header)
     print("-" * len(header))
     for item in payload.ensembles:
-        print(
-            f"{item.ensemble_id:<44} {item.status:<10} {item.method:<10} "
-            f"{len(item.components):<10} {item.metric}"
-        )
+        print(f"{item.ensemble_id:<44} {item.status:<10} {item.method:<10} {len(item.components):<10} {item.metric}")
 
 
 def _print_ensemble_details_table(payload: api.EnsembleResponse) -> None:
@@ -196,9 +193,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
 
         neutralization_proportion = 0.5
         if "--neutralization-proportion" in values:
-            parsed_proportion, proportion_err = _parse_neutralization_proportion(
-                values["--neutralization-proportion"]
-            )
+            parsed_proportion, proportion_err = _parse_neutralization_proportion(values["--neutralization-proportion"])
             if parsed_proportion is None or proportion_err is not None:
                 print(proportion_err or "invalid value for --neutralization-proportion", file=sys.stderr)
                 print(USAGE, file=sys.stderr)

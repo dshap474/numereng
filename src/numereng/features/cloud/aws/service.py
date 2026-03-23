@@ -58,9 +58,7 @@ class CloudEc2Error(Exception):
 DEFAULT_REGION = os.getenv("NUMERENG_AWS_REGION", "us-east-2") or "us-east-2"
 DEFAULT_BUCKET = os.getenv("NUMERENG_S3_BUCKET", "numereng-artifacts") or "numereng-artifacts"
 DEFAULT_IAM_ROLE = os.getenv("NUMERENG_EC2_IAM_ROLE", "numereng-training-role") or "numereng-training-role"
-DEFAULT_SECURITY_GROUP = (
-    os.getenv("NUMERENG_EC2_SECURITY_GROUP", "numereng-training") or "numereng-training"
-)
+DEFAULT_SECURITY_GROUP = os.getenv("NUMERENG_EC2_SECURITY_GROUP", "numereng-training") or "numereng-training"
 DEFAULT_DATA_VERSION = "v5.2"
 
 DEFAULT_CPU_AMI = os.getenv("NUMERENG_EC2_AMI_CPU", "ami-0b97b64b68a731354") or "ami-0b97b64b68a731354"
@@ -730,9 +728,7 @@ class CloudEc2Service:
         )
         next_state = self._persist_state(request, next_state)
 
-        message = (
-            "Remote training completed" if status == "completed" else "Remote training not completed successfully"
-        )
+        message = "Remote training completed" if status == "completed" else "Remote training not completed successfully"
         return CloudEc2Response(
             action="cloud.ec2.train.poll",
             message=message,

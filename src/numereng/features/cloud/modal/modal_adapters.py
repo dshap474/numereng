@@ -33,9 +33,7 @@ def _load_modal_modules() -> tuple[Any, Any, Any]:
         modal_exception = import_module("modal.exception")
         modal_runner = import_module("modal.runner")
     except Exception as exc:  # pragma: no cover - exercised only when modal is not installed
-        raise ModalAdapterError(
-            "modal_sdk_missing: install modal and authenticate with `modal setup`"
-        ) from exc
+        raise ModalAdapterError("modal_sdk_missing: install modal and authenticate with `modal setup`") from exc
     return modal, modal_exception, modal_runner
 
 

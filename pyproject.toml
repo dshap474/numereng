@@ -23,22 +23,42 @@ Documentation = "https://github.com/dshap474/numereng/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [
+    "catboost>=1.2",
     "httpx>=0.28",
+    "interpret>=0.6",
+    "imodels>=2.0",
     "lightgbm>=4.0",
-    "mypy>=1.10",
+    "ngboost>=0.5",
     "numerai-tools>=0.5.3",
     "optuna>=4.0",
     "pandas-stubs>=2.2",
     "pyarrow>=15.0",
+    "pytorch-tabnet>=4.1",
     "pytest>=8.0",
+    "quantile-forest>=1.4",
     "ruff>=0.6",
+    "scikit-learn>=1.8",
     "scipy>=1.12",
+    "tabpfn>=2.0",
+    "torch>=2.7",
+    "ty>=0.0.24",
+    "xgboost>=2.1",
 ]
 training = [
+    "catboost>=1.2",
+    "interpret>=0.6",
+    "imodels>=2.0",
     "lightgbm>=4.0",
+    "ngboost>=0.5",
     "numerai-tools>=0.5.3",
     "optuna>=4.0",
     "pyarrow>=15.0",
+    "pytorch-tabnet>=4.1",
+    "quantile-forest>=1.4",
+    "scikit-learn>=1.8",
+    "tabpfn>=2.0",
+    "torch>=2.7",
+    "xgboost>=2.1",
 ]
 mlops = [
     "mlflow>=2.17",
@@ -68,33 +88,39 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = [".venv-test"]
+extend-exclude = [".agents", ".venv-test"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
-[tool.mypy]
-python_version = "3.11"
-files = ["src", "tests"]
-warn_unused_configs = true
-strict = true
-exclude = 'src/numereng/features/scoring/(simplify-test|numerai-example)/'
+[tool.ty.environment]
+python-version = "3.11"
+root = ["./src"]
+
+[tool.ty.src]
+include = [
+    "src/numereng/config",
+    "src/numereng/platform",
+    "src/numereng/features/submission",
+    "src/numereng/api/contracts.py",
+    "src/numereng/api/pipeline.py",
+    "src/numereng/api/_health.py",
+    "tests/unit/numereng/config/test_training.py",
+    "tests/unit/numereng/features/submission",
+    "tests/integration/test_smoke_structure.py",
+]
 
 [[tool.mypy.overrides]]
 module = [
-    "boto3",
-    "botocore",
-    "botocore.*",
-    "lightgbm",
-    "numerai_tools",
-    "numerai_tools.*",
-    "optuna",
-    "pandas",
-    "pandas.*",
-    "numba",
-    "numba.*",
-    "scipy",
-    "scipy.*",
-    "yaml",
+    "imodels",
+    "imodels.*",
+    "pytorch_tabnet",
+    "pytorch_tabnet.*",
+    "quantile_forest",
+    "quantile_forest.*",
+    "tabpfn",
+    "tabpfn.*",
+    "torch",
+    "torch.*",
 ]
 ignore_missing_imports = true

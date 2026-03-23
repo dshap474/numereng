@@ -59,9 +59,7 @@ def test_resolve_model_config_rejects_conflicting_device_inputs() -> None:
 
 def test_resolve_model_config_rejects_device_for_non_lgbm() -> None:
     with pytest.raises(TrainingConfigError, match="training_model_device_requires_lgbm"):
-        service_module.resolve_model_config(
-            {"type": "CustomRegressor", "device": "cuda", "params": {"alpha": 1}}
-        )
+        service_module.resolve_model_config({"type": "CustomRegressor", "device": "cuda", "params": {"alpha": 1}})
 
 
 def test_resolve_resource_policy_defaults_max_threads_from_cpu_split(
@@ -241,6 +239,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         lambda *args, **kwargs: full,
     )
     monkeypatch.setattr(service_module, "build_model_data_loader", lambda **kwargs: object())
+
     def _fake_build_oof_predictions(*args: object, **kwargs: object) -> tuple[pd.DataFrame, dict[str, object]]:
         on_fold_start = cast(Any, kwargs.get("on_fold_start"))
         on_fold_complete = cast(Any, kwargs.get("on_fold_complete"))
@@ -389,7 +388,14 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert saved_payload["path"] == store_root / "runs" / result.run_id / "run.json"
     saved_results = cast(dict[str, object], saved_payload["results"])
     metrics_block = cast(dict[str, object], saved_results["metrics"])
-    assert metrics_block == {"status": "pending", "reason": "post_run_metrics_pending"}
+    assert metrics_block["corr"] == {"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}
+    assert metrics_block["bmc"] == {
+        "mean": 0.01,
+        "std": 0.02,
+        "sharpe": 0.5,
+        "max_drawdown": 0.1,
+        "avg_corr_with_benchmark": 0.02,
+    }
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
@@ -398,7 +404,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert loading_block["mode"] == "materialized"
     scoring_block = cast(dict[str, object], training_block["scoring"])
     assert scoring_block["mode"] == "materialized"
-    assert scoring_block["effective_backend"] == "pending"
+    assert scoring_block["effective_backend"] == "materialized"
     resources_block = cast(dict[str, object], training_block["resources"])
     assert resources_block["parallel_backend"] == "joblib"
     cache_block = cast(dict[str, object], training_block["cache"])
@@ -409,22 +415,25 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert data_block["effective_embargo_eras"] == 0
     assert data_block["embargo_eras"] == 0
     output_block = cast(dict[str, object], saved_results["output"])
-    assert output_block["score_provenance_file"] is None
+    assert output_block["score_provenance_file"] == "score_provenance.json"
     run_dir = store_root / "runs" / result.run_id
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     manifest_artifacts = cast(dict[str, object], run_manifest["artifacts"])
     assert manifest_artifacts["log"] == "run.log"
-    assert "scoring_manifest" not in manifest_artifacts
+    assert manifest_artifacts["score_provenance"] == "score_provenance.json"
+    assert manifest_artifacts["scoring_manifest"] == "artifacts/scoring/manifest.json"
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_started" in run_log
     assert "stage_update" in run_log
     assert "fold_started" in run_log
     assert "fold_completed" in run_log
+    assert "post_run_scoring_succeeded" in run_log
     assert "run_completed" in run_log
     index_stage_pos = run_log.index("stage_update | index_run")
+    scoring_stage_pos = run_log.index("stage_update | score_predictions")
     finalize_stage_pos = run_log.index("stage_update | finalize_manifest")
-    assert "stage_update | score_predictions_post_run" not in run_log
-    assert index_stage_pos < finalize_stage_pos
+    assert scoring_stage_pos < finalize_stage_pos
+    assert scoring_stage_pos < index_stage_pos
     assert manifest_statuses == ["RUNNING", "FINISHED"]
     assert indexed["store_root"] == store_root
     assert indexed["run_id"] == result.run_id
@@ -619,7 +628,7 @@ def test_run_training_submission_full_history_runs_post_training_scoring(
     assert result.results_path == store_root / "runs" / result.run_id / "run.json"
     saved_results = cast(dict[str, object], saved_payload["results"])
     metrics_block = cast(dict[str, object], saved_results["metrics"])
-    assert metrics_block == {"status": "pending", "reason": "post_run_metrics_pending"}
+    assert metrics_block["corr"] == {"mean": 0.1, "std": 0.2, "sharpe": 0.5, "max_drawdown": 0.1}
     training_block = cast(dict[str, object], saved_results["training"])
     assert "data_sampling" not in training_block
     engine_block = cast(dict[str, object], training_block["engine"])
@@ -631,8 +640,14 @@ def test_run_training_submission_full_history_runs_post_training_scoring(
     assert data_block["configured_embargo_eras"] == 13
     assert data_block["effective_embargo_eras"] == 0
     output_block = cast(dict[str, object], saved_results["output"])
-    assert output_block["score_provenance_file"] is None
-    assert scoring_calls == []
+    assert output_block["score_provenance_file"] == "score_provenance.json"
+    assert scoring_calls == [
+        {
+            "run_id": result.run_id,
+            "predictions_path": predictions_path,
+            "stage": "all",
+        }
+    ]
 
 
 def test_run_training_index_failure_raises_training_error(
@@ -1023,7 +1038,13 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
     )
 
     assert result.predictions_path == predictions_path
-    assert scoring_calls == []
+    assert scoring_calls == [
+        {
+            "scoring_mode": "era_stream",
+            "era_chunk_size": 8,
+            "stage": "all",
+        }
+    ]
 
     saved_results = cast(dict[str, object], saved_payload["results"])
     training_block = cast(dict[str, object], saved_results["training"])
@@ -1031,7 +1052,7 @@ def test_run_training_fold_lazy_routes_scoring_and_loading_modes(
     assert cast(dict[str, object], training_block["loading"])["mode"] == "fold_lazy"
     scoring_block = cast(dict[str, object], training_block["scoring"])
     assert scoring_block["mode"] == "era_stream"
-    assert scoring_block["effective_backend"] == "pending"
+    assert scoring_block["effective_backend"] == "era_stream"
     data_block = cast(dict[str, object], saved_results["data"])
     assert data_block["dataset_scope"] == "train_plus_validation"
 
@@ -1811,18 +1832,18 @@ def test_run_training_scoring_failure_marks_run_failed(
 
     monkeypatch.setattr(service_module, "save_run_manifest", _record_manifest)
 
-    result = service_module.run_training(
-        config_path=tmp_path / "config.json",
-        output_dir=None,
-        client=_FakeClient(),
-    )
+    with pytest.raises(TrainingError, match="training_post_run_scoring_failed"):
+        service_module.run_training(
+            config_path=tmp_path / "config.json",
+            output_dir=None,
+            client=_FakeClient(),
+        )
 
     run_dir = captured_run_dir["path"]
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
-    assert result.run_id == run_manifest["run_id"]
-    assert scoring_called["value"] is False
-    assert run_manifest["status"] == "FINISHED"
-    assert written_statuses == ["RUNNING", "FINISHED"]
-    assert "post_run_scoring_failed" not in run_log
-    assert "run_failed" not in run_log
+    assert scoring_called["value"] is True
+    assert run_manifest["status"] == "FAILED"
+    assert written_statuses == ["RUNNING", "FAILED"]
+    assert "post_run_scoring_failed" in run_log
+    assert "run_failed" in run_log

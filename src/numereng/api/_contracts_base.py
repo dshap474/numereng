@@ -14,6 +14,8 @@ NumeraiTournament = Literal["classic", "signals", "crypto"]
 NeutralizationMode = Literal["era", "global"]
 ScoringStage = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
 ExperimentScoreRoundStage = Literal["post_training_core", "post_training_full"]
+ResearchSupervisorStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
+ResearchStrategy = Literal["numerai-experiment-loop", "kaggle-gm-loop"]
 
 
 class HealthResponse(BaseModel):
@@ -319,6 +321,118 @@ class ExperimentPackResponse(BaseModel):
     packed_at: str
 
 
+class ResearchInitRequest(BaseModel):
+    experiment_id: str
+    strategy: ResearchStrategy
+    improvement_threshold: float = Field(default=0.0002, gt=0.0)
+    store_root: str = ".numereng"
+
+
+class ResearchBestRunResponse(BaseModel):
+    experiment_id: str | None = None
+    run_id: str | None = None
+    bmc_last_200_eras_mean: float | None = None
+    bmc_mean: float | None = None
+    corr_mean: float | None = None
+    mmc_mean: float | None = None
+    cwmm_mean: float | None = None
+    updated_at: str | None = None
+
+
+class ResearchRoundResponse(BaseModel):
+    round_number: int
+    round_label: str
+    experiment_id: str
+    path_id: str
+    status: str
+    next_config_index: int
+    config_filenames: list[str] = Field(default_factory=list)
+    run_ids: list[str] = Field(default_factory=list)
+    decision_action: str | None = None
+    experiment_question: str | None = None
+    winner_criteria: str | None = None
+    decision_rationale: str | None = None
+    decision_path_hypothesis: str | None = None
+    decision_path_slug: str | None = None
+    phase_id: str | None = None
+    phase_action: str | None = None
+    phase_transition_rationale: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+
+
+class ResearchPhaseResponse(BaseModel):
+    phase_id: str
+    phase_title: str
+    status: str
+    round_count: int
+    transition_rationale: str | None = None
+    started_at: str
+    updated_at: str
+
+
+class ResearchInitResponse(BaseModel):
+    root_experiment_id: str
+    strategy: ResearchStrategy
+    strategy_description: str
+    status: ResearchSupervisorStatus
+    active_experiment_id: str
+    active_path_id: str
+    improvement_threshold: float
+    current_phase: ResearchPhaseResponse | None = None
+    agentic_research_dir: str
+    program_path: str
+    lineage_path: str
+
+
+class ResearchStatusRequest(BaseModel):
+    experiment_id: str
+    store_root: str = ".numereng"
+
+
+class ResearchStatusResponse(BaseModel):
+    root_experiment_id: str
+    strategy: ResearchStrategy
+    strategy_description: str
+    status: ResearchSupervisorStatus
+    active_experiment_id: str
+    active_path_id: str
+    next_round_number: int
+    total_rounds_completed: int
+    total_paths_created: int
+    improvement_threshold: float
+    last_checkpoint: str
+    stop_reason: str | None = None
+    best_overall: ResearchBestRunResponse
+    current_round: ResearchRoundResponse | None = None
+    current_phase: ResearchPhaseResponse | None = None
+    program_path: str
+    lineage_path: str
+
+
+class ResearchRunRequest(BaseModel):
+    experiment_id: str
+    max_rounds: int | None = Field(default=None, ge=1)
+    max_paths: int | None = Field(default=None, ge=1)
+    store_root: str = ".numereng"
+
+
+class ResearchRunResponse(BaseModel):
+    root_experiment_id: str
+    strategy: ResearchStrategy
+    strategy_description: str
+    status: ResearchSupervisorStatus
+    active_experiment_id: str
+    active_path_id: str
+    next_round_number: int
+    total_rounds_completed: int
+    total_paths_created: int
+    last_checkpoint: str
+    stop_reason: str | None = None
+    current_phase: ResearchPhaseResponse | None = None
+    interrupted: bool = False
+
+
 __all__ = [
     "ExperimentCreateRequest",
     "ExperimentArchiveRequest",
@@ -335,6 +449,17 @@ __all__ = [
     "ExperimentReportRequest",
     "ExperimentReportResponse",
     "ExperimentReportRowResponse",
+    "ResearchBestRunResponse",
+    "ResearchInitRequest",
+    "ResearchInitResponse",
+    "ResearchPhaseResponse",
+    "ResearchRoundResponse",
+    "ResearchRunRequest",
+    "ResearchRunResponse",
+    "ResearchStatusRequest",
+    "ResearchStatusResponse",
+    "ResearchStrategy",
+    "ResearchSupervisorStatus",
     "ExperimentResponse",
     "ExperimentStatus",
     "ExperimentTrainRequest",

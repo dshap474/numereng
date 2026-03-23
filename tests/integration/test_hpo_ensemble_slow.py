@@ -19,7 +19,7 @@ def _write_base_config(path: Path) -> None:
             {
                 "data": {
                     "data_version": "v5.2",
-        "dataset_variant": "non_downsampled",
+                    "dataset_variant": "non_downsampled",
                     "feature_set": "small",
                     "target_col": "target_ender_20",
                     "era_col": "era",

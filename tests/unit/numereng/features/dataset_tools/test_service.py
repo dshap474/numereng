@@ -43,9 +43,9 @@ class _SeedDownloadClient:
         if filename.endswith("/train.parquet"):
             pd.DataFrame({"id": ["id_1"], "era": ["0001"], "target": [0.1]}).to_parquet(path, index=False)
         elif filename.endswith("/validation.parquet"):
-            pd.DataFrame(
-                {"id": ["id_2"], "era": ["0002"], "target": [0.2], "data_type": ["validation"]}
-            ).set_index("id").to_parquet(path)
+            pd.DataFrame({"id": ["id_2"], "era": ["0002"], "target": [0.2], "data_type": ["validation"]}).set_index(
+                "id"
+            ).to_parquet(path)
         elif filename.endswith("/train_benchmark_models.parquet"):
             pd.DataFrame({"id": ["id_1"], "v52_lgbm_ender20": [0.01]}).to_parquet(path, index=False)
         elif filename.endswith("/validation_benchmark_models.parquet"):
@@ -151,9 +151,9 @@ def test_build_downsampled_full_rejects_missing_era_column(tmp_path: Path) -> No
     version_dir.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame({"id": ["train_1"], "target": [0.1]}).to_parquet(version_dir / "train.parquet", index=False)
-    pd.DataFrame(
-        {"id": ["val_1"], "target": [0.2], "data_type": ["validation"]}
-    ).set_index("id").to_parquet(version_dir / "validation.parquet")
+    pd.DataFrame({"id": ["val_1"], "target": [0.2], "data_type": ["validation"]}).set_index("id").to_parquet(
+        version_dir / "validation.parquet"
+    )
     pd.DataFrame({"id": ["train_1"], "v52_lgbm_ender20": [0.01]}).to_parquet(
         version_dir / "train_benchmark_models.parquet",
         index=False,
@@ -226,6 +226,7 @@ def test_build_downsampled_full_rejects_invalid_step(tmp_path: Path) -> None:
             ),
             client=_NoDownloadClient(),
         )
+
 
 def test_build_downsampled_full_supports_custom_step_and_offset(tmp_path: Path) -> None:
     datasets_root = tmp_path / "datasets"

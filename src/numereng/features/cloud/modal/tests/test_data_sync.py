@@ -63,6 +63,7 @@ def test_resolve_required_data_files_rejects_quantized_variant(
     with pytest.raises(ValueError, match="training_config_schema_invalid"):
         resolve_required_data_files(config_path=config_path)
 
+
 def test_resolve_required_data_files_requires_files_to_exist(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

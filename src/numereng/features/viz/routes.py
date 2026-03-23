@@ -410,9 +410,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_manifest": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_manifest": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -428,9 +426,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_metrics": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_metrics": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -444,9 +440,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_events": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_events": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -460,9 +454,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_resources": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_resources": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -519,9 +511,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_trials": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_trials": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -537,9 +527,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_best_params": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_best_params": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 
@@ -555,9 +543,7 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(
             payload,
             extra_headers={
-                "Server-Timing": _server_timing_header(
-                    {"run_config": (time.perf_counter() - started_at) * 1000.0}
-                )
+                "Server-Timing": _server_timing_header({"run_config": (time.perf_counter() - started_at) * 1000.0})
             },
         )
 

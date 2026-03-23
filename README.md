@@ -14,6 +14,7 @@ Stable public interfaces:
 
 ```bash
 uv sync --extra dev
+make fmt
 uv run numereng --help
 make oss-preflight
 make test
@@ -27,12 +28,29 @@ Optional extras:
 
 Default runtime state lives under `.numereng/`.
 
+## Development Tooling
+
+The canonical local toolchain is `uv` for environment management, Ruff for linting and formatting,
+`ty` for the repo's enforced type gate, and `pytest` for tests.
+
+```bash
+make fmt
+make test
+make test-all
+```
+
+`ty` adoption is intentionally staged in `pyproject.toml` through a scoped
+`[tool.ty.src].include` list. The first enforced surface covers `config`,
+`platform`, `features/submission`, a small public API subset, and mirrored smoke/unit tests while
+backlog-heavy areas remain out of scope for this initial baseline.
+
 ## Core Workflows
 
 - Train runs from strict JSON configs: `uv run numereng run train --help`
 - Re-score an existing run: `uv run numereng run score --help`
 - Submit predictions or run outputs: `uv run numereng run submit --help`
 - Manage experiments and pack experiment summaries: `uv run numereng experiment --help`
+- Run agentic research campaigns rooted at one experiment: `uv run numereng research --help`
 - Run HPO studies: `uv run numereng hpo --help`
 - Build ensembles: `uv run numereng ensemble --help`
 - Neutralize predictions: `uv run numereng neutralize --help`
@@ -44,6 +62,7 @@ The CLI command families are:
 
 - `run`
 - `experiment`
+- `research`
 - `hpo`
 - `ensemble`
 - `neutralize`
@@ -78,8 +97,10 @@ Core feature slices include:
 - scoring
 - submission
 - experiments
+- agentic research
 - hpo
 - ensemble
+- dataset tools
 - feature neutralization
 - store
 - telemetry

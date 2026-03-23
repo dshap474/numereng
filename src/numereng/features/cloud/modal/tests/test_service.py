@@ -587,9 +587,7 @@ def test_deploy_translates_adapter_error(tmp_path: Path) -> None:
     service = CloudModalService(adapter=_FailingDeployAdapter())
     with pytest.raises(CloudModalError, match="modal_deploy_failed"):
         service.deploy(
-            ModalDeployRequest(
-                ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
-            )
+            ModalDeployRequest(ecr_image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest")
         )
 
 

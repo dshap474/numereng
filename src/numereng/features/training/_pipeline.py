@@ -107,9 +107,9 @@ from numereng.features.training.service import (
     _resolve_resource_policy,
     _resolve_scoring_mode,
     _resolve_scoring_target_cols,
-    _scoring_targets_explicit,
     _resolve_store_root_for_run,
     _scoring_policy_payload,
+    _scoring_targets_explicit,
     build_results_payload,
     resolve_benchmark_source,
     resolve_model_config,
@@ -616,6 +616,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         and state.benchmark_source is not None
         and not _is_full_history_refit_profile(engine_plan.mode)
     ):
+
         def _format_val_interval(fold_metadata: dict[str, object]) -> str:
             val_interval = fold_metadata.get("val_interval")
             if not isinstance(val_interval, dict):
@@ -1125,7 +1126,7 @@ def run_training_pipeline(
     embargo_eras: int | None = None,
     experiment_id: str | None = None,
 ) -> TrainingRunResult:
-    """Execute the full local train pipeline and emit only post-fold scoring."""
+    """Execute the full local train pipeline and persist canonical scoring artifacts."""
     state = TrainingPipelineState(
         config_path=Path(config_path).expanduser().resolve(),
         output_dir=Path(output_dir).expanduser() if output_dir is not None else None,
@@ -1150,6 +1151,7 @@ def run_training_pipeline(
         )
         state = load_training_data(state)
         state = train_model(state)
+        state = score_predictions(state)
         return finalize_training_run(state)
     except Exception as exc:
         fail_training_run(state, exc)

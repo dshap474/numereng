@@ -253,9 +253,7 @@ def _select_keep_eras(*, unique_eras: list[object], era_step: int, era_offset: i
     if era_step < 2:
         raise DatasetToolsValidationError(f"downsample_step_invalid:{era_step}")
     if era_offset < 0 or era_offset >= era_step:
-        raise DatasetToolsValidationError(
-            f"downsample_offset_invalid:{era_offset}:step={era_step}"
-        )
+        raise DatasetToolsValidationError(f"downsample_offset_invalid:{era_offset}:step={era_step}")
     return {era for idx, era in enumerate(unique_eras) if idx % era_step == era_offset}
 
 

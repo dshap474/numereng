@@ -93,6 +93,7 @@ src/numereng/
     submission/                # run/file artifact resolution + Numerai upload
     feature_neutralization/    # prediction neutralization
     experiments/               # experiment lifecycle + run linkage
+    agentic_research/          # strategy-driven continuous research supervisor + planner assets
     hpo/                       # Optuna study execution + trial persistence
     ensemble/                  # rank-average build + diagnostics
     dataset-tools/             # local dataset downsampling tools
@@ -149,10 +150,12 @@ Boundary behavior:
 
 Command families:
 - `run`: `train`, `score`, `submit`
-- `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `score-round`, `promote`, `report`
+- `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `score-round`, `promote`, `report`, `pack`
+- `research`: `init`, `status`, `run`
 - `hpo`: `create`, `list`, `details`, `trials`
 - `ensemble`: `build`, `list`, `details`
 - `neutralize`: `apply`
+- `dataset-tools`: `build-downsampled-full`
 - `store`: `init`, `index`, `rebuild`, `doctor`, `materialize-viz-artifacts`
 - `cloud`: `ec2`, `aws`, `modal`
 - `numerai`: `datasets` (`list`, `download`), `models`, `round`, `forum scrape`
@@ -199,6 +202,19 @@ Dynamic top-level dirs may also appear:
       EXPERIMENT.md
       EXPERIMENT.pack.md
       configs/*.json
+      agentic_research/
+        program.json
+        lineage.json
+        rounds/rN/
+          codex_prompt.txt
+          codex_usage.json
+          codex_stdout.jsonl
+          codex_stderr.txt
+          codex_last_message.json
+          codex_decision.json
+          planned_configs.json
+          report.json
+          round_summary.json
     _archive/
       <experiment_id>/
         experiment.json
@@ -351,7 +367,36 @@ cli experiment archive|unarchive
       - upsert experiment index row so viz reflects the change immediately
 ```
 
-### 7.5 HPO
+### 7.5 Agentic Research
+```text
+cli research init|status|run
+  -> api.research_init|api.research_status|api.research_run
+  -> features.agentic_research.init_research|get_research_status|run_research
+      - persist supervisor state under:
+          .numereng/experiments/<root>/agentic_research/program.json
+          .numereng/experiments/<root>/agentic_research/lineage.json
+          .numereng/experiments/<root>/agentic_research/rounds/rN/*
+      - `research init` requires one persisted strategy id
+      - supported strategies:
+          - `numerai-experiment-loop`
+          - `kaggle-gm-loop`
+      - phase-aware strategies persist `current_phase` in program state and surface it in API/CLI status
+      - select planner compute source from `src/numereng/config/openrouter/active-model.py`
+      - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
+      - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
+      - isolate planner runtime under a dedicated learner `CODEX_HOME` with lean headless defaults (`gpt-5.4`, low reasoning, read-only sandbox, shell tool disabled, no apps/multi-agent/js_repl) when the source is `codex-exec`
+      - load prompt/schema assets from the selected strategy package under `features/agentic_research/assets/<strategy-id>/`
+      - feed the selected planner backend a closed-world context bundle: metric policy, strategy context, best/prior round summaries, one authoritative base config snapshot, allowed override paths, and validated config examples
+      - validate planner output against the checked-in strategy schema, then materialize full configs locally by applying override-only deltas onto the authoritative base config before `TrainingConfig` validation
+      - persist planner telemetry per round (`codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`) so prompt cost and latency are measurable; artifact names remain `codex_*` for compatibility even when the planner source is OpenRouter
+      - write 4-5 configs into the active experiment, train sequentially, deferred-score the round, and persist summary artifacts
+      - track plateau streak on `bmc_last_200_eras.mean` with `bmc.mean` tie-break
+      - let strategy policy decide whether the next round stays in the current phase, advances phase, or completes the campaign
+      - after two failed rounds, force one scale-confirmation round; if that also fails, create a fresh child experiment and continue there
+      - write lineage backlinks into experiment manifest metadata so root and child paths remain auditable
+```
+
+### 7.6 HPO
 ```text
 cli hpo create
   -> api.hpo_create
@@ -611,9 +656,16 @@ success/help
 
 ## 12. Testing + Verification
 Primary checks:
+- `make fmt`
 - `make test` (fast gate)
 - `make test-all` (full gate)
 - `uv build`
+
+Tooling contract:
+- `uv` is the project manager and command runner.
+- Ruff is the canonical formatter and linter with the minimal repo baseline (`E`, `F`, `I`, `UP`).
+- `ty` is the canonical enforced type gate.
+- The initial `ty` surface is intentionally scoped through `[tool.ty.src].include` in `pyproject.toml` while backlog-heavy areas are migrated later.
 
 Contract anchors:
 - `tests/integration/test_smoke_structure.py`: validates public surface presence.

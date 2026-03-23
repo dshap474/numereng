@@ -61,9 +61,7 @@ class LGBMRegressor:
         missing = [col for col in feature_cols if col not in X.columns]
         if missing:
             raise TrainingModelError(
-                "training_model_feature_columns_missing:"
-                + ",".join(missing[:5])
-                + (",..." if len(missing) > 5 else "")
+                "training_model_feature_columns_missing:" + ",".join(missing[:5]) + (",..." if len(missing) > 5 else "")
             )
 
         return X[feature_cols]

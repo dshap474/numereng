@@ -117,11 +117,7 @@ def _resolve_predictions_path(*, run_dir: Path, manifest: dict[str, Any]) -> Pat
     if predictions_dir.is_dir():
         allowed_suffixes = {".parquet"}
         files = sorted(
-            [
-                item
-                for item in predictions_dir.iterdir()
-                if item.is_file() and item.suffix.lower() in allowed_suffixes
-            ],
+            [item for item in predictions_dir.iterdir() if item.is_file() and item.suffix.lower() in allowed_suffixes],
             key=lambda item: item.name,
         )
         if files:

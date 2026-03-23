@@ -78,9 +78,7 @@ def _official_walkforward_splits(
     if len(eras_sorted) <= chunk_size:
         required = chunk_size + 1
         found = len(eras_sorted)
-        raise TrainingConfigError(
-            f"training_cv_walkforward_requires_min_eras:required={required}:found={found}"
-        )
+        raise TrainingConfigError(f"training_cv_walkforward_requires_min_eras:required={required}:found={found}")
 
     splits: list[tuple[list[object], list[object]]] = []
     val_start = chunk_size
@@ -136,8 +134,7 @@ def build_oof_predictions(
         holdout_val_eras=holdout_val_eras,
     )
     splits_with_descriptors: list[tuple[list[object], list[object], dict[str, object]]] = [
-        (train_eras, val_eras, {})
-        for train_eras, val_eras in splits
+        (train_eras, val_eras, {}) for train_eras, val_eras in splits
     ]
 
     all_eras_sorted = _sorted_unique_eras(eras)

@@ -23,9 +23,7 @@ def test_parse_ecr_image_uri_accepts_expected_shape() -> None:
 
 def test_parse_ecr_image_uri_rejects_digest_form() -> None:
     with pytest.raises(ValueError, match="invalid ecr_image_uri"):
-        parse_ecr_image_uri(
-            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training@sha256:deadbeef"
-        )
+        parse_ecr_image_uri("123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training@sha256:deadbeef")
 
 
 def test_modal_deploy_request_rejects_invalid_ecr_uri() -> None:

@@ -433,7 +433,20 @@ def _metrics_payload_from_summaries(summaries: dict[str, pd.DataFrame]) -> dict[
         if len(summary.index) != 1:
             raise TrainingError(f"training_metric_row_missing_prediction:{metric_name}")
         payload[metric_name] = summary.iloc[0].to_dict()
+
+    for metric_name in ("bmc", "bmc_last_200_eras", "mmc"):
+        if isinstance(payload.get(metric_name), dict):
+            continue
+        alias_keys = _aliased_metric_keys(payload, metric_name)
+        if len(alias_keys) == 1:
+            payload[metric_name] = payload[alias_keys[0]]
     return payload
+
+
+def _aliased_metric_keys(payload: dict[str, object], metric_name: str) -> list[str]:
+    if metric_name == "bmc":
+        return [key for key in payload if key.startswith("bmc_") and not key.startswith("bmc_last_200_eras_")]
+    return [key for key in payload if key.startswith(f"{metric_name}_")]
 
 
 def _mark_telemetry_completed(

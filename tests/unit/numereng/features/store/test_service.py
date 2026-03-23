@@ -68,10 +68,7 @@ def test_init_store_db_creates_required_tables(tmp_path: Path) -> None:
     assert result.db_path.exists()
 
     with sqlite3.connect(result.db_path) as conn:
-        tables = {
-            str(row[0])
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
+        tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
 
     assert "schema_migrations" in tables
     assert "runs" in tables
@@ -214,7 +211,7 @@ def test_index_run_upserts_run_metrics_and_artifacts(tmp_path: Path) -> None:
     (run_dir / "artifacts" / "predictions").mkdir(parents=True)
 
     _write_run_manifest(run_dir)
-    (run_dir / "resolved.json").write_text("{\n  \"foo\": \"bar\"\n}\n")
+    (run_dir / "resolved.json").write_text('{\n  "foo": "bar"\n}\n')
     (run_dir / "results.json").write_text("{}")
     (run_dir / "metrics.json").write_text(
         json.dumps(
