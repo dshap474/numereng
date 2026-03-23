@@ -431,8 +431,7 @@ def _path_allowed(path: str) -> bool:
         if len(tokens) != len(allowed_tokens):
             continue
         if all(
-            expected == "*" or expected == current
-            for expected, current in zip(allowed_tokens, tokens, strict=True)
+            expected == "*" or expected == current for expected, current in zip(allowed_tokens, tokens, strict=True)
         ):
             return True
     return False
