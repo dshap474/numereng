@@ -206,8 +206,10 @@ Dynamic top-level dirs may also appear:
         program.json
         lineage.json
         llm_trace.jsonl
+        llm_trace.md
         rounds/rN/
           llm_trace.jsonl
+          llm_trace.md
           codex_prompt.txt
           codex_usage.json
           codex_stdout.jsonl
