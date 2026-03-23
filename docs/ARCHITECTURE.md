@@ -382,6 +382,7 @@ cli research init|status|run
           - `kaggle-gm-loop`
       - phase-aware strategies persist `current_phase` in program state and surface it in API/CLI status
       - select planner compute source from `src/numereng/config/openrouter/active-model.py`
+      - checked-in default: `ACTIVE_MODEL_SOURCE=codex-exec`
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - isolate planner runtime under a dedicated learner `CODEX_HOME` with lean headless defaults (`gpt-5.4`, low reasoning, read-only sandbox, shell tool disabled, no apps/multi-agent/js_repl) when the source is `codex-exec`
