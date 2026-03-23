@@ -45,8 +45,10 @@ from numereng.features.agentic_research.planner import (
     validate_decision,
 )
 from numereng.features.agentic_research.state import (
+    append_jsonl_artifact,
     ensure_agentic_research_dirs,
     lineage_path,
+    llm_trace_path,
     load_lineage_state,
     load_program_state,
     program_path,
@@ -74,7 +76,7 @@ from numereng.features.experiments import (
 )
 from numereng.features.store import StoreError, resolve_store_root, upsert_experiment
 from numereng.features.telemetry import bind_launch_metadata
-from numereng.platform.clients.openrouter import active_model_source
+from numereng.platform.clients.openrouter import active_model_source, load_openrouter_config
 
 _AGENTIC_RESEARCH_DIRNAME = "agentic_research"
 _DEFAULT_CODEX_COMMAND = default_codex_command()
@@ -452,6 +454,14 @@ def _run_current_round(
                 if executions:
                     _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
                 save_text_artifact(round_artifact_dir / "codex_failure.txt", str(retry_exc))
+                _append_planner_trace(
+                    auto_dir=auto_dir,
+                    round_artifact_dir=round_artifact_dir,
+                    round_state=round_state,
+                    executions=executions,
+                    status="failed",
+                    error=str(retry_exc),
+                )
                 stopped_state = _stop_program(state, reason="codex_planning_failed")
                 return stopped_state, lineage, "stop"
         _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
@@ -468,6 +478,13 @@ def _run_current_round(
                 "phase_transition_rationale": decision.phase_transition_rationale,
                 "configs": materialized_decision_configs,
             },
+        )
+        _append_planner_trace(
+            auto_dir=auto_dir,
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            executions=executions,
+            status="succeeded",
         )
         state = _apply_strategy_phase_action(
             state=state,
@@ -900,6 +917,78 @@ def _save_codex_execution_artifacts(
         "\n".join(execution.stderr_text for execution in executions if execution.stderr_text).strip(),
     )
     save_round_artifact(round_artifact_dir / "codex_last_message.json", executions[-1].last_message)
+
+
+def _planner_trace_payload(
+    *,
+    round_state: Any,
+    round_artifact_dir: Path,
+    executions: list[CodexPlannerExecution],
+    status: str,
+    error: str | None = None,
+) -> dict[str, object]:
+    source = active_model_source()
+    model_name: str | None = None
+    if source == "openrouter":
+        try:
+            model_name = load_openrouter_config().active_model
+        except Exception:  # noqa: BLE001
+            model_name = None
+    attempts = [
+        {
+            "attempt_number": attempt.attempt_number,
+            "elapsed_seconds": attempt.elapsed_seconds,
+            "returncode": attempt.returncode,
+            "thread_id": attempt.thread_id,
+            "input_tokens": attempt.input_tokens,
+            "cached_input_tokens": attempt.cached_input_tokens,
+            "output_tokens": attempt.output_tokens,
+            "stdout_line_count": attempt.stdout_line_count,
+            "validation_feedback": attempt.validation_feedback,
+        }
+        for execution in executions
+        for attempt in execution.attempts
+    ]
+    return {
+        "timestamp": utc_now_iso(),
+        "event": "planner_trace",
+        "status": status,
+        "planner_source": source,
+        "planner_model": model_name if model_name is not None else source,
+        "experiment_id": round_state.experiment_id,
+        "path_id": round_state.path_id,
+        "round_label": round_state.round_label,
+        "round_number": round_state.round_number,
+        "prompt_path": str(round_artifact_dir / "codex_prompt.txt"),
+        "usage_path": str(round_artifact_dir / "codex_usage.json"),
+        "stdout_path": str(round_artifact_dir / "codex_stdout.jsonl"),
+        "stderr_path": str(round_artifact_dir / "codex_stderr.txt"),
+        "last_message_path": str(round_artifact_dir / "codex_last_message.json"),
+        "decision_path": str(round_artifact_dir / "codex_decision.json"),
+        "attempts": attempts,
+        "decision": executions[-1].last_message if executions else None,
+        "error": error,
+    }
+
+
+def _append_planner_trace(
+    *,
+    auto_dir: Path,
+    round_artifact_dir: Path,
+    round_state: Any,
+    executions: list[CodexPlannerExecution],
+    status: str,
+    error: str | None = None,
+) -> None:
+    payload = _planner_trace_payload(
+        round_state=round_state,
+        round_artifact_dir=round_artifact_dir,
+        executions=executions,
+        status=status,
+        error=error,
+    )
+    append_jsonl_artifact(llm_trace_path(auto_dir), payload)
+    append_jsonl_artifact(round_artifact_dir / "llm_trace.jsonl", payload)
 
 
 def _run_planner(

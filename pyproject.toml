@@ -3,7 +3,7 @@ name = "numereng"
 version = "0.1.0"
 description = "Numerai workflow package for training, experiments, submissions, ensembles, HPO, cloud runs, and monitoring."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.34",
     "fastapi>=0.115",
@@ -87,14 +87,14 @@ markers = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 extend-exclude = [".agents", ".venv-test"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.ty.environment]
-python-version = "3.11"
+python-version = "3.12"
 root = ["./src"]
 
 [tool.ty.src]

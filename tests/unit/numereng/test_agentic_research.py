@@ -595,8 +595,21 @@ def test_run_research_executes_one_full_round(
     assert (round_dir / "round_summary.json").is_file()
     assert (round_dir / "codex_usage.json").is_file()
     assert (round_dir / "codex_last_message.json").is_file()
+    assert (round_dir / "llm_trace.jsonl").is_file()
     usage = json.loads((round_dir / "codex_usage.json").read_text(encoding="utf-8"))
     assert "attempts" in usage
+    trace_lines = [
+        json.loads(line)
+        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(trace_lines) == 1
+    assert trace_lines[0]["status"] == "succeeded"
+    assert trace_lines[0]["planner_source"] == "codex-exec"
+    assert trace_lines[0]["round_label"] == "r1"
+    assert trace_lines[0]["decision"]["next_action"] == "continue"
 
 
 def test_run_research_resumes_after_interrupt(

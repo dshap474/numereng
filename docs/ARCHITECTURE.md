@@ -205,7 +205,9 @@ Dynamic top-level dirs may also appear:
       agentic_research/
         program.json
         lineage.json
+        llm_trace.jsonl
         rounds/rN/
+          llm_trace.jsonl
           codex_prompt.txt
           codex_usage.json
           codex_stdout.jsonl
@@ -390,6 +392,7 @@ cli research init|status|run
       - feed the selected planner backend a closed-world context bundle: metric policy, strategy context, best/prior round summaries, one authoritative base config snapshot, allowed override paths, and validated config examples
       - validate planner output against the checked-in strategy schema, then materialize full configs locally by applying override-only deltas onto the authoritative base config before `TrainingConfig` validation
       - persist planner telemetry per round (`codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`) so prompt cost and latency are measurable; artifact names remain `codex_*` for compatibility even when the planner source is OpenRouter
+      - append planner trace entries to `.numereng/experiments/<root>/agentic_research/llm_trace.jsonl` and copy the same entry into `rounds/rN/llm_trace.jsonl`; each line captures planner source/model, attempt telemetry, the parsed decision, and file pointers to the raw prompt/response artifacts
       - write 4-5 configs into the active experiment, train sequentially, deferred-score the round, and persist summary artifacts
       - track plateau streak on `bmc_last_200_eras.mean` with `bmc.mean` tie-break
       - let strategy policy decide whether the next round stays in the current phase, advances phase, or completes the campaign

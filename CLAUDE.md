@@ -11,6 +11,7 @@ Read order:
 - `uv build`
 
 ## Environment Rules
+- Python baseline is `3.12+`.
 - Use only the project-managed env (`.venv`) via `uv sync --extra dev`.
 - Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `ty`, `numereng`, etc.).
 - If direct Python is required, use `.venv/bin/python`.

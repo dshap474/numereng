@@ -116,11 +116,11 @@ snap install amazon-ssm-agent 2>/dev/null || apt-get install -y amazon-ssm-agent
 systemctl start amazon-ssm-agent 2>/dev/null || snap start amazon-ssm-agent 2>/dev/null || true
 apt-get update -y -q
 DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-python3.11 python3.11-venv python3-pip curl build-essential cmake ninja-build git
+python3.12 python3.12-venv python3-pip curl build-essential cmake ninja-build git
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH=\"/root/.local/bin:$PATH\"
 mkdir -p /opt/numereng
-python3.11 -m venv /opt/numereng/.venv
+python3.12 -m venv /opt/numereng/.venv
 mkdir -p /opt/numereng/.numereng/datasets/{data_version}
 mkdir -p /opt/numereng/.numereng/configs
 mkdir -p /opt/numereng/.numereng/runs
@@ -131,11 +131,11 @@ touch /opt/numereng/.ready
 set -euo pipefail
 exec &>> /var/log/numereng-bootstrap.log
 systemctl start amazon-ssm-agent 2>/dev/null || true
-dnf install -y -q python3.11 python3.11-pip python3.11-devel gcc-c++ git curl
+dnf install -y -q python3.12 python3.12-pip python3.12-devel gcc-c++ git curl
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH=\"/root/.local/bin:$PATH\"
 mkdir -p /opt/numereng
-python3.11 -m venv /opt/numereng/.venv
+python3.12 -m venv /opt/numereng/.venv
 mkdir -p /opt/numereng/.numereng/datasets/{data_version}
 mkdir -p /opt/numereng/.numereng/configs
 mkdir -p /opt/numereng/.numereng/runs

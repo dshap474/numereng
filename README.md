@@ -12,6 +12,8 @@ Stable public interfaces:
 
 ## Quick Start
 
+Requires Python `3.12+`.
+
 ```bash
 uv sync --extra dev
 make fmt
@@ -128,6 +130,11 @@ The default store root is `.numereng/`. Common artifacts include:
     EXPERIMENT.md
     EXPERIMENT.pack.md
     configs/*.json
+    agentic_research/
+      program.json
+      lineage.json
+      llm_trace.jsonl
+      rounds/rN/*
   datasets/
   cloud/
   notes/
