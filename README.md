@@ -73,6 +73,8 @@ The CLI command families are:
 
 Python users can call the same flows through typed request/response contracts in `numereng.api.contracts`.
 
+Agentic research defaults to a headless `codex exec` planner. To use OpenRouter instead, switch `ACTIVE_MODEL_SOURCE` in `src/numereng/config/openrouter/active-model.py` to `openrouter`.
+
 ## Architecture
 
 The codebase follows a strict dependency direction:

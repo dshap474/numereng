@@ -18,6 +18,10 @@
 !store-ops/**
 
 # Keep Python cache artifacts in allowlisted skills local-only.
+numerai-api-ops/**/__pycache__/
+numerai-api-ops/**/*.py[cod]
+implement-custom-model/**/__pycache__/
+implement-custom-model/**/*.py[cod]
 numereng-experiment-ops/**/__pycache__/
 numereng-experiment-ops/**/*.py[cod]
 store-ops/**/__pycache__/

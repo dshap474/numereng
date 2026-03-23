@@ -35,7 +35,7 @@ Source map:
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
-- `src/numereng/features/agentic_research/*`: foreground supervisor that plans 4-5 config rounds, persists program state under one root experiment, pivots into child experiments when a path plateaus, and now selects a persisted research strategy at `research init`. Current strategies are `numerai-experiment-loop` and the phase-aware `kaggle-gm-loop`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); `codex-exec` uses the dedicated lean `CODEX_HOME`, while `openrouter` uses the configured `ACTIVE_MODEL`.
+- `src/numereng/features/agentic_research/*`: foreground supervisor that plans 4-5 config rounds, persists program state under one root experiment, pivots into child experiments when a path plateaus, and now selects a persisted research strategy at `research init`. Current strategies are `numerai-experiment-loop` and the phase-aware `kaggle-gm-loop`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the dedicated lean `CODEX_HOME`, while `openrouter` uses the configured `ACTIVE_MODEL`.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -91,7 +91,7 @@ Wiring map:
 - Agentic research:
   `cli research init|status|run -> api.research_init|research_status|research_run -> features.agentic_research.init_research|get_research_status|run_research`
   - `research init` now requires `strategy`
-  - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`)
+  - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`); checked-in default is `codex-exec`
   - strategy is persisted in `program.json`; old initialized programs without a strategy must be re-initialized
   - phase-aware strategies expose `current_phase` in API/CLI status and run responses
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime is isolated from the user’s interactive Codex defaults via a feature-managed learner `CODEX_HOME`

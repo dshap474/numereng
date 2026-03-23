@@ -51,7 +51,7 @@ Read order:
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
 - `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
 - `research init` requires `--strategy`; initialized programs persist that strategy in `agentic_research/program.json`.
-- Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`.
+- Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
 - Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
