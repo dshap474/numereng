@@ -84,9 +84,7 @@ def run_openrouter_raw_planner(*, prompt: str) -> RawPlannerExecution:
     client = OpenRouterClient()
     started = time.perf_counter()
     try:
-        response = client.chat_completions(
-            payload={"messages": [{"role": "user", "content": prompt}]}
-        )
+        response = client.chat_completions(payload={"messages": [{"role": "user", "content": prompt}]})
     except OpenRouterClientError as exc:
         raise AgenticResearchOpenRouterError("agentic_research_openrouter_exec_failed") from exc
     elapsed_seconds = time.perf_counter() - started
