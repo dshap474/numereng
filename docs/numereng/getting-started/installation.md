@@ -4,7 +4,7 @@ Set up numereng for local development and CLI usage.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - `uv`
 - Git
 - Optional: Node.js 20+ and npm (only if you run viz frontend)

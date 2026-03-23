@@ -22,6 +22,8 @@ from numereng.features.agentic_research.contracts import (
 
 _PROGRAM_FILENAME = "program.json"
 _LINEAGE_FILENAME = "lineage.json"
+_LLM_TRACE_FILENAME = "llm_trace.jsonl"
+_LLM_TRACE_MARKDOWN_FILENAME = "llm_trace.md"
 
 
 def utc_now_iso() -> str:
@@ -42,6 +44,16 @@ def program_path(agentic_research_dir: Path) -> Path:
 def lineage_path(agentic_research_dir: Path) -> Path:
     """Return the canonical lineage state path."""
     return agentic_research_dir / _LINEAGE_FILENAME
+
+
+def llm_trace_path(agentic_research_dir: Path) -> Path:
+    """Return the canonical append-only planner trace log path."""
+    return agentic_research_dir / _LLM_TRACE_FILENAME
+
+
+def llm_trace_markdown_path(agentic_research_dir: Path) -> Path:
+    """Return the canonical human-readable planner trace markdown path."""
+    return agentic_research_dir / _LLM_TRACE_MARKDOWN_FILENAME
 
 
 def round_dir(agentic_research_dir: Path, round_label: str) -> Path:
@@ -80,6 +92,20 @@ def save_text_artifact(path: Path, payload: str) -> None:
     """Persist one round-scoped text artifact."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
+
+
+def append_jsonl_artifact(path: Path, payload: dict[str, object]) -> None:
+    """Append one JSON object to a JSONL artifact."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def append_text_artifact(path: Path, payload: str) -> None:
+    """Append text to one artifact file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(payload)
 
 
 def decision_to_dict(decision: CodexDecision) -> dict[str, object]:

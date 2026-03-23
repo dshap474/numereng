@@ -62,9 +62,14 @@ def test_build_export_command_quotes_value() -> None:
     assert build_export_command("Token public$private") == "export NUMERAI_MCP_AUTH='Token public$private'"
 
 
-def test_main_prints_shell_export_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_prints_shell_export_command(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text('NUMERAI_MCP_AUTH="Token public\\$private"\n', encoding="utf-8")
+    monkeypatch.delenv("NUMERAI_MCP_AUTH", raising=False)
 
     exit_code = main(["--env-file", str(env_file)])
 
