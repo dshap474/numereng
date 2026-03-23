@@ -825,12 +825,25 @@ def _plan_mutation_round(
     report = _safe_report(root=root, experiment_id=state.active_experiment_id)
     recent_rounds = _recent_round_summaries(auto_dir=auto_dir)
     comparison_dirs = _planner_reference_config_dirs(root=root, state=state, active_path=active_path)
-    parent = select_parent_config(
-        root=root,
-        experiment=experiment,
-        report=report,
-        config_dirs=comparison_dirs,
-    )
+    try:
+        parent = select_parent_config(
+            root=root,
+            experiment=experiment,
+            report=report,
+            config_dirs=comparison_dirs,
+        )
+    except ValueError as exc:
+        error = str(exc)
+        save_text_artifact(round_artifact_dir / "codex_failure.txt", error)
+        _append_planner_trace(
+            auto_dir=auto_dir,
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            executions=[],
+            status="failed",
+            error=error,
+        )
+        return _stop_program(state, reason="codex_planning_failed"), lineage, "stop"
     validation_feedback: str | None = None
     executions: list[Any] = []
     proposal: Any | None = None
@@ -1015,10 +1028,27 @@ def _planner_reference_config_dirs(
     state: ResearchProgramState,
     active_path: ResearchPathState,
 ) -> list[Path]:
-    config_dirs = [_experiment_config_dir(root=root, experiment_id=state.active_experiment_id)]
-    if active_path.parent_experiment_id is not None:
-        config_dirs.append(_experiment_config_dir(root=root, experiment_id=active_path.parent_experiment_id))
-    if state.program_experiment_id not in {state.active_experiment_id, active_path.parent_experiment_id}:
+    config_dirs: list[Path] = []
+    seen_experiment_ids: set[str] = set()
+    paths_by_experiment_id = {path.experiment_id: path for path in state.paths}
+    current_path: ResearchPathState | None = active_path
+    while current_path is not None:
+        experiment_id = current_path.experiment_id
+        if experiment_id not in seen_experiment_ids:
+            config_dirs.append(_experiment_config_dir(root=root, experiment_id=experiment_id))
+            seen_experiment_ids.add(experiment_id)
+        parent_experiment_id = current_path.parent_experiment_id
+        if parent_experiment_id is None:
+            break
+        if parent_experiment_id in seen_experiment_ids:
+            break
+        parent_path = paths_by_experiment_id.get(parent_experiment_id)
+        if parent_path is None:
+            config_dirs.append(_experiment_config_dir(root=root, experiment_id=parent_experiment_id))
+            seen_experiment_ids.add(parent_experiment_id)
+            break
+        current_path = parent_path
+    if state.program_experiment_id not in seen_experiment_ids:
         config_dirs.append(_experiment_config_dir(root=root, experiment_id=state.program_experiment_id))
     return config_dirs
 
@@ -1319,10 +1349,12 @@ def _mutation_winner_criteria() -> str:
 
 
 def _trace_response_text(execution: Any) -> str:
+    raw_response_text = getattr(execution, "raw_response_text", "")
+    if isinstance(raw_response_text, str) and raw_response_text.strip():
+        return raw_response_text
     stdout_jsonl = getattr(execution, "stdout_jsonl", "")
     if isinstance(stdout_jsonl, str) and stdout_jsonl.strip():
         return stdout_jsonl
-    raw_response_text = getattr(execution, "raw_response_text", "")
     if isinstance(raw_response_text, str):
         return raw_response_text
     return ""
