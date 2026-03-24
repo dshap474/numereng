@@ -16,7 +16,7 @@ from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,
     load_custom_benchmark_predictions,
 )
-from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest, default_scoring_policy
+from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest
 from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run
 from numereng.features.telemetry import (
@@ -34,10 +34,8 @@ from numereng.features.training.cv import build_full_history_predictions, build_
 from numereng.features.training.errors import TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run
 from numereng.features.training.models import (
-    FoldJoinColumn,
     ModelDataLoaderProtocol,
     TrainingRunResult,
-    build_lazy_parquet_data_loader,
     build_model_data_loader,
     build_x_cols,
     normalize_x_groups,
@@ -49,9 +47,7 @@ from numereng.features.training.repo import (
     list_lazy_source_eras,
     load_config,
     load_features,
-    load_fold_data_lazy,
     load_full_data,
-    resolve_fold_lazy_source_paths,
     resolve_metrics_path,
     resolve_output_locations,
     resolve_resolved_config_path,
@@ -82,8 +78,6 @@ from numereng.features.training.run_store import (
     run_id_from_hash,
 )
 from numereng.features.training.service import (
-    _FOLD_LAZY_LOADING_MODE,
-    _MATERIALIZED_LOADING_MODE,
     _SIMPLE_PROFILE,
     _apply_resource_policy,
     _as_dict,
@@ -103,12 +97,9 @@ from numereng.features.training.service import (
     _resolve_dataset_scope,
     _resolve_dataset_scope_for_profile,
     _resolve_dataset_variant,
-    _resolve_loading_mode,
     _resolve_resource_policy,
-    _resolve_scoring_mode,
     _resolve_scoring_target_cols,
     _resolve_store_root_for_run,
-    _scoring_policy_payload,
     _scoring_targets_explicit,
     build_results_payload,
     resolve_benchmark_source,
@@ -147,10 +138,6 @@ class TrainingPipelineState:
     meta_model_col: str = "numerai_meta_model"
     data_embargo_eras: int | None = None
     dataset_scope: str = "train_only"
-    loading_mode: str = _MATERIALIZED_LOADING_MODE
-    scoring_mode: str = "materialized"
-    scoring_era_chunk_size: int = 64
-    include_feature_neutral_metrics: bool = True
     nan_missing_all_twos: bool = False
     missing_value: float = 2.0
     resource_policy: dict[str, object] = field(default_factory=dict)
@@ -189,12 +176,8 @@ class TrainingPipelineState:
     training_client: TrainingDataClient | None = None
     features: list[str] = field(default_factory=list)
     full: pd.DataFrame | None = None
-    source_paths: tuple[Path, ...] | None = None
-    profile_frame: pd.DataFrame | None = None
-    lazy_include_validation_only: bool = False
     baseline: pd.DataFrame | None = None
     baseline_col: str | None = None
-    join_columns: list[FoldJoinColumn] = field(default_factory=list)
     x_cols: list[str] = field(default_factory=list)
     data_loader: ModelDataLoaderProtocol | None = None
     all_eras: list[object] = field(default_factory=list)
@@ -209,7 +192,6 @@ class TrainingPipelineState:
     scoring_feature_source_paths: tuple[Path, ...] | None = None
     summaries: dict[str, pd.DataFrame] | None = None
     metrics_status: dict[str, object] | None = None
-    effective_scoring_backend: str = ""
     metrics_payload: dict[str, object] = field(default_factory=dict)
 
 
@@ -259,13 +241,6 @@ def prepare_training_run(
     state.meta_model_col = str(state.data_config.get("meta_model_col", "numerai_meta_model"))
     state.data_embargo_eras = _coerce_optional_int(state.data_config.get("embargo_eras"))
     dataset_scope_config = _resolve_dataset_scope(state.data_config.get("dataset_scope"))
-    loading_config = _as_dict(state.data_config.get("loading"))
-    state.loading_mode = _resolve_loading_mode(loading_config.get("mode"))
-    state.scoring_mode = _resolve_scoring_mode(loading_config.get("scoring_mode"))
-    state.scoring_era_chunk_size = _coerce_int(loading_config.get("era_chunk_size"), default=64)
-    state.include_feature_neutral_metrics = bool(loading_config.get("include_feature_neutral_metrics", True))
-    if state.scoring_era_chunk_size < 1:
-        raise TrainingConfigError("training_data_loading_era_chunk_size_invalid")
 
     state.nan_missing_all_twos = bool(state.preprocessing_config.get("nan_missing_all_twos", False))
     state.missing_value = _coerce_float(state.preprocessing_config.get("missing_value"), default=2.0)
@@ -331,13 +306,7 @@ def prepare_training_run(
             "dataset_scope": state.dataset_scope,
             "dataset_variant": state.dataset_variant,
         },
-        "loading": {"mode": state.loading_mode},
-        "scoring": {
-            "mode": state.scoring_mode,
-            "era_chunk_size": state.scoring_era_chunk_size,
-            "effective_backend": state.scoring_mode,
-            "policy": _scoring_policy_payload(default_scoring_policy(state.include_feature_neutral_metrics)),
-        },
+        "scoring": {"requested_stage": "post_training_core", "refreshed_stages": []},
         "resources": state.resource_policy,
         "cache": state.cache_policy,
     }
@@ -415,10 +384,7 @@ def prepare_training_run(
     log_info(
         state.run_log_path,
         event="run_started",
-        message=(
-            f"run_id={state.run_id} engine_mode={state.engine_plan.mode} "
-            f"loading_mode={state.loading_mode} scoring_mode={state.scoring_mode}"
-        ),
+        message=f"run_id={state.run_id} engine_mode={state.engine_plan.mode}",
         attempt_id=state.run_attempt_id,
     )
     save_resolved_config(config, state.resolved_snapshot_path)
@@ -444,58 +410,26 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
         state.feature_set,
         dataset_variant=state.dataset_variant,
     )
-    if state.loading_mode == _MATERIALIZED_LOADING_MODE:
-        state.full = load_full_data(
-            cast(TrainingDataClient, state.training_client),
-            state.data_version,
-            state.dataset_variant,
+    state.full = load_full_data(
+        cast(TrainingDataClient, state.training_client),
+        state.data_version,
+        state.dataset_variant,
+        state.features,
+        state.era_col,
+        state.target_col,
+        state.id_col,
+        dataset_scope=state.dataset_scope,
+    )
+    if state.nan_missing_all_twos:
+        state.full = apply_missing_all_twos_as_nan(
+            state.full,
             state.features,
             state.era_col,
-            state.target_col,
-            state.id_col,
-            dataset_scope=state.dataset_scope,
+            state.missing_value,
         )
-        if state.nan_missing_all_twos:
-            state.full = apply_missing_all_twos_as_nan(
-                state.full,
-                state.features,
-                state.era_col,
-                state.missing_value,
-            )
-        state.all_eras = sorted(set(state.full[state.era_col].tolist()), key=_era_sort_key)
-        state.full_rows = int(state.full.shape[0])
-        state.full_eras = int(state.full[state.era_col].nunique())
-    else:
-        if state.nan_missing_all_twos:
-            raise TrainingConfigError("training_data_loading_fold_lazy_disallows_nan_missing_all_twos")
-        state.lazy_include_validation_only = state.dataset_scope == "train_plus_validation"
-        state.source_paths = resolve_fold_lazy_source_paths(
-            cast(TrainingDataClient, state.training_client),
-            state.data_version,
-            dataset_variant=state.dataset_variant,
-            dataset_scope=state.dataset_scope,
-            data_root=DEFAULT_DATASETS_DIR,
-        )
-        state.all_eras = list_lazy_source_eras(
-            state.source_paths,
-            era_col=state.era_col,
-            include_validation_only=state.lazy_include_validation_only,
-        )
-        state.profile_frame = load_fold_data_lazy(
-            state.source_paths,
-            eras=state.all_eras,
-            columns=[state.era_col],
-            era_col=state.era_col,
-            id_col=None,
-            include_validation_only=state.lazy_include_validation_only,
-        )
-        state.all_eras = sorted(set(state.profile_frame[state.era_col].tolist()), key=_era_sort_key)
-        state.full_rows = int(state.profile_frame.shape[0])
-        state.full_eras = (
-            int(state.profile_frame[state.era_col].nunique())
-            if state.era_col in state.profile_frame.columns
-            else len(state.all_eras)
-        )
+    state.all_eras = sorted(set(state.full[state.era_col].tolist()), key=_era_sort_key)
+    state.full_rows = int(state.full.shape[0])
+    state.full_eras = int(state.full[state.era_col].nunique())
 
     if "baseline" in state.x_groups:
         baseline_spec = _as_dict(state.model_config.get("baseline"))
@@ -516,18 +450,15 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
         )
         if state.baseline_col is None:
             raise TrainingConfigError("training_baseline_column_missing")
-        if state.loading_mode == _MATERIALIZED_LOADING_MODE:
-            if state.full is None:
-                raise TrainingConfigError("training_data_loading_materialized_missing_frame")
-            state.full = attach_benchmark_predictions(
-                state.full,
-                state.baseline,
-                state.baseline_col,
-                era_col=state.era_col,
-                id_col=state.id_col,
-            )
-        else:
-            state.join_columns.append(FoldJoinColumn(frame=state.baseline, column=state.baseline_col))
+        if state.full is None:
+            raise TrainingConfigError("training_data_loading_materialized_missing_frame")
+        state.full = attach_benchmark_predictions(
+            state.full,
+            state.baseline,
+            state.baseline_col,
+            era_col=state.era_col,
+            id_col=state.id_col,
+        )
 
     state.x_cols = build_x_cols(
         x_groups=state.x_groups,
@@ -537,28 +468,15 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
         baseline_col=state.baseline_col,
     )
 
-    if state.loading_mode == _MATERIALIZED_LOADING_MODE:
-        if state.full is None:
-            raise TrainingConfigError("training_data_loading_materialized_missing_frame")
-        state.data_loader = build_model_data_loader(
-            full=state.full,
-            x_cols=state.x_cols,
-            era_col=state.era_col,
-            target_col=state.target_col,
-            id_col=state.id_col,
-        )
-    else:
-        if state.source_paths is None:
-            raise TrainingConfigError("training_data_loading_fold_lazy_missing_sources")
-        state.data_loader = build_lazy_parquet_data_loader(
-            source_paths=state.source_paths,
-            x_cols=state.x_cols,
-            era_col=state.era_col,
-            target_col=state.target_col,
-            id_col=state.id_col,
-            include_validation_only=state.lazy_include_validation_only,
-            join_columns=state.join_columns,
-        )
+    if state.full is None:
+        raise TrainingConfigError("training_data_loading_materialized_missing_frame")
+    state.data_loader = build_model_data_loader(
+        full=state.full,
+        x_cols=state.x_cols,
+        era_col=state.era_col,
+        target_col=state.target_col,
+        id_col=state.id_col,
+    )
     return state
 
 
@@ -573,19 +491,12 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     simple_train_eras: list[object] | None = None
     simple_val_eras: list[object] | None = None
     if engine_plan.mode == _SIMPLE_PROFILE:
-        if (
-            state.loading_mode == _FOLD_LAZY_LOADING_MODE
-            and state.source_paths is not None
-            and len(state.source_paths) >= 2
-        ):
-            train_path, validation_path = state.source_paths[0], state.source_paths[1]
-        else:
-            train_path, validation_path = ensure_split_dataset_paths(
-                cast(TrainingDataClient, state.training_client),
-                state.data_version,
-                dataset_variant=state.dataset_variant,
-                data_root=DEFAULT_DATASETS_DIR,
-            )
+        train_path, validation_path = ensure_split_dataset_paths(
+            cast(TrainingDataClient, state.training_client),
+            state.data_version,
+            dataset_variant=state.dataset_variant,
+            data_root=DEFAULT_DATASETS_DIR,
+        )
         simple_train_eras = list_lazy_source_eras((train_path,), era_col=state.era_col, include_validation_only=False)
         simple_val_eras = list_lazy_source_eras((validation_path,), era_col=state.era_col, include_validation_only=True)
         if not simple_train_eras or not simple_val_eras:
@@ -652,7 +563,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
                     client=state.training_client,
                     data_version=state.data_version,
                     dataset_variant=state.dataset_variant,
-                    feature_source_paths=state.source_paths,
+                    feature_source_paths=state.scoring_feature_source_paths,
                     dataset_scope=state.dataset_scope,
                     era_col=state.era_col,
                     id_col=state.id_col,
@@ -732,8 +643,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     state.artifacts["predictions"] = str(state.predictions_relative)
     state.oof_rows = int(state.predictions.shape[0])
     state.oof_eras = int(state.predictions[state.era_col].nunique())
-    state.scoring_feature_source_paths = state.source_paths
-    state.effective_scoring_backend = state.scoring_mode
+    state.scoring_feature_source_paths = None
 
     _record_telemetry_stage(
         state.telemetry_session,
@@ -747,13 +657,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         "status": "pending",
         "reason": "post_run_metrics_pending",
     }
-    state.effective_scoring_backend = "pending"
-    state.training_runtime_metadata["scoring"] = {
-        "mode": state.scoring_mode,
-        "era_chunk_size": state.scoring_era_chunk_size,
-        "effective_backend": state.effective_scoring_backend,
-        "policy": _scoring_policy_payload(default_scoring_policy()),
-    }
+    state.training_runtime_metadata["scoring"] = {"requested_stage": "post_training_core", "refreshed_stages": []}
 
     _record_telemetry_stage(
         state.telemetry_session,
@@ -798,13 +702,9 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         cv_meta=state.cv_meta,
         engine_plan=engine_plan,
         cv_enabled=state.cv_enabled,
-        loading_mode=state.loading_mode,
-        scoring_mode=state.scoring_mode,
-        scoring_era_chunk_size=state.scoring_era_chunk_size,
         resource_policy=state.resource_policy,
         cache_policy=state.cache_policy,
-        scoring_backend=state.effective_scoring_backend,
-        scoring_policy=default_scoring_policy(),
+        scoring_metadata=cast(dict[str, object], state.training_runtime_metadata["scoring"]),
         metrics_status=state.metrics_status,
     )
     if state.results_path is None:
@@ -854,13 +754,10 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     log_info(
         state.run_log_path,
         event="post_run_scoring_started",
-        message=f"mode={state.scoring_mode} era_chunk_size={state.scoring_era_chunk_size}",
+        message="stage=post_training_core",
         attempt_id=state.run_attempt_id,
     )
     state.full = None
-    state.source_paths = None
-    state.profile_frame = None
-    state.join_columns = []
     state.baseline = None
     state.all_eras = []
     state.data_loader = None
@@ -892,22 +789,12 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 era_col=state.era_col,
                 id_col=state.id_col,
                 data_root=DEFAULT_DATASETS_DIR,
-                scoring_mode=state.scoring_mode,
-                era_chunk_size=state.scoring_era_chunk_size,
-                stage="all",
-                include_feature_neutral_metrics=state.include_feature_neutral_metrics,
+                stage="post_training_core",
             ),
             client=state.training_client,
         )
     except Exception as exc:
         logger.exception("post-run scoring failed for run_id=%s", state.run_id)
-        state.effective_scoring_backend = "failed"
-        state.training_runtime_metadata["scoring"] = {
-            "mode": state.scoring_mode,
-            "era_chunk_size": state.scoring_era_chunk_size,
-            "effective_backend": state.effective_scoring_backend,
-            "policy": _scoring_policy_payload(default_scoring_policy()),
-        }
         log_error(
             state.run_log_path,
             event="post_run_scoring_failed",
@@ -918,15 +805,18 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
 
     state.summaries = scoring_result.summaries
     score_provenance = scoring_result.score_provenance
-    state.effective_scoring_backend = scoring_result.effective_scoring_backend
-    state.training_runtime_metadata["scoring"] = {
-        "mode": state.scoring_mode,
-        "era_chunk_size": state.scoring_era_chunk_size,
-        "effective_backend": state.effective_scoring_backend,
+    stage_metadata = _as_dict(score_provenance.get("stages"))
+    scoring_metadata: dict[str, object] = {
         "requested_stage": scoring_result.requested_stage,
         "refreshed_stages": list(scoring_result.refreshed_stages),
-        "policy": _scoring_policy_payload(scoring_result.policy),
     }
+    emitted = stage_metadata.get("emitted")
+    omissions = stage_metadata.get("omissions")
+    if isinstance(emitted, list):
+        scoring_metadata["emitted_stage_files"] = [str(value) for value in emitted]
+    if isinstance(omissions, dict):
+        scoring_metadata["omissions"] = {str(key): str(value) for key, value in omissions.items()}
+    state.training_runtime_metadata["scoring"] = scoring_metadata
     if (
         state.score_provenance_path is None
         or state.scoring_dir is None
@@ -949,7 +839,10 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     log_info(
         state.run_log_path,
         event="post_run_scoring_succeeded",
-        message=f"effective_backend={state.effective_scoring_backend}",
+        message=(
+            f"requested_stage={scoring_result.requested_stage} "
+            f"refreshed_stages={','.join(scoring_result.refreshed_stages)}"
+        ),
         attempt_id=state.run_attempt_id,
     )
 
@@ -980,13 +873,9 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         cv_meta=state.cv_meta,
         engine_plan=engine_plan,
         cv_enabled=state.cv_enabled,
-        loading_mode=state.loading_mode,
-        scoring_mode=state.scoring_mode,
-        scoring_era_chunk_size=state.scoring_era_chunk_size,
         resource_policy=state.resource_policy,
         cache_policy=state.cache_policy,
-        scoring_backend=state.effective_scoring_backend,
-        scoring_policy=scoring_result.policy,
+        scoring_metadata=scoring_metadata,
         metrics_status=None,
     )
     save_results(results, state.results_path)
@@ -1005,9 +894,6 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
     if engine_plan is None:
         raise TrainingError("training_engine_plan_uninitialized")
     state.full = None
-    state.source_paths = None
-    state.profile_frame = None
-    state.join_columns = []
     state.baseline = None
     state.all_eras = []
     state.data_loader = None

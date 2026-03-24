@@ -31,7 +31,8 @@ Source map:
 - `src/numereng/config/hpo/*`: strict JSON HPO contracts + loader.
 - `src/numereng/platform/*`: boundary errors + Numerai adapter + forum scraper tooling.
 - `src/numereng/features/training/*`: deterministic run orchestration + artifacts.
-- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> finalize`); training always emits `post_fold`, while deferred post-training scoring happens later from saved predictions.
+- `src/numereng/features/models/custom_models/*`: plugin model adapters; numereng routes `TabPFNRegressor` cache traffic into `.numereng/cache/tabpfn`.
+- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> finalize`); training uses the materialized loader only and automatically refreshes `post_training_core` after predictions are written.
 - `src/numereng/features/scoring/*`: canonical run-scoring service + metric engines; hot-path metric math is array-kernel based in `features/scoring/_fastops.py` and orchestrated from `metrics.py`.
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
@@ -51,7 +52,7 @@ Source map:
 - `src/numereng/cli/*`: parsing/dispatch/help.
 
 Default store layout (`.numereng`):
-- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
+- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
 - Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
 - Dynamic roots may appear: `hpo/`, `ensembles/`.
 
@@ -73,8 +74,9 @@ Key artifacts:
 - `experiments/<experiment_id>/agentic_research/llm_trace.jsonl`
 - `experiments/<experiment_id>/agentic_research/llm_trace.md`
 - `experiments/<experiment_id>/agentic_research/rounds/rN/*`
-  - planner round artifacts include `codex_prompt.txt`, `codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`, `codex_decision.json`, `planned_configs.json`, `report.json`, `round_summary.json`, `llm_trace.jsonl`, `llm_trace.md`
-  - numerai mutation rounds now materialize at most one generated config/run and persist lineage fields like `parent_run_id`, `parent_config_filename`, `change_set`, and `llm_rationale`
+  - canonical round artifacts are `round.json` and `round.md`
+  - round bundles persist the current decision, planner prompt/response, lineage fields like `parent_run_id`, `parent_config_filename`, `change_set`, and `llm_rationale`, plus any scored results
+  - legacy per-round planner transport files are cleaned up when a round bundle is written
 - `experiments/_archive/<experiment_id>/...`
 
 Wiring map:
@@ -104,8 +106,9 @@ Wiring map:
   - the numerai planner sees one parent config, a short lineage summary, and only the three core metrics: `bmc_last_200_eras_mean`, `bmc_mean`, and `corr_mean`
   - the numerai planner returns a plain-text `RATIONALE:` + `CHANGES:` block with dotted `config.path = <json-literal>` edits; Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, retries once with validation feedback, and writes one child config
   - `kaggle-gm-loop` still uses the structured planner JSON/schema contract, but its prompt text is also externalized under `prompts/`
-  - planner trace logs are append-only JSONL under `agentic_research/llm_trace.jsonl` and copied into each round as `rounds/rN/llm_trace.jsonl`; a human-readable markdown companion is also written to `agentic_research/llm_trace.md` and `rounds/rN/llm_trace.md`
-  - the markdown view is intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
+  - planner trace logs are append-only under `agentic_research/llm_trace.jsonl` with a human-readable companion at `agentic_research/llm_trace.md`
+  - per-round readability now lives in `rounds/rN/round.md`, which embeds the exact prompt sent to the planner, the raw planner response, the parsed final response, and the round outcome in one document
+  - the root markdown trace remains intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
@@ -180,14 +183,13 @@ Critical invariants:
 - Training enforces single-writer execution per deterministic `run_id` via `runs/<run_id>/.train.lock`; concurrent starts hard-fail.
 - Training requires a fresh deterministic run directory (no pre-existing artifacts besides `.train.lock`), so reruns after partial/failed attempts require store reset.
 - Training and HPO config paths must be `.json`; unknown keys hard-fail.
+- Legacy `data.loading` is removed from the training schema. Config loading hard-fails if it is present, but run hashing strips that removed subtree so historical configs keep the same deterministic run identity.
 - `model.device` is the canonical explicit training-device contract and is allowed only: `cpu|cuda`.
 - `model.device` is valid only for `LGBMRegressor`; if `model.params.device_type` is also set it must exactly match.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
-- Loading mode allowed only: `materialized|fold_lazy`.
-- Scoring mode allowed only: `materialized|era_stream`.
-- Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV and finishes with deferred post-training metrics marked pending; later `run score` or `experiment score-round` executes the canonical scorer from saved predictions.
-- Deferred scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle. The bundle writes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when feature-neutral diagnostics are enabled. Historical runs may still have legacy `post_training_summary` / `post_training_features_summary` files, which remain readable.
+- Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV and then automatically refreshes the canonical `post_training_core` stage from saved predictions. Later `run score` or `experiment score-round` can refresh any stage, including `post_training_full`.
+- Scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle. The bundle writes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when feature-neutral diagnostics are materialized. Historical runs may still have legacy `post_training_summary` / `post_training_features_summary` files, which remain readable.
 - `post_training_core_summary` is the flattened scorecard stage: native/payout CORR summaries plus payout-backed `mmc`, `bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and `corr_delta_vs_baseline` summary stats when those inputs are available.
 - `baseline_corr` is not a persisted run metric. The scorer derives payout-target `corr_delta_vs_baseline` from the shared active-benchmark per-era CORR artifact when present, or from transient fallback computation for explicit path benchmarks.
 - `corr`, `fnc`, and `mmc` delegate directly to `numerai_tools`; `cwmm` uses the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
@@ -218,9 +220,9 @@ Critical invariants:
 - Benchmark model parquet data is used for scoring metrics (BMC/correlation-to-benchmark), not as training features.
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
-- In `train_plus_validation` mode (materialized or fold-lazy), `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
+- In `train_plus_validation` mode, `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
-- `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, and any deferred `post_training_core` / `post_training_full` scoring must be materialized later from saved predictions.
+- `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, but training still refreshes `post_training_core` automatically and later rescoring can materialize `post_training_full`.
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
 - Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
 - Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.

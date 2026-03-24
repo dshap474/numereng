@@ -35,12 +35,7 @@ Minimal example:
     "data_version": "v5.2",
     "dataset_variant": "non_downsampled",
     "feature_set": "small",
-    "target_col": "target",
-    "loading": {
-      "mode": "materialized",
-      "scoring_mode": "materialized",
-      "era_chunk_size": 64
-    }
+    "target_col": "target"
   },
   "model": {
     "type": "LGBMRegressor",
@@ -78,9 +73,6 @@ Important fields:
 - `benchmark_source.predictions_path` required only when `source=path`
 - `benchmark_source.pred_col` default `prediction`
 - `benchmark_source.name` optional provenance label
-- `loading.mode`: `materialized|fold_lazy`
-- `loading.scoring_mode`: `materialized|era_stream`
-- `loading.era_chunk_size`: integer >= 1
 
 Benchmark source clarification:
 
@@ -172,7 +164,7 @@ Supported fields:
 
 Constraint:
 
-- `nan_missing_all_twos=true` is invalid when `data.loading.mode=fold_lazy`
+- `nan_missing_all_twos` and `missing_value` apply uniformly under the single materialized training loader
 
 ## `output`
 
@@ -219,7 +211,8 @@ Minimal example:
 - benchmark predictions are metrics-only and are not generic training features
 - `model.x_groups` and `model.data_needed` are feature-only by default
 - `model.x_groups` rejects `era`, `id`, and benchmark aliases
-- training emits `post_fold` during CV; deferred `post_training_core` / `post_training_full` metrics are computed later from saved predictions
+- training always uses the materialized loader and the materialized scorer
+- `run train` automatically refreshes `post_training_core`; `run score --stage post_training_full` or `--stage all` adds the feature-heavy summary
 - canonical FNC neutralizes to `fncv3_features` and then correlates against the scoring target being evaluated
 - benchmark and meta-model joins require strict era alignment
 - if `neutralization.enabled=true` in an HPO config, `neutralizer_path` is required

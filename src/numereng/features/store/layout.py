@@ -10,6 +10,7 @@ CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "cloud",
     "experiments",
     "notes",
+    "cache",
 )
 CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
     "numereng.db",

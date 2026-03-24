@@ -220,7 +220,6 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
         results_path=str(result.results_path),
         metrics_path=str(result.metrics_path),
         score_provenance_path=str(result.score_provenance_path),
-        effective_scoring_backend=result.effective_scoring_backend,
         requested_stage=result.requested_stage,
         refreshed_stages=list(result.refreshed_stages),
     )

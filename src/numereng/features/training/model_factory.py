@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from numereng.config.settings import load_settings
 from numereng.features.models.lgbm import LGBMRegressor
 from numereng.features.training.errors import TrainingModelError
 from numereng.features.training.target_transforms import TargetTransformWrapper
@@ -111,6 +114,63 @@ def _validate_model_cls(model_type: str, model_cls: Any) -> None:
         raise TrainingModelError(f"training_model_invalid_model_class:{model_type}")
 
 
+def _normalize_model_params(model_type: str, model_params: dict[str, Any]) -> dict[str, Any]:
+    if model_type != "TabPFNRegressor":
+        return dict(model_params)
+
+    cache_dir = _bind_tabpfn_cache_dir()
+    normalized = dict(model_params)
+    normalized["model_path"] = _normalize_tabpfn_model_path(normalized.get("model_path"), cache_dir=cache_dir)
+    return normalized
+
+
+def _normalize_tabpfn_model_path(model_path: Any, *, cache_dir: Path) -> Any:
+    if model_path is None or model_path == "auto":
+        return model_path
+
+    if isinstance(model_path, list):
+        return [_normalize_tabpfn_model_path(value, cache_dir=cache_dir) for value in model_path]
+
+    if isinstance(model_path, Path):
+        return _normalize_tabpfn_single_model_path(model_path, cache_dir=cache_dir)
+
+    if isinstance(model_path, str):
+        stripped = model_path.strip()
+        if not stripped:
+            return model_path
+        return _normalize_tabpfn_single_model_path(Path(stripped), cache_dir=cache_dir)
+
+    return model_path
+
+
+def _normalize_tabpfn_single_model_path(model_path: Path, *, cache_dir: Path) -> str:
+    expanded = model_path.expanduser()
+    if expanded.is_absolute():
+        return str(expanded.resolve())
+    if expanded.parent == Path("."):
+        return str((cache_dir / expanded.name).resolve())
+    return str(expanded.resolve())
+
+
+def _resolve_store_root() -> Path:
+    return Path(load_settings().store_root).expanduser().resolve()
+
+
+def _resolve_tabpfn_cache_dir() -> Path:
+    return (_resolve_store_root() / "cache" / "tabpfn").resolve()
+
+
+def _bind_tabpfn_cache_dir() -> Path:
+    configured = os.environ.get("TABPFN_MODEL_CACHE_DIR", "").strip()
+    if configured:
+        cache_dir = Path(configured).expanduser().resolve()
+    else:
+        cache_dir = _resolve_tabpfn_cache_dir()
+        os.environ["TABPFN_MODEL_CACHE_DIR"] = str(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
 def build_model(
     model_type: str,
     model_params: dict[str, Any],
@@ -120,10 +180,11 @@ def build_model(
 ) -> Any:
     """Create configured model instance from typed model config."""
     resolved_model_config = model_config or {}
+    normalized_model_params = _normalize_model_params(model_type, model_params)
     model_cls = _resolve_model_class(model_type, resolved_model_config)
     _validate_model_cls(model_type, model_cls)
 
-    model: Any = model_cls(feature_cols=feature_cols, **model_params)
+    model: Any = model_cls(feature_cols=feature_cols, **normalized_model_params)
 
     target_transform = resolved_model_config.get("target_transform")
     if target_transform:

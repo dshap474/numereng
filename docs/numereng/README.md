@@ -76,6 +76,7 @@ Common artifacts under `.numereng/`:
   datasets/
   cloud/
   notes/
+  cache/
 ```
 
 Forum scraping writes outside the store by default:

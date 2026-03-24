@@ -57,6 +57,9 @@ Default store root: `.numereng`
   datasets/
   cloud/
   notes/
+  cache/
+    derived_datasets/
+    tabpfn/
 ```
 
 ## Run Artifacts

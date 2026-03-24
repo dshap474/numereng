@@ -26,6 +26,8 @@ _PROGRAM_FILENAME = "program.json"
 _LINEAGE_FILENAME = "lineage.json"
 _LLM_TRACE_FILENAME = "llm_trace.jsonl"
 _LLM_TRACE_MARKDOWN_FILENAME = "llm_trace.md"
+_ROUND_RECORD_FILENAME = "round.json"
+_ROUND_MARKDOWN_FILENAME = "round.md"
 
 
 def utc_now_iso() -> str:
@@ -61,6 +63,16 @@ def llm_trace_markdown_path(agentic_research_dir: Path) -> Path:
 def round_dir(agentic_research_dir: Path, round_label: str) -> Path:
     """Return one round artifact directory path."""
     return agentic_research_dir / "rounds" / round_label
+
+
+def round_record_path(round_artifact_dir: Path) -> Path:
+    """Return the canonical per-round machine-readable artifact path."""
+    return round_artifact_dir / _ROUND_RECORD_FILENAME
+
+
+def round_markdown_path(round_artifact_dir: Path) -> Path:
+    """Return the canonical per-round human-readable artifact path."""
+    return round_artifact_dir / _ROUND_MARKDOWN_FILENAME
 
 
 def save_program_state(path: Path, state: ResearchProgramState) -> None:

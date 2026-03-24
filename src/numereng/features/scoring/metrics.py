@@ -976,10 +976,7 @@ def build_scoring_artifact_bundle(
     if "post_fold_per_era" not in stage_frames:
         stage_omissions["post_fold"] = "cv_fold_missing_or_not_applicable"
     if "post_training_full_summary" not in stage_frames:
-        if not _resolve_scoring_policy(scoring_policy).include_feature_neutral_metrics:
-            stage_omissions["post_training_full"] = "feature_neutral_metrics_disabled"
-        else:
-            stage_omissions["post_training_full"] = "feature_diagnostics_unavailable"
+        stage_omissions["post_training_full"] = "feature_diagnostics_unavailable"
     if payout_target_col not in prepared.columns:
         stage_omissions["ender20"] = "payout_target_missing"
     series_manifest["stages"] = {
@@ -2353,7 +2350,7 @@ def _summarize_prediction_file_with_scores_materialized(
     era_col: str = "era",
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
-    era_chunk_size: int = 64,
+    include_feature_neutral_metrics: bool = True,
     scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
     """Summarize prediction metrics and build per-run scoring provenance."""
@@ -2379,7 +2376,7 @@ def _summarize_prediction_file_with_scores_materialized(
         raise TrainingDataError(f"training_predictions_missing_columns:{id_col}")
 
     resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
-    feature_neutral_metrics_enabled = resolved_scoring_policy.include_feature_neutral_metrics
+    feature_neutral_metrics_enabled = include_feature_neutral_metrics
     missing_scoring_targets = [col for col in resolved_scoring_targets if col not in predictions.columns]
     fnc_source_paths: tuple[Path, ...] = ()
     fnc_include_validation_only = False
@@ -2485,57 +2482,31 @@ def _summarize_prediction_file_with_scores_materialized(
             era_col=era_col,
             id_col=id_col,
         )
-        fnc_chunks: dict[str, list[pd.DataFrame]] = {target: [] for target in resolved_scoring_targets}
-        feature_exposure_chunks: list[pd.DataFrame] = []
-        max_feature_exposure_chunks: list[pd.DataFrame] = []
-        fnc_eras = sorted(set(predictions[era_col].tolist()), key=_era_sort_key)
-        for era_chunk in _chunked(fnc_eras, era_chunk_size):
-            chunk_predictions = predictions[predictions[era_col].isin(era_chunk)]
-            if chunk_predictions.empty:
-                continue
-
-            feature_chunk = load_fold_data_lazy(
-                fnc_source_paths,
-                eras=list(era_chunk),
-                columns=[era_col, *resolved_feature_cols, id_col],
-                era_col=era_col,
-                id_col=id_col,
-                include_validation_only=fnc_include_validation_only,
-            )
-            predictions_for_fnc = attach_fnc_features(
-                chunk_predictions,
-                feature_chunk,
-                feature_cols=resolved_feature_cols,
-                era_col=era_col,
-                id_col=id_col,
-            )
-            fnc_overlap_rows += int(len(predictions_for_fnc))
-            fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
-            for scoring_target_col in resolved_scoring_targets:
-                fnc_chunks[scoring_target_col].append(
-                    per_era_fnc(
-                        predictions_for_fnc,
-                        resolved_pred_cols,
-                        resolved_feature_cols,
-                        scoring_target_col,
-                        era_col=era_col,
-                    )
-                )
-            feature_exposure_chunk, max_feature_exposure_chunk = per_era_feature_exposure(
+        feature_frame = load_fold_data_lazy(
+            fnc_source_paths,
+            eras=sorted(set(predictions[era_col].tolist()), key=_era_sort_key),
+            columns=[era_col, *resolved_feature_cols, id_col],
+            era_col=era_col,
+            id_col=id_col,
+            include_validation_only=fnc_include_validation_only,
+        )
+        predictions_for_fnc = attach_fnc_features(
+            predictions,
+            feature_frame,
+            feature_cols=resolved_feature_cols,
+            era_col=era_col,
+            id_col=id_col,
+        )
+        fnc_overlap_rows = int(len(predictions_for_fnc))
+        fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
+        for scoring_target_col in resolved_scoring_targets:
+            fnc_per_era = per_era_fnc(
                 predictions_for_fnc,
                 resolved_pred_cols,
                 resolved_feature_cols,
+                scoring_target_col,
                 era_col=era_col,
             )
-            feature_exposure_chunks.append(feature_exposure_chunk)
-            max_feature_exposure_chunks.append(max_feature_exposure_chunk)
-
-        if not any(fnc_chunks.values()):
-            raise TrainingDataError("training_fnc_no_overlapping_ids")
-        for scoring_target_col, chunks in fnc_chunks.items():
-            if not chunks:
-                continue
-            fnc_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(chunks, axis=0)))
             fnc_key = _target_metric_key(
                 metric_name="fnc",
                 target_col=scoring_target_col,
@@ -2552,11 +2523,11 @@ def _summarize_prediction_file_with_scores_materialized(
                     aliases=target_aliases,
                 )
             ] = _single_series_frame(fnc_per_era, resolved_pred_cols[0])
-        if not feature_exposure_chunks or not max_feature_exposure_chunks:
-            raise TrainingDataError("training_feature_exposure_no_overlapping_ids")
-        feature_exposure_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0)))
-        max_feature_exposure_per_era = cast(
-            pd.DataFrame, _sort_era_index(pd.concat(max_feature_exposure_chunks, axis=0))
+        feature_exposure_per_era, max_feature_exposure_per_era = per_era_feature_exposure(
+            predictions_for_fnc,
+            resolved_pred_cols,
+            resolved_feature_cols,
+            era_col=era_col,
         )
         summaries["feature_exposure"] = summarize_scores(feature_exposure_per_era)
         summaries["max_feature_exposure"] = summarize_scores(max_feature_exposure_per_era)
@@ -2808,7 +2779,6 @@ def _summarize_prediction_file_with_scores_materialized(
             "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
             "fnc_target_policy": resolved_scoring_policy.fnc_target_policy,
             "benchmark_min_overlap_ratio": resolved_scoring_policy.benchmark_min_overlap_ratio,
-            "include_feature_neutral_metrics": feature_neutral_metrics_enabled,
         },
         "meta_metrics": {
             "emitted": meta_metrics_emitted,
@@ -2869,11 +2839,10 @@ def summarize_prediction_file_with_scores(
     era_col: str = "era",
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
-    scoring_mode: str = "materialized",
-    era_chunk_size: int = 64,
+    include_feature_neutral_metrics: bool = True,
     scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
-    """Summarize prediction metrics with explicit scoring execution mode."""
+    """Summarize prediction metrics using the canonical materialized scorer."""
     summaries, provenance, _ = score_prediction_file_with_details(
         predictions_path,
         pred_cols,
@@ -2895,8 +2864,7 @@ def summarize_prediction_file_with_scores(
         era_col=era_col,
         id_col=id_col,
         data_root=data_root,
-        scoring_mode=scoring_mode,
-        era_chunk_size=era_chunk_size,
+        include_feature_neutral_metrics=include_feature_neutral_metrics,
         scoring_policy=scoring_policy,
     )
     return summaries, provenance
@@ -2924,719 +2892,34 @@ def score_prediction_file_with_details(
     era_col: str = "era",
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
-    scoring_mode: str = "materialized",
-    era_chunk_size: int = 64,
+    include_feature_neutral_metrics: bool = True,
     scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
     """Summarize prediction metrics and return canonical per-era metric frames."""
-    resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
-    if scoring_mode == "materialized":
-        summaries, provenance, metric_frames = _summarize_prediction_file_with_scores_materialized(
-            predictions_path,
-            pred_cols,
-            target_col,
-            scoring_target_cols,
-            data_version,
-            scoring_targets_explicit,
-            dataset_variant=dataset_variant,
-            client=client,
-            feature_set=feature_set,
-            feature_source_paths=feature_source_paths,
-            dataset_scope=dataset_scope,
-            benchmark_model=benchmark_model,
-            benchmark_name=benchmark_name,
-            benchmark_data_path=benchmark_data_path,
-            benchmark_metadata_path=benchmark_metadata_path,
-            meta_model_data_path=meta_model_data_path,
-            meta_model_col=meta_model_col,
-            era_col=era_col,
-            id_col=id_col,
-            data_root=data_root,
-            era_chunk_size=era_chunk_size,
-            scoring_policy=resolved_scoring_policy,
-        )
-        provenance["execution"] = {
-            "requested_scoring_mode": scoring_mode,
-            "effective_scoring_mode": "materialized",
-            "era_chunk_size": era_chunk_size,
-        }
-        return summaries, provenance, metric_frames
-
-    if scoring_mode == "era_stream":
-        return _summarize_prediction_file_with_scores_era_stream(
-            predictions_path,
-            pred_cols,
-            target_col,
-            scoring_target_cols,
-            data_version,
-            scoring_targets_explicit,
-            dataset_variant=dataset_variant,
-            client=client,
-            feature_set=feature_set,
-            feature_source_paths=feature_source_paths,
-            dataset_scope=dataset_scope,
-            benchmark_model=benchmark_model,
-            benchmark_name=benchmark_name,
-            benchmark_data_path=benchmark_data_path,
-            benchmark_metadata_path=benchmark_metadata_path,
-            meta_model_data_path=meta_model_data_path,
-            meta_model_col=meta_model_col,
-            era_col=era_col,
-            id_col=id_col,
-            data_root=data_root,
-            era_chunk_size=era_chunk_size,
-            scoring_policy=resolved_scoring_policy,
-        )
-
-    raise TrainingMetricsError("training_metrics_scoring_mode_invalid")
-
-
-def _summarize_prediction_file_with_scores_era_stream(
-    predictions_path: str | Path,
-    pred_cols: Sequence[object],
-    target_col: str,
-    scoring_target_cols: Sequence[str],
-    data_version: str,
-    scoring_targets_explicit: bool = False,
-    *,
-    dataset_variant: str,
-    client: TrainingDataClient,
-    feature_set: str,
-    feature_source_paths: Sequence[Path] | None = None,
-    dataset_scope: str = "train_plus_validation",
-    benchmark_model: str = DEFAULT_BENCHMARK_MODEL,
-    benchmark_name: str | None = None,
-    benchmark_data_path: str | Path | None = None,
-    benchmark_metadata_path: str | Path | None = None,
-    meta_model_data_path: str | Path | None = None,
-    meta_model_col: str = DEFAULT_META_MODEL_COL,
-    era_col: str = "era",
-    id_col: str = "id",
-    data_root: Path = DEFAULT_DATASETS_DIR,
-    era_chunk_size: int,
-    scoring_policy: ResolvedScoringPolicy | None = None,
-) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
-    if era_chunk_size < 1:
-        raise TrainingMetricsError("training_metrics_era_chunk_size_invalid")
-
-    resolved_pred_cols = [str(col) for col in _as_list(pred_cols)]
-    requested_scoring_targets = _normalize_requested_scoring_targets(scoring_target_cols)
-    resolved_scoring_targets, optional_scoring_targets = _resolve_scoring_targets(
-        target_col=target_col,
-        scoring_target_cols=scoring_target_cols,
-    )
-    predictions_path_resolved = Path(predictions_path).expanduser().resolve()
-    if predictions_path_resolved.suffix.lower() != ".parquet":
-        raise TrainingDataError(f"training_metrics_era_stream_requires_parquet:{predictions_path_resolved}")
-    prediction_columns = _table_columns(predictions_path_resolved)
-    native_prediction_target_cols = [col for col in resolved_scoring_targets if col in prediction_columns]
-    required_cols = [era_col, *native_prediction_target_cols, *resolved_pred_cols, id_col]
-    missing = [col for col in required_cols if col not in prediction_columns]
-    if missing:
-        raise TrainingDataError(f"training_predictions_missing_columns:{','.join(missing)}")
-
-    if benchmark_data_path is not None:
-        benchmark_path = resolve_data_path(benchmark_data_path, data_root=data_root)
-    else:
-        benchmark_path = resolve_benchmark_predictions_path(
-            client,
-            data_version,
-            dataset_variant=dataset_variant,
-            data_root=data_root,
-        )
-    benchmark_columns = _table_columns(benchmark_path)
-    raw_benchmark_col = _resolve_benchmark_column(benchmark_columns, benchmark_model)
-    benchmark_col = _resolve_benchmark_output_col(
-        benchmark_name=benchmark_name,
-        raw_benchmark_col=raw_benchmark_col,
-        prediction_cols=resolved_pred_cols,
-    )
-
-    meta_model_path = resolve_meta_model_path(
-        client,
+    return _summarize_prediction_file_with_scores_materialized(
+        predictions_path,
+        pred_cols,
+        target_col,
+        scoring_target_cols,
         data_version,
+        scoring_targets_explicit,
         dataset_variant=dataset_variant,
+        client=client,
+        feature_set=feature_set,
+        feature_source_paths=feature_source_paths,
+        dataset_scope=dataset_scope,
+        benchmark_model=benchmark_model,
+        benchmark_name=benchmark_name,
+        benchmark_data_path=benchmark_data_path,
+        benchmark_metadata_path=benchmark_metadata_path,
         meta_model_data_path=meta_model_data_path,
+        meta_model_col=meta_model_col,
+        era_col=era_col,
+        id_col=id_col,
         data_root=data_root,
+        include_feature_neutral_metrics=include_feature_neutral_metrics,
+        scoring_policy=_resolve_scoring_policy(scoring_policy),
     )
-    meta_columns = _table_columns(meta_model_path)
-    resolved_meta_model_col = _resolve_meta_model_column(
-        meta_columns,
-        meta_model_col,
-        era_col=era_col,
-        id_col=id_col,
-    )
-    resolved_scoring_policy = _resolve_scoring_policy(scoring_policy)
-    feature_neutral_metrics_enabled = resolved_scoring_policy.include_feature_neutral_metrics
-    missing_scoring_targets = [col for col in resolved_scoring_targets if col not in prediction_columns]
-    fnc_source_paths: tuple[Path, ...] = ()
-    fnc_include_validation_only = False
-    if missing_scoring_targets or feature_neutral_metrics_enabled:
-        fnc_source_paths, fnc_include_validation_only = resolve_fnc_source_paths(
-            client=client,
-            data_version=data_version,
-            dataset_variant=dataset_variant,
-            feature_source_paths=feature_source_paths,
-            dataset_scope=dataset_scope,
-            data_root=data_root,
-        )
-
-    era_values = _parquet_unique_values(predictions_path_resolved, column=era_col)
-    if not era_values:
-        raise TrainingDataError("training_predictions_missing_rows")
-    prediction_keys = read_join_source_keys(
-        predictions_path_resolved,
-        id_col=id_col,
-        era_col=era_col,
-        source_name="predictions",
-    )
-    resolved_feature_cols: list[str] = []
-    fnc_keys = pd.DataFrame()
-    if feature_neutral_metrics_enabled:
-        resolved_feature_cols = resolve_fnc_feature_columns(
-            client=client,
-            data_version=data_version,
-            dataset_variant=dataset_variant,
-            scoring_policy=resolved_scoring_policy,
-            data_root=data_root,
-        )
-        fnc_keys = load_fold_data_lazy(
-            fnc_source_paths,
-            eras=era_values,
-            columns=[era_col, id_col],
-            era_col=era_col,
-            id_col=id_col,
-            include_validation_only=fnc_include_validation_only,
-        )
-    benchmark_keys = read_join_source_keys(
-        benchmark_path,
-        id_col=id_col,
-        era_col=era_col,
-        extra_cols=[raw_benchmark_col],
-        source_name="benchmark",
-    )
-    meta_keys = read_join_source_keys(
-        meta_model_path,
-        id_col=id_col,
-        era_col=era_col,
-        extra_cols=[resolved_meta_model_col],
-        source_name="meta_model",
-    )
-    target_join_stats: dict[str, int | float] = {}
-    if missing_scoring_targets:
-        target_keys = load_fold_data_lazy(
-            fnc_source_paths,
-            eras=era_values,
-            columns=[era_col, id_col, *missing_scoring_targets],
-            era_col=era_col,
-            id_col=id_col,
-            include_validation_only=fnc_include_validation_only,
-        )
-        resolved_scoring_targets, available_missing_targets = _filter_missing_scoring_targets(
-            resolved_scoring_targets=resolved_scoring_targets,
-            missing_scoring_targets=missing_scoring_targets,
-            optional_scoring_targets=optional_scoring_targets,
-            available_columns=[str(col) for col in target_keys.columns],
-        )
-        if available_missing_targets:
-            target_join_stats = validate_join_source_coverage(
-                prediction_keys,
-                target_keys,
-                source_name="scoring_target",
-                era_col=era_col,
-                id_col=id_col,
-                include_missing_counts=True,
-            )
-            missing_scoring_targets = available_missing_targets
-        else:
-            missing_scoring_targets = []
-    resolved_contribution_targets = _resolve_contribution_scoring_targets(
-        available_scoring_targets=resolved_scoring_targets,
-        requested_scoring_targets=requested_scoring_targets,
-        scoring_targets_explicit=scoring_targets_explicit,
-        payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-    )
-    target_aliases = _validate_target_aliases(resolved_scoring_targets)
-    fnc_preflight: dict[str, int | float] = {}
-    if feature_neutral_metrics_enabled:
-        fnc_preflight = validate_join_source_coverage(
-            prediction_keys,
-            fnc_keys,
-            source_name="fnc",
-            era_col=era_col,
-            id_col=id_col,
-        )
-    benchmark_stats: dict[str, int | float] = {}
-    if resolved_contribution_targets:
-        benchmark_stats = validate_join_source_coverage(
-            prediction_keys,
-            benchmark_keys,
-            source_name="benchmark",
-            era_col=era_col,
-            id_col=id_col,
-            min_overlap_ratio=resolved_scoring_policy.benchmark_min_overlap_ratio,
-            include_missing_counts=True,
-        )
-    preflight_meta_stats = validate_join_source_coverage(
-        prediction_keys,
-        meta_keys,
-        source_name="meta",
-        era_col=era_col,
-        id_col=id_col,
-        min_overlap_ratio=0.0,
-        include_missing_counts=True,
-        allow_zero_overlap=True,
-    )
-
-    corr_chunks: dict[str, list[pd.DataFrame]] = {target: [] for target in resolved_scoring_targets}
-    fnc_chunks: dict[str, list[pd.DataFrame]] = {target: [] for target in resolved_scoring_targets}
-    feature_exposure_chunks: list[pd.DataFrame] = []
-    max_feature_exposure_chunks: list[pd.DataFrame] = []
-    shared_payout_baseline_frame, shared_payout_baseline_provenance = _load_shared_benchmark_corr_series_frame(
-        benchmark_metadata_path=(
-            resolve_data_path(benchmark_metadata_path, data_root=data_root)
-            if benchmark_metadata_path is not None
-            else None
-        ),
-        target_col=DEFAULT_PAYOUT_TARGET_COL,
-        data_root=data_root,
-        era_col=era_col,
-    )
-    needs_transient_payout_baseline = (
-        DEFAULT_PAYOUT_TARGET_COL in resolved_contribution_targets and shared_payout_baseline_frame is None
-    )
-    baseline_corr_provenance: dict[str, object] | None = shared_payout_baseline_provenance
-    bmc_chunks: dict[str, list[pd.DataFrame]] = {target: [] for target in resolved_contribution_targets}
-    baseline_corr_chunks: list[pd.DataFrame] = []
-    bmc_corr_chunks: list[pd.DataFrame] = []
-    mmc_chunks: dict[str, list[pd.DataFrame]] = {target: [] for target in resolved_contribution_targets}
-    cwmm_chunks: list[pd.DataFrame] = []
-    fnc_overlap_rows = 0
-    fnc_overlap_eras: set[object] = set()
-    benchmark_overlap_rows = 0
-    benchmark_overlap_eras: set[object] = set()
-    meta_overlap_rows = 0
-    meta_overlap_eras: set[object] = set()
-    predictions_rows = 0
-
-    for era_chunk in _chunked(era_values, era_chunk_size):
-        chunk_predictions = _read_parquet_era_chunk(
-            predictions_path_resolved,
-            era_values=era_chunk,
-            columns=required_cols,
-            era_col=era_col,
-            id_col=id_col,
-        )
-        if id_col not in chunk_predictions.columns and chunk_predictions.index.name == id_col:
-            chunk_predictions = chunk_predictions.reset_index()
-        if id_col not in chunk_predictions.columns:
-            raise TrainingDataError(f"training_predictions_missing_columns:{id_col}")
-        if chunk_predictions.empty:
-            continue
-
-        predictions_rows += int(len(chunk_predictions))
-        if missing_scoring_targets:
-            target_chunk = load_fold_data_lazy(
-                fnc_source_paths,
-                eras=list(era_chunk),
-                columns=[era_col, id_col, *missing_scoring_targets],
-                era_col=era_col,
-                id_col=id_col,
-                include_validation_only=fnc_include_validation_only,
-            )
-            chunk_predictions = attach_scoring_targets(
-                chunk_predictions,
-                target_chunk,
-                target_cols=missing_scoring_targets,
-                era_col=era_col,
-                id_col=id_col,
-            )
-        for scoring_target_col in resolved_scoring_targets:
-            corr_chunks[scoring_target_col].append(
-                per_era_corr(chunk_predictions, resolved_pred_cols, scoring_target_col, era_col)
-            )
-
-        if feature_neutral_metrics_enabled:
-            fnc_feature_chunk = load_fold_data_lazy(
-                fnc_source_paths,
-                eras=list(era_chunk),
-                columns=[era_col, *resolved_feature_cols, id_col],
-                era_col=era_col,
-                id_col=id_col,
-                include_validation_only=fnc_include_validation_only,
-            )
-            predictions_for_fnc = attach_fnc_features(
-                chunk_predictions,
-                fnc_feature_chunk,
-                feature_cols=resolved_feature_cols,
-                era_col=era_col,
-                id_col=id_col,
-            )
-            fnc_overlap_rows += int(len(predictions_for_fnc))
-            fnc_overlap_eras.update(predictions_for_fnc[era_col].tolist())
-            for scoring_target_col in resolved_scoring_targets:
-                fnc_chunks[scoring_target_col].append(
-                    per_era_fnc(
-                        predictions_for_fnc,
-                        resolved_pred_cols,
-                        resolved_feature_cols,
-                        scoring_target_col,
-                        era_col=era_col,
-                    )
-                )
-            feature_exposure_chunk, max_feature_exposure_chunk = per_era_feature_exposure(
-                predictions_for_fnc,
-                resolved_pred_cols,
-                resolved_feature_cols,
-                era_col=era_col,
-            )
-            feature_exposure_chunks.append(feature_exposure_chunk)
-            max_feature_exposure_chunks.append(max_feature_exposure_chunk)
-
-        if resolved_contribution_targets:
-            benchmark_chunk = _read_parquet_era_chunk(
-                benchmark_path,
-                era_values=era_chunk,
-                columns=[raw_benchmark_col, id_col, era_col],
-                era_col=era_col,
-                id_col=id_col,
-            )
-            if raw_benchmark_col != benchmark_col:
-                benchmark_chunk = benchmark_chunk.rename(columns={raw_benchmark_col: benchmark_col})
-            try:
-                predictions_for_benchmark = attach_benchmark_predictions(
-                    chunk_predictions,
-                    benchmark_chunk,
-                    benchmark_col,
-                    era_col=era_col,
-                    id_col=id_col,
-                    min_overlap_ratio=resolved_scoring_policy.benchmark_min_overlap_ratio,
-                )
-            except TrainingDataError as exc:
-                if str(exc) != "training_benchmark_no_overlapping_ids":
-                    raise
-                continue
-            benchmark_overlap_rows += int(len(predictions_for_benchmark))
-            benchmark_overlap_eras.update(predictions_for_benchmark[era_col].tolist())
-            for scoring_target_col in resolved_contribution_targets:
-                bmc_chunks[scoring_target_col].append(
-                    per_era_bmc(
-                        predictions_for_benchmark,
-                        resolved_pred_cols,
-                        benchmark_col,
-                        scoring_target_col,
-                        era_col,
-                    )
-                )
-                if not needs_transient_payout_baseline or scoring_target_col != DEFAULT_PAYOUT_TARGET_COL:
-                    continue
-                baseline_corr_chunks.append(
-                    per_era_corr(
-                        predictions_for_benchmark,
-                        [benchmark_col],
-                        scoring_target_col,
-                        era_col,
-                    )
-                )
-            bmc_corr_chunks.append(
-                per_era_reference_corr(
-                    predictions_for_benchmark,
-                    resolved_pred_cols,
-                    benchmark_col,
-                    era_col=era_col,
-                )
-            )
-
-        meta_chunk = _read_parquet_era_chunk(
-            meta_model_path,
-            era_values=era_chunk,
-            columns=[resolved_meta_model_col, id_col, era_col],
-            era_col=era_col,
-            id_col=id_col,
-        )
-        try:
-            predictions_for_meta, meta_stats = attach_meta_model_predictions(
-                chunk_predictions,
-                meta_chunk,
-                resolved_meta_model_col,
-                era_col=era_col,
-                id_col=id_col,
-                min_overlap_ratio=0.0,
-            )
-        except TrainingDataError as exc:
-            if str(exc) != "training_meta_model_no_overlapping_ids":
-                raise
-            continue
-        meta_overlap_rows += int(meta_stats["meta_overlap_rows"])
-        meta_overlap_eras.update(predictions_for_meta[era_col].tolist())
-        for scoring_target_col in resolved_contribution_targets:
-            mmc_chunks[scoring_target_col].append(
-                per_era_mmc(
-                    predictions_for_meta,
-                    resolved_pred_cols,
-                    resolved_meta_model_col,
-                    scoring_target_col,
-                    era_col=era_col,
-                )
-            )
-        cwmm_chunks.append(
-            per_era_cwmm(
-                predictions_for_meta,
-                resolved_pred_cols,
-                resolved_meta_model_col,
-                era_col=era_col,
-            )
-        )
-
-    if not any(corr_chunks.values()):
-        raise TrainingDataError("training_metrics_era_stream_no_chunks")
-    if feature_neutral_metrics_enabled and not any(fnc_chunks.values()):
-        raise TrainingDataError("training_fnc_no_overlapping_ids")
-    if feature_neutral_metrics_enabled and (not feature_exposure_chunks or not max_feature_exposure_chunks):
-        raise TrainingDataError("training_feature_exposure_no_overlapping_ids")
-    if resolved_contribution_targets and not any(bmc_chunks.values()):
-        raise TrainingDataError("training_benchmark_no_overlapping_ids")
-    meta_metrics_emitted = bool(cwmm_chunks)
-    meta_metrics_reason: str | None = None
-    if not meta_metrics_emitted:
-        meta_metrics_reason = "no_meta_overlap"
-
-    bmc_corr_per_era: pd.DataFrame | None = None
-    if bmc_corr_chunks:
-        bmc_corr_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(bmc_corr_chunks, axis=0)))
-    cwmm_per_era: pd.DataFrame | None = None
-    if meta_metrics_emitted:
-        cwmm_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(cwmm_chunks, axis=0)))
-
-    summaries: dict[str, pd.DataFrame] = {}
-    metric_frames: dict[str, pd.DataFrame] = {}
-    if feature_neutral_metrics_enabled:
-        feature_exposure_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(feature_exposure_chunks, axis=0)))
-        max_feature_exposure_per_era = cast(
-            pd.DataFrame, _sort_era_index(pd.concat(max_feature_exposure_chunks, axis=0))
-        )
-        for scoring_target_col, chunks in fnc_chunks.items():
-            if not chunks:
-                continue
-            fnc_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(chunks, axis=0)))
-            fnc_key = _target_metric_key(
-                metric_name="fnc",
-                target_col=scoring_target_col,
-                native_target_col=target_col,
-                aliases=target_aliases,
-            )
-            summaries[fnc_key] = summarize_scores(fnc_per_era)
-            metric_frames[
-                _canonical_target_metric_key(
-                    metric_name="fnc",
-                    scoring_target_col=scoring_target_col,
-                    native_target_col=target_col,
-                    payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                    aliases=target_aliases,
-                )
-            ] = _single_series_frame(fnc_per_era, resolved_pred_cols[0])
-        summaries["feature_exposure"] = summarize_scores(feature_exposure_per_era)
-        summaries["max_feature_exposure"] = summarize_scores(max_feature_exposure_per_era)
-        metric_frames["feature_exposure"] = _single_series_frame(feature_exposure_per_era, resolved_pred_cols[0])
-        metric_frames["max_feature_exposure"] = _single_series_frame(
-            max_feature_exposure_per_era,
-            resolved_pred_cols[0],
-        )
-    for scoring_target_col, chunks in corr_chunks.items():
-        corr_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(chunks, axis=0)))
-        corr_key = _target_metric_key(
-            metric_name="corr",
-            target_col=scoring_target_col,
-            native_target_col=target_col,
-            aliases=target_aliases,
-        )
-        summaries[corr_key] = summarize_scores(corr_per_era)
-        metric_frames[
-            _canonical_target_metric_key(
-                metric_name="corr",
-                scoring_target_col=scoring_target_col,
-                native_target_col=target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-        ] = _single_series_frame(corr_per_era, resolved_pred_cols[0])
-
-    if bmc_corr_per_era is not None:
-        bmc_corr_mean = bmc_corr_per_era.mean()
-        metric_frames["corr_with_benchmark"] = _single_series_frame(bmc_corr_per_era, resolved_pred_cols[0])
-        bmc_corr_recent = cast(pd.DataFrame, _last_n_eras(bmc_corr_per_era, 200))
-        bmc_corr_recent_mean = bmc_corr_recent.mean()
-        for scoring_target_col, chunks in bmc_chunks.items():
-            if not chunks:
-                continue
-            bmc_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(chunks, axis=0)))
-            bmc_key = _contribution_metric_key(
-                metric_name="bmc",
-                target_col=scoring_target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-            bmc_recent_key = _contribution_metric_key(
-                metric_name="bmc_last_200_eras",
-                target_col=scoring_target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-            bmc_summary = summarize_scores(bmc_per_era)
-            metric_frames[
-                _canonical_contribution_metric_key(
-                    metric_name="bmc",
-                    scoring_target_col=scoring_target_col,
-                    payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                    aliases=target_aliases,
-                )
-            ] = _single_series_frame(bmc_per_era, resolved_pred_cols[0])
-            for col in bmc_summary.index:
-                bmc_summary.loc[col, "avg_corr_with_benchmark"] = float(bmc_corr_mean.get(col, np.nan))
-            summaries[bmc_key] = bmc_summary
-
-            bmc_recent = cast(pd.DataFrame, _last_n_eras(bmc_per_era, 200))
-            bmc_recent_summary = summarize_scores(bmc_recent)
-            for col in bmc_recent_summary.index:
-                bmc_recent_summary.loc[col, "avg_corr_with_benchmark"] = float(bmc_corr_recent_mean.get(col, np.nan))
-            summaries[bmc_recent_key] = bmc_recent_summary
-            if scoring_target_col != DEFAULT_PAYOUT_TARGET_COL:
-                continue
-            if shared_payout_baseline_frame is not None:
-                baseline_metric_frame = shared_payout_baseline_frame
-            else:
-                if not baseline_corr_chunks:
-                    continue
-                baseline_per_era = cast(
-                    pd.DataFrame,
-                    _sort_era_index(pd.concat(baseline_corr_chunks, axis=0)),
-                )
-                baseline_metric_frame = _single_series_frame(baseline_per_era, benchmark_col)
-                if baseline_corr_provenance is None or baseline_corr_provenance.get("mode") != "shared_artifact":
-                    baseline_corr_provenance = {
-                        "mode": "transient_computed",
-                        "target_col": scoring_target_col,
-                        "reason": "shared_artifact_unavailable",
-                    }
-            corr_metric_key = _canonical_target_metric_key(
-                metric_name="corr",
-                scoring_target_col=scoring_target_col,
-                native_target_col=target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-            corr_delta_key = _canonical_contribution_metric_key(
-                metric_name="corr_delta_vs_baseline",
-                scoring_target_col=scoring_target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-            corr_delta_series = _delta_series(metric_frames[corr_metric_key], baseline_metric_frame)
-            metric_frames[corr_delta_key] = corr_delta_series
-            summaries[
-                _contribution_metric_key(
-                    metric_name="corr_delta_vs_baseline",
-                    target_col=scoring_target_col,
-                    payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                    aliases=target_aliases,
-                )
-            ] = _summarize_single_series_frame(corr_delta_series, prediction_col=resolved_pred_cols[0])
-
-    if meta_metrics_emitted:
-        for scoring_target_col, chunks in mmc_chunks.items():
-            if not chunks:
-                continue
-            mmc_per_era = cast(pd.DataFrame, _sort_era_index(pd.concat(chunks, axis=0)))
-            mmc_key = _contribution_metric_key(
-                metric_name="mmc",
-                target_col=scoring_target_col,
-                payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                aliases=target_aliases,
-            )
-            summaries[mmc_key] = summarize_scores(mmc_per_era)
-            metric_frames[
-                _canonical_contribution_metric_key(
-                    metric_name="mmc",
-                    scoring_target_col=scoring_target_col,
-                    payout_target_col=DEFAULT_PAYOUT_TARGET_COL,
-                    aliases=target_aliases,
-                )
-            ] = _single_series_frame(mmc_per_era, resolved_pred_cols[0])
-        if cwmm_per_era is None:
-            raise TrainingMetricsError("training_metrics_unexpected_per_era_type")
-        summaries["cwmm"] = summarize_scores(cwmm_per_era)
-        metric_frames["cwmm"] = _single_series_frame(cwmm_per_era, resolved_pred_cols[0])
-
-    provenance: dict[str, object] = {
-        "schema_version": "2",
-        "data_version": data_version,
-        "dataset_variant": dataset_variant,
-        "columns": {
-            "prediction_cols": resolved_pred_cols,
-            "target_col": target_col,
-            "scoring_target_cols": resolved_scoring_targets,
-            "corr_target_cols": resolved_scoring_targets,
-            "fnc_target_cols": resolved_scoring_targets,
-            "contribution_target_cols": resolved_contribution_targets,
-            "requested_scoring_target_cols": requested_scoring_targets,
-            "scoring_targets_explicit": scoring_targets_explicit,
-            "target_metric_aliases": target_aliases,
-            "id_col": id_col,
-            "era_col": era_col,
-            "training_feature_set": feature_set,
-            "meta_model_col": resolved_meta_model_col,
-            "benchmark_col": benchmark_col,
-        },
-        "meta_metrics": {
-            "emitted": meta_metrics_emitted,
-            "reason": meta_metrics_reason,
-        },
-        "policy": {
-            "fnc_feature_set": resolved_scoring_policy.fnc_feature_set,
-            "fnc_target_policy": resolved_scoring_policy.fnc_target_policy,
-            "benchmark_min_overlap_ratio": resolved_scoring_policy.benchmark_min_overlap_ratio,
-            "include_feature_neutral_metrics": feature_neutral_metrics_enabled,
-        },
-        "sources": {
-            "predictions": _file_fingerprint(predictions_path_resolved),
-            "meta_model": _file_fingerprint(meta_model_path),
-            "benchmark": _file_fingerprint(benchmark_path),
-        },
-        "joins": {
-            "predictions_rows": predictions_rows,
-            "predictions_eras": int(len(era_values)),
-            **target_join_stats,
-            **benchmark_stats,
-            **preflight_meta_stats,
-            "benchmark_stream_overlap_rows": benchmark_overlap_rows,
-            "benchmark_stream_overlap_eras": int(len(benchmark_overlap_eras)),
-            "meta_overlap_rows": meta_overlap_rows,
-            "meta_overlap_eras": int(len(meta_overlap_eras)),
-            "meta_source_rows": _table_row_count(meta_model_path),
-        },
-        "execution": {
-            "requested_scoring_mode": "era_stream",
-            "effective_scoring_mode": "era_stream",
-            "era_chunk_size": era_chunk_size,
-        },
-    }
-    if resolved_contribution_targets and DEFAULT_PAYOUT_TARGET_COL in resolved_contribution_targets:
-        provenance["baseline_corr"] = baseline_corr_provenance or {
-            "mode": "transient_computed",
-            "target_col": DEFAULT_PAYOUT_TARGET_COL,
-            "reason": "shared_artifact_unavailable",
-        }
-    if feature_neutral_metrics_enabled:
-        provenance_columns = cast(dict[str, object], provenance["columns"])
-        provenance_columns["fnc_feature_set"] = resolved_scoring_policy.fnc_feature_set
-        provenance_columns["fnc_feature_count"] = len(resolved_feature_cols)
-        provenance_sources = cast(dict[str, object], provenance["sources"])
-        provenance_sources["fnc_feature_sources"] = [str(path) for path in fnc_source_paths]
-        provenance_joins = cast(dict[str, object], provenance["joins"])
-        provenance_joins["fnc_overlap_rows"] = fnc_overlap_rows
-        provenance_joins["fnc_overlap_eras"] = int(len(fnc_overlap_eras))
-        provenance_joins.update(fnc_preflight)
-    return summaries, provenance, metric_frames
 
 
 def summarize_prediction_file_with_bmc(

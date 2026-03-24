@@ -60,17 +60,12 @@ def test_compute_run_hash_changes_when_output_baselines_dir_changes() -> None:
     assert base_hash != alt_hash
 
 
-def test_compute_run_hash_changes_when_loading_mode_changes() -> None:
+def test_compute_run_hash_ignores_removed_loading_block() -> None:
     base_config = {
         "data": {
             "data_version": "v5.2",
             "feature_set": "small",
             "target_col": "target",
-            "loading": {
-                "mode": "materialized",
-                "scoring_mode": "materialized",
-                "era_chunk_size": 64,
-            },
         },
         "model": {
             "type": "LGBMRegressor",
@@ -94,8 +89,8 @@ def test_compute_run_hash_changes_when_loading_mode_changes() -> None:
     }
     alt_data = dict(cast(dict[str, object], base_config["data"]))
     alt_data["loading"] = {
-        "mode": "fold_lazy",
-        "scoring_mode": "materialized",
+        "mode": "materialized",
+        "scoring_mode": "era_stream",
         "era_chunk_size": 64,
     }
     alt_config: dict[str, object] = {**base_config, "data": alt_data}
@@ -125,4 +120,4 @@ def test_compute_run_hash_changes_when_loading_mode_changes() -> None:
         engine_mode="official",
         engine_settings=engine_settings,
     )
-    assert base_hash != alt_hash
+    assert base_hash == alt_hash

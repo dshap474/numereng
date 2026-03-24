@@ -38,8 +38,6 @@ _ALLOWED_OVERRIDE_PATHS: Final[tuple[str, ...]] = (
     "data.target_col",
     "data.scoring_targets",
     "data.target_horizon",
-    "data.loading.era_chunk_size",
-    "data.loading.include_feature_neutral_metrics",
     "preprocessing.nan_missing_all_twos",
     "preprocessing.missing_value",
     "model.type",
@@ -76,12 +74,6 @@ _FALLBACK_BASE_CONFIG: Final[dict[str, object]] = {
         "meta_model_col": "numerai_meta_model",
         "embargo_eras": None,
         "baselines_dir": None,
-        "loading": {
-            "mode": "materialized",
-            "scoring_mode": "materialized",
-            "era_chunk_size": 64,
-            "include_feature_neutral_metrics": True,
-        },
     },
     "preprocessing": {
         "nan_missing_all_twos": False,

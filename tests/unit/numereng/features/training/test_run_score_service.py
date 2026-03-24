@@ -75,7 +75,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 "resolved_config": "resolved.json",
                 "results": "results.json",
             },
-            "training": {"scoring": {"mode": "materialized", "era_chunk_size": 64, "effective_backend": "failed"}},
+            "training": {"scoring": {"requested_stage": "all", "refreshed_stages": []}},
         },
     )
     _write_json(
@@ -89,7 +89,6 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
                 "target_col": "target",
                 "benchmark_source": {"source": "active"},
                 "meta_model_col": "numerai_meta_model",
-                "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
             },
             "output": {"predictions_name": "pred"},
         },
@@ -99,7 +98,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
         {
             "metrics": {"status": "failed", "reason": "old"},
             "output": {"output_dir": str(run_dir), "predictions_file": "artifacts/predictions/pred.parquet"},
-            "training": {"scoring": {"mode": "materialized", "era_chunk_size": 64, "effective_backend": "failed"}},
+            "training": {"scoring": {"requested_stage": "all", "refreshed_stages": []}},
         },
     )
 
@@ -109,13 +108,16 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
         "run_scoring",
         lambda **kwargs: PostTrainingScoringResult(
             summaries=_scoring_summaries(),
-            score_provenance={"execution": {"effective_scoring_mode": "materialized"}},
-            effective_scoring_backend="materialized",
+            score_provenance={
+                "stages": {
+                    "emitted": ["run_metric_series", "post_training_core_summary"],
+                    "omissions": {"post_training_full": "feature_diagnostics_unavailable"},
+                }
+            },
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
                 fnc_target_policy="scoring_target",
                 benchmark_min_overlap_ratio=0.0,
-                include_feature_neutral_metrics=True,
             ),
             artifacts=ScoringArtifactBundle(
                 series_frames={},
@@ -178,17 +180,18 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert saved_results["metrics"]["corr"]["mean"] == 0.1
     assert "payout_estimate_mean" not in saved_results["metrics"]
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
-    assert saved_results["training"]["scoring"]["effective_backend"] == "materialized"
     assert saved_results["training"]["scoring"]["requested_stage"] == "all"
     assert saved_results["training"]["scoring"]["refreshed_stages"] == ["run_metric_series", "post_training_core"]
-    assert saved_results["training"]["scoring"]["policy"]["fnc_target_policy"] == "scoring_target"
-    assert saved_results["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
+    assert saved_results["training"]["scoring"]["emitted_stage_files"] == [
+        "run_metric_series",
+        "post_training_core_summary",
+    ]
+    assert saved_results["training"]["scoring"]["omissions"]["post_training_full"] == "feature_diagnostics_unavailable"
 
     saved_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"
     assert saved_manifest["artifacts"]["scoring_manifest"] == "artifacts/scoring/manifest.json"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
-    assert saved_manifest["training"]["scoring"]["policy"]["include_feature_neutral_metrics"] is True
     assert saved_manifest["training"]["scoring"]["requested_stage"] == "all"
     assert (run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
     assert (run_dir / "artifacts" / "scoring" / "post_training_core_summary.parquet").is_file()
@@ -260,7 +263,6 @@ def test_score_run_partial_stage_preserves_existing_unselected_artifacts(
                 "target_col": "target",
                 "benchmark_source": {"source": "active"},
                 "meta_model_col": "numerai_meta_model",
-                "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
             },
             "output": {"predictions_name": "pred"},
         },
@@ -273,13 +275,11 @@ def test_score_run_partial_stage_preserves_existing_unselected_artifacts(
         "run_scoring",
         lambda **kwargs: PostTrainingScoringResult(
             summaries=_scoring_summaries(),
-            score_provenance={"execution": {"effective_scoring_mode": "materialized"}},
-            effective_scoring_backend="materialized",
+            score_provenance={"stages": {"emitted": ["run_metric_series"], "omissions": {}}},
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
                 fnc_target_policy="scoring_target",
                 benchmark_min_overlap_ratio=0.0,
-                include_feature_neutral_metrics=True,
             ),
             artifacts=ScoringArtifactBundle(
                 series_frames={},
@@ -354,7 +354,6 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
                 "target_col": "target",
                 "benchmark_source": {"source": "active"},
                 "meta_model_col": "numerai_meta_model",
-                "loading": {"scoring_mode": "materialized", "era_chunk_size": 64},
             },
             "output": {"predictions_name": "pred"},
         },
@@ -368,7 +367,7 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
         lambda **kwargs: PostTrainingScoringResult(
             summaries=_scoring_summaries(),
             score_provenance={
-                "execution": {"effective_scoring_mode": "materialized"},
+                "stages": {"emitted": ["post_training_core_summary"], "omissions": {}},
                 "artifacts": {
                     "charts": ["run_metric_series"],
                     "stage_files": [
@@ -379,12 +378,10 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
                     ],
                 },
             },
-            effective_scoring_backend="materialized",
             policy=ResolvedScoringPolicy(
                 fnc_feature_set="fncv3_features",
                 fnc_target_policy="scoring_target",
                 benchmark_min_overlap_ratio=0.0,
-                include_feature_neutral_metrics=False,
             ),
             artifacts=ScoringArtifactBundle(
                 series_frames={},

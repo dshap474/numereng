@@ -134,7 +134,6 @@ class ScoreRunResult:
     results_path: Path
     metrics_path: Path
     score_provenance_path: Path
-    effective_scoring_backend: str
     requested_stage: CanonicalScoringStage = "all"
     refreshed_stages: tuple[str, ...] = ()
 

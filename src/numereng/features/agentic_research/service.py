@@ -16,7 +16,6 @@ from numereng.features.agentic_research.codex_exec import (
 from numereng.features.agentic_research.config_evolution import (
     MaterializedMutationConfig,
     ParentConfigSelection,
-    change_set_from_proposal,
     materialize_mutation_config,
     parse_mutation_response,
     render_mutation_prompt,
@@ -47,7 +46,6 @@ from numereng.features.agentic_research.planner import (
     build_round_state,
     child_experiment_id,
     force_action_for_path,
-    materialize_config_payload,
     materialize_configs,
     render_prompt,
     round_summary_from_report,
@@ -70,6 +68,8 @@ from numereng.features.agentic_research.state import (
     program_path,
     proposal_to_dict,
     round_dir,
+    round_markdown_path,
+    round_record_path,
     save_lineage_state,
     save_program_state,
     save_round_artifact,
@@ -463,6 +463,7 @@ def _run_current_round(
                 updated_at=utc_now_iso(),
             )
             save_program_state(program_path(auto_dir), state)
+            _save_round_bundle(round_artifact_dir=round_artifact_dir, round_state=round_state)
         with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
             score_experiment_round(
                 store_root=root,
@@ -472,6 +473,7 @@ def _run_current_round(
             )
         round_state = replace(round_state, status="scored", updated_at=utc_now_iso())
         state = replace(state, current_round=round_state, last_checkpoint="round_scored", updated_at=utc_now_iso())
+        _save_round_bundle(round_artifact_dir=round_artifact_dir, round_state=round_state)
 
     round_state = state.current_round
     if round_state is None:
@@ -497,30 +499,14 @@ def _run_current_round(
             round_best=best_row,
             improved=improved,
         )
-        summary = round_summary_from_report(report=report, run_ids=round_state.run_ids, round_state=round_state)
-        summary["improved_best_overall"] = improved
-        save_round_artifact(round_artifact_dir / "round_summary.json", summary)
-        save_round_artifact(
-            round_artifact_dir / "report.json",
-            {
-                "experiment_id": report.experiment_id,
-                "metric": report.metric,
-                "total_runs": report.total_runs,
-                "champion_run_id": report.champion_run_id,
-                "rows": [
-                    {
-                        "run_id": item.run_id,
-                        "metric_value": item.metric_value,
-                        "corr_mean": item.corr_mean,
-                        "mmc_mean": item.mmc_mean,
-                        "cwmm_mean": item.cwmm_mean,
-                        "bmc_mean": item.bmc_mean,
-                        "bmc_last_200_eras_mean": item.bmc_last_200_eras_mean,
-                        "is_champion": item.is_champion,
-                    }
-                    for item in report.rows
-                ],
-            },
+        _save_round_bundle(
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            results_payload=_round_results_payload(
+                report=report,
+                round_state=round_state,
+                improved_best_overall=improved,
+            ),
         )
         current_phase = _increment_phase_round_count(state.current_phase)
         state = _replace_path(state, updated_path)
@@ -658,7 +644,6 @@ def _plan_structured_round(
     )
     validation_feedback: str | None = None
     executions: list[CodexPlannerExecution] = []
-    materialized_decision_configs: list[dict[str, object]] = []
     decision: Any | None = None
     for _attempt in range(2):
         prompt = render_prompt(
@@ -675,7 +660,6 @@ def _plan_structured_round(
             valid_config_examples=valid_config_examples,
             validation_feedback=validation_feedback,
         )
-        save_text_artifact(round_artifact_dir / "codex_prompt.txt", prompt)
         try:
             execution = _run_planner(
                 prompt=prompt,
@@ -686,47 +670,46 @@ def _plan_structured_round(
             executions.append(execution)
             decision = execution.decision
             validate_decision(decision, strategy=strategy_definition, current_phase=state.current_phase)
-            materialized_decision_configs = _materialized_decision_configs(
-                base_config=base_config_snapshot,
-                decision=decision,
-            )
             break
         except (AgenticResearchCodexError, AgenticResearchOpenRouterError, ValueError, json.JSONDecodeError) as exc:
             validation_feedback = str(exc)
-            save_text_artifact(round_artifact_dir / "codex_validation_error.txt", validation_feedback)
     if decision is None:
-        if executions:
-            _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
         error = validation_feedback or "agentic_research_structured_planning_failed"
-        save_text_artifact(round_artifact_dir / "codex_failure.txt", error)
+        planner_payload = _planner_trace_payload(
+            round_state=round_state,
+            round_artifact_dir=round_artifact_dir,
+            prompt_text=prompt,
+            executions=executions,
+            status="failed",
+            error=error,
+        )
+        _save_round_bundle(
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            planner_payload=planner_payload,
+        )
         _append_planner_trace(
             auto_dir=auto_dir,
             round_artifact_dir=round_artifact_dir,
             round_state=round_state,
+            prompt_text=prompt,
             executions=executions,
             status="failed",
             error=error,
         )
         return _stop_program(state, reason="codex_planning_failed"), lineage, "stop"
-    _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
-    save_round_artifact(
-        round_artifact_dir / "codex_decision.json",
-        {
-            "experiment_question": decision.experiment_question,
-            "winner_criteria": decision.winner_criteria,
-            "decision_rationale": decision.decision_rationale,
-            "next_action": decision.next_action,
-            "path_hypothesis": decision.path_hypothesis,
-            "path_slug": decision.path_slug,
-            "phase_action": decision.phase_action,
-            "phase_transition_rationale": decision.phase_transition_rationale,
-            "configs": materialized_decision_configs,
-        },
+    planner_payload = _planner_trace_payload(
+        round_state=round_state,
+        round_artifact_dir=round_artifact_dir,
+        prompt_text=prompt,
+        executions=executions,
+        status="succeeded",
     )
     _append_planner_trace(
         auto_dir=auto_dir,
         round_artifact_dir=round_artifact_dir,
         round_state=round_state,
+        prompt_text=prompt,
         executions=executions,
         status="succeeded",
     )
@@ -766,13 +749,6 @@ def _plan_structured_round(
         base_config=base_config_snapshot,
         configs=decision.configs,
     )
-    save_round_artifact(
-        round_artifact_dir / "planned_configs.json",
-        {
-            "experiment_id": round_state.experiment_id,
-            "filenames": filenames,
-        },
-    )
     if force_action_for_path(active_path) == "scale":
         state = _replace_path(
             state,
@@ -798,6 +774,7 @@ def _plan_structured_round(
         phase_transition_rationale=decision.phase_transition_rationale,
         updated_at=utc_now_iso(),
     )
+    _save_round_bundle(round_artifact_dir=round_artifact_dir, round_state=round_state, planner_payload=planner_payload)
     return (
         replace(
             state,
@@ -834,11 +811,24 @@ def _plan_mutation_round(
         )
     except ValueError as exc:
         error = str(exc)
-        save_text_artifact(round_artifact_dir / "codex_failure.txt", error)
+        planner_payload = _planner_trace_payload(
+            round_state=round_state,
+            round_artifact_dir=round_artifact_dir,
+            prompt_text="",
+            executions=[],
+            status="failed",
+            error=error,
+        )
+        _save_round_bundle(
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            planner_payload=planner_payload,
+        )
         _append_planner_trace(
             auto_dir=auto_dir,
             round_artifact_dir=round_artifact_dir,
             round_state=round_state,
+            prompt_text="",
             executions=[],
             status="failed",
             error=error,
@@ -856,7 +846,6 @@ def _plan_mutation_round(
             recent_round_summaries=recent_rounds,
             validation_feedback=validation_feedback,
         )
-        save_text_artifact(round_artifact_dir / "codex_prompt.txt", prompt)
         try:
             raw_execution = _run_mutation_planner(
                 prompt=prompt,
@@ -886,42 +875,43 @@ def _plan_mutation_round(
             if raw_execution is not None:
                 executions.append(raw_execution)
             validation_feedback = str(exc)
-            save_text_artifact(round_artifact_dir / "codex_validation_error.txt", validation_feedback)
     if proposal is None or candidate is None:
-        if executions:
-            _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
         error = validation_feedback or "agentic_research_mutation_planning_failed"
-        save_text_artifact(round_artifact_dir / "codex_failure.txt", error)
+        planner_payload = _planner_trace_payload(
+            round_state=round_state,
+            round_artifact_dir=round_artifact_dir,
+            prompt_text=prompt,
+            executions=executions,
+            status="failed",
+            error=error,
+        )
+        _save_round_bundle(
+            round_artifact_dir=round_artifact_dir,
+            round_state=round_state,
+            planner_payload=planner_payload,
+        )
         _append_planner_trace(
             auto_dir=auto_dir,
             round_artifact_dir=round_artifact_dir,
             round_state=round_state,
+            prompt_text=prompt,
             executions=executions,
             status="failed",
             error=error,
         )
         return _stop_program(state, reason="codex_planning_failed"), lineage, "stop"
-    _save_codex_execution_artifacts(round_artifact_dir=round_artifact_dir, executions=executions)
-    save_round_artifact(
-        round_artifact_dir / "codex_decision.json",
-        {
-            "parent_run_id": parent.run_id,
-            "parent_config_filename": parent.config_filename,
-            "parent_metrics": {
-                "bmc_last_200_eras_mean": parent.bmc_last_200_eras_mean,
-                "bmc_mean": parent.bmc_mean,
-                "corr_mean": parent.corr_mean,
-            },
-            "rationale": proposal.rationale,
-            "changes": change_set_from_proposal(proposal),
-            "candidate_filename": candidate.filename,
-            "materialized_config": candidate.payload,
-        },
+    planner_payload = _planner_trace_payload(
+        round_state=round_state,
+        round_artifact_dir=round_artifact_dir,
+        prompt_text=prompt,
+        executions=executions,
+        status="succeeded",
     )
     _append_planner_trace(
         auto_dir=auto_dir,
         round_artifact_dir=round_artifact_dir,
         round_state=round_state,
+        prompt_text=prompt,
         executions=executions,
         status="succeeded",
     )
@@ -945,13 +935,6 @@ def _plan_mutation_round(
         )
     config_dir = _experiment_config_dir(root=root, experiment_id=round_state.experiment_id)
     write_materialized_config(config_dir=config_dir, candidate=candidate)
-    save_round_artifact(
-        round_artifact_dir / "planned_configs.json",
-        {
-            "experiment_id": round_state.experiment_id,
-            "filenames": [candidate.filename],
-        },
-    )
     if action == "scale":
         state = _replace_path(
             state,
@@ -976,6 +959,7 @@ def _plan_mutation_round(
         llm_rationale=proposal.rationale,
         updated_at=utc_now_iso(),
     )
+    _save_round_bundle(round_artifact_dir=round_artifact_dir, round_state=round_state, planner_payload=planner_payload)
     return (
         replace(
             state,
@@ -1114,14 +1098,26 @@ def _increment_phase_round_count(current_phase: ResearchPhaseState | None) -> Re
     )
 
 
-def _save_codex_execution_artifacts(
-    *,
-    round_artifact_dir: Path,
-    executions: list[Any],
-) -> None:
-    if not executions:
-        return
-    attempts = [
+_LEGACY_ROUND_ARTIFACT_FILENAMES = (
+    "codex_prompt.txt",
+    "codex_usage.json",
+    "codex_stdout.jsonl",
+    "codex_stderr.txt",
+    "codex_last_message.json",
+    "codex_last_message.txt",
+    "codex_decision.json",
+    "planned_configs.json",
+    "report.json",
+    "round_summary.json",
+    "llm_trace.jsonl",
+    "llm_trace.md",
+    "codex_failure.txt",
+    "codex_validation_error.txt",
+)
+
+
+def _planner_attempt_payloads(executions: list[Any]) -> list[dict[str, object]]:
+    return [
         {
             "attempt_number": attempt.attempt_number,
             "elapsed_seconds": attempt.elapsed_seconds,
@@ -1136,34 +1132,25 @@ def _save_codex_execution_artifacts(
         for execution in executions
         for attempt in execution.attempts
     ]
-    save_round_artifact(
-        round_artifact_dir / "codex_usage.json",
-        {
-            "attempts": attempts,
-            "final_attempt": attempts[-1] if attempts else None,
-            "total_input_tokens": sum(item["input_tokens"] or 0 for item in attempts),
-            "total_cached_input_tokens": sum(item["cached_input_tokens"] or 0 for item in attempts),
-            "total_output_tokens": sum(item["output_tokens"] or 0 for item in attempts),
-            "total_elapsed_seconds": round(sum(float(item["elapsed_seconds"]) for item in attempts), 6),
-        },
-    )
-    save_text_artifact(
-        round_artifact_dir / "codex_stdout.jsonl",
-        "".join(execution.stdout_jsonl for execution in executions),
-    )
-    save_text_artifact(
-        round_artifact_dir / "codex_stderr.txt",
-        "\n".join(execution.stderr_text for execution in executions if execution.stderr_text).strip(),
-    )
-    last_message_attr = getattr(executions[-1], "last_message", None)
-    last_message = last_message_attr if isinstance(last_message_attr, dict) else {}
-    save_round_artifact(round_artifact_dir / "codex_last_message.json", last_message)
+
+
+def _planner_usage_payload(executions: list[Any]) -> dict[str, object]:
+    attempts = _planner_attempt_payloads(executions)
+    return {
+        "attempts": attempts,
+        "final_attempt": attempts[-1] if attempts else None,
+        "total_input_tokens": sum(item["input_tokens"] or 0 for item in attempts),
+        "total_cached_input_tokens": sum(item["cached_input_tokens"] or 0 for item in attempts),
+        "total_output_tokens": sum(item["output_tokens"] or 0 for item in attempts),
+        "total_elapsed_seconds": round(sum(float(item["elapsed_seconds"]) for item in attempts), 6),
+    }
 
 
 def _planner_trace_payload(
     *,
     round_state: Any,
     round_artifact_dir: Path,
+    prompt_text: str,
     executions: list[Any],
     status: str,
     error: str | None = None,
@@ -1175,21 +1162,7 @@ def _planner_trace_payload(
             model_name = load_openrouter_config().active_model
         except Exception:  # noqa: BLE001
             model_name = None
-    attempts = [
-        {
-            "attempt_number": attempt.attempt_number,
-            "elapsed_seconds": attempt.elapsed_seconds,
-            "returncode": attempt.returncode,
-            "thread_id": attempt.thread_id,
-            "input_tokens": attempt.input_tokens,
-            "cached_input_tokens": attempt.cached_input_tokens,
-            "output_tokens": attempt.output_tokens,
-            "stdout_line_count": attempt.stdout_line_count,
-            "validation_feedback": attempt.validation_feedback,
-        }
-        for execution in executions
-        for attempt in execution.attempts
-    ]
+    attempts = _planner_attempt_payloads(executions)
     parsed_response = None
     if executions:
         last_message = getattr(executions[-1], "last_message", None)
@@ -1205,14 +1178,11 @@ def _planner_trace_payload(
         "path_id": round_state.path_id,
         "round_label": round_state.round_label,
         "round_number": round_state.round_number,
-        "prompt_path": str(round_artifact_dir / "codex_prompt.txt"),
-        "usage_path": str(round_artifact_dir / "codex_usage.json"),
-        "stdout_path": str(round_artifact_dir / "codex_stdout.jsonl"),
-        "stderr_path": str(round_artifact_dir / "codex_stderr.txt"),
-        "last_message_path": str(round_artifact_dir / "codex_last_message.json"),
-        "decision_path": str(round_artifact_dir / "codex_decision.json"),
+        "round_path": str(round_record_path(round_artifact_dir)),
+        "round_markdown_path": str(round_markdown_path(round_artifact_dir)),
         "attempts": attempts,
-        "prompt_text": _read_trace_text(round_artifact_dir / "codex_prompt.txt"),
+        "usage": _planner_usage_payload(executions),
+        "prompt_text": prompt_text,
         "raw_response_text": _trace_response_text(executions[-1]) if executions else "",
         "parsed_response": parsed_response,
         "decision": parsed_response,
@@ -1225,6 +1195,7 @@ def _append_planner_trace(
     auto_dir: Path,
     round_artifact_dir: Path,
     round_state: Any,
+    prompt_text: str,
     executions: list[Any],
     status: str,
     error: str | None = None,
@@ -1232,20 +1203,20 @@ def _append_planner_trace(
     payload = _planner_trace_payload(
         round_state=round_state,
         round_artifact_dir=round_artifact_dir,
+        prompt_text=prompt_text,
         executions=executions,
         status=status,
         error=error,
     )
     append_jsonl_artifact(llm_trace_path(auto_dir), payload)
-    append_jsonl_artifact(round_artifact_dir / "llm_trace.jsonl", payload)
     append_text_artifact(llm_trace_markdown_path(auto_dir), _render_planner_trace_markdown(payload))
-    append_text_artifact(round_artifact_dir / "llm_trace.md", _render_planner_trace_markdown(payload))
 
 
 def _render_planner_trace_markdown(payload: dict[str, object]) -> str:
     prompt_text = str(payload.get("prompt_text") or "")
     raw_response_text = str(payload.get("raw_response_text") or "")
-    stderr_text = _read_trace_text(payload.get("stderr_path"))
+    usage = payload.get("usage")
+    stderr_text = ""
     parsed_response = payload.get("parsed_response")
     decision_text = json.dumps(parsed_response, indent=2, sort_keys=True) if isinstance(parsed_response, dict) else ""
     lines = [
@@ -1254,6 +1225,7 @@ def _render_planner_trace_markdown(payload: dict[str, object]) -> str:
         f"- Status: `{payload.get('status', '')}`",
         f"- Planner source: `{payload.get('planner_source', '')}`",
         f"- Planner model: `{payload.get('planner_model', '')}`",
+        (f"- Round record: `{payload.get('round_path', '')}`" if payload.get("round_path") else ""),
         "",
         "### Sent To LLM",
         "",
@@ -1273,28 +1245,24 @@ def _render_planner_trace_markdown(payload: dict[str, object]) -> str:
         decision_text,
         "```",
     ]
+    if isinstance(usage, dict):
+        lines.extend(
+            [
+                "",
+                "### Usage",
+                "",
+                "```json",
+                json.dumps(usage, indent=2, sort_keys=True),
+                "```",
+            ]
+        )
     if stderr_text:
         lines.extend(["", "### Raw Stderr", "", "```text", stderr_text, "```"])
     error = payload.get("error")
     if error:
         lines.extend(["", "### Error", "", str(error)])
     lines.extend(["", "---", ""])
-    return "\n".join(lines)
-
-
-def _read_trace_text(path_value: object) -> str:
-    if isinstance(path_value, Path):
-        path = path_value
-    elif isinstance(path_value, str) and path_value.strip():
-        path = Path(path_value)
-    else:
-        return ""
-    if not path.is_file():
-        return ""
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
+    return "\n".join(line for line in lines if line != "")
 
 
 def _run_planner(
@@ -1360,23 +1328,171 @@ def _trace_response_text(execution: Any) -> str:
     return ""
 
 
-def _materialized_decision_configs(
+def _round_results_payload(
     *,
-    base_config: dict[str, object],
-    decision: Any,
-) -> list[dict[str, object]]:
-    return [
-        {
-            "filename": item.filename,
-            "rationale": item.rationale,
-            "overrides": item.overrides,
-            "materialized_config": materialize_config_payload(
-                base_config=base_config,
-                overrides=item.overrides,
-            ),
-        }
-        for item in decision.configs
+    report: Any,
+    round_state: Any,
+    improved_best_overall: bool,
+) -> dict[str, object]:
+    summary = round_summary_from_report(report=report, run_ids=round_state.run_ids, round_state=round_state)
+    return {
+        "metric": report.metric,
+        "total_runs": report.total_runs,
+        "champion_run_id": report.champion_run_id,
+        "improved_best_overall": improved_best_overall,
+        "best_row": summary.get("best_row"),
+        "rows": summary.get("rows"),
+    }
+
+
+def _save_round_bundle(
+    *,
+    round_artifact_dir: Path,
+    round_state: Any,
+    planner_payload: dict[str, object] | None = None,
+    results_payload: dict[str, object] | None = None,
+) -> None:
+    existing = _load_round_bundle(round_artifact_dir)
+    if planner_payload is None and isinstance(existing.get("planner"), dict):
+        planner_payload = existing.get("planner")
+    if results_payload is None and isinstance(existing.get("results"), dict):
+        results_payload = existing.get("results")
+    payload = {
+        "round_number": round_state.round_number,
+        "round_label": round_state.round_label,
+        "experiment_id": round_state.experiment_id,
+        "path_id": round_state.path_id,
+        "status": round_state.status,
+        "started_at": round_state.started_at,
+        "updated_at": round_state.updated_at,
+        "decision": {
+            "action": round_state.decision_action,
+            "experiment_question": round_state.experiment_question,
+            "winner_criteria": round_state.winner_criteria,
+            "decision_rationale": round_state.decision_rationale,
+            "path_hypothesis": round_state.decision_path_hypothesis,
+            "path_slug": round_state.decision_path_slug,
+            "phase_id": round_state.phase_id,
+            "phase_action": round_state.phase_action,
+            "phase_transition_rationale": round_state.phase_transition_rationale,
+        },
+        "lineage": {
+            "parent_run_id": round_state.parent_run_id,
+            "parent_config_filename": round_state.parent_config_filename,
+            "child_config_filenames": list(round_state.config_filenames),
+            "change_set": list(round_state.change_set),
+            "llm_rationale": round_state.llm_rationale,
+        },
+        "execution": {
+            "run_ids": list(round_state.run_ids),
+            "next_config_index": round_state.next_config_index,
+        },
+        "planner": planner_payload,
+        "results": results_payload,
+    }
+    save_round_artifact(round_record_path(round_artifact_dir), payload)
+    save_text_artifact(round_markdown_path(round_artifact_dir), _render_round_markdown(payload))
+    _cleanup_legacy_round_artifacts(round_artifact_dir)
+
+
+def _load_round_bundle(round_artifact_dir: Path) -> dict[str, object]:
+    path = round_record_path(round_artifact_dir)
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return payload
+
+
+def _render_round_markdown(payload: dict[str, object]) -> str:
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    lineage = payload.get("lineage") if isinstance(payload.get("lineage"), dict) else {}
+    execution = payload.get("execution") if isinstance(payload.get("execution"), dict) else {}
+    planner = payload.get("planner") if isinstance(payload.get("planner"), dict) else {}
+    results = payload.get("results") if isinstance(payload.get("results"), dict) else {}
+    lines = [
+        f"# {payload.get('round_label', '')}",
+        "",
+        f"- Status: `{payload.get('status', '')}`",
+        f"- Experiment: `{payload.get('experiment_id', '')}`",
+        f"- Path: `{payload.get('path_id', '')}`",
+        f"- Decision action: `{decision.get('action') or 'n/a'}`",
     ]
+    parent_config = lineage.get("parent_config_filename")
+    if parent_config:
+        lines.append(f"- Parent config: `{parent_config}`")
+    parent_run_id = lineage.get("parent_run_id")
+    if parent_run_id:
+        lines.append(f"- Parent run: `{parent_run_id}`")
+    child_configs = lineage.get("child_config_filenames")
+    if isinstance(child_configs, list) and child_configs:
+        lines.append(f"- Child config(s): `{', '.join(str(item) for item in child_configs)}`")
+    run_ids = execution.get("run_ids")
+    if isinstance(run_ids, list) and run_ids:
+        lines.append(f"- Run id(s): `{', '.join(str(item) for item in run_ids)}`")
+    results_best = results.get("best_row") if isinstance(results.get("best_row"), dict) else None
+    if results_best is not None:
+        lines.extend(
+            [
+                "",
+                "## Outcome",
+                "",
+                f"- Improved best overall: `{results.get('improved_best_overall')}`",
+                f"- Best run: `{results_best.get('run_id')}`",
+                f"- `bmc_last_200_eras_mean`: `{results_best.get('bmc_last_200_eras_mean')}`",
+                f"- `bmc_mean`: `{results_best.get('bmc_mean')}`",
+                f"- `corr_mean`: `{results_best.get('corr_mean')}`",
+            ]
+        )
+    change_set = lineage.get("change_set")
+    if isinstance(change_set, list) and change_set:
+        lines.extend(["", "## Change Set", ""])
+        for item in change_set:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- `{item.get('path')}` = `{json.dumps(item.get('value'), sort_keys=True)}`")
+    llm_rationale = lineage.get("llm_rationale")
+    if isinstance(llm_rationale, str) and llm_rationale.strip():
+        lines.extend(["", "## LLM Rationale", "", llm_rationale.strip()])
+    prompt_text = planner.get("prompt_text")
+    if isinstance(prompt_text, str) and prompt_text.strip():
+        lines.extend(["", "## Sent To LLM", "", "```text", prompt_text.strip(), "```"])
+    raw_response_text = planner.get("raw_response_text")
+    if isinstance(raw_response_text, str) and raw_response_text.strip():
+        lines.extend(["", "## Raw LLM Response", "", "```text", raw_response_text.strip(), "```"])
+    parsed_response = planner.get("parsed_response")
+    if isinstance(parsed_response, dict):
+        lines.extend(
+            [
+                "",
+                "## Parsed Final Response",
+                "",
+                "```json",
+                json.dumps(parsed_response, indent=2, sort_keys=True),
+                "```",
+            ]
+        )
+    usage = planner.get("usage")
+    if isinstance(usage, dict):
+        lines.extend(["", "## Usage", "", "```json", json.dumps(usage, indent=2, sort_keys=True), "```"])
+    planner_error = planner.get("error")
+    if planner_error:
+        lines.extend(["", "## Error", "", str(planner_error)])
+    return "\n".join(lines) + "\n"
+
+
+def _cleanup_legacy_round_artifacts(round_artifact_dir: Path) -> None:
+    for filename in _LEGACY_ROUND_ARTIFACT_FILENAMES:
+        path = round_artifact_dir / filename
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError:
+            continue
 
 
 def _recent_round_summaries(*, auto_dir: Path) -> list[dict[str, object]]:
@@ -1385,16 +1501,45 @@ def _recent_round_summaries(*, auto_dir: Path) -> list[dict[str, object]]:
         return []
     items: list[dict[str, object]] = []
     for path in sorted(rounds_root.iterdir(), key=lambda item: item.name):
-        summary_path = path / "round_summary.json"
-        if not summary_path.is_file():
+        record_path = round_record_path(path)
+        if record_path.is_file():
+            try:
+                payload = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, dict):
+                items.append(_round_summary_view(payload))
+                continue
+        legacy_summary_path = path / "round_summary.json"
+        if not legacy_summary_path.is_file():
             continue
         try:
-            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            payload = json.loads(legacy_summary_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(payload, dict):
             items.append(payload)
     return items
+
+
+def _round_summary_view(payload: dict[str, object]) -> dict[str, object]:
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    lineage = payload.get("lineage") if isinstance(payload.get("lineage"), dict) else {}
+    results = payload.get("results") if isinstance(payload.get("results"), dict) else {}
+    return {
+        "round_label": payload.get("round_label"),
+        "experiment_id": payload.get("experiment_id"),
+        "path_id": payload.get("path_id"),
+        "decision_action": decision.get("action"),
+        "experiment_question": decision.get("experiment_question"),
+        "winner_criteria": decision.get("winner_criteria"),
+        "decision_rationale": decision.get("decision_rationale"),
+        "parent_run_id": lineage.get("parent_run_id"),
+        "parent_config_filename": lineage.get("parent_config_filename"),
+        "change_set": lineage.get("change_set") if isinstance(lineage.get("change_set"), list) else [],
+        "llm_rationale": lineage.get("llm_rationale"),
+        "best_row": results.get("best_row") if isinstance(results.get("best_row"), dict) else None,
+    }
 
 
 def _agentic_research_dir(experiment: ExperimentRecord) -> Path:

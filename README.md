@@ -137,6 +137,7 @@ The default store root is `.numereng/`. Common artifacts include:
       llm_trace.jsonl
       llm_trace.md
       rounds/rN/*
+  cache/
   datasets/
   cloud/
   notes/

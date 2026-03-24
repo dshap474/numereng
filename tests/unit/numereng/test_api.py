@@ -902,7 +902,6 @@ def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
             results_path=Path("/tmp/results.json"),
             metrics_path=Path("/tmp/metrics.json"),
             score_provenance_path=Path("/tmp/score_provenance.json"),
-            effective_scoring_backend="materialized",
             requested_stage="all",
             refreshed_stages=("run_metric_series", "post_training_core"),
         )
@@ -916,7 +915,6 @@ def test_score_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.results_path == "/tmp/results.json"
     assert response.metrics_path == "/tmp/metrics.json"
     assert response.score_provenance_path == "/tmp/score_provenance.json"
-    assert response.effective_scoring_backend == "materialized"
     assert response.requested_stage == "all"
     assert response.refreshed_stages == ["run_metric_series", "post_training_core"]
 
@@ -935,7 +933,6 @@ def test_score_run_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.Mon
             results_path=Path("/tmp/results.json"),
             metrics_path=Path("/tmp/metrics.json"),
             score_provenance_path=Path("/tmp/score_provenance.json"),
-            effective_scoring_backend="materialized",
             requested_stage="all",
         )
 

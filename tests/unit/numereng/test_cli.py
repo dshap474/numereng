@@ -304,7 +304,6 @@ def test_cli_run_score_success(
             results_path="/tmp/results.json",
             metrics_path="/tmp/metrics.json",
             score_provenance_path="/tmp/score_provenance.json",
-            effective_scoring_backend="materialized",
             requested_stage="all",
             refreshed_stages=["run_metric_series", "post_training_core"],
         )
@@ -333,7 +332,6 @@ def test_cli_run_score_stage_success(
             results_path="/tmp/results.json",
             metrics_path="/tmp/metrics.json",
             score_provenance_path="/tmp/score_provenance.json",
-            effective_scoring_backend="materialized",
             requested_stage="post_training_core",
             refreshed_stages=["post_training_core"],
         )

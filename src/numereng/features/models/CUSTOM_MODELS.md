@@ -59,6 +59,11 @@ Each registered class must:
 - implement `predict`
 - filter `X` by `feature_cols` when it is provided
 
+Numereng may also normalize backend-specific asset paths when that keeps runtime
+behavior deterministic. `TabPFNRegressor`, for example, routes cache-managed
+checkpoint names into `.numereng/cache/tabpfn` instead of letting the backend
+write into the current working directory.
+
 Use `src/numereng/features/models/custom_models/template_model.py` as the exact starter.
 
 ## Config example

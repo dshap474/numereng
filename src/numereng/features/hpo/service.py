@@ -517,13 +517,6 @@ def _extract_metric_value_from_predictions(
     dataset_scope = str(data_config.get("dataset_scope", "train_only"))
     meta_model_data_path = _optional_path(data_config.get("meta_model_data_path"))
     meta_model_col = str(data_config.get("meta_model_col", DEFAULT_META_MODEL_COL))
-    loading_config = _as_mapping(data_config.get("loading"))
-    scoring_mode = str(loading_config.get("scoring_mode", "materialized"))
-    era_chunk_size_obj = loading_config.get("era_chunk_size", 64)
-    if not isinstance(era_chunk_size_obj, int):
-        raise HpoExecutionError("hpo_trial_scoring_chunk_size_invalid")
-    era_chunk_size = era_chunk_size_obj
-
     try:
         scoring_result = run_post_training_scoring(
             request=PostTrainingScoringRequest(
@@ -546,8 +539,7 @@ def _extract_metric_value_from_predictions(
                 era_col=era_col,
                 id_col=id_col,
                 data_root=DEFAULT_DATASETS_DIR,
-                scoring_mode=scoring_mode,
-                era_chunk_size=era_chunk_size,
+                stage="all",
             ),
             client=scoring_client,
         )

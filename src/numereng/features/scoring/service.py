@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 from numereng.features.scoring.metrics import (
     build_scoring_artifact_bundle,
@@ -12,7 +11,6 @@ from numereng.features.scoring.metrics import (
 from numereng.features.scoring.models import (
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
-    ResolvedScoringPolicy,
     RunScoringRequest,
     RunScoringResult,
     default_scoring_policy,
@@ -27,14 +25,7 @@ def run_scoring(
 ) -> RunScoringResult:
     """Compute canonical run-scoring outputs from persisted predictions."""
 
-    effective_scoring_backend = _resolve_effective_scoring_mode(request)
-    base_policy = default_scoring_policy()
-    policy = ResolvedScoringPolicy(
-        fnc_feature_set=base_policy.fnc_feature_set,
-        fnc_target_policy=base_policy.fnc_target_policy,
-        benchmark_min_overlap_ratio=base_policy.benchmark_min_overlap_ratio,
-        include_feature_neutral_metrics=request.include_feature_neutral_metrics,
-    )
+    policy = default_scoring_policy()
 
     summaries, score_provenance, metric_frames = score_prediction_file_with_details(
         predictions_path=request.predictions_path,
@@ -57,8 +48,7 @@ def run_scoring(
         era_col=request.era_col,
         id_col=request.id_col,
         data_root=request.data_root,
-        scoring_mode=effective_scoring_backend,
-        era_chunk_size=request.era_chunk_size,
+        include_feature_neutral_metrics=request.stage in {"all", "post_training_full"},
         scoring_policy=policy,
     )
     artifacts, benchmark_joins = build_scoring_artifact_bundle(
@@ -87,15 +77,7 @@ def run_scoring(
         scoring_policy=policy,
     )
 
-    execution_payload: dict[str, object] = {
-        "requested_scoring_mode": request.scoring_mode,
-        "effective_scoring_mode": effective_scoring_backend,
-        "era_chunk_size": request.era_chunk_size,
-        "requested_stage": request.stage,
-    }
-    if request.scoring_mode == "era_stream" and effective_scoring_backend != request.scoring_mode:
-        execution_payload["fallback_reason"] = "external_source_not_parquet"
-    score_provenance["execution"] = execution_payload
+    score_provenance["execution"] = {"requested_stage": request.stage}
     score_provenance["benchmark_source"] = {
         "mode": request.benchmark_source.mode,
         "name": request.benchmark_source.name,
@@ -143,7 +125,6 @@ def run_scoring(
     return RunScoringResult(
         summaries=summaries,
         score_provenance=score_provenance,
-        effective_scoring_backend=effective_scoring_backend,
         policy=policy,
         artifacts=artifacts,
         requested_stage=request.stage,
@@ -159,25 +140,6 @@ def run_post_training_scoring(
     """Backward-compatible alias for the canonical run scorer."""
 
     return run_scoring(request=request, client=client)
-
-
-def _resolve_effective_scoring_mode(request: PostTrainingScoringRequest) -> str:
-    if request.scoring_mode != "era_stream":
-        return request.scoring_mode
-
-    if not _looks_parquet(request.predictions_path):
-        return "materialized"
-    if not _looks_parquet(request.benchmark_source.predictions_path):
-        return "materialized"
-    if not _looks_parquet(request.meta_model_data_path):
-        return "materialized"
-    return request.scoring_mode
-
-
-def _looks_parquet(value: str | Path | None) -> bool:
-    if value is None:
-        return True
-    return Path(str(value)).suffix.lower() == ".parquet"
 
 
 def _refreshed_canonical_stages(stage: str, stage_frames: Mapping[str, object]) -> list[str]:

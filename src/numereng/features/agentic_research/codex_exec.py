@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Final
@@ -93,17 +94,18 @@ def run_codex_planner(
     artifact_dir: Path,
 ) -> CodexPlannerExecution:
     """Run headless Codex once with a structured JSON schema contract."""
-    raw_execution = _run_codex_exec(
+    raw_execution, output_path = _run_codex_exec(
         prompt=prompt,
         command=[*command, "--output-schema", str(schema_path)],
         artifact_dir=artifact_dir,
     )
-    last_message_path = artifact_dir / "codex_last_message.json"
     try:
-        last_message = _load_last_message(last_message_path)
+        last_message = _load_last_message(output_path)
         decision = decision_from_dict(last_message)
     except Exception as exc:
         raise AgenticResearchCodexError("agentic_research_codex_output_invalid") from exc
+    finally:
+        _unlink_if_exists(output_path)
     return CodexPlannerExecution(
         decision=decision,
         attempts=raw_execution.attempts,
@@ -121,12 +123,13 @@ def run_codex_raw_planner(
     artifact_dir: Path,
 ) -> RawPlannerExecution:
     """Run headless Codex once and capture the raw final text response."""
-    raw_execution = _run_codex_exec(prompt=prompt, command=command, artifact_dir=artifact_dir)
-    last_message_path = artifact_dir / "codex_last_message.txt"
+    raw_execution, output_path = _run_codex_exec(prompt=prompt, command=command, artifact_dir=artifact_dir)
     try:
-        response_text = last_message_path.read_text(encoding="utf-8")
+        response_text = output_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise AgenticResearchCodexError("agentic_research_codex_output_invalid") from exc
+    finally:
+        _unlink_if_exists(output_path)
     return RawPlannerExecution(
         attempts=raw_execution.attempts,
         stdout_jsonl=raw_execution.stdout_jsonl,
@@ -140,14 +143,18 @@ def _run_codex_exec(
     prompt: str,
     command: list[str],
     artifact_dir: Path,
-) -> RawPlannerExecution:
+) -> tuple[RawPlannerExecution, Path]:
     """Run the underlying headless Codex command once and capture telemetry."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     attempts: list[CodexPlannerAttempt] = []
-    output_name = "codex_last_message.json" if "--output-schema" in command else "codex_last_message.txt"
-    output_path = artifact_dir / output_name
-    if output_path.exists():
-        output_path.unlink()
+    output_suffix = ".json" if "--output-schema" in command else ".txt"
+    with tempfile.NamedTemporaryFile(
+        dir=artifact_dir,
+        prefix=".codex_output_",
+        suffix=output_suffix,
+        delete=False,
+    ) as handle:
+        output_path = Path(handle.name)
     started = time.perf_counter()
     try:
         completed = subprocess.run(
@@ -180,11 +187,14 @@ def _run_codex_exec(
         raise AgenticResearchCodexError(
             f"agentic_research_codex_exec_failed:{completed.returncode}:{completed.stderr.strip()}"
         )
-    return RawPlannerExecution(
-        attempts=attempts,
-        stdout_jsonl=completed.stdout,
-        stderr_text=completed.stderr.strip(),
-        raw_response_text="",
+    return (
+        RawPlannerExecution(
+            attempts=attempts,
+            stdout_jsonl=completed.stdout,
+            stderr_text=completed.stderr.strip(),
+            raw_response_text="",
+        ),
+        output_path,
     )
 
 
@@ -192,6 +202,14 @@ def _planner_env() -> dict[str, str]:
     env = dict(os.environ)
     env["CODEX_HOME"] = str(ensure_learner_codex_home())
     return env
+
+
+def _unlink_if_exists(path: Path) -> None:
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        return
 
 
 def _load_last_message(path: Path) -> dict[str, object]:

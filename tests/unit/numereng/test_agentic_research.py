@@ -82,12 +82,6 @@ def _valid_training_config() -> dict[str, object]:
             "meta_model_col": "numerai_meta_model",
             "embargo_eras": None,
             "baselines_dir": None,
-            "loading": {
-                "mode": "materialized",
-                "scoring_mode": "materialized",
-                "era_chunk_size": 64,
-                "include_feature_neutral_metrics": True,
-            },
         },
         "preprocessing": {
             "nan_missing_all_twos": False,
@@ -799,13 +793,13 @@ def test_run_research_executes_one_full_round(
     assert state.best_overall.run_id == "run-1"
     assert state.strategy == "numerai-experiment-loop"
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    assert (round_dir / "round_summary.json").is_file()
-    assert (round_dir / "codex_usage.json").is_file()
-    assert (round_dir / "codex_last_message.json").is_file()
-    assert (round_dir / "llm_trace.jsonl").is_file()
-    assert (round_dir / "llm_trace.md").is_file()
-    usage = json.loads((round_dir / "codex_usage.json").read_text(encoding="utf-8"))
-    assert "attempts" in usage
+    assert (round_dir / "round.json").is_file()
+    assert (round_dir / "round.md").is_file()
+    assert not (round_dir / "codex_prompt.txt").exists()
+    assert not (round_dir / "codex_usage.json").exists()
+    assert not (round_dir / "llm_trace.md").exists()
+    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
+    assert "attempts" in round_payload["planner"]["usage"]
     trace_markdown = (
         store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.md"
     ).read_text(encoding="utf-8")
@@ -827,9 +821,9 @@ def test_run_research_executes_one_full_round(
     assert trace_lines[0]["planner_source"] == "codex-exec"
     assert trace_lines[0]["round_label"] == "r1"
     assert trace_lines[0]["parsed_response"]["changes"][0]["path"] == "model.params.learning_rate"
-    round_summary = json.loads((round_dir / "round_summary.json").read_text(encoding="utf-8"))
-    assert round_summary["parent_config_filename"] == "base.json"
-    assert round_summary["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
+    assert round_payload["lineage"]["parent_config_filename"] == "base.json"
+    assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
+    assert round_payload["results"]["best_row"]["run_id"] == "run-1"
 
 
 def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -> None:
@@ -846,9 +840,8 @@ def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -
     assert result.status == "stopped"
     assert result.stop_reason == "codex_planning_failed"
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    assert (round_dir / "codex_failure.txt").read_text(encoding="utf-8").strip() == (
-        f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
-    )
+    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
+    assert round_payload["planner"]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
     trace_lines = [
         json.loads(line)
         for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
@@ -964,9 +957,9 @@ def test_run_research_trace_prefers_raw_response_text(
     ]
     assert trace_lines[0]["raw_response_text"] == raw_response
     assert trace_lines[0]["raw_response_text"] != transport_stream
-    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
-    assert raw_response in trace_markdown
-    assert transport_stream not in trace_markdown
+    round_markdown = (round_dir / "round.md").read_text(encoding="utf-8")
+    assert raw_response in round_markdown
+    assert transport_stream not in round_markdown
 
 
 def test_run_research_retries_once_when_mutation_is_duplicate(
@@ -1064,9 +1057,9 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
     assert result.status == "stopped"
     assert planner_calls["count"] == 2
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    assert "agentic_research_candidate_duplicate" in (round_dir / "codex_validation_error.txt").read_text(
-        encoding="utf-8"
-    )
+    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
+    assert "agentic_research_candidate_duplicate" in round_payload["planner"]["prompt_text"]
+    assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
 
 
 def test_run_research_resumes_after_interrupt(

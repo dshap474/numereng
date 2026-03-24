@@ -1,5 +1,51 @@
 {
   "$defs": {
+    "BenchmarkSourceConfig": {
+      "additionalProperties": false,
+      "description": "Benchmark prediction source used for benchmark-relative scoring.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "pred_col": {
+          "default": "prediction",
+          "title": "Pred Col",
+          "type": "string"
+        },
+        "predictions_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predictions Path"
+        },
+        "source": {
+          "default": "active",
+          "enum": [
+            "active",
+            "path"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "title": "BenchmarkSourceConfig",
+      "type": "object"
+    },
     "DataConfig": {
       "additionalProperties": false,
       "description": "Data loading and target-selection settings.",
@@ -69,9 +115,6 @@
           "title": "Id Col",
           "type": "string"
         },
-        "loading": {
-          "$ref": "#/$defs/DataLoadingConfig"
-        },
         "meta_model_col": {
           "default": "numerai_meta_model",
           "title": "Meta Model Col",
@@ -130,89 +173,6 @@
         "dataset_variant"
       ],
       "title": "DataConfig",
-      "type": "object"
-    },
-    "BenchmarkSourceConfig": {
-      "additionalProperties": false,
-      "description": "Benchmark prediction source used for benchmark-relative scoring.",
-      "properties": {
-        "name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Name"
-        },
-        "pred_col": {
-          "default": "prediction",
-          "title": "Pred Col",
-          "type": "string"
-        },
-        "predictions_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Predictions Path"
-        },
-        "source": {
-          "default": "active",
-          "enum": [
-            "active",
-            "path"
-          ],
-          "title": "Source",
-          "type": "string"
-        }
-      },
-      "title": "BenchmarkSourceConfig",
-      "type": "object"
-    },
-    "DataLoadingConfig": {
-      "additionalProperties": false,
-      "description": "Runtime loading/scoring controls for training and metrics.",
-      "properties": {
-        "era_chunk_size": {
-          "default": 64,
-          "minimum": 1,
-          "title": "Era Chunk Size",
-          "type": "integer"
-        },
-        "include_feature_neutral_metrics": {
-          "default": true,
-          "title": "Include Feature Neutral Metrics",
-          "type": "boolean"
-        },
-        "mode": {
-          "default": "materialized",
-          "enum": [
-            "materialized",
-            "fold_lazy"
-          ],
-          "title": "Mode",
-          "type": "string"
-        },
-        "scoring_mode": {
-          "default": "materialized",
-          "enum": [
-            "materialized",
-            "era_stream"
-          ],
-          "title": "Scoring Mode",
-          "type": "string"
-        }
-      },
-      "title": "DataLoadingConfig",
       "type": "object"
     },
     "ModelBaselineConfig": {

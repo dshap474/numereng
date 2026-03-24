@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
-import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -127,9 +124,6 @@ def _build_training_config(
     *,
     dataset: _SyntheticDataset,
     store_root: Path,
-    loading_mode: str,
-    scoring_mode: str,
-    era_chunk_size: int,
     parallel_folds: int,
 ) -> dict[str, object]:
     data_block: dict[str, object] = {
@@ -146,11 +140,6 @@ def _build_training_config(
             "pred_col": "v52_lgbm_ender20",
         },
         "meta_model_data_path": str(dataset.meta_path),
-        "loading": {
-            "mode": loading_mode,
-            "scoring_mode": scoring_mode,
-            "era_chunk_size": era_chunk_size,
-        },
     }
     return {
         "data": data_block,
@@ -198,7 +187,7 @@ def _write_config(path: Path, payload: dict[str, object]) -> None:
 
 
 @pytest.mark.integration
-def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
+def test_run_training_materialized_smoke_indexes_and_writes_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -208,13 +197,10 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
     _write_features_metadata(tmp_path, dataset.features)
     _stage_default_dataset_root(tmp_path, dataset)
 
-    config_path = tmp_path / "train_fold_lazy.json"
+    config_path = tmp_path / "train_materialized.json"
     config_payload = _build_training_config(
         dataset=dataset,
         store_root=store_root,
-        loading_mode="fold_lazy",
-        scoring_mode="materialized",
-        era_chunk_size=8,
         parallel_folds=1,
     )
     _write_config(config_path, config_payload)
@@ -224,24 +210,6 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
         training_service_module,
         "load_features",
         lambda client, data_version, feature_set, dataset_variant="non_downsampled": dataset.features,
-    )
-
-    def _resolve_fold_paths(
-        client: object,
-        data_version: str,
-        dataset_scope: str = "train_only",
-        data_root: Path | None = None,
-        dataset_variant: str = "non_downsampled",
-    ) -> tuple[Path, ...]:
-        del client, data_version, data_root, dataset_variant
-        if dataset_scope == "train_plus_validation":
-            return (dataset.train_path, dataset.validation_path)
-        return (dataset.train_path,)
-
-    monkeypatch.setattr(
-        training_service_module,
-        "resolve_fold_lazy_source_paths",
-        _resolve_fold_paths,
     )
 
     response = api_module.run_training(
@@ -262,12 +230,13 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert run_manifest["status"] == "FINISHED"
     training_block = cast(dict[str, object], run_manifest["training"])
-    assert cast(dict[str, object], training_block["loading"])["mode"] == "fold_lazy"
     scoring_block = cast(dict[str, object], training_block["scoring"])
-    assert scoring_block["mode"] == "materialized"
+    assert scoring_block["requested_stage"] == "post_training_core"
+    assert "post_training_core" in cast(list[str], scoring_block["refreshed_stages"])
     run_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
     run_metrics = cast(dict[str, object], run_results["metrics"])
-    assert "fnc" in run_metrics
+    assert "fnc" not in run_metrics
+    assert "feature_exposure" not in run_metrics
 
     db_path = store_root / "numereng.db"
     assert db_path.is_file()
@@ -282,7 +251,7 @@ def test_run_training_fold_lazy_smoke_indexes_and_writes_artifacts(
 
 
 @pytest.mark.integration
-def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
+def test_materialized_scoring_core_vs_full_integration(tmp_path: Path) -> None:
     dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=220, n_features=6, seed=11)
     _write_features_metadata(tmp_path, dataset.features)
     predictions_path = tmp_path / "predictions.parquet"
@@ -295,7 +264,7 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
     prediction_frame["prediction"] = prediction_frame["target"] * 0.6 + 0.2
     prediction_frame.to_parquet(predictions_path, index=False)
 
-    materialized_summaries, _ = summarize_prediction_file_with_scores(
+    core_summaries, _ = summarize_prediction_file_with_scores(
         predictions_path=predictions_path,
         pred_cols=["prediction"],
         target_col="target",
@@ -310,10 +279,9 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode="materialized",
-        era_chunk_size=4,
+        include_feature_neutral_metrics=False,
     )
-    stream_summaries, _ = summarize_prediction_file_with_scores(
+    full_summaries, _ = summarize_prediction_file_with_scores(
         predictions_path=predictions_path,
         pred_cols=["prediction"],
         target_col="target",
@@ -328,19 +296,13 @@ def test_scoring_mode_era_stream_parity_integration(tmp_path: Path) -> None:
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode="era_stream",
-        era_chunk_size=2,
     )
 
-    assert set(materialized_summaries) == set(stream_summaries)
-    for metric_name in materialized_summaries:
-        assert_frame_equal(
-            materialized_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
-            stream_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
-            check_exact=False,
-            rtol=1e-9,
-            atol=1e-9,
-        )
+    assert "fnc" not in core_summaries
+    assert "feature_exposure" not in core_summaries
+    assert "fnc" in full_summaries
+    assert "feature_exposure" in full_summaries
+    assert "max_feature_exposure" in full_summaries
 
 
 @pytest.mark.integration
@@ -368,9 +330,6 @@ def test_parallel_memmap_outputs_match_single_worker(
         _build_training_config(
             dataset=dataset,
             store_root=store_root,
-            loading_mode="materialized",
-            scoring_mode="materialized",
-            era_chunk_size=8,
             parallel_folds=1,
         ),
     )
@@ -379,9 +338,6 @@ def test_parallel_memmap_outputs_match_single_worker(
         _build_training_config(
             dataset=dataset,
             store_root=store_root,
-            loading_mode="materialized",
-            scoring_mode="materialized",
-            era_chunk_size=8,
             parallel_folds=2,
         ),
     )
@@ -407,117 +363,6 @@ def test_parallel_memmap_outputs_match_single_worker(
     parallel_results = json.loads(Path(parallel.results_path).read_text(encoding="utf-8"))
     single_metrics = cast(dict[str, dict[str, float]], single_results["metrics"])
     parallel_metrics = cast(dict[str, dict[str, float]], parallel_results["metrics"])
-    for metric_key in ("corr", "fnc", "bmc", "mmc", "cwmm"):
+    for metric_key in ("corr", "bmc", "mmc", "cwmm"):
         assert single_metrics[metric_key]["mean"] == pytest.approx(parallel_metrics[metric_key]["mean"], abs=1e-12)
         assert single_metrics[metric_key]["std"] == pytest.approx(parallel_metrics[metric_key]["std"], abs=1e-12)
-
-
-def _run_training_subprocess(
-    *,
-    workdir: Path,
-    config_path: Path,
-    output_dir: Path,
-    repo_src: Path,
-) -> dict[str, object]:
-    script = """
-import json
-import resource
-import time
-from pathlib import Path
-
-import numereng.api as api_module
-from numereng.api.contracts import TrainRunRequest
-
-config_path = Path(__import__("sys").argv[1])
-output_dir = Path(__import__("sys").argv[2])
-start = time.perf_counter()
-response = api_module.run_training(
-    TrainRunRequest(config_path=str(config_path), output_dir=str(output_dir))
-)
-elapsed = time.perf_counter() - start
-print(json.dumps({
-    "run_id": response.run_id,
-    "elapsed_seconds": elapsed,
-    "peak_rss": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss),
-}))
-"""
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(repo_src)
-    result = subprocess.run(
-        [sys.executable, "-c", script, str(config_path), str(output_dir)],
-        cwd=str(workdir),
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    payload = json.loads(lines[-1])
-    return cast(dict[str, object], payload)
-
-
-@pytest.mark.integration
-@pytest.mark.slow
-def test_fold_lazy_slow_peak_rss_regression_gate(tmp_path: Path) -> None:
-    # Run in an isolated cwd so default `.numereng/datasets` resolution is local.
-    workdir = tmp_path / "perf_env"
-    workdir.mkdir(parents=True, exist_ok=True)
-    dataset = _build_synthetic_dataset(workdir, n_eras=6, rows_per_era=8000, n_features=60, seed=101)
-    store_root = workdir / ".numereng_store"
-    store_root.mkdir(parents=True, exist_ok=True)
-
-    dataset_root = workdir / ".numereng" / "datasets" / "v5.2"
-    dataset_root.mkdir(parents=True, exist_ok=True)
-    features_payload = {
-        "feature_sets": {
-            "small": dataset.features,
-            "all": dataset.features,
-            "fncv3_features": dataset.features,
-        }
-    }
-    (dataset_root / "features.json").write_text(json.dumps(features_payload), encoding="utf-8")
-    pd.read_parquet(dataset.train_path).to_parquet(dataset_root / "train.parquet", index=False)
-    pd.read_parquet(dataset.validation_path).to_parquet(dataset_root / "validation.parquet", index=False)
-
-    materialized_path = workdir / "materialized.json"
-    fold_lazy_path = workdir / "fold_lazy.json"
-    _write_config(
-        materialized_path,
-        _build_training_config(
-            dataset=dataset,
-            store_root=store_root,
-            loading_mode="materialized",
-            scoring_mode="materialized",
-            era_chunk_size=64,
-            parallel_folds=1,
-        ),
-    )
-    _write_config(
-        fold_lazy_path,
-        _build_training_config(
-            dataset=dataset,
-            store_root=store_root,
-            loading_mode="fold_lazy",
-            scoring_mode="materialized",
-            era_chunk_size=64,
-            parallel_folds=1,
-        ),
-    )
-
-    repo_src = Path(__file__).resolve().parents[2] / "src"
-    materialized = _run_training_subprocess(
-        workdir=workdir,
-        config_path=materialized_path,
-        output_dir=store_root,
-        repo_src=repo_src,
-    )
-    fold_lazy = _run_training_subprocess(
-        workdir=workdir,
-        config_path=fold_lazy_path,
-        output_dir=store_root,
-        repo_src=repo_src,
-    )
-
-    materialized_peak = cast(int, materialized["peak_rss"])
-    fold_lazy_peak = cast(int, fold_lazy["peak_rss"])
-    assert fold_lazy_peak <= int(materialized_peak * 1.1)

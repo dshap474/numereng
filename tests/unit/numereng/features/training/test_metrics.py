@@ -13,7 +13,6 @@ from numerai_tools.scoring import (
     pearson_correlation,
     tie_kept_rank__gaussianize__pow_1_5,
 )
-from pandas.testing import assert_frame_equal
 
 import numereng.features.scoring.metrics as metrics_module
 from numereng.features.scoring.metrics import (
@@ -620,10 +619,8 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     assert policy["benchmark_min_overlap_ratio"] == pytest.approx(0.0)
 
 
-@pytest.mark.parametrize("scoring_mode", ["materialized", "era_stream"])
 def test_score_prediction_file_with_details_uses_shared_active_benchmark_corr_artifact_for_delta(
     tmp_path: Path,
-    scoring_mode: str,
 ) -> None:
     predictions_path = tmp_path / "predictions.parquet"
     predictions = pd.DataFrame(
@@ -692,12 +689,11 @@ def test_score_prediction_file_with_details_uses_shared_active_benchmark_corr_ar
         benchmark_data_path=benchmark_path,
         benchmark_metadata_path=benchmark_metadata_path,
         meta_model_data_path=meta_path,
-        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        scoring_policy=default_scoring_policy(),
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode=scoring_mode,
-        era_chunk_size=1,
+        include_feature_neutral_metrics=False,
     )
 
     corr_ender20 = metric_frames["corr_ender20"].sort_values("era").reset_index(drop=True)
@@ -715,10 +711,8 @@ def test_score_prediction_file_with_details_uses_shared_active_benchmark_corr_ar
     assert baseline_corr["artifact_path"] == str(shared_corr_path.resolve())
 
 
-@pytest.mark.parametrize("scoring_mode", ["materialized", "era_stream"])
 def test_score_prediction_file_with_details_falls_back_to_transient_baseline_corr_for_delta(
     tmp_path: Path,
-    scoring_mode: str,
 ) -> None:
     predictions_path = tmp_path / "predictions.parquet"
     predictions = pd.DataFrame(
@@ -768,12 +762,11 @@ def test_score_prediction_file_with_details_falls_back_to_transient_baseline_cor
         benchmark_name="custom_benchmark",
         benchmark_data_path=benchmark_path,
         meta_model_data_path=meta_path,
-        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        scoring_policy=default_scoring_policy(),
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode=scoring_mode,
-        era_chunk_size=1,
+        include_feature_neutral_metrics=False,
     )
 
     assert "baseline_corr" not in metric_frames
@@ -880,11 +873,11 @@ def test_score_prediction_file_with_details_uses_safe_benchmark_alias_for_path_s
         benchmark_name="active_benchmark",
         benchmark_data_path=benchmark_path,
         meta_model_data_path=meta_path,
-        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        scoring_policy=default_scoring_policy(),
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode="materialized",
+        include_feature_neutral_metrics=False,
     )
 
     assert summaries["bmc"].loc["prediction", "mean"] != pytest.approx(0.0)
@@ -997,16 +990,14 @@ def test_summarize_prediction_file_with_scores_skips_fnc_dependencies_when_disab
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_policy=metrics_module.default_scoring_policy(False),
+        scoring_policy=metrics_module.default_scoring_policy(),
+        include_feature_neutral_metrics=False,
     )
 
     assert "corr" in summaries
     assert "fnc" not in summaries
     assert "feature_exposure" not in summaries
     assert "max_feature_exposure" not in summaries
-    policy = provenance["policy"]
-    assert isinstance(policy, dict)
-    assert policy["include_feature_neutral_metrics"] is False
     columns = provenance["columns"]
     assert isinstance(columns, dict)
     assert "fnc_feature_count" not in columns
@@ -1079,94 +1070,6 @@ def test_summarize_prediction_file_with_scores_omits_meta_metrics_when_meta_miss
     assert meta_metrics["reason"] == "no_meta_overlap"
 
 
-def test_summarize_prediction_file_with_scores_era_stream_matches_materialized(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.parquet"
-    predictions = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d", "e", "f"],
-            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
-            "target": [0.2, 0.4, 0.1, 0.3, 0.5, 0.7],
-            "prediction": [0.1, 0.3, 0.2, 0.4, 0.6, 0.8],
-        }
-    )
-    predictions.to_parquet(predictions_path, index=False)
-    _write_feature_sources(
-        tmp_path,
-        ids=predictions["id"].tolist(),
-        eras=predictions["era"].tolist(),
-        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25, 0.45, 0.65]},
-    )
-
-    benchmark_path = tmp_path / "benchmark.parquet"
-    benchmark = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d", "e", "f"],
-            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
-            "v52_lgbm_ender20": [0.6, 0.7, 0.2, 0.3, 0.1, 0.2],
-        }
-    ).set_index("id")
-    benchmark.to_parquet(benchmark_path)
-
-    meta_path = tmp_path / "meta.parquet"
-    meta = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d", "e", "f"],
-            "era": ["era1", "era1", "era2", "era2", "era3", "era3"],
-            "numerai_meta_model": [0.55, 0.65, 0.15, 0.25, 0.35, 0.45],
-        }
-    ).set_index("id")
-    meta.to_parquet(meta_path)
-
-    materialized_summaries, materialized_provenance = summarize_prediction_file_with_scores(
-        predictions_path=predictions_path,
-        pred_cols=["prediction"],
-        target_col="target",
-        scoring_target_cols=["target"],
-        data_version="v5.2",
-        client=_FakeClient(),
-        benchmark_model="v52_lgbm_ender20",
-        benchmark_data_path=benchmark_path,
-        meta_model_data_path=meta_path,
-        era_col="era",
-        id_col="id",
-        data_root=tmp_path,
-        scoring_mode="materialized",
-    )
-    stream_summaries, stream_provenance = summarize_prediction_file_with_scores(
-        predictions_path=predictions_path,
-        pred_cols=["prediction"],
-        target_col="target",
-        scoring_target_cols=["target"],
-        data_version="v5.2",
-        client=_FakeClient(),
-        benchmark_model="v52_lgbm_ender20",
-        benchmark_data_path=benchmark_path,
-        meta_model_data_path=meta_path,
-        era_col="era",
-        id_col="id",
-        data_root=tmp_path,
-        scoring_mode="era_stream",
-        era_chunk_size=1,
-    )
-
-    for metric_name in ("feature_exposure", "max_feature_exposure", "bmc", "bmc_last_200_eras", "cwmm"):
-        assert_frame_equal(
-            materialized_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
-            stream_summaries[metric_name].sort_index(axis=0).sort_index(axis=1),
-            check_exact=False,
-            rtol=1e-9,
-            atol=1e-9,
-        )
-
-    materialized_execution = materialized_provenance["execution"]
-    assert isinstance(materialized_execution, dict)
-    assert materialized_execution["effective_scoring_mode"] == "materialized"
-    stream_execution = stream_provenance["execution"]
-    assert isinstance(stream_execution, dict)
-    assert stream_execution["effective_scoring_mode"] == "era_stream"
-    assert stream_execution["era_chunk_size"] == 1
-
-
 def test_summarize_prediction_file_with_scores_allows_partial_benchmark_overlap(
     tmp_path: Path,
 ) -> None:
@@ -1207,30 +1110,27 @@ def test_summarize_prediction_file_with_scores_allows_partial_benchmark_overlap(
     ).set_index("id")
     meta.to_parquet(meta_path)
 
-    for scoring_mode in ("materialized", "era_stream"):
-        summaries, provenance = summarize_prediction_file_with_scores(
-            predictions_path=predictions_path,
-            pred_cols=["prediction"],
-            target_col="target",
-            scoring_target_cols=["target"],
-            data_version="v5.2",
-            client=_FakeClient(),
-            benchmark_model="v52_lgbm_ender20",
-            benchmark_data_path=benchmark_path,
-            meta_model_data_path=meta_path,
-            era_col="era",
-            id_col="id",
-            data_root=tmp_path,
-            scoring_mode=scoring_mode,
-            era_chunk_size=1,
-        )
+    summaries, provenance = summarize_prediction_file_with_scores(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target"],
+        data_version="v5.2",
+        client=_FakeClient(),
+        benchmark_model="v52_lgbm_ender20",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+    )
 
-        assert "bmc" in summaries
-        assert "bmc_last_200_eras" in summaries
-        joins = provenance["joins"]
-        assert isinstance(joins, dict)
-        assert joins["benchmark_overlap_rows"] == 4
-        assert joins["benchmark_missing_rows"] == 2
+    assert "bmc" in summaries
+    assert "bmc_last_200_eras" in summaries
+    joins = provenance["joins"]
+    assert isinstance(joins, dict)
+    assert joins["benchmark_overlap_rows"] == 4
+    assert joins["benchmark_missing_rows"] == 2
 
 
 def test_summarize_prediction_file_with_scores_emits_meta_metrics_on_overlap_window(
@@ -1273,34 +1173,31 @@ def test_summarize_prediction_file_with_scores_emits_meta_metrics_on_overlap_win
     ).set_index("id")
     meta.to_parquet(meta_path)
 
-    for scoring_mode in ("materialized", "era_stream"):
-        summaries, provenance = summarize_prediction_file_with_scores(
-            predictions_path=predictions_path,
-            pred_cols=["prediction"],
-            target_col="target",
-            scoring_target_cols=["target"],
-            data_version="v5.2",
-            client=_FakeClient(),
-            benchmark_model="v52_lgbm_ender20",
-            benchmark_data_path=benchmark_path,
-            meta_model_data_path=meta_path,
-            era_col="era",
-            id_col="id",
-            data_root=tmp_path,
-            scoring_mode=scoring_mode,
-            era_chunk_size=1,
-        )
+    summaries, provenance = summarize_prediction_file_with_scores(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target"],
+        data_version="v5.2",
+        client=_FakeClient(),
+        benchmark_model="v52_lgbm_ender20",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+    )
 
-        assert "mmc" in summaries
-        assert "cwmm" in summaries
-        meta_metrics = provenance["meta_metrics"]
-        assert isinstance(meta_metrics, dict)
-        assert meta_metrics["emitted"] is True
-        assert meta_metrics["reason"] is None
-        joins = provenance["joins"]
-        assert isinstance(joins, dict)
-        assert joins["meta_overlap_rows"] == 4
-        assert joins["meta_overlap_eras"] == 2
+    assert "mmc" in summaries
+    assert "cwmm" in summaries
+    meta_metrics = provenance["meta_metrics"]
+    assert isinstance(meta_metrics, dict)
+    assert meta_metrics["emitted"] is True
+    assert meta_metrics["reason"] is None
+    joins = provenance["joins"]
+    assert isinstance(joins, dict)
+    assert joins["meta_overlap_rows"] == 4
+    assert joins["meta_overlap_eras"] == 2
 
 
 def test_summarize_prediction_file_with_scores_omits_meta_metrics_without_overlap(
@@ -1343,87 +1240,6 @@ def test_summarize_prediction_file_with_scores_omits_meta_metrics_without_overla
     ).set_index("id")
     meta.to_parquet(meta_path)
 
-    for scoring_mode in ("materialized", "era_stream"):
-        summaries, provenance = summarize_prediction_file_with_scores(
-            predictions_path=predictions_path,
-            pred_cols=["prediction"],
-            target_col="target",
-            scoring_target_cols=["target"],
-            data_version="v5.2",
-            client=_FakeClient(),
-            benchmark_model="v52_lgbm_ender20",
-            benchmark_data_path=benchmark_path,
-            meta_model_data_path=meta_path,
-            era_col="era",
-            id_col="id",
-            data_root=tmp_path,
-            scoring_mode=scoring_mode,
-            era_chunk_size=1,
-        )
-
-        assert "mmc" not in summaries
-        assert "cwmm" not in summaries
-        assert "corr" in summaries
-        assert "bmc" in summaries
-        meta_metrics = provenance["meta_metrics"]
-        assert isinstance(meta_metrics, dict)
-        assert meta_metrics["emitted"] is False
-        assert meta_metrics["reason"] == "no_meta_overlap"
-        joins = provenance["joins"]
-        assert isinstance(joins, dict)
-        assert joins["meta_overlap_rows"] == 0
-
-
-def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_reads(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    predictions_path = tmp_path / "predictions.parquet"
-    predictions = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d"],
-            "era": ["era1", "era1", "era2", "era2"],
-            "target": [0.2, 0.4, 0.1, 0.3],
-            "prediction": [0.1, 0.3, 0.2, 0.4],
-        }
-    )
-    predictions.to_parquet(predictions_path, index=False)
-    _write_feature_sources(
-        tmp_path,
-        ids=predictions["id"].tolist(),
-        eras=predictions["era"].tolist(),
-        extra_cols={"target_ender_20": [0.15, 0.35, 0.05, 0.25]},
-    )
-
-    benchmark_path = tmp_path / "benchmark.parquet"
-    benchmark = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d"],
-            "era": ["era1", "era1", "era2", "era2"],
-            "v52_lgbm_ender20": [0.6, 0.7, 0.2, 0.3],
-        }
-    ).set_index("id")
-    benchmark.to_parquet(benchmark_path)
-
-    meta_path = tmp_path / "meta.parquet"
-    meta = pd.DataFrame(
-        {
-            "id": ["a", "b", "c", "d"],
-            "era": ["era1", "era1", "era2", "era2"],
-            "numerai_meta_model": [0.55, 0.65, 0.15, 0.25],
-        }
-    ).set_index("id")
-    meta.to_parquet(meta_path)
-
-    original_read_table = metrics_module._read_table
-    read_calls: list[tuple[Path, tuple[str, ...] | None]] = []
-
-    def _track_read_table(path: Path, columns: list[str] | None = None) -> pd.DataFrame:
-        read_calls.append((path.expanduser().resolve(), tuple(columns) if columns is not None else None))
-        return original_read_table(path, columns=columns)
-
-    monkeypatch.setattr(metrics_module, "_read_table", _track_read_table)
-
     summaries, provenance = summarize_prediction_file_with_scores(
         predictions_path=predictions_path,
         pred_cols=["prediction"],
@@ -1437,31 +1253,19 @@ def test_summarize_prediction_file_with_scores_era_stream_avoids_full_table_read
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode="era_stream",
-        era_chunk_size=1,
     )
-    assert set(summaries) == {
-        "corr",
-        "corr_ender20",
-        "fnc",
-        "fnc_ender20",
-        "feature_exposure",
-        "max_feature_exposure",
-        "bmc",
-        "bmc_last_200_eras",
-        "corr_delta_vs_baseline",
-        "mmc",
-        "cwmm",
-    }
+
+    assert "mmc" not in summaries
+    assert "cwmm" not in summaries
+    assert "corr" in summaries
+    assert "bmc" in summaries
+    meta_metrics = provenance["meta_metrics"]
+    assert isinstance(meta_metrics, dict)
+    assert meta_metrics["emitted"] is False
+    assert meta_metrics["reason"] == "no_meta_overlap"
     joins = provenance["joins"]
     assert isinstance(joins, dict)
-    assert joins["predictions_rows"] == 4
-    predictions_calls = [call for call in read_calls if call[0] == predictions_path.resolve()]
-    assert predictions_calls == [(predictions_path.resolve(), ("id", "era"))]
-    benchmark_calls = [call for call in read_calls if call[0] == benchmark_path.resolve()]
-    assert benchmark_calls == [(benchmark_path.resolve(), ("era", "v52_lgbm_ender20"))]
-    meta_calls = [call for call in read_calls if call[0] == meta_path.resolve()]
-    assert meta_calls == [(meta_path.resolve(), ("era", "numerai_meta_model"))]
+    assert joins["meta_overlap_rows"] == 0
 
 
 def test_summarize_prediction_file_with_scores_materialized_reads_predictions_once_and_projects_aux_tables(
@@ -1530,7 +1334,6 @@ def test_summarize_prediction_file_with_scores_materialized_reads_predictions_on
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_mode="materialized",
     )
 
     predictions_calls = [call for call in read_calls if call[0] == predictions_path.resolve()]
@@ -1554,29 +1357,6 @@ def test_summarize_prediction_file_with_scores_materialized_reads_predictions_on
         {"era", "numerai_meta_model"},
         {"id", "era", "numerai_meta_model"},
     )
-
-
-def test_summarize_prediction_file_with_scores_rejects_unknown_mode(tmp_path: Path) -> None:
-    predictions_path = tmp_path / "predictions.parquet"
-    pd.DataFrame(
-        {
-            "id": ["a", "b"],
-            "era": ["era1", "era1"],
-            "target": [0.2, 0.4],
-            "prediction": [0.1, 0.3],
-        }
-    ).to_parquet(predictions_path, index=False)
-
-    with pytest.raises(TrainingMetricsError, match="training_metrics_scoring_mode_invalid"):
-        summarize_prediction_file_with_scores(
-            predictions_path=predictions_path,
-            pred_cols=["prediction"],
-            target_col="target",
-            scoring_target_cols=["target"],
-            data_version="v5.2",
-            client=_FakeClient(),
-            scoring_mode="unknown",
-        )
 
 
 def test_summarize_prediction_file_with_scores_emits_extra_target_metrics_from_dataset_sources(
@@ -1617,39 +1397,36 @@ def test_summarize_prediction_file_with_scores_emits_extra_target_metrics_from_d
         }
     ).set_index("id").to_parquet(meta_path)
 
-    for scoring_mode in ("materialized", "era_stream"):
-        summaries, provenance = summarize_prediction_file_with_scores(
-            predictions_path=predictions_path,
-            pred_cols=["prediction"],
-            target_col="target",
-            scoring_target_cols=["target", "target_ender_20"],
-            data_version="v5.2",
-            scoring_targets_explicit=True,
-            client=_FakeClient(),
-            benchmark_model="v52_lgbm_ender20",
-            benchmark_data_path=benchmark_path,
-            meta_model_data_path=meta_path,
-            era_col="era",
-            id_col="id",
-            data_root=tmp_path,
-            scoring_mode=scoring_mode,
-            era_chunk_size=1,
-        )
+    summaries, provenance = summarize_prediction_file_with_scores(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col="target",
+        scoring_target_cols=["target", "target_ender_20"],
+        data_version="v5.2",
+        scoring_targets_explicit=True,
+        client=_FakeClient(),
+        benchmark_model="v52_lgbm_ender20",
+        benchmark_data_path=benchmark_path,
+        meta_model_data_path=meta_path,
+        era_col="era",
+        id_col="id",
+        data_root=tmp_path,
+    )
 
-        assert "corr" in summaries
-        assert "fnc" in summaries
-        assert "mmc" in summaries
-        assert "mmc_target" in summaries
-        assert "bmc" in summaries
-        assert "bmc_target" in summaries
-        assert "bmc_last_200_eras" in summaries
-        assert "bmc_last_200_eras_target" in summaries
-        assert "corr_ender20" in summaries
-        assert "fnc_ender20" in summaries
-        columns = provenance["columns"]
-        assert isinstance(columns, dict)
-        assert columns["scoring_target_cols"] == ["target", "target_ender_20"]
-        assert columns["contribution_target_cols"] == ["target_ender_20", "target"]
+    assert "corr" in summaries
+    assert "fnc" in summaries
+    assert "mmc" in summaries
+    assert "mmc_target" in summaries
+    assert "bmc" in summaries
+    assert "bmc_target" in summaries
+    assert "bmc_last_200_eras" in summaries
+    assert "bmc_last_200_eras_target" in summaries
+    assert "corr_ender20" in summaries
+    assert "fnc_ender20" in summaries
+    columns = provenance["columns"]
+    assert isinstance(columns, dict)
+    assert columns["scoring_target_cols"] == ["target", "target_ender_20"]
+    assert columns["contribution_target_cols"] == ["target_ender_20", "target"]
 
 
 def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> None:
@@ -1734,7 +1511,7 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=True),
+        scoring_policy=default_scoring_policy(),
     )
 
     assert set(bundle.stage_frames) == {
@@ -1858,7 +1635,7 @@ def test_build_scoring_artifact_bundle_omits_post_fold_without_cv_fold(tmp_path:
         era_col="era",
         id_col="id",
         data_root=tmp_path,
-        scoring_policy=default_scoring_policy(include_feature_neutral_metrics=False),
+        scoring_policy=default_scoring_policy(),
     )
 
     assert "post_fold_per_era" not in bundle.stage_frames
