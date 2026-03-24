@@ -43,9 +43,10 @@ Read order:
 - Training/HPO config files are JSON-only and reject unknown keys (`extra=forbid`).
 - Legacy `data.loading` config is removed. Training configs hard-fail if it is present; training is materialized-loader only, and run hashing strips the removed block for identity compatibility.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`; legacy `submission` profile references hard-fail with a rename error.
+- `TabPFNRegressor` resolves bare checkpoint names under the effective run `store_root` at `cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
 - Run IDs are deterministic hash-based IDs (12-char prefixes).
 - Training requires successful pre-finalization `index_run`; if it fails, command fails.
-- Training writes `post_fold` during CV and automatically refreshes `post_training_core`; later `run score` or `experiment score-round` can materialize `post_training_full`.
+- Training writes `post_fold` during CV and automatically refreshes `post_training_core`; training/rescore scoring metadata is rebuilt from the persisted scoring manifest, and `post_training_full` is marked `not_requested` until that fuller stage is requested.
 - `experiment train` enforces `output_dir == store_root` (or omit output dir).
 - `experiment pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
 - Telemetry is fail-open and opt-in via launch metadata binding.

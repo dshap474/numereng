@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from importlib import import_module
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -109,6 +110,7 @@ def build_oof_predictions(
     id_col: str | None,
     era_col: str,
     target_col: str,
+    store_root: Path | None = None,
     feature_cols: list[str] | None = None,
     parallel_folds: int = 1,
     parallel_backend: str = "joblib",
@@ -184,6 +186,7 @@ def build_oof_predictions(
                 id_col=id_col,
                 era_col=era_col,
                 target_col=target_col,
+                store_root=store_root,
                 feature_cols=feature_cols,
             )
             if fold_result is None:
@@ -221,6 +224,7 @@ def build_oof_predictions(
                 id_col=id_col,
                 era_col=era_col,
                 target_col=target_col,
+                store_root=store_root,
                 feature_cols=feature_cols,
             )
             for fold_idx, train_eras, val_eras, descriptor in fold_work
@@ -270,6 +274,7 @@ def _run_fold_prediction(
     id_col: str | None,
     era_col: str,
     target_col: str,
+    store_root: Path | None,
     feature_cols: list[str] | None,
 ) -> tuple[pd.DataFrame, dict[str, object]] | None:
     train_data = _load_data(data_loader, train_eras)
@@ -285,6 +290,7 @@ def _run_fold_prediction(
         model_params,
         model_config,
         feature_cols=feature_cols,
+        store_root=store_root,
     )
     model.fit(train_data.X, train_data.y)
     preds = model.predict(val_data.X)
@@ -321,6 +327,7 @@ def build_full_history_predictions(
     id_col: str | None,
     era_col: str,
     target_col: str,
+    store_root: Path | None = None,
     feature_cols: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Train one model on all eras and return in-sample predictions."""
@@ -335,6 +342,7 @@ def build_full_history_predictions(
         model_params,
         model_config,
         feature_cols=feature_cols,
+        store_root=store_root,
     )
     model.fit(full_data.X, full_data.y)
     preds = model.predict(full_data.X)

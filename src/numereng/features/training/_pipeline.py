@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -108,6 +109,13 @@ from numereng.features.training.service import (
 from numereng.features.training.strategies import TrainingEnginePlan, TrainingProfile, resolve_training_engine
 
 logger = logging.getLogger(__name__)
+_EMITTED_STAGE_FILE_ORDER = (
+    "run_metric_series",
+    "post_fold_per_era",
+    "post_fold_snapshots",
+    "post_training_core_summary",
+    "post_training_full_summary",
+)
 
 
 @dataclass
@@ -603,6 +611,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             state.id_col,
             state.era_col,
             state.target_col,
+            store_root=state.run_store_root or _resolve_store_root_for_run(state.output_root),
             feature_cols=state.features,
         )
     else:
@@ -618,6 +627,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             state.id_col,
             state.era_col,
             state.target_col,
+            store_root=state.run_store_root or _resolve_store_root_for_run(state.output_root),
             feature_cols=state.features,
             parallel_folds=cast(int, state.resource_policy["parallel_folds"]),
             parallel_backend=str(state.resource_policy["parallel_backend"]),
@@ -806,17 +816,6 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     state.summaries = scoring_result.summaries
     score_provenance = scoring_result.score_provenance
     stage_metadata = _as_dict(score_provenance.get("stages"))
-    scoring_metadata: dict[str, object] = {
-        "requested_stage": scoring_result.requested_stage,
-        "refreshed_stages": list(scoring_result.refreshed_stages),
-    }
-    emitted = stage_metadata.get("emitted")
-    omissions = stage_metadata.get("omissions")
-    if isinstance(emitted, list):
-        scoring_metadata["emitted_stage_files"] = [str(value) for value in emitted]
-    if isinstance(omissions, dict):
-        scoring_metadata["omissions"] = {str(key): str(value) for key, value in omissions.items()}
-    state.training_runtime_metadata["scoring"] = scoring_metadata
     if (
         state.score_provenance_path is None
         or state.scoring_dir is None
@@ -825,15 +824,25 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         or state.metrics_path is None
     ):
         raise TrainingError("training_scoring_paths_uninitialized")
-    save_score_provenance(score_provenance, state.score_provenance_path)
-    state.score_provenance_relative = state.score_provenance_path.relative_to(state.output_root)
-    state.artifacts["score_provenance"] = str(state.score_provenance_relative)
     persisted_scoring = save_scoring_artifacts(
         scoring_result.artifacts,
         scoring_dir=state.scoring_dir,
         output_dir=state.output_root,
         selected_stage=scoring_result.requested_stage,
     )
+    manifest_payload = _refresh_persisted_scoring_provenance(
+        score_provenance=score_provenance,
+        persisted_scoring=persisted_scoring,
+    )
+    state.training_runtime_metadata["scoring"] = _scoring_metadata_from_manifest(
+        requested_stage=scoring_result.requested_stage,
+        refreshed_stages=scoring_result.refreshed_stages,
+        stage_metadata=stage_metadata,
+        manifest_payload=manifest_payload,
+    )
+    save_score_provenance(score_provenance, state.score_provenance_path)
+    state.score_provenance_relative = state.score_provenance_path.relative_to(state.output_root)
+    state.artifacts["score_provenance"] = str(state.score_provenance_relative)
     state.artifacts["scoring_manifest"] = str(persisted_scoring.manifest_relative)
     state.metrics_status = None
     log_info(
@@ -875,7 +884,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         cv_enabled=state.cv_enabled,
         resource_policy=state.resource_policy,
         cache_policy=state.cache_policy,
-        scoring_metadata=scoring_metadata,
+        scoring_metadata=cast(dict[str, object], state.training_runtime_metadata["scoring"]),
         metrics_status=None,
     )
     save_results(results, state.results_path)
@@ -1052,6 +1061,72 @@ def _era_sort_key(era: object) -> int | str:
     if isinstance(era, int):
         return era
     return str(era)
+
+
+def _scoring_metadata_from_manifest(
+    *,
+    requested_stage: str,
+    refreshed_stages: tuple[str, ...],
+    stage_metadata: dict[str, object],
+    manifest_payload: dict[str, object],
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "requested_stage": requested_stage,
+        "refreshed_stages": list(refreshed_stages),
+    }
+    refreshed_stage_files = _as_dict(manifest_payload.get("refreshed_stage_files"))
+    emitted = refreshed_stage_files.keys() if refreshed_stage_files else stage_metadata.get("emitted")
+    omissions = _as_dict(_as_dict(manifest_payload.get("stages")).get("omissions")) or stage_metadata.get("omissions")
+    if isinstance(emitted, list):
+        payload["emitted_stage_files"] = _ordered_emitted_stage_files(emitted)
+    elif refreshed_stage_files:
+        payload["emitted_stage_files"] = _ordered_emitted_stage_files(refreshed_stage_files.keys())
+    if isinstance(omissions, dict):
+        payload["omissions"] = {str(key): str(value) for key, value in omissions.items()}
+    return payload
+
+
+def _refresh_persisted_scoring_provenance(
+    *,
+    score_provenance: dict[str, object],
+    persisted_scoring: object,
+) -> dict[str, object]:
+    if not hasattr(persisted_scoring, "manifest_path") or not hasattr(persisted_scoring, "manifest_relative"):
+        return {}
+    manifest_path = cast(Path, getattr(persisted_scoring, "manifest_path"))
+    manifest_relative = cast(Path, getattr(persisted_scoring, "manifest_relative"))
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(manifest_payload, dict):
+        return {}
+    chart_files = _as_dict(manifest_payload.get("chart_files"))
+    stage_files = _as_dict(manifest_payload.get("stage_files"))
+    refreshed = manifest_payload.get("refreshed_canonical_stages")
+    refreshed_stages = [str(value) for value in refreshed] if isinstance(refreshed, list) else []
+    score_provenance["artifacts"] = {
+        "scoring_manifest": str(manifest_relative),
+        "charts": sorted(chart_files.keys()),
+        "stage_files": sorted(stage_files.keys()),
+        "requested_stage": manifest_payload.get("requested_stage"),
+        "refreshed_canonical_stages": refreshed_stages,
+    }
+    return manifest_payload
+
+
+def _ordered_emitted_stage_files(values: object) -> list[str]:
+    if not isinstance(values, list) and not hasattr(values, "__iter__"):
+        return []
+    resolved = [str(value) for value in values]
+    remaining = set(resolved)
+    ordered: list[str] = []
+    for item in _EMITTED_STAGE_FILE_ORDER:
+        if item in remaining:
+            ordered.append(item)
+            remaining.remove(item)
+    ordered.extend(sorted(remaining))
+    return ordered
 
 
 __all__ = [

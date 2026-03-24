@@ -35,6 +35,13 @@ from numereng.features.training.service import resolve_benchmark_source
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
 _DEFAULT_DATASET_SCOPE = "train_plus_validation"
+_EMITTED_STAGE_FILE_ORDER = (
+    "run_metric_series",
+    "post_fold_per_era",
+    "post_fold_snapshots",
+    "post_training_core_summary",
+    "post_training_full_summary",
+)
 
 
 def score_run(
@@ -143,7 +150,7 @@ def score_run(
         output_dir=run_dir,
         selected_stage=scoring_result.requested_stage,
     )
-    _refresh_persisted_artifacts_provenance(
+    manifest_payload = _refresh_persisted_artifacts_provenance(
         score_provenance=scoring_result.score_provenance,
         persisted_scoring=persisted_scoring,
     )
@@ -160,6 +167,7 @@ def score_run(
     results_training["scoring"] = _updated_scoring_payload(
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
+        manifest_payload=manifest_payload,
         stage_metadata=_as_mapping(scoring_result.score_provenance.get("stages")),
     )
     results["training"] = results_training
@@ -177,6 +185,7 @@ def score_run(
     manifest_training["scoring"] = _updated_scoring_payload(
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
+        manifest_payload=manifest_payload,
         stage_metadata=_as_mapping(scoring_result.score_provenance.get("stages")),
     )
     run_manifest["training"] = manifest_training
@@ -269,16 +278,22 @@ def _updated_scoring_payload(
     *,
     requested_stage: CanonicalScoringStage,
     refreshed_stages: tuple[str, ...],
+    manifest_payload: dict[str, object],
     stage_metadata: dict[str, object],
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "requested_stage": requested_stage,
         "refreshed_stages": list(refreshed_stages),
     }
-    emitted = stage_metadata.get("emitted")
-    omissions = stage_metadata.get("omissions")
+    refreshed_stage_files = _as_mapping(manifest_payload.get("refreshed_stage_files"))
+    emitted = refreshed_stage_files.keys() if refreshed_stage_files else stage_metadata.get("emitted")
+    omissions = _as_mapping(_as_mapping(manifest_payload.get("stages")).get("omissions")) or stage_metadata.get(
+        "omissions"
+    )
     if isinstance(emitted, list):
-        payload["emitted_stage_files"] = [str(value) for value in emitted]
+        payload["emitted_stage_files"] = _ordered_emitted_stage_files(emitted)
+    elif refreshed_stage_files:
+        payload["emitted_stage_files"] = _ordered_emitted_stage_files(refreshed_stage_files.keys())
     if isinstance(omissions, dict):
         payload["omissions"] = {str(key): str(value) for key, value in omissions.items()}
     return payload
@@ -294,17 +309,17 @@ def _refresh_persisted_artifacts_provenance(
     *,
     score_provenance: dict[str, object],
     persisted_scoring: object,
-) -> None:
+) -> dict[str, object]:
     if not hasattr(persisted_scoring, "manifest_path") or not hasattr(persisted_scoring, "manifest_relative"):
-        return
+        return {}
     manifest_path = cast(Path, getattr(persisted_scoring, "manifest_path"))
     manifest_relative = cast(Path, getattr(persisted_scoring, "manifest_relative"))
     try:
         manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return
+        return {}
     if not isinstance(manifest_payload, dict):
-        return
+        return {}
     chart_files = _as_mapping(manifest_payload.get("chart_files"))
     stage_files = _as_mapping(manifest_payload.get("stage_files"))
     refreshed = manifest_payload.get("refreshed_canonical_stages")
@@ -316,6 +331,7 @@ def _refresh_persisted_artifacts_provenance(
         "requested_stage": manifest_payload.get("requested_stage"),
         "refreshed_canonical_stages": refreshed_stages,
     }
+    return manifest_payload
 
 
 def _optional_path(value: object) -> str | Path | None:
@@ -324,6 +340,20 @@ def _optional_path(value: object) -> str | Path | None:
     if isinstance(value, (str, Path)):
         return value
     raise TrainingConfigError("training_config_path_value_invalid")
+
+
+def _ordered_emitted_stage_files(values: object) -> list[str]:
+    if not isinstance(values, list) and not hasattr(values, "__iter__"):
+        return []
+    resolved = [str(value) for value in values]
+    remaining = set(resolved)
+    ordered: list[str] = []
+    for item in _EMITTED_STAGE_FILE_ORDER:
+        if item in remaining:
+            ordered.append(item)
+            remaining.remove(item)
+    ordered.extend(sorted(remaining))
+    return ordered
 
 
 def _coerce_required_str(*, value: object, error_code: str) -> str:

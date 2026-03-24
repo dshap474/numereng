@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import importlib.util
 import os
 import sys
@@ -114,11 +113,16 @@ def _validate_model_cls(model_type: str, model_cls: Any) -> None:
         raise TrainingModelError(f"training_model_invalid_model_class:{model_type}")
 
 
-def _normalize_model_params(model_type: str, model_params: dict[str, Any]) -> dict[str, Any]:
+def _normalize_model_params(
+    model_type: str,
+    model_params: dict[str, Any],
+    *,
+    store_root: Path | None = None,
+) -> dict[str, Any]:
     if model_type != "TabPFNRegressor":
         return dict(model_params)
 
-    cache_dir = _bind_tabpfn_cache_dir()
+    cache_dir = _bind_tabpfn_cache_dir(store_root=store_root)
     normalized = dict(model_params)
     normalized["model_path"] = _normalize_tabpfn_model_path(normalized.get("model_path"), cache_dir=cache_dir)
     return normalized
@@ -156,16 +160,17 @@ def _resolve_store_root() -> Path:
     return Path(load_settings().store_root).expanduser().resolve()
 
 
-def _resolve_tabpfn_cache_dir() -> Path:
-    return (_resolve_store_root() / "cache" / "tabpfn").resolve()
+def _resolve_tabpfn_cache_dir(*, store_root: Path | None = None) -> Path:
+    resolved_store_root = store_root.resolve() if store_root is not None else _resolve_store_root()
+    return (resolved_store_root / "cache" / "tabpfn").resolve()
 
 
-def _bind_tabpfn_cache_dir() -> Path:
+def _bind_tabpfn_cache_dir(*, store_root: Path | None = None) -> Path:
     configured = os.environ.get("TABPFN_MODEL_CACHE_DIR", "").strip()
     if configured:
         cache_dir = Path(configured).expanduser().resolve()
     else:
-        cache_dir = _resolve_tabpfn_cache_dir()
+        cache_dir = _resolve_tabpfn_cache_dir(store_root=store_root)
         os.environ["TABPFN_MODEL_CACHE_DIR"] = str(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
@@ -177,10 +182,11 @@ def build_model(
     model_config: dict[str, Any] | None = None,
     *,
     feature_cols: list[str] | None = None,
+    store_root: Path | None = None,
 ) -> Any:
     """Create configured model instance from typed model config."""
     resolved_model_config = model_config or {}
-    normalized_model_params = _normalize_model_params(model_type, model_params)
+    normalized_model_params = _normalize_model_params(model_type, model_params, store_root=store_root)
     model_cls = _resolve_model_class(model_type, resolved_model_config)
     _validate_model_cls(model_type, model_cls)
 
