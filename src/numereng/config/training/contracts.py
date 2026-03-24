@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 TrainingEngineMode = Literal["official", "custom", "full_history"]
-DataLoadingMode = Literal["materialized", "fold_lazy"]
-ScoringMode = Literal["materialized", "era_stream"]
 DatasetScope = Literal["train_only", "train_plus_validation"]
 DatasetVariant = Literal["non_downsampled", "downsampled"]
 ParallelBackend = Literal["joblib"]
@@ -21,15 +19,6 @@ class _StrictConfigModel(BaseModel):
     """Base model that rejects unknown config keys."""
 
     model_config = ConfigDict(extra="forbid")
-
-
-class DataLoadingConfig(_StrictConfigModel):
-    """Runtime loading/scoring controls for training and metrics."""
-
-    mode: DataLoadingMode = "materialized"
-    scoring_mode: ScoringMode = "materialized"
-    era_chunk_size: int = Field(default=64, ge=1)
-    include_feature_neutral_metrics: bool = True
 
 
 class BenchmarkSourceConfig(_StrictConfigModel):
@@ -74,7 +63,6 @@ class DataConfig(_StrictConfigModel):
     embargo_eras: int | None = Field(default=None, ge=0)
     baselines_dir: str | None = None
     dataset_scope: DatasetScope = "train_only"
-    loading: DataLoadingConfig = Field(default_factory=DataLoadingConfig)
 
 
 class PreprocessingConfig(_StrictConfigModel):
@@ -210,8 +198,6 @@ __all__ = [
     "CacheMode",
     "BenchmarkSourceConfig",
     "DataConfig",
-    "DataLoadingConfig",
-    "DataLoadingMode",
     "DatasetScope",
     "DatasetVariant",
     "ModelDevice",
@@ -220,7 +206,6 @@ __all__ = [
     "OutputConfig",
     "ParallelBackend",
     "PreprocessingConfig",
-    "ScoringMode",
     "TrainingCacheConfig",
     "TrainingConfig",
     "TrainingEngineConfig",

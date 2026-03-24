@@ -2,6 +2,7 @@
 .numereng/
 .numereng_*/
 .local/
+.cache/
 
 # Data directories (downloaded and generated files)
 output/
@@ -50,6 +51,7 @@ vendor/
 # Models and predictions (large files)
 models/*.pkl
 predictions/*.csv
+/tabpfn-*.ckpt
 
 # Viz build artifacts (for standalone repo use)
 viz/web/node_modules/

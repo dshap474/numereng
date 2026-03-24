@@ -59,11 +59,8 @@ class PostTrainingScoringRequest:
     era_col: str
     id_col: str
     data_root: Path
-    scoring_mode: str
-    era_chunk_size: int
     scoring_targets_explicit: bool = False
     stage: CanonicalScoringStage = "all"
-    include_feature_neutral_metrics: bool = True
 
 
 @dataclass(frozen=True)
@@ -73,27 +70,18 @@ class ResolvedScoringPolicy:
     fnc_feature_set: str
     fnc_target_policy: str
     benchmark_min_overlap_ratio: float
-    include_feature_neutral_metrics: bool
 
 
 _DEFAULT_SCORING_POLICY = ResolvedScoringPolicy(
     fnc_feature_set="fncv3_features",
     fnc_target_policy="scoring_target",
     benchmark_min_overlap_ratio=0.0,
-    include_feature_neutral_metrics=True,
 )
 
 
-def default_scoring_policy(include_feature_neutral_metrics: bool | None = None) -> ResolvedScoringPolicy:
+def default_scoring_policy() -> ResolvedScoringPolicy:
     """Return the canonical scoring policy for training metrics."""
-    if include_feature_neutral_metrics is None:
-        return _DEFAULT_SCORING_POLICY
-    return ResolvedScoringPolicy(
-        fnc_feature_set=_DEFAULT_SCORING_POLICY.fnc_feature_set,
-        fnc_target_policy=_DEFAULT_SCORING_POLICY.fnc_target_policy,
-        benchmark_min_overlap_ratio=_DEFAULT_SCORING_POLICY.benchmark_min_overlap_ratio,
-        include_feature_neutral_metrics=include_feature_neutral_metrics,
-    )
+    return _DEFAULT_SCORING_POLICY
 
 
 @dataclass(frozen=True)
@@ -102,7 +90,6 @@ class PostTrainingScoringResult:
 
     summaries: dict[str, pd.DataFrame]
     score_provenance: dict[str, object]
-    effective_scoring_backend: str
     policy: ResolvedScoringPolicy
     artifacts: ScoringArtifactBundle
     requested_stage: CanonicalScoringStage = "all"

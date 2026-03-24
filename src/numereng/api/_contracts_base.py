@@ -167,7 +167,6 @@ class ScoreRunResponse(BaseModel):
     results_path: str
     metrics_path: str
     score_provenance_path: str
-    effective_scoring_backend: str
     requested_stage: ScoringStage = "all"
     refreshed_stages: list[str] = Field(default_factory=list)
 

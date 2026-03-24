@@ -31,7 +31,7 @@ def compute_run_hash(
 ) -> str:
     """Compute deterministic training run identity hash."""
     output_config = _as_mapping(config.get("output"))
-    material_config = dict(config)
+    material_config = _strip_removed_training_identity_fields(dict(config))
     material_config.pop("output", None)
 
     identity: dict[str, object] = {
@@ -157,6 +157,18 @@ def _normalize_path_value(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _strip_removed_training_identity_fields(config: dict[str, object]) -> dict[str, object]:
+    data_config = _as_mapping(config.get("data"))
+    if "loading" not in data_config:
+        return config
+
+    normalized = dict(config)
+    normalized_data = dict(data_config)
+    normalized_data.pop("loading", None)
+    normalized["data"] = normalized_data
+    return normalized
 
 
 def _utc_now_iso() -> str:

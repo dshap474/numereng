@@ -69,7 +69,6 @@ Important fields include:
 - `policy.fnc_feature_set`
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
-- `policy.include_feature_neutral_metrics`
 - `baseline_corr.mode`
 
 Current rules:
@@ -77,6 +76,7 @@ Current rules:
 - benchmark and meta-model joins require strict era alignment
 - benchmark diagnostics score only overlapping rows
 - meta metrics are emitted whenever there is usable overlap
+- feature-heavy diagnostics are stage-driven: `post_training_core` omits FNC/exposure, while `post_training_full` and `all` include them
 - `baseline_corr` itself is no longer persisted as a run metric; payout-target benchmark CORR is read from the shared active-benchmark artifact when available, or computed transiently for delta fallback
 
 ## Dashboard Contract

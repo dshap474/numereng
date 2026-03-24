@@ -25,8 +25,6 @@ _ALLOWED_MUTATION_PATHS: Final[tuple[str, ...]] = (
     "data.target_col",
     "data.scoring_targets",
     "data.target_horizon",
-    "data.loading.era_chunk_size",
-    "data.loading.include_feature_neutral_metrics",
     "preprocessing.nan_missing_all_twos",
     "preprocessing.missing_value",
     "model.type",

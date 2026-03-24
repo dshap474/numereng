@@ -12,7 +12,6 @@ import pandas as pd
 from numereng.features.scoring.models import (
     CanonicalScoringStage,
     PostTrainingScoringRequest,
-    ResolvedScoringPolicy,
 )
 from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run, resolve_store_root
@@ -36,7 +35,6 @@ from numereng.features.training.service import resolve_benchmark_source
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
 _DEFAULT_DATASET_SCOPE = "train_plus_validation"
-_DEFAULT_SCORING_MODE = "materialized"
 
 
 def score_run(
@@ -79,13 +77,6 @@ def score_run(
         raise TrainingError(f"training_score_predictions_not_found:{predictions_path}")
 
     data_config = _as_mapping(resolved.get("data"))
-    loading_config = _as_mapping(data_config.get("loading"))
-
-    scoring_mode = _resolve_scoring_mode(loading_config.get("scoring_mode"))
-    era_chunk_size = _resolve_era_chunk_size(loading_config.get("era_chunk_size"), default=64)
-    if era_chunk_size < 1:
-        raise TrainingConfigError("training_data_loading_era_chunk_size_invalid")
-
     target_col = _coerce_required_str(
         value=data_config.get("target_col") or _as_mapping(run_manifest.get("data")).get("target_col"),
         error_code="training_score_target_col_missing",
@@ -119,16 +110,13 @@ def score_run(
         era_col=str(data_config.get("era_col", "era")),
         id_col=str(data_config.get("id_col", "id")),
         data_root=DEFAULT_DATASETS_DIR,
-        scoring_mode=scoring_mode,
-        era_chunk_size=era_chunk_size,
         stage=stage,
-        include_feature_neutral_metrics=_include_feature_neutral_metrics(stage),
     )
 
     log_info(
         run_log_path,
         event="run_scoring_started",
-        message=f"mode={scoring_mode} era_chunk_size={era_chunk_size} stage={stage}",
+        message=f"stage={stage}",
     )
 
     try:
@@ -170,13 +158,9 @@ def score_run(
     results["metrics"] = metrics_payload
     results_training = _as_mapping(results.get("training"))
     results_training["scoring"] = _updated_scoring_payload(
-        existing=_as_mapping(results_training.get("scoring")),
-        requested_mode=scoring_mode,
-        requested_chunk_size=era_chunk_size,
-        effective_backend=scoring_result.effective_scoring_backend,
-        policy=scoring_result.policy,
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
+        stage_metadata=_as_mapping(scoring_result.score_provenance.get("stages")),
     )
     results["training"] = results_training
     save_results(results, results_path)
@@ -191,13 +175,9 @@ def score_run(
     run_manifest["metrics_summary"] = metrics_payload
     manifest_training = _as_mapping(run_manifest.get("training"))
     manifest_training["scoring"] = _updated_scoring_payload(
-        existing=_as_mapping(manifest_training.get("scoring")),
-        requested_mode=scoring_mode,
-        requested_chunk_size=era_chunk_size,
-        effective_backend=scoring_result.effective_scoring_backend,
-        policy=scoring_result.policy,
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
+        stage_metadata=_as_mapping(scoring_result.score_provenance.get("stages")),
     )
     run_manifest["training"] = manifest_training
     save_run_manifest(run_manifest, run_manifest_path)
@@ -211,8 +191,8 @@ def score_run(
         run_log_path,
         event="run_scoring_succeeded",
         message=(
-            f"effective_backend={scoring_result.effective_scoring_backend} "
-            f"requested_stage={scoring_result.requested_stage}"
+            f"requested_stage={scoring_result.requested_stage} "
+            f"refreshed_stages={','.join(scoring_result.refreshed_stages)}"
         ),
     )
 
@@ -222,7 +202,6 @@ def score_run(
         results_path=results_path,
         metrics_path=metrics_path,
         score_provenance_path=score_provenance_path,
-        effective_scoring_backend=scoring_result.effective_scoring_backend,
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
     )
@@ -288,50 +267,21 @@ def _metrics_payload_from_summaries(
 
 def _updated_scoring_payload(
     *,
-    existing: dict[str, object],
-    requested_mode: str,
-    requested_chunk_size: int,
-    effective_backend: str,
-    policy: ResolvedScoringPolicy,
     requested_stage: CanonicalScoringStage,
     refreshed_stages: tuple[str, ...],
+    stage_metadata: dict[str, object],
 ) -> dict[str, object]:
-    payload = dict(existing)
-    payload["mode"] = requested_mode
-    payload["era_chunk_size"] = requested_chunk_size
-    payload["effective_backend"] = effective_backend
-    payload["requested_stage"] = requested_stage
-    payload["refreshed_stages"] = list(refreshed_stages)
-    payload["policy"] = {
-        "fnc_feature_set": policy.fnc_feature_set,
-        "fnc_target_policy": policy.fnc_target_policy,
-        "benchmark_min_overlap_ratio": policy.benchmark_min_overlap_ratio,
-        "include_feature_neutral_metrics": policy.include_feature_neutral_metrics,
+    payload: dict[str, object] = {
+        "requested_stage": requested_stage,
+        "refreshed_stages": list(refreshed_stages),
     }
+    emitted = stage_metadata.get("emitted")
+    omissions = stage_metadata.get("omissions")
+    if isinstance(emitted, list):
+        payload["emitted_stage_files"] = [str(value) for value in emitted]
+    if isinstance(omissions, dict):
+        payload["omissions"] = {str(key): str(value) for key, value in omissions.items()}
     return payload
-
-
-def _resolve_scoring_mode(value: object) -> str:
-    if value is None:
-        return _DEFAULT_SCORING_MODE
-    if isinstance(value, str) and value in {"materialized", "era_stream"}:
-        return value
-    raise TrainingConfigError("training_data_loading_scoring_mode_invalid")
-
-
-def _resolve_era_chunk_size(value: object, *, default: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        raise TrainingConfigError("training_config_integer_value_invalid")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError as exc:
-            raise TrainingConfigError("training_config_integer_value_invalid") from exc
-    raise TrainingConfigError("training_config_integer_value_invalid")
 
 
 def _as_mapping(value: object) -> dict[str, object]:
@@ -398,10 +348,6 @@ def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: 
 
 def _scoring_targets_explicit(*, data_config: dict[str, object]) -> bool:
     return data_config.get("scoring_targets") is not None
-
-
-def _include_feature_neutral_metrics(stage: CanonicalScoringStage) -> bool:
-    return stage in {"all", "run_metric_series", "post_training_full"}
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:

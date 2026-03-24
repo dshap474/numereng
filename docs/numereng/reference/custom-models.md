@@ -41,6 +41,12 @@ Each registered class must:
 - implement `predict`
 - filter `X` by `feature_cols` when it is provided
 
+Backend-specific path handling may also live in numereng. For example,
+`TabPFNRegressor` uses the project-local cache root
+`.numereng/cache/tabpfn`. A bare checkpoint filename in
+`model.params.model_path` is treated as a cache-managed model name there
+instead of a path relative to the current working directory.
+
 ## Config Example
 
 ```json

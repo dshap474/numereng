@@ -105,7 +105,7 @@ src/numereng/
       modal/                   # deploy/data/train orchestration + state
       lambda/, runpod/, vast/  # placeholders
     models/
-      custom_models/           # model plugin path
+      custom_models/           # model plugin path; numereng may normalize backend asset paths into `.numereng/cache/*`
 
   api/
     contracts.py
@@ -169,6 +169,7 @@ Canonical top-level dirs:
 - `cloud`
 - `experiments`
 - `notes`
+- `cache`
 
 Canonical top-level sqlite files:
 - `numereng.db`
@@ -208,17 +209,8 @@ Dynamic top-level dirs may also appear:
         llm_trace.jsonl
         llm_trace.md
         rounds/rN/
-          llm_trace.jsonl
-          llm_trace.md
-          codex_prompt.txt
-          codex_usage.json
-          codex_stdout.jsonl
-          codex_stderr.txt
-          codex_last_message.json
-          codex_decision.json
-          planned_configs.json
-          report.json
-          round_summary.json
+          round.json
+          round.md
     _archive/
       <experiment_id>/
         experiment.json
@@ -309,13 +301,14 @@ Data loading and CV rules:
 - `data.dataset_scope=train_plus_validation` uses `train.parquet` plus `validation.parquet`, and applies `data_type=validation` filtering only on validation sources.
 - `purged_walk_forward` uses walk-forward defaults of `chunk_size=156`; embargo is horizon-based (`20d -> 8`, `60d -> 16`).
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
+- Legacy `data.loading` is removed from the training schema. Config loading now hard-fails if it is present, and training always uses the materialized loader. Run hashing strips that removed subtree so historical identities remain stable.
 - `model.device` is the canonical explicit device contract for training and is allowed only: `cpu|cuda`.
 - `model.device` is valid only for `LGBMRegressor`; legacy `model.params.device_type` remains supported but must exactly match when both are present.
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set, then correlating against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `corr`, `fnc`, and `mmc` are delegated to `numerai_tools`; `cwmm` is computed locally using the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Scoring implementation is optimized behind the existing boundary: `features.scoring.metrics` orchestrates cached parquet reads and canonical artifact/provenance assembly, while `features.scoring._fastops` owns the NumPy/Numba per-era kernels that replace the older pandas callback hot path.
-- Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV, and later `run score` / `experiment score-round` writes deferred post-training artifacts from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when enabled. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Partial rescoring overwrites only the selected stage artifacts while still refreshing manifest/provenance/results/metrics metadata, and the refreshed provenance artifact block is rebuilt from the persisted scoring manifest so it matches the materialized bundle.
+- Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV and automatically refreshes `post_training_core`, while later `run score` / `experiment score-round` can refresh any stage from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when materialized. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Partial rescoring overwrites only the selected stage artifacts while still refreshing manifest/provenance/results/metrics metadata, and the refreshed provenance artifact block is rebuilt from the persisted scoring manifest so it matches the materialized bundle.
 - `post_training_core_summary` is the flattened decision scorecard: it carries native/payout CORR summaries plus payout-backed `mmc`, `bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and `corr_delta_vs_baseline` summary stats when the aligned benchmark/meta inputs exist.
 - `baseline_corr` is no longer persisted as a run metric; instead, provenance records whether payout-target baseline CORR came from the shared active-benchmark artifact or from transient fallback computation.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
@@ -398,12 +391,12 @@ cli research init|status|run
         - Python parses dotted `config.path = <json-literal>` edits, clones the parent config, validates the child `TrainingConfig`, names it deterministically, and retries once on invalid or duplicate mutations
         - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
       - `kaggle-gm-loop` remains phase-aware and still uses the structured planner JSON/schema contract
-      - persist planner telemetry per round (`codex_usage.json`, `codex_stdout.jsonl`, `codex_stderr.txt`, `codex_last_message.json`) so prompt cost and latency are measurable; artifact names remain `codex_*` for compatibility even when the planner source is OpenRouter
-      - append planner trace entries to `.numereng/experiments/<root>/agentic_research/llm_trace.jsonl` and copy the same entry into `rounds/rN/llm_trace.jsonl`
-      - render a human-readable markdown companion at `.numereng/experiments/<root>/agentic_research/llm_trace.md` and `rounds/rN/llm_trace.md`
-      - the markdown companion is deliberately literal: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
-      - numerai rounds persist mutation lineage in round state/artifacts (`parent_run_id`, `parent_config_filename`, `change_set`, `llm_rationale`)
-      - structured planner strategies can still write 4-5 configs, but numerai mutation rounds now write one child config into the active experiment, train it, deferred-score the round, and persist summary artifacts
+      - append planner trace entries to `.numereng/experiments/<root>/agentic_research/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/llm_trace.md`
+      - persist one canonical round bundle per round at `rounds/rN/round.json` and `rounds/rN/round.md`
+      - the round markdown is deliberately literal: exact prompt sent to the planner, raw planner response, parsed final response, lineage context, and scored outcome
+      - numerai rounds persist mutation lineage in the round bundle (`parent_run_id`, `parent_config_filename`, `change_set`, `llm_rationale`)
+      - numerai mutation rounds now write one child config into the active experiment, train it, deferred-score the round, and persist one bundled round record instead of many transport-specific files
+      - legacy per-round `codex_*`, `planned_configs.json`, `report.json`, `round_summary.json`, and per-round trace copies are removed when the bundle is written
       - track plateau streak on `bmc_last_200_eras.mean` with `bmc.mean` tie-break
       - let strategy policy decide whether the next round stays in the current phase, advances phase, or completes the campaign
       - after two failed rounds, force one scale-confirmation round; if that also fails, create a fresh child experiment and continue there
@@ -643,15 +636,15 @@ success/help
 16. Launch metadata precedence is outermost binding first; API defaults apply only when unbound.
 17. Experiment-scoped monitor queries depend on `run_jobs.experiment_id`; pass `--experiment-id` when launching ad-hoc run training.
 18. Viz API is read-only; run control is intentionally not wired into frontend controls.
-19. `train_plus_validation` filtering (materialized and fold-lazy) must never apply `data_type=validation` to `train.parquet`.
+19. `train_plus_validation` filtering must never apply `data_type=validation` to `train.parquet`.
 20. Purged walk-forward defaults are fixed at `chunk_size=156` and horizon-based embargo (`20d -> 8`, `60d -> 16`).
 21. Horizon resolution uses `data.target_horizon` first and target-name inference second; unresolved ambiguity is a hard error.
 22. Purged walk-forward CV requires `chunk_size + 1` or more unique eras.
 23. Benchmark model parquet data is metrics-only (BMC/correlation diagnostics) and is not included as training features.
 24. Canonical `model.x_groups` / `model.data_needed` are features-only; identifier groups (`era`, `id`) and benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) are rejected.
-25. Canonical FNC uses dataset feature set `fncv3_features` and correlates against the scoring target being evaluated; if feature-neutral metrics are enabled and `features.json` does not define `fncv3_features`, post-run scoring fails.
+25. Canonical FNC uses dataset feature set `fncv3_features` and correlates against the scoring target being evaluated; `post_training_core` omits those feature-heavy diagnostics, while `post_training_full` and `all` include them. If `features.json` does not define `fncv3_features` and a feature-heavy stage is requested, scoring fails.
 26. Benchmark post-run scoring requires nonzero `(id, era)` overlap with strict era alignment and emits `bmc` / `bmc_last_200_eras` on the maximum available overlapping benchmark window; meta-model scoring also requires strict era alignment but emits `mmc` / `cwmm` on the maximum available overlapping meta-model window whenever any overlap exists.
-27. `full_history_refit` is final-fit only for training and does not emit `post_fold`; deferred `post_training_core` / `post_training_full` scoring can still be materialized later from saved predictions.
+27. `full_history_refit` is final-fit only for training and does not emit `post_fold`; training still refreshes `post_training_core`, and later rescoring can materialize `post_training_full` from saved predictions.
 28. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
 29. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
 30. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.

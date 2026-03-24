@@ -33,10 +33,6 @@ Training configs are strict JSON and validated against `src/numereng/config/trai
       "predictions_path": ".numereng/datasets/baselines/medium_ender20_ender60_6run_blend/pred_medium_ender20_ender60_6run_blend.parquet",
       "pred_col": "prediction",
       "name": "medium_ender20_ender60_6run_blend"
-    },
-    "loading": {
-      "mode": "materialized",
-      "scoring_mode": "materialized"
     }
   },
   "model": {
@@ -69,6 +65,9 @@ Optional overrides:
 - `--profile <simple|purged_walk_forward|full_history_refit>`
 - `--experiment-id <id>` if you want the run linked to an experiment while still using `run train`
 
+`run train` now always uses the materialized loader and automatically refreshes
+the `post_training_core` scoring stage after predictions are written.
+
 ## Re-Score A Saved Run
 
 ```bash
@@ -76,6 +75,9 @@ uv run numereng run score --run-id <run_id>
 ```
 
 Use this when the predictions artifact already exists and you want to rebuild `results.json`, `metrics.json`, `score_provenance.json`, and the store index rows.
+
+Use `--stage post_training_full` or `--stage all` when you want the feature-heavy
+FNC / exposure diagnostics in addition to the default core summary.
 
 ## Outputs
 
@@ -103,5 +105,6 @@ Run indexing is mandatory. If indexing fails, the command fails.
 - `full_history_refit` is final-fit only and emits no validation metrics
 - default benchmark scoring requires a seeded active benchmark artifact unless
   the config uses `benchmark_source.source = "path"`
+- `run train` refreshes `post_training_core` by default; feature-heavy diagnostics are stage-driven through `run score`
 - post-run FNC always neutralizes to `fncv3_features`
 - numereng does not emit `payout_estimate_mean`

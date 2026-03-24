@@ -207,7 +207,7 @@ def test_ensure_json_config_path_and_uri_validation() -> None:
         ensure_json_config_uri("s3://bucket/path/train.yaml")
 
 
-def test_load_training_config_json_accepts_loading_resources_cache_sections(tmp_path: Path) -> None:
+def test_load_training_config_json_rejects_legacy_loading_section(tmp_path: Path) -> None:
     config_path = tmp_path / "train.json"
     config_path.write_text(
         json.dumps(
@@ -242,23 +242,8 @@ def test_load_training_config_json_accepts_loading_resources_cache_sections(tmp_
         encoding="utf-8",
     )
 
-    payload = load_training_config_json(config_path)
-    data_block = cast(dict[str, object], payload["data"])
-    data_loading = cast(dict[str, object], data_block["loading"])
-    assert data_loading == {
-        "mode": "fold_lazy",
-        "scoring_mode": "era_stream",
-        "era_chunk_size": 32,
-        "include_feature_neutral_metrics": True,
-    }
-    training_block = cast(dict[str, object], payload["training"])
-    training_resources = cast(dict[str, object], training_block["resources"])
-    assert training_resources["parallel_folds"] == 2
-    assert training_resources["parallel_backend"] == "joblib"
-    assert training_resources["max_threads_per_worker"] == "default"
-    training_cache = cast(dict[str, object], training_block["cache"])
-    assert training_cache["mode"] == "deterministic"
-    assert training_cache["cache_labels"] is False
+    with pytest.raises(TrainingConfigLoaderError, match="training_config_schema_invalid:data.loading"):
+        load_training_config_json(config_path)
 
 
 def test_load_training_config_json_defaults_dataset_scope_to_train_only(tmp_path: Path) -> None:

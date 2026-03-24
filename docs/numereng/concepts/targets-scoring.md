@@ -67,6 +67,5 @@ That means:
 - `policy.fnc_feature_set`
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
-- `policy.include_feature_neutral_metrics`
 
-Feature-neutral metrics can be disabled via `include_feature_neutral_metrics=false`; when disabled, FNC/exposure outputs and their FNC-specific provenance fields are omitted.
+Feature-neutral diagnostics are stage-driven: `post_training_core` omits FNC and exposure outputs, while `post_training_full` and `all` include them.

@@ -19,7 +19,7 @@ strictly era-aligned meta-model overlap:
 
 - `cwmm`
 
-When feature-neutral metrics are enabled, training scoring also emits:
+Feature-heavy scoring stages (`all` and `post_training_full`) also emit:
 
 - `fnc`
 - `fnc_<alias>`
@@ -86,8 +86,6 @@ metric:
   - contribution families add alias-suffixed extra targets from the explicit list while reserving the unsuffixed keys for the payout target
 - `fnc_feature_set`: `fncv3_features`
 - `fnc_target_policy`: correlate the feature-neutralized submission against the scoring target being evaluated
-- `include_feature_neutral_metrics`: `true` by default; when `false`, `fnc`,
-  `feature_exposure`, and `max_feature_exposure` are omitted
 - `benchmark_min_overlap_ratio`: `0.0`
 - meta-model overlap policy: emit `mmc`, `mmc_<alias>`, and `cwmm` when there is
   any strictly era-aligned `(id, era)` overlap; compute them on the maximum
@@ -115,8 +113,6 @@ metric:
 - Meta-model joins do not require a whole-run minimum-overlap threshold; `mmc` /
   `cwmm` are computed on the available overlapping meta-model window whenever
   any strictly era-aligned overlap exists.
-- Era-stream scoring may skip chunks with zero benchmark/meta overlap after whole-run preflight has validated benchmark coverage and recorded the available meta overlap window.
-
 ## Summary Shape
 
 Each emitted metric family persists a nested summary for each prediction column:
@@ -143,11 +139,11 @@ This package writes or refreshes the following scoring artifacts:
 - `artifacts/scoring/post_fold_per_era.parquet`
 - `artifacts/scoring/post_fold_snapshots.parquet`
 - `artifacts/scoring/post_training_core_summary.parquet`
-- `artifacts/scoring/post_training_full_summary.parquet` when feature-neutral diagnostics are enabled
+- `artifacts/scoring/post_training_full_summary.parquet` when feature-neutral diagnostics are materialized
 
-Training itself only guarantees `post_fold` artifacts during CV. Deferred
-`post_training_core` / `post_training_full` artifacts are materialized later by
-`run score` or `experiment score-round`. Historical runs may still expose the
+`run train` automatically refreshes `post_training_core` after predictions are
+written. `run score` and `experiment score-round` can later refresh any stage,
+including the inclusive feature-heavy `post_training_full`. Historical runs may still expose the
 legacy filenames `post_training_summary.parquet` and
 `post_training_features_summary.parquet`, which remain read-compatible.
 
@@ -202,7 +198,6 @@ historical runs that have not been rescored yet.
 - overlap ratios for benchmark/meta joins
 - whether meta-dependent metrics were emitted, and the omission reason when they were not
 - fixed policy settings for benchmark/meta overlap behavior
-- requested and effective scoring backend details for era-stream/materialized execution
 - requested canonical stage selection and refreshed canonical stages
 - preserved benchmark alias metadata used by Numereng consumers even though the
   underlying scorer executes through array kernels

@@ -15,11 +15,7 @@ from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,  # noqa: F401
     load_custom_benchmark_predictions,  # noqa: F401
 )
-from numereng.features.scoring.models import (
-    BenchmarkSource,
-    ResolvedScoringPolicy,
-    default_scoring_policy,
-)
+from numereng.features.scoring.models import BenchmarkSource, ResolvedScoringPolicy
 from numereng.features.scoring.service import run_post_training_scoring, run_scoring  # noqa: F401
 from numereng.features.store import index_run  # noqa: F401
 from numereng.features.telemetry import (
@@ -92,13 +88,9 @@ from numereng.features.training.strategies import (
     resolve_training_engine,  # noqa: F401
 )
 
-_MATERIALIZED_LOADING_MODE = "materialized"
-_FOLD_LAZY_LOADING_MODE = "fold_lazy"
 _SIMPLE_PROFILE: TrainingProfile = "simple"
 _PURGED_WALK_FORWARD_PROFILE: TrainingProfile = "purged_walk_forward"
 _FULL_HISTORY_REFIT_PROFILE: TrainingProfile = "full_history_refit"
-_MATERIALIZED_SCORING_MODE = "materialized"
-_ERA_STREAM_SCORING_MODE = "era_stream"
 
 logger = logging.getLogger(__name__)
 
@@ -198,12 +190,9 @@ def build_results_payload(
     cv_meta: dict[str, object],
     engine_plan: TrainingEnginePlan,
     cv_enabled: bool,
-    loading_mode: str,
-    scoring_mode: str,
-    scoring_era_chunk_size: int,
     resource_policy: dict[str, object],
     cache_policy: dict[str, object],
-    scoring_backend: str,
+    scoring_metadata: dict[str, object],
     scoring_policy: ResolvedScoringPolicy | None = None,
     metrics_status: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -228,8 +217,6 @@ def build_results_payload(
         metrics_payload = metrics_status or {"status": "not_applicable"}
     else:
         metrics_payload = _metrics_payload_from_summaries(summaries)
-
-    resolved_scoring_policy = scoring_policy or default_scoring_policy()
 
     return {
         "model": model_meta,
@@ -283,15 +270,7 @@ def build_results_payload(
                 "resolved": engine_plan.resolved_config,
                 "override_sources": engine_plan.override_sources,
             },
-            "loading": {
-                "mode": loading_mode,
-            },
-            "scoring": {
-                "mode": scoring_mode,
-                "era_chunk_size": scoring_era_chunk_size,
-                "effective_backend": scoring_backend,
-                "policy": _scoring_policy_payload(resolved_scoring_policy),
-            },
+            "scoring": dict(scoring_metadata),
             "resources": resource_policy,
             "cache": cache_policy,
             "cv": {
@@ -553,15 +532,6 @@ def _as_dict(value: object) -> dict[str, object]:
     raise TrainingConfigError("training_config_section_not_mapping")
 
 
-def _resolve_loading_mode(value: object) -> str:
-    if value is None:
-        return _MATERIALIZED_LOADING_MODE
-    resolved = str(value)
-    if resolved not in {_MATERIALIZED_LOADING_MODE, _FOLD_LAZY_LOADING_MODE}:
-        raise TrainingConfigError("training_data_loading_mode_invalid")
-    return resolved
-
-
 def _resolve_scoring_target_cols(*, data_config: dict[str, object], target_col: str) -> tuple[str, ...]:
     raw = data_config.get("scoring_targets")
     if raw is None:
@@ -696,15 +666,6 @@ def resolve_benchmark_source(
     )
 
 
-def _resolve_scoring_mode(value: object) -> str:
-    if value is None:
-        return _MATERIALIZED_SCORING_MODE
-    resolved = str(value)
-    if resolved not in {_MATERIALIZED_SCORING_MODE, _ERA_STREAM_SCORING_MODE}:
-        raise TrainingConfigError("training_data_loading_scoring_mode_invalid")
-    return resolved
-
-
 def _resolve_resource_policy(config: dict[str, object]) -> dict[str, object]:
     parallel_folds = _coerce_int(config.get("parallel_folds"), default=1)
     parallel_backend = str(config.get("parallel_backend", "joblib"))
@@ -803,7 +764,6 @@ def _scoring_policy_payload(policy: ResolvedScoringPolicy) -> dict[str, object]:
         "fnc_feature_set": policy.fnc_feature_set,
         "fnc_target_policy": policy.fnc_target_policy,
         "benchmark_min_overlap_ratio": policy.benchmark_min_overlap_ratio,
-        "include_feature_neutral_metrics": policy.include_feature_neutral_metrics,
     }
 
 

@@ -19,13 +19,7 @@
       "meta_model_data_path": null,
       "meta_model_col": "numerai_meta_model",
       "embargo_eras": null,
-      "baselines_dir": null,
-      "loading": {
-        "mode": "materialized",
-        "scoring_mode": "materialized",
-        "era_chunk_size": 64,
-        "include_feature_neutral_metrics": true
-      }
+      "baselines_dir": null
     },
     "preprocessing": {
       "nan_missing_all_twos": false,
@@ -196,32 +190,6 @@
           ".numereng/baselines"
         ]
       },
-      "loading": {
-        "mode": [
-          "materialized",
-          "fold_lazy"
-        ],
-        "scoring_mode": [
-          "materialized",
-          "era_stream"
-        ],
-        "era_chunk_size": {
-          "type": "integer",
-          "minimum": 1,
-          "examples": [
-            64,
-            128
-          ]
-        },
-        "include_feature_neutral_metrics": {
-          "type": "boolean",
-          "examples": [
-            true,
-            false
-          ],
-          "note": "When false, skip FNC and feature-exposure scoring to reduce scoring time."
-        }
-      }
     },
     "preprocessing": {
       "nan_missing_all_twos": [
@@ -594,20 +562,17 @@
     },
     "defaults": {
       "dataset_variant": "non_downsampled",
-      "loading_mode": "materialized",
-      "scoring_mode": "materialized",
       "training_profile": "purged_walk_forward",
       "lgbmregressor_default_preset": "Official Standard Large"
     }
   },
   "runtime_constraints": [
-    "Default profile/loading/variant for this template: purged_walk_forward + materialized + non_downsampled.",
+    "Default profile/variant for this template: purged_walk_forward + non_downsampled.",
     "Never train on era/id: model.x_groups and model.data_needed must not include era or id.",
     "model.x_groups and model.data_needed must not include benchmark aliases: benchmark, benchmarks, benchmark_models.",
     "If baseline is requested in model.x_groups or model.data_needed, model.baseline.name and model.baseline.predictions_path are required, and data.id_col must be present.",
     "model.x_groups and model.data_needed are aliases; when both are set, x_groups is used.",
     "training.engine.profile=simple disallows data.dataset_variant=downsampled.",
-    "data.loading.mode=fold_lazy disallows preprocessing.nan_missing_all_twos=true.",
     "training.engine.mode=custom is not runtime-supported in features/training.",
     "training.engine.window_size_eras and training.engine.embargo_eras are legacy knobs and must remain null.",
     "Legacy training fields training.method, training.method_overrides, training.strategy, and training.cv are runtime-disallowed.",

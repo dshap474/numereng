@@ -41,9 +41,11 @@ Read order:
 - Submission source is XOR: exactly one of `run_id` or `predictions_path`.
 - Neutralization source is XOR: exactly one of `run_id` or `predictions_path`.
 - Training/HPO config files are JSON-only and reject unknown keys (`extra=forbid`).
+- Legacy `data.loading` config is removed. Training configs hard-fail if it is present; training is materialized-loader only, and run hashing strips the removed block for identity compatibility.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`; legacy `submission` profile references hard-fail with a rename error.
 - Run IDs are deterministic hash-based IDs (12-char prefixes).
 - Training requires successful pre-finalization `index_run`; if it fails, command fails.
+- Training writes `post_fold` during CV and automatically refreshes `post_training_core`; later `run score` or `experiment score-round` can materialize `post_training_full`.
 - `experiment train` enforces `output_dir == store_root` (or omit output dir).
 - `experiment pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
 - Telemetry is fail-open and opt-in via launch metadata binding.
@@ -54,9 +56,10 @@ Read order:
 - `research init` requires `--strategy`; initialized programs persist that strategy in `agentic_research/program.json`.
 - Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
 - `numerai-experiment-loop` is now config-centric: each autonomous round selects one parent config, applies a small LLM mutation, validates one child config, and trains that single child.
+- Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
-- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`.
+- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.
 - `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.

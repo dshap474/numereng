@@ -21,12 +21,7 @@ class _FakeClient:
         return dest_path or filename
 
 
-def _request(
-    *,
-    scoring_mode: str,
-    benchmark_path: str | Path | None,
-    meta_path: str | Path | None,
-) -> PostTrainingScoringRequest:
+def _request(*, stage: str) -> PostTrainingScoringRequest:
     return PostTrainingScoringRequest(
         run_id="run-123",
         config_hash="config-hash",
@@ -43,34 +38,28 @@ def _request(
         benchmark_source=BenchmarkSource(
             mode="path",
             name="benchmark",
-            predictions_path=Path(benchmark_path) if benchmark_path is not None else Path("benchmark.parquet"),
+            predictions_path=Path("benchmark.parquet"),
             pred_col="prediction",
         ),
         meta_model_col="numerai_meta_model",
-        meta_model_data_path=meta_path,
+        meta_model_data_path=Path("meta_model.parquet"),
         era_col="era",
         id_col="id",
         data_root=Path(".numereng") / "datasets",
-        scoring_mode=scoring_mode,
-        era_chunk_size=64,
+        stage=stage,
     )
 
 
-def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_sources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_post_training_scoring_uses_stage_driven_full_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     call_args: dict[str, object] = {}
 
     def _fake_score(
-        *args: object,
-        **kwargs: object,
+        *args: object, **kwargs: object
     ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
         _ = args
         call_args.update(kwargs)
         return (
-            {
-                "corr": pd.DataFrame(index=["prediction"]),
-            },
+            {"corr": pd.DataFrame(index=["prediction"])},
             {},
             {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.1}])},
         )
@@ -90,41 +79,27 @@ def test_run_post_training_scoring_falls_back_to_materialized_for_non_parquet_so
     )
 
     result = scoring_service_module.run_post_training_scoring(
-        request=_request(
-            scoring_mode="era_stream",
-            benchmark_path=Path("benchmark.csv"),
-            meta_path=Path("meta_model.parquet"),
-        ),
+        request=_request(stage="all"),
         client=_FakeClient(),
     )
 
-    assert call_args["scoring_mode"] == "materialized"
+    assert call_args["include_feature_neutral_metrics"] is True
     assert call_args["benchmark_name"] == "benchmark"
-    assert result.effective_scoring_backend == "materialized"
-    execution = result.score_provenance["execution"]
-    assert isinstance(execution, dict)
-    assert execution["requested_scoring_mode"] == "era_stream"
-    assert execution["effective_scoring_mode"] == "materialized"
-    assert execution["fallback_reason"] == "external_source_not_parquet"
+    assert result.score_provenance["execution"] == {"requested_stage": "all"}
     assert result.policy.fnc_feature_set == "fncv3_features"
     assert "run_metric_series" in result.artifacts.stage_frames
 
 
-def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_post_training_scoring_uses_stage_driven_core_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     call_args: dict[str, object] = {}
 
     def _fake_score(
-        *args: object,
-        **kwargs: object,
+        *args: object, **kwargs: object
     ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
         _ = args
         call_args.update(kwargs)
         return (
-            {
-                "corr": pd.DataFrame(index=["prediction"]),
-            },
+            {"corr": pd.DataFrame(index=["prediction"])},
             {},
             {"corr_native": pd.DataFrame([{"era": "era1", "value": 0.2}])},
         )
@@ -136,7 +111,7 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
         lambda **kwargs: (
             ScoringArtifactBundle(
                 series_frames={},
-                stage_frames={"run_metric_series": pd.DataFrame([{"run_id": "run-123", "value": 0.2}])},
+                stage_frames={"post_training_core_summary": pd.DataFrame([{"run_id": "run-123", "value": 0.2}])},
                 manifest={},
             ),
             {"benchmark_overlap_rows": 1},
@@ -144,22 +119,12 @@ def test_run_post_training_scoring_preserves_era_stream_for_parquet_sources(
     )
 
     result = scoring_service_module.run_post_training_scoring(
-        request=_request(
-            scoring_mode="era_stream",
-            benchmark_path=Path("benchmark.parquet"),
-            meta_path=Path("meta_model.parquet"),
-        ),
+        request=_request(stage="post_training_core"),
         client=_FakeClient(),
     )
 
-    assert call_args["scoring_mode"] == "era_stream"
-    assert call_args["benchmark_name"] == "benchmark"
-    assert result.effective_scoring_backend == "era_stream"
-    execution = result.score_provenance["execution"]
-    assert isinstance(execution, dict)
-    assert execution["requested_scoring_mode"] == "era_stream"
-    assert execution["effective_scoring_mode"] == "era_stream"
-    assert "fallback_reason" not in execution
+    assert call_args["include_feature_neutral_metrics"] is False
+    assert result.score_provenance["execution"] == {"requested_stage": "post_training_core"}
     assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
     assert result.policy.fnc_target_policy == "scoring_target"
-    assert result.artifacts.stage_frames["run_metric_series"].iloc[0]["value"] == pytest.approx(0.2)
+    assert result.artifacts.stage_frames["post_training_core_summary"].iloc[0]["value"] == pytest.approx(0.2)
