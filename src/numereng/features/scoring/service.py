@@ -74,8 +74,10 @@ def run_scoring(
         era_col=request.era_col,
         id_col=request.id_col,
         data_root=request.data_root,
+        requested_stage=request.stage,
         scoring_policy=policy,
     )
+    refreshed_stages = _refreshed_canonical_stages(request.stage, artifacts.stage_frames)
 
     score_provenance["execution"] = {"requested_stage": request.stage}
     score_provenance["benchmark_source"] = {
@@ -118,7 +120,7 @@ def run_scoring(
         "charts": sorted(key for key in artifacts.stage_frames.keys() if key == "run_metric_series"),
         "stage_files": sorted(key for key in artifacts.stage_frames.keys()),
         "requested_stage": request.stage,
-        "refreshed_canonical_stages": _refreshed_canonical_stages(request.stage, artifacts.stage_frames),
+        "refreshed_canonical_stages": refreshed_stages,
     }
     score_provenance["stages"] = artifacts.manifest.get("stages", {})
 
@@ -128,7 +130,7 @@ def run_scoring(
         policy=policy,
         artifacts=artifacts,
         requested_stage=request.stage,
-        refreshed_stages=tuple(_refreshed_canonical_stages(request.stage, artifacts.stage_frames)),
+        refreshed_stages=tuple(refreshed_stages),
     )
 
 

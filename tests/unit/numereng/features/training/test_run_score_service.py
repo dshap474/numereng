@@ -367,7 +367,10 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
         lambda **kwargs: PostTrainingScoringResult(
             summaries=_scoring_summaries(),
             score_provenance={
-                "stages": {"emitted": ["post_training_core_summary"], "omissions": {}},
+                "stages": {
+                    "emitted": ["post_training_core_summary"],
+                    "omissions": {"post_training_full": "not_requested"},
+                },
                 "artifacts": {
                     "charts": ["run_metric_series"],
                     "stage_files": [
@@ -435,3 +438,6 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
     assert artifacts_block["stage_files"] == ["post_training_core_summary"]
     assert artifacts_block["requested_stage"] == "post_training_core"
     assert artifacts_block["refreshed_canonical_stages"] == ["post_training_core"]
+    saved_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    assert saved_results["training"]["scoring"]["emitted_stage_files"] == ["post_training_core_summary"]
+    assert saved_results["training"]["scoring"]["omissions"] == {"post_training_full": "not_requested"}

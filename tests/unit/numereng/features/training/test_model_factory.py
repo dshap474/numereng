@@ -130,6 +130,28 @@ def test_build_model_passes_normalized_tabpfn_model_path_to_plugin(
     assert model.kwargs["model_path"] == str((cache_dir / "tabpfn-v2-regressor.ckpt").resolve())
 
 
+def test_build_model_uses_explicit_store_root_for_tabpfn_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / "custom-store"
+    cache_dir = store_root / "cache" / "tabpfn"
+    plugin_path = tmp_path / "tabpfn_plugin.py"
+    monkeypatch.delenv("TABPFN_MODEL_CACHE_DIR", raising=False)
+    monkeypatch.setattr(model_factory, "_resolve_store_root", lambda: tmp_path / "repo-default")
+    _write_model_file(plugin_path, "TabPFNRegressor")
+
+    model = model_factory.build_model(
+        "TabPFNRegressor",
+        {"model_path": "tabpfn-v2-regressor.ckpt"},
+        {"module_path": str(plugin_path)},
+        store_root=store_root,
+    )
+
+    assert model.kwargs["model_path"] == str((cache_dir / "tabpfn-v2-regressor.ckpt").resolve())
+    assert model_factory.os.environ["TABPFN_MODEL_CACHE_DIR"] == str(cache_dir.resolve())
+
+
 def test_normalize_model_params_preserves_explicit_relative_tabpfn_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

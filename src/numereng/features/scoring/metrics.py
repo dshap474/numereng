@@ -23,6 +23,7 @@ from numereng.features.scoring._fastops import (
 from numereng.features.scoring.artifacts import SCORING_STAGE_FILENAMES
 from numereng.features.scoring.models import (
     BenchmarkSource,
+    CanonicalScoringStage,
     ResolvedScoringPolicy,
     ScoringArtifactBundle,
 )
@@ -791,6 +792,7 @@ def build_scoring_artifact_bundle(
     era_col: str = "era",
     id_col: str = "id",
     data_root: Path = DEFAULT_DATASETS_DIR,
+    requested_stage: CanonicalScoringStage = "all",
     scoring_policy: ResolvedScoringPolicy | None = None,
 ) -> tuple[ScoringArtifactBundle, dict[str, object]]:
     """Build all canonical per-era, cumulative, and staged scoring artifact frames."""
@@ -976,7 +978,10 @@ def build_scoring_artifact_bundle(
     if "post_fold_per_era" not in stage_frames:
         stage_omissions["post_fold"] = "cv_fold_missing_or_not_applicable"
     if "post_training_full_summary" not in stage_frames:
-        stage_omissions["post_training_full"] = "feature_diagnostics_unavailable"
+        if requested_stage in {"all", "post_training_full"}:
+            stage_omissions["post_training_full"] = "feature_diagnostics_unavailable"
+        else:
+            stage_omissions["post_training_full"] = "not_requested"
     if payout_target_col not in prepared.columns:
         stage_omissions["ender20"] = "payout_target_missing"
     series_manifest["stages"] = {

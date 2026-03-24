@@ -319,7 +319,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                         "post_fold_snapshots",
                         "post_training_core_summary",
                     ],
-                    "omissions": {"post_training_full": "feature_diagnostics_unavailable"},
+                    "omissions": {"post_training_full": "not_requested"},
                 },
             },
             policy=ResolvedScoringPolicy(
@@ -345,12 +345,28 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                                 "value": 0.1,
                             }
                         ]
-                    )
+                    ),
+                    "post_training_core_summary": pd.DataFrame(
+                        [
+                            {
+                                "run_id": "run-123",
+                                "config_hash": "config-hash",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "corr_native_mean": 0.1,
+                                "corr_native_std": 0.2,
+                                "corr_native_sharpe": 0.5,
+                                "corr_native_max_drawdown": 0.1,
+                            }
+                        ]
+                    ),
                 },
                 manifest={},
             ),
             requested_stage="post_training_core",
-            refreshed_stages=("run_metric_series", "post_fold", "post_training_core"),
+            refreshed_stages=("post_training_core",),
         ),
     )
     monkeypatch.setattr(
@@ -413,14 +429,9 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert engine_block["mode"] == "purged_walk_forward"
     scoring_block = cast(dict[str, object], training_block["scoring"])
     assert scoring_block["requested_stage"] == "post_training_core"
-    assert scoring_block["refreshed_stages"] == ["run_metric_series", "post_fold", "post_training_core"]
-    assert scoring_block["emitted_stage_files"] == [
-        "run_metric_series",
-        "post_fold_per_era",
-        "post_fold_snapshots",
-        "post_training_core_summary",
-    ]
-    assert scoring_block["omissions"] == {"post_training_full": "feature_diagnostics_unavailable"}
+    assert scoring_block["refreshed_stages"] == ["post_training_core"]
+    assert scoring_block["emitted_stage_files"] == ["post_training_core_summary"]
+    assert scoring_block["omissions"] == {"post_training_full": "not_requested"}
     resources_block = cast(dict[str, object], training_block["resources"])
     assert resources_block["parallel_backend"] == "joblib"
     cache_block = cast(dict[str, object], training_block["cache"])

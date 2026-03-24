@@ -112,7 +112,7 @@ def test_run_post_training_scoring_uses_stage_driven_core_metrics(monkeypatch: p
             ScoringArtifactBundle(
                 series_frames={},
                 stage_frames={"post_training_core_summary": pd.DataFrame([{"run_id": "run-123", "value": 0.2}])},
-                manifest={},
+                manifest={"stages": {"omissions": {"post_training_full": "not_requested"}}},
             ),
             {"benchmark_overlap_rows": 1},
         ),
@@ -125,6 +125,7 @@ def test_run_post_training_scoring_uses_stage_driven_core_metrics(monkeypatch: p
 
     assert call_args["include_feature_neutral_metrics"] is False
     assert result.score_provenance["execution"] == {"requested_stage": "post_training_core"}
+    assert result.score_provenance["stages"]["omissions"]["post_training_full"] == "not_requested"
     assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
     assert result.policy.fnc_target_policy == "scoring_target"
     assert result.artifacts.stage_frames["post_training_core_summary"].iloc[0]["value"] == pytest.approx(0.2)

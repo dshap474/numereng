@@ -105,7 +105,7 @@ src/numereng/
       modal/                   # deploy/data/train orchestration + state
       lambda/, runpod/, vast/  # placeholders
     models/
-      custom_models/           # model plugin path; numereng may normalize backend asset paths into `.numereng/cache/*`
+      custom_models/           # model plugin path; numereng may normalize backend asset paths into `<effective_store_root>/cache/*`
 
   api/
     contracts.py
@@ -308,8 +308,9 @@ Data loading and CV rules:
 - FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set, then correlating against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `corr`, `fnc`, and `mmc` are delegated to `numerai_tools`; `cwmm` is computed locally using the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Scoring implementation is optimized behind the existing boundary: `features.scoring.metrics` orchestrates cached parquet reads and canonical artifact/provenance assembly, while `features.scoring._fastops` owns the NumPy/Numba per-era kernels that replace the older pandas callback hot path.
-- Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV and automatically refreshes `post_training_core`, while later `run score` / `experiment score-round` can refresh any stage from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when materialized. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Partial rescoring overwrites only the selected stage artifacts while still refreshing manifest/provenance/results/metrics metadata, and the refreshed provenance artifact block is rebuilt from the persisted scoring manifest so it matches the materialized bundle.
+- Canonical scoring artifacts are materialized under `artifacts/scoring/` in two ways: training writes `post_fold` artifacts during CV and automatically refreshes `post_training_core`, while later `run score` / `experiment score-round` can refresh any stage from saved predictions. The bundle includes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when materialized. Historical runs may still expose legacy `post_training_summary` / `post_training_features_summary` files, which remain read-compatible. Training-time scoring and partial rescoring both rebuild recorded artifact metadata from the persisted scoring manifest so `score_provenance.json`, `results.json -> training.scoring.emitted_stage_files`, and `run.json -> training.scoring.emitted_stage_files` reflect the actual materialized bundle rather than the pre-persist in-memory stage map.
 - `post_training_core_summary` is the flattened decision scorecard: it carries native/payout CORR summaries plus payout-backed `mmc`, `bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and `corr_delta_vs_baseline` summary stats when the aligned benchmark/meta inputs exist.
+- When the requested stage is only `post_training_core`, the canonical stage omissions record `post_training_full=not_requested`. Availability-based omission reasons for `post_training_full` are reserved for requests that actually include feature-heavy diagnostics (`all` or `post_training_full`).
 - `baseline_corr` is no longer persisted as a run metric; instead, provenance records whether payout-target baseline CORR came from the shared active-benchmark artifact or from transient fallback computation.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - Feature exposure diagnostics are computed during post-run scoring using the same `fncv3_features` join path as FNC. Training persists nested summaries for `feature_exposure` (RMS exposure) and `max_feature_exposure` (max absolute exposure), while viz exposes `feature_exposure_mean` and scalar `max_feature_exposure` from those nested payloads.
@@ -642,24 +643,25 @@ success/help
 22. Purged walk-forward CV requires `chunk_size + 1` or more unique eras.
 23. Benchmark model parquet data is metrics-only (BMC/correlation diagnostics) and is not included as training features.
 24. Canonical `model.x_groups` / `model.data_needed` are features-only; identifier groups (`era`, `id`) and benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) are rejected.
-25. Canonical FNC uses dataset feature set `fncv3_features` and correlates against the scoring target being evaluated; `post_training_core` omits those feature-heavy diagnostics, while `post_training_full` and `all` include them. If `features.json` does not define `fncv3_features` and a feature-heavy stage is requested, scoring fails.
-26. Benchmark post-run scoring requires nonzero `(id, era)` overlap with strict era alignment and emits `bmc` / `bmc_last_200_eras` on the maximum available overlapping benchmark window; meta-model scoring also requires strict era alignment but emits `mmc` / `cwmm` on the maximum available overlapping meta-model window whenever any overlap exists.
-27. `full_history_refit` is final-fit only for training and does not emit `post_fold`; training still refreshes `post_training_core`, and later rescoring can materialize `post_training_full` from saved predictions.
-28. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
-29. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
-30. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
-31. Managed AWS extract hard-fails on unsafe archive members (absolute/traversal paths, links, invalid run IDs) and on hash-mismatched run-dir collisions.
-32. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
-33. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
-34. Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
-35. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
-36. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
-37. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
-38. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
-39. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
-40. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
-41. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
-42. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
+25. `TabPFNRegressor` bare checkpoint names resolve under the effective run `store_root` at `cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set, so experiment-scoped or alternate store roots keep model cache state local to that root.
+26. Canonical FNC uses dataset feature set `fncv3_features` and correlates against the scoring target being evaluated; `post_training_core` omits those feature-heavy diagnostics, while `post_training_full` and `all` include them. If `features.json` does not define `fncv3_features` and a feature-heavy stage is requested, scoring fails.
+27. Benchmark post-run scoring requires nonzero `(id, era)` overlap with strict era alignment and emits `bmc` / `bmc_last_200_eras` on the maximum available overlapping benchmark window; meta-model scoring also requires strict era alignment but emits `mmc` / `cwmm` on the maximum available overlapping meta-model window whenever any overlap exists.
+28. `full_history_refit` is final-fit only for training and does not emit `post_fold`; training still refreshes `post_training_core`, and later rescoring can materialize `post_training_full` from saved predictions.
+29. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
+30. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
+31. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
+32. Managed AWS extract hard-fails on unsafe archive members (absolute/traversal paths, links, invalid run IDs) and on hash-mismatched run-dir collisions.
+33. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
+34. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
+35. Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
+36. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
+37. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
+38. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
+39. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
+40. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
+41. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
+42. EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` and must use `.json` extension.
+43. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
 
 ## 12. Testing + Verification
 Primary checks:
