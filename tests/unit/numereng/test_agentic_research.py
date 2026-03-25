@@ -297,6 +297,7 @@ def test_strategy_registry_loads_both_profiles() -> None:
     assert numerai.planner_contract == "config_mutation"
     assert numerai.phase_aware is False
     assert numerai.prompt_path.name == "mutation_prompt.md"
+    assert numerai.schema_path is None
     assert kaggle.phase_aware is True
     assert kaggle.phases[0].phase_id == "phase1_eda_baseline"
     assert kaggle.schema_path is not None
