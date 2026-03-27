@@ -51,12 +51,14 @@ backlog-heavy areas remain out of scope for this initial baseline.
 - Train runs from strict JSON configs: `uv run numereng run train --help`
 - Re-score an existing run: `uv run numereng run score --help`
 - Submit predictions or run outputs: `uv run numereng run submit --help`
+- Build or promote shared benchmark baselines from existing runs: `uv run numereng baseline --help`
 - Manage experiments and pack experiment summaries: `uv run numereng experiment --help`
 - Run agentic research campaigns rooted at one experiment: `uv run numereng research --help`
 - Run HPO studies: `uv run numereng hpo --help`
 - Build ensembles: `uv run numereng ensemble --help`
 - Neutralize predictions: `uv run numereng neutralize --help`
 - Manage datasets, store state, and backfill viz artifacts for historical runs: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
+- Build normalized read-only monitor snapshots for local or remote-backed stores: `uv run numereng monitor --help`
 - Launch cloud jobs: `uv run numereng cloud --help`
 - Query Numerai APIs and forum data: `uv run numereng numerai --help`
 
@@ -64,12 +66,14 @@ The CLI command families are:
 
 - `run`
 - `experiment`
+- `baseline`
 - `research`
 - `hpo`
 - `ensemble`
 - `neutralize`
 - `dataset-tools`
 - `store`
+- `monitor`
 - `cloud`
 - `numerai`
 
@@ -89,11 +93,12 @@ config -> platform -> features -> api -> cli
 High-level layout:
 
 - `src/numereng/config/`: strict training and HPO config contracts/loaders
-- `src/numereng/platform/`: Numerai adapters, forum scraping, shared boundary errors
+- `src/numereng/platform/`: Numerai adapters, forum scraping, shared boundary errors, remote monitor profile loading
 - `src/numereng/features/`: business logic by slice
 - `src/numereng/api/`: stable Python facade and workflow entrypoints
 - `src/numereng/cli/`: CLI parsing and command dispatch
-- `src/numereng/features/viz/`: read-only dashboard backend
+- `viz/api/numereng_viz/`: read-only dashboard backend package and monitor snapshot composition
+- `src/numereng/features/viz/`: compatibility shim for the public viz boundary
 - `viz/web/`: dashboard frontend
 
 Core feature slices include:
@@ -101,6 +106,7 @@ Core feature slices include:
 - training
 - scoring
 - submission
+- baseline
 - experiments
 - agentic research
 - hpo
@@ -121,11 +127,16 @@ The default store root is `.numereng/`. Common artifacts include:
   numereng.db
   runs/<run_id>/
     run.json
+    runtime.json
     resolved.json
     results.json
     metrics.json
     score_provenance.json
     artifacts/predictions/*.parquet
+  datasets/
+    baselines/<name>/
+      baseline.json
+      pred_<name>.parquet
   experiments/<experiment_id>/
     experiment.json
     EXPERIMENT.md

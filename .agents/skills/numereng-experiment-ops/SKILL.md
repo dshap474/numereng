@@ -87,6 +87,7 @@ Canonical experiment files:
 - `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
 - `.numereng/experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `.numereng/experiments/<experiment_id>/configs/*.json`
+- `.numereng/experiments/<experiment_id>/run_scripts/*` for launcher and recovery helpers
 - `.numereng/experiments/<experiment_id>/run_plan.csv` when the experiment is using a planned sweep
 - `.numereng/experiments/_archive/<experiment_id>/...` for archived experiment-local files
 
@@ -122,15 +123,63 @@ uv run numereng experiment create \
 
 After creation:
 
+- `experiment create` now scaffolds the deterministic experiment skeleton for you:
+  - `EXPERIMENT.md` with the current report-section contract
+  - `configs/`
+  - `run_plan.csv` with the canonical header stub
+  - `run_scripts/launch_all.py|.sh|.ps1`
 - keep the canonical narrative in `EXPERIMENT.md`
 - keep configs in `configs/`
-- use `run_plan.csv` only when a sweep ordering is intentionally defined
+- keep launcher and recovery helpers in `run_scripts/`
+- fill in `run_plan.csv` only when a sweep ordering is intentionally defined
 - update the experiment log after each completed round
+- when refreshing a report, bring `EXPERIMENT.md` up to the current template contract rather than only appending ad hoc notes
 
 Use these assets:
 
 - `assets/EXPERIMENT.template.md`
 - `assets/research-round-template.md`
+
+## EXPERIMENT.md Contract
+
+Treat `assets/EXPERIMENT.template.md` as the narrative schema for experiment reporting.
+For new experiments, prefer the CLI-generated scaffold first and use the asset as the refresh/reference contract.
+
+Required sections for current reports:
+
+- summary with `hypothesis`, primary metric, tie-break metric, and outcome
+- abstract
+- method
+- execution inventory
+- ambiguity resolution when relevant
+- scout -> scale tracker
+- plateau gate settings
+- round log
+- results
+- standard plots / visual checks
+- ensemble log when relevant
+- remaining knobs audit
+- final decision
+- stopping rationale
+- findings
+- anti-patterns observed
+- next experiments
+- final checks
+- repro commands
+
+Section expectations:
+
+- `Execution Inventory` must separate planned, executed, failed/interrupted, and skipped/superseded configs.
+- `Round Log` must state what changed in the round, what actually ran, and the round decision.
+- `Results` must include a compact summary table and should include `avg_corr_with_benchmark` when available from run artifacts.
+- `Standard Plots / Visual Checks` should record the plot command and artifact path when plots exist; if no plot was generated, say why and what scalar evidence substituted for it.
+- `Final Checks` should be used as the completion gate for the markdown itself.
+
+Completion bar:
+
+- Do not call an `EXPERIMENT.md` complete just because it exists.
+- A completed report should clearly distinguish executed work from planned-only work, match the underlying run artifacts, explain champion status, and avoid stale placeholders.
+- If the experiment is complete or the user asks for a final write-up, regenerate `EXPERIMENT.pack.md` after the narrative is updated.
 
 ## Config File Conventions
 
@@ -155,6 +204,25 @@ For manual sweeps:
   not yet seeded `.numereng/datasets/baselines/active_benchmark/`
 - use default `benchmark_source.source=active` only when the shared
   `active_benchmark` artifact is already present
+
+Post-training scoring policy:
+
+- `training.post_training_scoring` defaults to `none`
+- use `core` or `full` when one config should score itself immediately after training
+- use `round_core` or `round_full` only in experiment workflows and only on the
+  last `rN_*` config in a round when you want one deferred batch scoring pass at
+  the end of that round
+- earlier configs in the same round should usually keep `post_training_scoring = "none"`
+- `run train` rejects `round_core` and `round_full`; those policies require
+  `experiment train`
+
+Scripted sweep policy:
+
+- experiment-local launchers live under `run_scripts/`
+- scripted sweeps must call `uv run numereng experiment train ... --post-training-scoring none`
+- scripted sweeps own round scoring and must call `uv run numereng experiment score-round --round <rN> --stage <post_training_core|post_training_full>` after the last planned config for each round
+- default scripted batch stage is `post_training_core`; use `post_training_full` only when the round needs the heavy feature diagnostics
+- do not combine scripted batch scoring with config-level `round_core` or `round_full`
 
 For HPO study definitions:
 
@@ -188,7 +256,8 @@ Use these current command families:
 ```bash
 uv run numereng experiment archive --id <id>
 uv run numereng experiment unarchive --id <id>
-uv run numereng experiment train --id <id> --config <config.json>
+uv run numereng experiment train --id <id> --config <config.json> [--post-training-scoring <none|core|full|round_core|round_full>]
+uv run numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>
 uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
 uv run numereng experiment pack --id <id>
 uv run numereng experiment details --id <id> --format json
@@ -202,6 +271,30 @@ manifest workflow.
 
 Guardrail:
 - if an experiment is archived, unarchive it before running `experiment train` or `experiment promote`
+
+Recommended scripted sweep layout:
+
+```text
+.numereng/experiments/<experiment_id>/
+  experiment.json
+  EXPERIMENT.md
+  configs/
+  run_plan.csv
+  run_scripts/
+    launch_all.py
+    launch_all.sh
+    launch_all.ps1
+    run_with_recovery.py   # optional per-experiment helper
+```
+
+Recommended scripted sweep commands:
+
+- default launcher:
+  - `bash .numereng/experiments/<id>/run_scripts/launch_all.sh`
+- explicit heavy round scoring:
+  - `bash .numereng/experiments/<id>/run_scripts/launch_all.sh --score-stage post_training_full`
+- manual recovery path:
+  - `uv run numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>`
 
 ## Pack Completed Experiment
 
@@ -230,6 +323,7 @@ The packed markdown includes:
 
 Do not treat the pack file as a replacement for `EXPERIMENT.md`.
 It is a generated snapshot and should not include per-era or other time-series metrics.
+Run pack after the markdown narrative is current and the report-level final checks have been satisfied.
 
 ## Champion Handoff And Submission
 
@@ -261,13 +355,13 @@ Each completed run should have a run directory under:
 
 - `.numereng/runs/<run_id>/`
 
-Core files expected for completed scored runs:
+Core files expected for completed runs:
 
 - `run.json`
 - `resolved.json`
 - `results.json`
 - `metrics.json`
-- `score_provenance.json`
+- `score_provenance.json` after post-training scoring has been materialized
 
 Expect `run.json` to carry:
 
@@ -275,6 +369,9 @@ Expect `run.json` to carry:
 - config provenance
 - metrics summary
 - declared artifact paths
+- `training.scoring` metadata with `policy`, `status`, `requested_stage`, and
+  `refreshed_stages`; failed or deferred scoring may also include `reason` and
+  `error`
 
 At minimum, artifact paths declared in `run.json` should exist on disk for successful runs.
 Prediction parquet outputs should match the recorded artifact paths.
@@ -336,12 +433,14 @@ If a task spans multiple domains, load each relevant reference and avoid unrelat
 
 | Task | Use |
 |---|---|
-| Create or refresh experiment narrative | `assets/EXPERIMENT.template.md` |
+| Refresh experiment narrative or backfill an older stub | `assets/EXPERIMENT.template.md` |
 | Log one research round | `assets/research-round-template.md` |
 | Start a new training config | `assets/training-config-template.json` |
+| Backfill launcher files for an older experiment that predates CLI scaffolding | `assets/launch_all.py`, `assets/launch_all.sh`, `assets/launch_all.ps1` |
 | Start an HPO study config | `assets/hpo-study-template.json` |
 
 Explicit path gates:
 - If the task is about experiment narrative or round logging, use the markdown templates.
+- If the task is about refreshing `EXPERIMENT.md`, align the file to the current `assets/EXPERIMENT.template.md` section contract instead of preserving stale structure.
 - If the task is about training config shape, use `assets/training-config-template.json` plus the schema source paths.
 - If the task is about HPO study authoring, use `assets/hpo-study-template.json`.

@@ -18,6 +18,7 @@ Each training run writes to `.numereng/runs/<run_id>/`.
 Required artifacts:
 
 - `run.json`
+- `runtime.json`
 - `resolved.json`
 - `metrics.json`
 - `results.json`
@@ -45,6 +46,16 @@ CSV-only auxiliary artifacts are not part of the supported contract.
 Consumers should treat `artifacts/scoring/manifest.json` as the scoring
 artifact entrypoint and may use the store rescoring backfill path for legacy
 runs. Other optional diagnostics must not be derived at request time.
+
+Lifecycle contract:
+
+- `runtime.json` is the canonical in-flight lifecycle snapshot and remains on disk as the final lifecycle snapshot after terminalization.
+- `runtime.json` also carries canonical backend-owned progress fields:
+  `progress_percent`, `progress_label`, `progress_current`, `progress_total`.
+- `run.json` remains the canonical run artifact and terminal summary.
+- Terminal `run.json.status` may be `FINISHED`, `FAILED`, `CANCELED`, or `STALE`.
+- Terminal `run.json.lifecycle` carries `terminal_reason`, `terminal_detail`, `cancel_requested_at`, and `reconciled`.
+- Progress percent is not a frontend guess. Training writes the fixed pipeline progress plan and fold-aware `train_model` updates into both `runtime.json` and `run_lifecycles`.
 
 ## Canonical Field Names
 

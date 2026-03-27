@@ -375,6 +375,9 @@ class CloudAwsManagedService:
             if checkpoint_s3_uri is not None:
                 next_artifacts["checkpoint_s3_uri"] = checkpoint_s3_uri
 
+            next_metadata = dict(state.metadata)
+            next_metadata.update(self._monitor_metadata_from_submit(request))
+
             next_state = state.model_copy(
                 update={
                     "run_id": run_id,
@@ -387,6 +390,7 @@ class CloudAwsManagedService:
                     "training_job_arn": training_status.job_arn,
                     "status": training_status.status,
                     "artifacts": next_artifacts,
+                    "metadata": next_metadata,
                 },
                 deep=True,
             )
@@ -404,6 +408,7 @@ class CloudAwsManagedService:
                 output_s3_uri=output_s3_uri,
                 error_message=training_status.failure_reason,
                 started_at=_utc_now_iso(),
+                metadata=next_state.metadata,
             )
 
             return CloudAwsResponse(
@@ -461,6 +466,9 @@ class CloudAwsManagedService:
             if checkpoint_s3_uri is not None:
                 next_artifacts["checkpoint_s3_uri"] = checkpoint_s3_uri
 
+            next_metadata = dict(state.metadata)
+            next_metadata.update(self._monitor_metadata_from_submit(request))
+
             next_state = state.model_copy(
                 update={
                     "run_id": run_id,
@@ -472,6 +480,7 @@ class CloudAwsManagedService:
                     "batch_job_id": batch_job_id,
                     "status": "SUBMITTED",
                     "artifacts": next_artifacts,
+                    "metadata": next_metadata,
                 },
                 deep=True,
             )
@@ -489,6 +498,7 @@ class CloudAwsManagedService:
                 output_s3_uri=output_s3_uri,
                 error_message=None,
                 started_at=_utc_now_iso(),
+                metadata=next_state.metadata,
             )
 
             return CloudAwsResponse(
@@ -558,6 +568,7 @@ class CloudAwsManagedService:
                 output_s3_uri=training_status.output_s3_uri,
                 error_message=training_status.failure_reason,
                 finished_at=_finished_timestamp(training_status.status),
+                metadata=next_state.metadata,
             )
 
             return CloudAwsResponse(
@@ -612,6 +623,7 @@ class CloudAwsManagedService:
                 output_s3_uri=state.artifacts.get("output_s3_uri"),
                 error_message=batch_status.status_reason,
                 finished_at=_finished_timestamp(batch_status.status),
+                metadata=next_state.metadata,
             )
 
             return CloudAwsResponse(
@@ -756,6 +768,7 @@ class CloudAwsManagedService:
                 image_uri=state.image_uri,
                 output_s3_uri=state.artifacts.get("output_s3_uri"),
                 error_message=None,
+                metadata=state.metadata,
             )
 
             return CloudAwsResponse(
@@ -814,6 +827,7 @@ class CloudAwsManagedService:
                     if requested_action == "cancel"
                     else ("terminated" if requested_action == "terminate" else batch_status.status_reason)
                 ),
+                metadata=state.metadata,
             )
 
             return CloudAwsResponse(
@@ -915,6 +929,7 @@ class CloudAwsManagedService:
                 image_uri=state.image_uri,
                 output_s3_uri=output_s3_uri,
                 error_message=None,
+                metadata=state.metadata,
             )
 
         return CloudAwsResponse(
@@ -1014,6 +1029,7 @@ class CloudAwsManagedService:
                 image_uri=state.image_uri,
                 output_s3_uri=output_s3_uri,
                 error_message=index_warning,
+                metadata=next_state.metadata,
             )
 
         return CloudAwsResponse(
@@ -1100,12 +1116,23 @@ class CloudAwsManagedService:
         error_message: str | None,
         started_at: str | None = None,
         finished_at: str | None = None,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         metadata_payload = {
             "provider": provider,
             "backend": backend,
             "status": status,
         }
+        if metadata:
+            metadata_payload.update({key: value for key, value in metadata.items() if value})
+        config_path = getattr(request, "config_path", None)
+        if isinstance(config_path, str) and config_path.strip():
+            metadata_payload.setdefault("config_path", config_path)
+            metadata_payload.setdefault("config_id", config_path)
+            metadata_payload.setdefault("config_label", Path(config_path).name)
+            experiment_id = _infer_experiment_id_from_config_path(config_path, store_root=request.store_root)
+            if experiment_id is not None:
+                metadata_payload.setdefault("experiment_id", experiment_id)
         try:
             upsert_cloud_job(
                 store_root=request.store_root,
@@ -1126,6 +1153,18 @@ class CloudAwsManagedService:
             )
         except StoreError:
             return
+
+    def _monitor_metadata_from_submit(self, request: AwsTrainSubmitRequest) -> dict[str, str]:
+        metadata: dict[str, str] = {}
+        if request.config_path is None:
+            return metadata
+        metadata["config_path"] = request.config_path
+        metadata["config_id"] = request.config_path
+        metadata["config_label"] = Path(request.config_path).name
+        experiment_id = _infer_experiment_id_from_config_path(request.config_path, store_root=request.store_root)
+        if experiment_id is not None:
+            metadata["experiment_id"] = experiment_id
+        return metadata
 
     def _generated_run_id(self) -> str:
         return f"aws-{int(time.time())}"
@@ -1149,6 +1188,23 @@ def _parse_s3_uri(uri: str, *, default_bucket: str) -> tuple[str, str] | None:
     if not bucket:
         bucket = default_bucket
     return bucket, key
+
+
+def _infer_experiment_id_from_config_path(config_path: str, *, store_root: str) -> str | None:
+    path = Path(config_path).expanduser()
+    store_root_path = Path(store_root).expanduser().resolve()
+    if not path.is_absolute():
+        path = (store_root_path / path).resolve()
+    else:
+        path = path.resolve()
+    try:
+        relative = path.relative_to(store_root_path)
+    except ValueError:
+        return None
+    parts = list(relative.parts)
+    if len(parts) >= 4 and parts[0] == "experiments" and parts[2] == "configs":
+        return parts[1]
+    return None
 
 
 def _slug_token(value: str) -> str:

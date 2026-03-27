@@ -1,6 +1,5 @@
-"""Viz dashboard feature slice."""
+"""Compatibility shim for moved viz backend package."""
 
-from numereng.features.viz.app import create_app
-from numereng.features.viz.store_adapter import VizStoreAdapter, VizStoreConfig
+from numereng_viz import VizStoreAdapter, VizStoreConfig, build_monitor_snapshot, create_app
 
-__all__ = ["create_app", "VizStoreAdapter", "VizStoreConfig"]
+__all__ = ["build_monitor_snapshot", "create_app", "VizStoreAdapter", "VizStoreConfig"]

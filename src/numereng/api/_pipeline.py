@@ -37,6 +37,7 @@ def prepare_training_run(request: TrainRunRequest) -> TrainingPipelineState:
         config_path=request.config_path,
         output_dir=request.output_dir,
         profile=request.profile,
+        post_training_scoring=request.post_training_scoring,
         engine_mode=request.engine_mode,
         window_size_eras=request.window_size_eras,
         embargo_eras=request.embargo_eras,

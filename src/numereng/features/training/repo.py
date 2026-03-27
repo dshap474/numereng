@@ -99,6 +99,11 @@ def resolve_score_provenance_path(run_dir: Path) -> Path:
     return run_dir / "score_provenance.json"
 
 
+def resolve_runtime_snapshot_path(run_dir: Path) -> Path:
+    """Resolve canonical live runtime snapshot path."""
+    return run_dir / "runtime.json"
+
+
 def resolve_active_benchmark_dir(*, data_root: Path = DEFAULT_DATASETS_DIR) -> Path:
     """Resolve the canonical active-benchmark directory."""
 

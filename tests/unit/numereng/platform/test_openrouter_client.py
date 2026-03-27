@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -233,7 +234,7 @@ def test_openrouter_client_http_errors_are_typed(monkeypatch: pytest.MonkeyPatch
             url="https://openrouter.ai/api/v1/models",
             code=429,
             msg="Too Many Requests",
-            hdrs=None,
+            hdrs=Message(),
             fp=io.BytesIO(b'{"error":{"message":"Rate limited"}}'),
         )
 

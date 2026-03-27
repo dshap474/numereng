@@ -23,6 +23,10 @@ Primary schema and loader paths:
 - make file names reflect the changed variable
 - change one variable at a time within a research round unless the round is intentionally testing an interaction
 - keep dataset variant, feature scope, and benchmark reference explicit in the config
+- default `training.post_training_scoring` to `none` for normal round configs
+- use `training.post_training_scoring = "round_core"` or `"round_full"` only on
+  the last `rN_*` config in a round when one deferred batch scoring pass should
+  run after that config links into the experiment manifest
 - prefer `data.benchmark_source.source = "path"` when a machine has not yet seeded
   `.numereng/datasets/baselines/active_benchmark/`
 - use default `benchmark_source.source = "active"` only when the shared active

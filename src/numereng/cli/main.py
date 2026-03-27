@@ -7,11 +7,13 @@ from collections.abc import Sequence
 
 from numereng import api
 from numereng.cli.commands import (
+    handle_baseline_command,
     handle_cloud_command,
     handle_dataset_tools_command,
     handle_ensemble_command,
     handle_experiment_command,
     handle_hpo_command,
+    handle_monitor_command,
     handle_neutralize_command,
     handle_numerai_command,
     handle_research_command,
@@ -30,6 +32,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args and args[0] == "run":
         return handle_run_command(args[1:])
 
+    if args and args[0] == "baseline":
+        return handle_baseline_command(args[1:])
+
     if args and args[0] == "dataset-tools":
         return handle_dataset_tools_command(args[1:])
 
@@ -41,6 +46,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args and args[0] == "neutralize":
         return handle_neutralize_command(args[1:])
+
+    if args and args[0] == "monitor":
+        return handle_monitor_command(args[1:])
 
     if args and args[0] == "ensemble":
         return handle_ensemble_command(args[1:])

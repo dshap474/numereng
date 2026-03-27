@@ -21,3 +21,7 @@ class TrainingModelError(TrainingError):
 
 class TrainingMetricsError(TrainingError):
     """Raised when metric computation fails."""
+
+
+class TrainingCanceledError(TrainingError):
+    """Raised when cooperative cancellation interrupts one local run."""

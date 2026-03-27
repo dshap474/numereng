@@ -30,6 +30,7 @@ build/
 .ruff_cache/
 .coverage
 htmlcov/
+.pre-commit-cache/
 
 # OS / generated logs
 .DS_Store

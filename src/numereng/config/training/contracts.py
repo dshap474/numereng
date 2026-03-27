@@ -13,6 +13,7 @@ DatasetVariant = Literal["non_downsampled", "downsampled"]
 ParallelBackend = Literal["joblib"]
 CacheMode = Literal["deterministic"]
 ModelDevice = Literal["cpu", "cuda"]
+PostTrainingScoringPolicy = Literal["none", "core", "full", "round_core", "round_full"]
 
 
 class _StrictConfigModel(BaseModel):
@@ -171,6 +172,7 @@ class TrainingSectionConfig(_StrictConfigModel):
     """Training controls for engine behavior and execution policy."""
 
     engine: TrainingEngineConfig = Field(default_factory=TrainingEngineConfig)
+    post_training_scoring: PostTrainingScoringPolicy = "none"
     resources: TrainingResourcesConfig = Field(default_factory=TrainingResourcesConfig)
     cache: TrainingCacheConfig = Field(default_factory=TrainingCacheConfig)
 
@@ -205,6 +207,7 @@ __all__ = [
     "ModelConfig",
     "OutputConfig",
     "ParallelBackend",
+    "PostTrainingScoringPolicy",
     "PreprocessingConfig",
     "TrainingCacheConfig",
     "TrainingConfig",

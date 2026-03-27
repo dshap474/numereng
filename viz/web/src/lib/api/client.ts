@@ -24,6 +24,108 @@ export interface Experiment {
 	tags: string[];
 }
 
+export interface ExperimentOverviewSummary {
+	total_experiments: number;
+	active_experiments: number;
+	completed_experiments: number;
+	live_experiments: number;
+	live_runs: number;
+	queued_runs: number;
+	attention_count: number;
+}
+
+export interface ExperimentOverviewItem {
+	experiment_id: string;
+	name: string;
+	status: string;
+	created_at: string;
+	updated_at: string;
+	run_count?: number | null;
+	tags: string[];
+	has_live: boolean;
+	live_run_count: number;
+	attention_state: 'failed' | 'stale' | 'canceled' | 'none' | string;
+	latest_activity_at: string | null;
+	source_kind?: 'local' | 'ssh' | string;
+	source_id?: string;
+	source_label?: string;
+	detail_href?: string | null;
+}
+
+export interface LiveRunOverview {
+	run_id: string;
+	experiment_id?: string | null;
+	experiment_name?: string | null;
+	job_id: string | null;
+	config_id: string | null;
+	config_label: string;
+	status: string;
+	current_stage: string | null;
+	progress_percent: number | null;
+	progress_label: string | null;
+	updated_at: string | null;
+	terminal_reason: string | null;
+	source_kind?: 'local' | 'ssh' | string;
+	source_id?: string;
+	source_label?: string;
+	backend?: string | null;
+	provider_run_id?: string | null;
+	detail_href?: string | null;
+}
+
+export interface LiveExperimentOverview {
+	experiment_id: string;
+	name: string;
+	status: string;
+	tags: string[];
+	live_run_count: number;
+	queued_run_count: number;
+	attention_state: 'failed' | 'stale' | 'canceled' | 'none' | string;
+	latest_activity_at: string | null;
+	aggregate_progress_percent: number | null;
+	runs: LiveRunOverview[];
+	source_kind?: 'local' | 'ssh' | string;
+	source_id?: string;
+	source_label?: string;
+	detail_href?: string | null;
+}
+
+export interface RecentExperimentActivityItem {
+	experiment_id: string;
+	experiment_name: string;
+	run_id: string | null;
+	job_id: string | null;
+	config_id: string | null;
+	config_label: string;
+	status: string;
+	current_stage: string | null;
+	progress_percent: number | null;
+	progress_label: string | null;
+	updated_at: string | null;
+	finished_at: string | null;
+	terminal_reason: string | null;
+	source_kind?: 'local' | 'ssh' | string;
+	source_id?: string;
+	source_label?: string;
+	backend?: string | null;
+	provider_run_id?: string | null;
+}
+
+export interface ExperimentOverviewResponse {
+	summary: ExperimentOverviewSummary;
+	experiments: ExperimentOverviewItem[];
+	live_experiments: LiveExperimentOverview[];
+	recent_activity: RecentExperimentActivityItem[];
+	sources?: Array<{
+		kind: string;
+		id: string;
+		label: string;
+		host?: string | null;
+		store_root?: string;
+		state?: string;
+	}>;
+}
+
 export interface ExperimentRun {
 	run_id: string;
 	experiment_id: string;
@@ -264,6 +366,50 @@ export interface RunJob {
 	queue_position: number | null;
 }
 
+export interface RunLifecycle {
+	run_id: string;
+	run_hash: string;
+	config_hash: string;
+	job_id: string;
+	logical_run_id: string;
+	attempt_id: string;
+	attempt_no: number;
+	source: string;
+	operation_type: string;
+	job_type: string;
+	status: 'queued' | 'starting' | 'running' | 'completed' | 'failed' | 'canceled' | 'stale' | string;
+	experiment_id: string | null;
+	config_id: string;
+	config_source: string;
+	config_path: string;
+	config_sha256: string;
+	run_dir: string;
+	runtime_path: string;
+	backend: string | null;
+	worker_id: string | null;
+	pid: number | null;
+	host: string | null;
+	current_stage: string | null;
+	completed_stages: string[];
+	progress_percent: number | null;
+	progress_label: string | null;
+	progress_current: number | null;
+	progress_total: number | null;
+	cancel_requested: boolean;
+	cancel_requested_at: string | null;
+	created_at: string;
+	queued_at: string | null;
+	started_at: string | null;
+	last_heartbeat_at: string | null;
+	updated_at: string;
+	finished_at: string | null;
+	terminal_reason: string | null;
+	terminal_detail: Record<string, unknown>;
+	latest_metrics: Record<string, unknown>;
+	latest_sample: Record<string, unknown>;
+	reconciled: boolean;
+}
+
 export interface RunJobListResponse {
 	items: RunJob[];
 	total: number;
@@ -487,6 +633,7 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				fetchFn
 			),
 		listExperiments: () => get<Experiment[]>('/experiments', fetchFn),
+		getExperimentsOverview: () => get<ExperimentOverviewResponse>('/experiments/overview', fetchFn),
 		getExperiment: (id: string) => get<Experiment>(`/experiments/${id}`, fetchFn),
 		getExperimentConfigs: (
 			id: string,
@@ -550,6 +697,7 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				})}`,
 				fetchFn
 			),
+		getRunLifecycle: (runId: string) => get<RunLifecycle>(`/runs/${runId}/lifecycle`, fetchFn),
 		listRunpodPods: () => get<RunpodPodListResponse>('/runpod/pods', fetchFn),
 		getRunJob: (jobId: string) => get<RunJob>(`/run-jobs/${jobId}`, fetchFn),
 		getRunJobBatch: (batchId: string) => get<RunJobBatchResponse>(`/run-jobs/batches/${batchId}`, fetchFn),

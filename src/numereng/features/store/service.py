@@ -27,6 +27,7 @@ _SCHEMA_MIGRATIONS = (
     "2026_02_store_index_v4_cloud_jobs_pk_provider",
     "2026_02_store_index_v5_hpo_ensemble",
     "2026_02_store_index_v6_run_ops_telemetry",
+    "2026_03_store_index_v7_run_lifecycles",
 )
 _SCHEMA_MIGRATION_NAME = _SCHEMA_MIGRATIONS[-1]
 
@@ -39,6 +40,7 @@ _REQUIRED_TABLES = (
     "run_job_events",
     "run_job_logs",
     "run_job_samples",
+    "run_lifecycles",
     "logical_runs",
     "run_attempts",
     "cloud_jobs",
@@ -52,6 +54,7 @@ _REQUIRED_TABLES = (
 
 _CANONICAL_ARTIFACTS = (
     ("manifest", "run.json"),
+    ("runtime", "runtime.json"),
     ("resolved_config", "resolved.json"),
     ("resolved_config_legacy", "resolved.yaml"),
     ("results", "results.json"),
@@ -146,6 +149,9 @@ _SCHEMA_STATEMENTS = (
         external_run_id TEXT,
         run_dir TEXT,
         cancel_requested INTEGER NOT NULL DEFAULT 0,
+        cancel_requested_at TEXT,
+        terminal_reason TEXT,
+        terminal_detail_json TEXT,
         error_json TEXT
     );
     """,
@@ -192,6 +198,51 @@ _SCHEMA_STATEMENTS = (
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS run_lifecycles (
+        run_id TEXT PRIMARY KEY,
+        run_hash TEXT NOT NULL,
+        config_hash TEXT,
+        job_id TEXT NOT NULL,
+        logical_run_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        attempt_no INTEGER NOT NULL DEFAULT 1,
+        source TEXT NOT NULL,
+        operation_type TEXT NOT NULL,
+        job_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        experiment_id TEXT,
+        config_id TEXT NOT NULL,
+        config_source TEXT NOT NULL,
+        config_path TEXT NOT NULL,
+        config_sha256 TEXT NOT NULL,
+        run_dir TEXT NOT NULL,
+        runtime_path TEXT NOT NULL,
+        backend TEXT,
+        worker_id TEXT,
+        pid INTEGER,
+        host TEXT,
+        current_stage TEXT,
+        completed_stages_json TEXT NOT NULL,
+        progress_percent REAL,
+        progress_label TEXT,
+        progress_current INTEGER,
+        progress_total INTEGER,
+        cancel_requested INTEGER NOT NULL DEFAULT 0,
+        cancel_requested_at TEXT,
+        created_at TEXT NOT NULL,
+        queued_at TEXT,
+        started_at TEXT,
+        last_heartbeat_at TEXT,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        terminal_reason TEXT,
+        terminal_detail_json TEXT,
+        latest_metrics_json TEXT,
+        latest_sample_json TEXT,
+        reconciled INTEGER NOT NULL DEFAULT 0
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS logical_runs (
         logical_run_id TEXT PRIMARY KEY,
         experiment_id TEXT,
@@ -217,6 +268,9 @@ _SCHEMA_STATEMENTS = (
         pid INTEGER,
         exit_code INTEGER,
         signal INTEGER,
+        cancel_requested_at TEXT,
+        terminal_reason TEXT,
+        terminal_detail_json TEXT,
         error_json TEXT,
         canonical_run_id TEXT,
         external_run_id TEXT,
@@ -338,6 +392,12 @@ _INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_run_job_events_job_id_id ON run_job_events(job_id, id ASC);",
     "CREATE INDEX IF NOT EXISTS idx_run_job_logs_job_id_id ON run_job_logs(job_id, id ASC);",
     "CREATE INDEX IF NOT EXISTS idx_run_job_samples_job_id_id ON run_job_samples(job_id, id ASC);",
+    "CREATE INDEX IF NOT EXISTS idx_run_lifecycles_status_updated ON run_lifecycles(status, updated_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_run_lifecycles_job_id ON run_lifecycles(job_id);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_run_lifecycles_experiment_updated "
+        "ON run_lifecycles(experiment_id, updated_at DESC);"
+    ),
     "CREATE INDEX IF NOT EXISTS idx_logical_runs_exp_updated ON logical_runs(experiment_id, updated_at DESC);",
     (
         "CREATE INDEX IF NOT EXISTS idx_run_attempts_logical_attempt "
@@ -2282,6 +2342,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     for statement in _SCHEMA_STATEMENTS:
         conn.execute(statement)
 
+    _ensure_lifecycle_columns(conn)
     _migrate_cloud_jobs_primary_key(conn)
 
     for statement in _INDEX_STATEMENTS:
@@ -2293,6 +2354,35 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             (migration_name, _utc_now_iso()),
         )
     conn.commit()
+
+
+def _ensure_lifecycle_columns(conn: sqlite3.Connection) -> None:
+    _ensure_column_exists(conn, table_name="run_jobs", column_name="cancel_requested_at", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_jobs", column_name="terminal_reason", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_jobs", column_name="terminal_detail_json", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_attempts", column_name="cancel_requested_at", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_attempts", column_name="terminal_reason", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_attempts", column_name="terminal_detail_json", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_percent", column_def="REAL")
+    _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_label", column_def="TEXT")
+    _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_current", column_def="INTEGER")
+    _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_total", column_def="INTEGER")
+
+
+def _ensure_column_exists(
+    conn: sqlite3.Connection,
+    *,
+    table_name: str,
+    column_name: str,
+    column_def: str,
+) -> None:
+    if not _table_exists(conn, table_name):
+        return
+    existing = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    names = {str(row["name"] if isinstance(row, sqlite3.Row) else row[1]) for row in existing if len(row) >= 2}
+    if column_name in names:
+        return
+    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
 
 def _migrate_cloud_jobs_primary_key(conn: sqlite3.Connection) -> None:

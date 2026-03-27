@@ -180,6 +180,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert saved_results["metrics"]["corr"]["mean"] == 0.1
     assert "payout_estimate_mean" not in saved_results["metrics"]
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
+    assert saved_results["training"]["scoring"]["status"] == "succeeded"
     assert saved_results["training"]["scoring"]["requested_stage"] == "all"
     assert saved_results["training"]["scoring"]["refreshed_stages"] == ["run_metric_series", "post_training_core"]
     assert saved_results["training"]["scoring"]["emitted_stage_files"] == [
@@ -192,6 +193,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert saved_manifest["artifacts"]["score_provenance"] == "score_provenance.json"
     assert saved_manifest["artifacts"]["scoring_manifest"] == "artifacts/scoring/manifest.json"
     assert saved_manifest["metrics_summary"]["corr"]["mean"] == 0.1
+    assert saved_manifest["training"]["scoring"]["status"] == "succeeded"
     assert saved_manifest["training"]["scoring"]["requested_stage"] == "all"
     assert (run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
     assert (run_dir / "artifacts" / "scoring" / "post_training_core_summary.parquet").is_file()

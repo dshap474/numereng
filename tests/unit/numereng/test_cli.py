@@ -49,6 +49,47 @@ def test_cli_main_unknown_argument(capsys: pytest.CaptureFixture[str]) -> None:
     assert "unknown arguments: --unknown" in captured.err
 
 
+def test_cli_monitor_snapshot_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_build_monitor_snapshot(request: api_module.MonitorSnapshotRequest) -> api_module.MonitorSnapshotResponse:
+        assert request.store_root == ".numereng"
+        assert request.refresh_cloud is False
+        return api_module.MonitorSnapshotResponse(
+            generated_at="2026-03-25T00:00:00+00:00",
+            source=api_module.MonitorSourceResponse(
+                kind="local",
+                id="local",
+                label="Local store",
+                host="host",
+                store_root=".numereng",
+                state="live",
+            ),
+            summary=api_module.MonitorSummaryResponse(
+                total_experiments=1,
+                active_experiments=1,
+                completed_experiments=0,
+                live_experiments=1,
+                live_runs=1,
+                queued_runs=0,
+                attention_count=0,
+            ),
+            experiments=[],
+            live_experiments=[],
+            live_runs=[],
+            recent_activity=[],
+        )
+
+    monkeypatch.setattr(api_module, "build_monitor_snapshot", fake_build_monitor_snapshot)
+
+    exit_code = cli.main(["monitor", "snapshot", "--no-refresh-cloud", "--json"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["summary"]["live_runs"] == 1
+
+
 def test_cli_run_submit_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -143,6 +184,7 @@ def test_cli_run_train_success(
         assert request.engine_mode is None
         assert request.window_size_eras is None
         assert request.embargo_eras is None
+        assert request.post_training_scoring is None
         return api_module.TrainRunResponse(
             run_id="run-123",
             predictions_path="/tmp/preds.parquet",
@@ -231,12 +273,59 @@ def test_cli_run_train_profile_success(
     assert payload["results_path"] == "/tmp/results.json"
 
 
+def test_cli_run_train_post_training_scoring_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_run_training(request: api_module.TrainRunRequest) -> api_module.TrainRunResponse:
+        assert request.post_training_scoring == "full"
+        return api_module.TrainRunResponse(
+            run_id="run-789",
+            predictions_path="/tmp/preds.parquet",
+            results_path="/tmp/results.json",
+        )
+
+    monkeypatch.setattr(api_module, "run_training", fake_run_training)
+
+    exit_code = cli.main(
+        [
+            "run",
+            "train",
+            "--config",
+            "configs/run.json",
+            "--post-training-scoring",
+            "full",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-789"
+
+
 def test_cli_run_train_parse_error(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["run", "train"])
     captured = capsys.readouterr()
 
     assert exit_code == 2
     assert "missing required argument: --config" in captured.err
+
+
+def test_cli_run_train_invalid_post_training_scoring(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(
+        [
+            "run",
+            "train",
+            "--config",
+            "configs/run.json",
+            "--post-training-scoring",
+            "bad_value",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "invalid value for --post-training-scoring" in captured.err
 
 
 def test_cli_run_train_invalid_engine_mode(capsys: pytest.CaptureFixture[str]) -> None:
@@ -379,6 +468,32 @@ def test_cli_run_score_boundary_error(
     assert "training_score_run_not_found" in captured.err
 
 
+def test_cli_run_cancel_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_cancel_run(request: api_module.RunCancelRequest) -> api_module.RunCancelResponse:
+        assert request.run_id == "run-123"
+        assert request.store_root == ".numereng"
+        return api_module.RunCancelResponse(
+            run_id="run-123",
+            job_id="job-123",
+            status="running",
+            cancel_requested=True,
+            cancel_requested_at="2026-03-24T00:00:00+00:00",
+            accepted=True,
+        )
+
+    monkeypatch.setattr(api_module, "cancel_run", fake_cancel_run)
+
+    exit_code = cli.main(["run", "cancel", "--run-id", "run-123"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-123"
+    assert payload["accepted"] is True
+
+
 def test_cli_run_unknown_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = cli.main(["run", "unknown"])
     captured = capsys.readouterr()
@@ -439,6 +554,7 @@ def test_cli_experiment_train_success(
         assert request.experiment_id == "2026-02-22_test-exp"
         assert request.config_path == "configs/run.json"
         assert request.profile == "purged_walk_forward"
+        assert request.post_training_scoring is None
         assert request.engine_mode is None
         assert request.window_size_eras is None
         assert request.embargo_eras is None
@@ -468,6 +584,39 @@ def test_cli_experiment_train_success(
     assert exit_code == 0
     assert payload["run_id"] == "run-123"
     assert payload["experiment_id"] == "2026-02-22_test-exp"
+
+
+def test_cli_experiment_train_post_training_scoring_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_experiment_train(request: api_module.ExperimentTrainRequest) -> api_module.ExperimentTrainResponse:
+        assert request.post_training_scoring == "round_full"
+        return api_module.ExperimentTrainResponse(
+            experiment_id=request.experiment_id,
+            run_id="run-124",
+            predictions_path="/tmp/preds.parquet",
+            results_path="/tmp/results.json",
+        )
+
+    monkeypatch.setattr(api_module, "experiment_train", fake_experiment_train)
+
+    exit_code = cli.main(
+        [
+            "experiment",
+            "train",
+            "--id",
+            "2026-02-22_test-exp",
+            "--config",
+            "configs/run.json",
+            "--post-training-scoring",
+            "round_full",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["run_id"] == "run-124"
 
 
 def test_cli_experiment_train_sets_cli_launch_metadata(
@@ -925,6 +1074,36 @@ def test_cli_store_doctor_fix_strays_success(
     assert exit_code == 0
     assert payload["stray_cleanup_applied"] is True
     assert payload["deleted_paths"] == ["/tmp/.numereng/modal_smoke_data"]
+
+
+def test_cli_store_repair_run_lifecycles_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_store_repair_run_lifecycles(
+        request: api_module.StoreRunLifecycleRepairRequest,
+    ) -> api_module.StoreRunLifecycleRepairResponse:
+        assert request.store_root == ".numereng"
+        assert request.run_id is None
+        assert request.active_only is True
+        return api_module.StoreRunLifecycleRepairResponse(
+            store_root="/tmp/.numereng",
+            scanned_count=2,
+            unchanged_count=1,
+            reconciled_count=1,
+            reconciled_stale_count=1,
+            reconciled_canceled_count=0,
+            run_ids=["run-stale"],
+        )
+
+    monkeypatch.setattr(api_module, "store_repair_run_lifecycles", fake_store_repair_run_lifecycles)
+
+    exit_code = cli.main(["store", "repair-run-lifecycles"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["reconciled_stale_count"] == 1
+    assert payload["run_ids"] == ["run-stale"]
 
 
 def test_cli_store_materialize_viz_artifacts_success(
@@ -2933,3 +3112,46 @@ def test_cli_research_commands_success(
     exit_code = cli.main(["research", "run", "--experiment-id", "2026-02-22_test-exp", "--max-rounds", "1"])
     assert exit_code == 0
     assert _parse_stdout_json(capsys.readouterr().out)["stop_reason"] == "max_rounds_reached"
+
+
+def test_cli_baseline_build_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_baseline_build(request: api_module.BaselineBuildRequest) -> api_module.BaselineBuildResponse:
+        assert request.run_ids == ["run20a", "run20b", "run60a"]
+        assert request.name == "medium_ender20_ender60_6run_blend"
+        assert request.default_target == "target_ender_20"
+        assert request.promote_active is True
+        return api_module.BaselineBuildResponse(
+            name=request.name,
+            baseline_dir="/tmp/.numereng/datasets/baselines/medium_ender20_ender60_6run_blend",
+            predictions_path="/tmp/.numereng/datasets/baselines/medium_ender20_ender60_6run_blend/pred_medium_ender20_ender60_6run_blend.parquet",
+            metadata_path="/tmp/.numereng/datasets/baselines/medium_ender20_ender60_6run_blend/baseline.json",
+            available_targets=["target_ender_20", "target_ender_60"],
+            default_target=request.default_target,
+            source_run_ids=request.run_ids,
+            source_experiment_id="2026-03-15_medium-deep-lgbm-ender20-ender60-3seed",
+            active_predictions_path="/tmp/.numereng/datasets/baselines/active_benchmark/predictions.parquet",
+            active_metadata_path="/tmp/.numereng/datasets/baselines/active_benchmark/benchmark.json",
+            created_at="2026-03-27T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(api_module, "baseline_build", fake_baseline_build)
+
+    exit_code = cli.main(
+        [
+            "baseline",
+            "build",
+            "--run-ids",
+            "run20a,run20b,run60a",
+            "--name",
+            "medium_ender20_ender60_6run_blend",
+            "--promote-active",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["name"] == "medium_ender20_ender60_6run_blend"
+    assert payload["default_target"] == "target_ender_20"

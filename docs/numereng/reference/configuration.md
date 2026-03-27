@@ -50,7 +50,8 @@ Minimal example:
   "training": {
     "engine": {
       "profile": "purged_walk_forward"
-    }
+    },
+    "post_training_scoring": "none"
   }
 }
 ```
@@ -135,6 +136,26 @@ Current behavior:
 - `simple` requires split train/validation sources
 - `full_history_refit` is final-fit only and emits no validation metrics
 
+### `training.post_training_scoring`
+
+Allowed values:
+
+- `none` default
+- `core`
+- `full`
+- `round_core`
+- `round_full`
+
+Behavior:
+
+- `none` leaves post-training scoring deferred
+- `core` auto-materializes `post_training_core` after training
+- `full` auto-materializes inclusive `post_training_full` after training
+- `round_core` and `round_full` are experiment-only policies that defer single-run
+  scoring and instead trigger one round batch pass after the run is linked into
+  the experiment manifest
+- CLI or API overrides take precedence over the config value
+
 ### `training.resources`
 
 Important fields:
@@ -212,7 +233,8 @@ Minimal example:
 - `model.x_groups` and `model.data_needed` are feature-only by default
 - `model.x_groups` rejects `era`, `id`, and benchmark aliases
 - training always uses the materialized loader and the materialized scorer
-- `run train` automatically refreshes `post_training_core`; `run score --stage post_training_full` or `--stage all` adds the feature-heavy summary
+- `training.post_training_scoring` defaults to `none`; `run train` only auto-scores when the resolved policy is `core` or `full`
+- `round_core` and `round_full` require `experiment train` with an `rN_*` config stem
 - canonical FNC neutralizes to `fncv3_features` and then correlates against the scoring target being evaluated
 - benchmark and meta-model joins require strict era alignment
 - if `neutralization.enabled=true` in an HPO config, `neutralizer_path` is required

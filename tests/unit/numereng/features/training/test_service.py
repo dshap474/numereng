@@ -16,6 +16,8 @@ from numereng.features.scoring.models import (
     ScoringArtifactBundle,
 )
 from numereng.features.store import StoreError
+from numereng.features.telemetry import bind_launch_metadata
+from numereng.features.training import _pipeline as pipeline_module
 from numereng.features.training.errors import TrainingConfigError, TrainingError
 from numereng.features.training.strategies.core.protocol import TrainingEnginePlan
 
@@ -30,6 +32,12 @@ class _FakeClient:
     ) -> str:
         _ = (filename, round_num)
         return dest_path or filename
+
+
+@pytest.fixture(autouse=True)
+def _bind_training_launch_metadata() -> object:
+    with bind_launch_metadata(source="tests.training.service", operation_type="run", job_type="run"):
+        yield
 
 
 def test_resolve_model_config_requires_params() -> None:
@@ -141,7 +149,10 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
             "params": {"n_estimators": 10},
             "x_groups": ["features"],
         },
-        "training": {"engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8}},
+        "training": {
+            "engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8},
+            "post_training_scoring": "core",
+        },
     }
 
     full = pd.DataFrame(
@@ -407,6 +418,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         config_path=tmp_path / "config.json",
         output_dir=None,
         client=_FakeClient(),
+        post_training_scoring="core",
     )
 
     assert result.predictions_path == predictions_path
@@ -428,6 +440,8 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     engine_block = cast(dict[str, object], training_block["engine"])
     assert engine_block["mode"] == "purged_walk_forward"
     scoring_block = cast(dict[str, object], training_block["scoring"])
+    assert scoring_block["policy"] == "core"
+    assert scoring_block["status"] == "succeeded"
     assert scoring_block["requested_stage"] == "post_training_core"
     assert scoring_block["refreshed_stages"] == ["post_training_core"]
     assert scoring_block["emitted_stage_files"] == ["post_training_core_summary"]
@@ -447,8 +461,19 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     manifest_artifacts = cast(dict[str, object], run_manifest["artifacts"])
     assert manifest_artifacts["log"] == "run.log"
+    assert manifest_artifacts["runtime"] == "runtime.json"
     assert manifest_artifacts["score_provenance"] == "score_provenance.json"
     assert manifest_artifacts["scoring_manifest"] == "artifacts/scoring/manifest.json"
+    lifecycle_block = cast(dict[str, object], run_manifest["lifecycle"])
+    assert lifecycle_block["terminal_reason"] == "completed"
+    assert lifecycle_block["cancel_requested_at"] is None
+    assert lifecycle_block["reconciled"] is False
+    runtime_snapshot = json.loads((run_dir / "runtime.json").read_text(encoding="utf-8"))
+    assert runtime_snapshot["run_id"] == result.run_id
+    assert runtime_snapshot["status"] == "completed"
+    runtime_block = cast(dict[str, object], runtime_snapshot["runtime"])
+    assert runtime_block["current_stage"] == "finalize_manifest"
+    assert runtime_block["terminal_reason"] == "completed"
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert "run_started" in run_log
     assert "stage_update" in run_log
@@ -464,6 +489,56 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert manifest_statuses == ["RUNNING", "FINISHED"]
     assert indexed["store_root"] == store_root
     assert indexed["run_id"] == result.run_id
+
+
+def test_run_training_requires_launch_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = {
+        "data": {
+            "data_version": "v5.2",
+            "dataset_variant": "non_downsampled",
+            "feature_set": "small",
+            "target_col": "target",
+            "era_col": "era",
+            "id_col": "id",
+        },
+        "model": {
+            "type": "LGBMRegressor",
+            "params": {"n_estimators": 10},
+            "x_groups": ["features"],
+        },
+        "training": {"engine": {"profile": "simple"}},
+    }
+
+    monkeypatch.setattr(service_module, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        service_module,
+        "resolve_training_engine",
+        lambda **kwargs: TrainingEnginePlan(
+            mode="simple",
+            cv_config={"enabled": False},
+            resolved_config={"profile": "simple"},
+            override_sources=["default"],
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_output_locations",
+        lambda cfg, override, run_id: (
+            tmp_path / "store" / "runs" / run_id,
+            tmp_path / "baselines",
+            tmp_path / "store" / "runs" / run_id,
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "predictions",
+            tmp_path / "store" / "runs" / run_id / "artifacts" / "scoring",
+        ),
+    )
+    monkeypatch.setattr(pipeline_module, "get_launch_metadata", lambda: None)
+
+    with pytest.raises(TrainingError, match="training_launch_metadata_missing"):
+        service_module.run_training(
+            config_path=tmp_path / "config.json",
+            output_dir=None,
+            client=_FakeClient(),
+        )
 
 
 def test_run_training_submission_full_history_runs_post_training_scoring(
@@ -484,6 +559,7 @@ def test_run_training_submission_full_history_runs_post_training_scoring(
             "params": {"n_estimators": 10},
             "x_groups": ["features"],
         },
+        "training": {"post_training_scoring": "core"},
     }
 
     full = pd.DataFrame(
@@ -649,6 +725,7 @@ def test_run_training_submission_full_history_runs_post_training_scoring(
         config_path=tmp_path / "config.json",
         output_dir=None,
         client=_FakeClient(),
+        post_training_scoring="core",
     )
 
     assert result.predictions_path == predictions_path
@@ -1471,7 +1548,7 @@ def test_run_training_rejects_non_fresh_run_directory(
     assert not (run_dir / "run.json").exists()
 
 
-def test_run_training_scoring_failure_marks_run_failed(
+def test_run_training_scoring_failure_keeps_finished_run_and_records_failed_scoring(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1490,7 +1567,10 @@ def test_run_training_scoring_failure_marks_run_failed(
             "params": {"n_estimators": 10},
             "x_groups": ["features"],
         },
-        "training": {"engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8}},
+        "training": {
+            "engine": {"mode": "custom", "window_size_eras": 156, "embargo_eras": 8},
+            "post_training_scoring": "core",
+        },
     }
     full = pd.DataFrame(
         {
@@ -1592,18 +1672,137 @@ def test_run_training_scoring_failure_marks_run_failed(
 
     monkeypatch.setattr(service_module, "save_run_manifest", _record_manifest)
 
-    with pytest.raises(TrainingError, match="training_post_run_scoring_failed"):
-        service_module.run_training(
-            config_path=tmp_path / "config.json",
-            output_dir=None,
-            client=_FakeClient(),
-        )
+    result = service_module.run_training(
+        config_path=tmp_path / "config.json",
+        output_dir=None,
+        client=_FakeClient(),
+        post_training_scoring="core",
+    )
 
     run_dir = captured_run_dir["path"]
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert result.run_id
     assert scoring_called["value"] is True
-    assert run_manifest["status"] == "FAILED"
-    assert written_statuses == ["RUNNING", "FAILED"]
+    assert run_manifest["status"] == "FINISHED"
+    assert written_statuses == ["RUNNING", "FINISHED"]
+    scoring_block = cast(dict[str, object], cast(dict[str, object], run_manifest["training"])["scoring"])
+    assert scoring_block["policy"] == "core"
+    assert scoring_block["status"] == "failed"
+    assert scoring_block["requested_stage"] == "post_training_core"
+    assert scoring_block["reason"] == "post_training_scoring_failed"
+    assert scoring_block["error"] == "score boom"
+    metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics_payload["status"] == "failed"
+    assert metrics_payload["reason"] == "post_training_scoring_failed"
     assert "post_run_scoring_failed" in run_log
-    assert "run_failed" in run_log
+    assert "run_completed" in run_log
+
+
+def test_run_training_defaults_post_training_scoring_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = {
+        "data": {
+            "data_version": "v5.2",
+            "dataset_variant": "non_downsampled",
+            "feature_set": "small",
+            "target_col": "target",
+            "era_col": "era",
+            "id_col": "id",
+        },
+        "model": {
+            "type": "LGBMRegressor",
+            "params": {"n_estimators": 10},
+            "x_groups": ["features"],
+        },
+        "training": {"engine": {"profile": "full_history_refit"}},
+    }
+    full = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "feature_1": [1.0]})
+    predictions = pd.DataFrame({"id": ["a"], "era": ["era1"], "target": [0.1], "prediction": [0.2]})
+    store_root = tmp_path / "store"
+    run_scoring_called = {"value": False}
+
+    monkeypatch.setattr(service_module, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        service_module,
+        "resolve_training_engine",
+        lambda **kwargs: TrainingEnginePlan(
+            mode="full_history_refit",
+            cv_config={
+                "enabled": False,
+                "mode": "full_history_refit",
+                "n_splits": 0,
+                "embargo": 0,
+                "min_train_size": 0,
+                "max_train_eras": None,
+            },
+            resolved_config={"mode": "full_history_refit"},
+            override_sources=["default"],
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_output_locations",
+        lambda cfg, override, run_id: (
+            store_root / "runs" / run_id,
+            tmp_path / "baselines",
+            store_root / "runs" / run_id,
+            store_root / "runs" / run_id / "artifacts" / "predictions",
+            store_root / "runs" / run_id / "artifacts" / "scoring",
+        ),
+    )
+    monkeypatch.setattr(service_module, "load_features", lambda *args, **kwargs: ["feature_1"])
+    monkeypatch.setattr(service_module, "load_full_data", lambda *args, **kwargs: full)
+    monkeypatch.setattr(service_module, "build_model_data_loader", lambda **kwargs: object())
+    monkeypatch.setattr(
+        service_module,
+        "build_full_history_predictions",
+        lambda *args, **kwargs: (
+            predictions,
+            {
+                "n_splits": 0,
+                "embargo": 0,
+                "mode": "full_history_refit",
+                "min_train_size": 0,
+                "max_train_eras": None,
+                "folds_used": 1,
+                "folds": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(service_module, "select_prediction_columns", lambda df, id_col, era_col, target_col: df)
+    monkeypatch.setattr(
+        service_module,
+        "save_predictions",
+        lambda predictions, config, config_path, predictions_dir, output_dir: (
+            output_dir / "artifacts" / "predictions" / "run.parquet",
+            Path("predictions/run.parquet"),
+        ),
+    )
+    monkeypatch.setattr(
+        service_module,
+        "run_scoring",
+        lambda **kwargs: run_scoring_called.__setitem__("value", True),  # pragma: no cover - should not run
+    )
+    monkeypatch.setattr(
+        service_module,
+        "resolve_results_path",
+        lambda cfg, path, results_dir: results_dir / "run.json",
+    )
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    result = service_module.run_training(
+        config_path=tmp_path / "config.json",
+        output_dir=None,
+        client=_FakeClient(),
+    )
+
+    run_dir = store_root / "runs" / result.run_id
+    run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    scoring_block = cast(dict[str, object], cast(dict[str, object], run_manifest["training"])["scoring"])
+    assert run_scoring_called["value"] is False
+    assert scoring_block["policy"] == "none"
+    assert scoring_block["status"] == "deferred"
+    assert scoring_block["reason"] == "post_training_scoring_disabled"

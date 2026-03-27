@@ -6,9 +6,9 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-RunStatus = Literal["RUNNING", "FINISHED", "FAILED"]
+RunStatus = Literal["RUNNING", "FINISHED", "FAILED", "CANCELED", "STALE"]
 
 RUN_MANIFEST_SCHEMA_VERSION = "1"
 
@@ -71,6 +71,7 @@ def build_run_manifest(
     metrics_summary: dict[str, object] | None = None,
     error: dict[str, str] | None = None,
     training_metadata: dict[str, object] | None = None,
+    lifecycle_metadata: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Build minimal v1 training run manifest payload."""
     created = created_at or _utc_now_iso()
@@ -104,12 +105,14 @@ def build_run_manifest(
     }
     if experiment_id:
         manifest["experiment_id"] = experiment_id
-    if status in {"FINISHED", "FAILED"}:
+    if status in {"FINISHED", "FAILED", "CANCELED", "STALE"}:
         manifest["finished_at"] = _utc_now_iso()
     if metrics_summary:
         manifest["metrics_summary"] = metrics_summary
     if error:
         manifest["error"] = error
+    if lifecycle_metadata:
+        manifest["lifecycle"] = lifecycle_metadata
     return manifest
 
 

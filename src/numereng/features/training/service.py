@@ -11,11 +11,12 @@ from typing import cast
 
 import pandas as pd
 
+from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,  # noqa: F401
     load_custom_benchmark_predictions,  # noqa: F401
 )
-from numereng.features.scoring.models import BenchmarkSource, ResolvedScoringPolicy
+from numereng.features.scoring.models import BenchmarkSource, CanonicalScoringStage, ResolvedScoringPolicy
 from numereng.features.scoring.service import run_post_training_scoring, run_scoring  # noqa: F401
 from numereng.features.store import index_run  # noqa: F401
 from numereng.features.telemetry import (
@@ -25,6 +26,8 @@ from numereng.features.telemetry import (
     capture_local_resource_sample,
     emit_metric_event,
     emit_stage_event,
+    is_cancel_requested,
+    mark_job_canceled,
     mark_job_completed,
     mark_job_failed,
 )
@@ -33,7 +36,7 @@ from numereng.features.training.cv import (
     build_full_history_predictions,  # noqa: F401
     build_oof_predictions,  # noqa: F401
 )
-from numereng.features.training.errors import TrainingConfigError, TrainingError
+from numereng.features.training.errors import TrainingCanceledError, TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run  # noqa: F401
 from numereng.features.training.models import (
     TrainingRunResult,
@@ -93,6 +96,13 @@ _PURGED_WALK_FORWARD_PROFILE: TrainingProfile = "purged_walk_forward"
 _FULL_HISTORY_REFIT_PROFILE: TrainingProfile = "full_history_refit"
 
 logger = logging.getLogger(__name__)
+_POST_TRAINING_SCORING_STAGE_BY_POLICY: dict[PostTrainingScoringPolicy, CanonicalScoringStage | None] = {
+    "none": None,
+    "core": "post_training_core",
+    "full": "post_training_full",
+    "round_core": "post_training_core",
+    "round_full": "post_training_full",
+}
 
 
 def resolve_model_config(model_config: dict[str, object]) -> tuple[str, dict[str, object]]:
@@ -285,16 +295,58 @@ def build_results_payload(
     }
 
 
+def resolve_post_training_scoring_policy(
+    *,
+    training_config: dict[str, object],
+    override: PostTrainingScoringPolicy | None = None,
+) -> PostTrainingScoringPolicy:
+    """Resolve one post-training scoring policy from override or config."""
+    if override is not None:
+        return override
+
+    raw_value = training_config.get("post_training_scoring")
+    if raw_value is None:
+        return "none"
+    return cast(PostTrainingScoringPolicy, str(raw_value))
+
+
+def resolve_post_training_scoring_policy_from_config(
+    *,
+    config_path: str | Path,
+    override: PostTrainingScoringPolicy | None = None,
+) -> PostTrainingScoringPolicy:
+    """Resolve one post-training scoring policy directly from a config file."""
+    if override is not None:
+        return override
+    config = load_config(Path(config_path).expanduser().resolve())
+    training_config = _as_dict(config.get("training"))
+    return resolve_post_training_scoring_policy(training_config=training_config)
+
+
+def post_training_scoring_requested_stage(
+    policy: PostTrainingScoringPolicy,
+) -> CanonicalScoringStage | None:
+    """Map one post-training scoring policy to the requested scoring stage."""
+    return _POST_TRAINING_SCORING_STAGE_BY_POLICY[policy]
+
+
+def is_round_post_training_scoring_policy(policy: PostTrainingScoringPolicy) -> bool:
+    """Return whether one policy defers to experiment-round batch scoring."""
+    return policy in {"round_core", "round_full"}
+
+
 def run_training(
     *,
     config_path: str | Path,
     output_dir: str | Path | None = None,
     client: TrainingDataClient | None = None,
     profile: TrainingProfile | None = None,
+    post_training_scoring: PostTrainingScoringPolicy | None = None,
     engine_mode: str | None = None,
     window_size_eras: int | None = None,
     embargo_eras: int | None = None,
     experiment_id: str | None = None,
+    allow_round_batch_post_training_scoring: bool = False,
 ) -> TrainingRunResult:
     """Run full training pipeline and return predictions/results artifact paths."""
     from numereng.features.training import _pipeline as pipeline_module
@@ -324,10 +376,13 @@ def run_training(
         "load_full_data",
         "maybe_log_training_run",
         "normalize_x_groups",
+        "is_round_post_training_scoring_policy",
+        "post_training_scoring_requested_stage",
         "resolve_fold_lazy_source_paths",
         "resolve_metrics_path",
         "resolve_model_config",
         "resolve_output_locations",
+        "resolve_post_training_scoring_policy",
         "resolve_resolved_config_path",
         "resolve_results_path",
         "resolve_run_manifest_path",
@@ -351,10 +406,12 @@ def run_training(
         output_dir=output_dir,
         client=client,
         profile=profile,
+        post_training_scoring=post_training_scoring,
         engine_mode=engine_mode,
         window_size_eras=window_size_eras,
         embargo_eras=embargo_eras,
         experiment_id=experiment_id,
+        allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
     )
 
 
@@ -366,6 +423,7 @@ def _record_telemetry_stage(
     message: str,
     run_log_path: Path | None,
     attempt_id: str,
+    extra_payload: dict[str, object] | None = None,
 ) -> None:
     log_stage(run_log_path, stage_name=stage_name, message=message, attempt_id=attempt_id)
 
@@ -375,6 +433,7 @@ def _record_telemetry_stage(
                 session,
                 current_stage=stage_name,
                 completed_stages=list(completed_stages),
+                extra_payload=extra_payload,
             )
             append_log_line(session, stream="stdout", line=f"[stage] {stage_name} :: {message}")
             append_resource_sample(session, sample=capture_local_resource_sample())
@@ -455,6 +514,39 @@ def _mark_telemetry_completed(
             logger.exception("failed to mark telemetry completion for run_id=%s", run_id)
 
 
+def _mark_telemetry_canceled(
+    session: LocalRunTelemetrySession | None,
+    *,
+    run_id: str,
+    message: str,
+    run_log_path: Path | None,
+    attempt_id: str,
+    cancel_requested_at: str | None,
+    terminal_reason: str,
+    terminal_detail: dict[str, object] | None = None,
+) -> None:
+    log_error(
+        run_log_path,
+        event="run_canceled",
+        message=f"run_id={run_id} reason={message}",
+        attempt_id=attempt_id,
+    )
+    if session is not None:
+        try:
+            mark_job_canceled(
+                session,
+                terminal_reason=terminal_reason,
+                terminal_detail={
+                    "message": message,
+                    "cancel_requested_at": cancel_requested_at,
+                    **(terminal_detail or {}),
+                },
+            )
+            append_log_line(session, stream="stderr", line=f"[telemetry] canceled run {run_id}: {message}")
+        except Exception:
+            logger.exception("failed to mark telemetry cancellation for run_id=%s", run_id)
+
+
 def _mark_telemetry_failed(
     session: LocalRunTelemetrySession | None,
     *,
@@ -463,6 +555,8 @@ def _mark_telemetry_failed(
     message: str,
     run_log_path: Path | None,
     attempt_id: str,
+    terminal_reason: str = "failed",
+    terminal_detail: dict[str, object] | None = None,
 ) -> None:
     log_error(
         run_log_path,
@@ -475,10 +569,39 @@ def _mark_telemetry_failed(
             mark_job_failed(
                 session,
                 error=error,
+                terminal_reason=terminal_reason,
+                terminal_detail=terminal_detail,
             )
             append_log_line(session, stream="stderr", line=f"[telemetry] failed run {run_id}: {message}")
         except Exception:
             logger.exception("failed to mark telemetry failure for run_id=%s", run_id)
+
+
+def _lifecycle_manifest_payload(
+    *,
+    terminal_reason: str,
+    cancel_requested_at: str | None = None,
+    terminal_detail: dict[str, object] | None = None,
+    reconciled: bool = False,
+) -> dict[str, object]:
+    return {
+        "terminal_reason": terminal_reason,
+        "terminal_detail": terminal_detail or {},
+        "cancel_requested_at": cancel_requested_at,
+        "reconciled": reconciled,
+    }
+
+
+def _raise_if_cancel_requested(
+    session: LocalRunTelemetrySession | None,
+    *,
+    stage_name: str,
+) -> None:
+    if session is None:
+        return
+    if not is_cancel_requested(session):
+        return
+    raise TrainingCanceledError(f"training_run_canceled:{stage_name}")
 
 
 def _telemetry_metric_payload(metrics_payload: dict[str, object]) -> dict[str, object]:

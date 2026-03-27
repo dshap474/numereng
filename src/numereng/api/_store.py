@@ -15,6 +15,8 @@ from numereng.api.contracts import (
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunLifecycleRepairRequest,
+    StoreRunLifecycleRepairResponse,
 )
 from numereng.features.store import StoreError
 from numereng.platform.errors import PackageError
@@ -133,10 +135,38 @@ def store_materialize_viz_artifacts(
     )
 
 
+def store_repair_run_lifecycles(
+    request: StoreRunLifecycleRepairRequest | None = None,
+) -> StoreRunLifecycleRepairResponse:
+    """Sweep local lifecycle rows and reconcile stale/orphaned active runs."""
+    from numereng import api as api_module
+
+    resolved_request = StoreRunLifecycleRepairRequest() if request is None else request
+    try:
+        result = api_module.reconcile_run_lifecycles_record(
+            store_root=resolved_request.store_root,
+            run_id=resolved_request.run_id,
+            active_only=resolved_request.active_only,
+        )
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+
+    return StoreRunLifecycleRepairResponse(
+        store_root=str(result.store_root),
+        scanned_count=result.scanned_count,
+        unchanged_count=result.unchanged_count,
+        reconciled_count=result.reconciled_count,
+        reconciled_stale_count=result.reconciled_stale_count,
+        reconciled_canceled_count=result.reconciled_canceled_count,
+        run_ids=list(result.run_ids),
+    )
+
+
 __all__ = [
     "store_doctor",
     "store_index_run",
     "store_init",
     "store_materialize_viz_artifacts",
+    "store_repair_run_lifecycles",
     "store_rebuild",
 ]

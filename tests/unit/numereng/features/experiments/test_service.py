@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,18 @@ def _write_run_artifacts(
         (run_dir / "score_provenance.json").write_text(json.dumps(score_provenance))
 
 
+def _write_training_config(path: Path, *, post_training_scoring: str | None = None) -> None:
+    payload: dict[str, object] = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+        "model": {"type": "LGBMRegressor", "params": {}},
+        "training": {},
+    }
+    if post_training_scoring is not None:
+        payload["training"] = {"post_training_scoring": post_training_scoring}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_create_experiment_writes_manifest_and_indexes_db(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
 
@@ -60,7 +73,22 @@ def test_create_experiment_writes_manifest_and_indexes_db(tmp_path: Path) -> Non
     )
 
     manifest_path = store_root / "experiments" / "2026-02-22_test-exp" / "experiment.json"
+    experiment_dir = manifest_path.parent
     assert manifest_path.is_file()
+    assert (experiment_dir / "configs").is_dir()
+    assert (experiment_dir / "run_scripts").is_dir()
+    launch_all_py = experiment_dir / "run_scripts" / "launch_all.py"
+    assert launch_all_py.is_file()
+    assert (experiment_dir / "run_scripts" / "launch_all.sh").is_file()
+    assert (experiment_dir / "run_scripts" / "launch_all.ps1").is_file()
+    assert (experiment_dir / "run_plan.csv").read_text(encoding="utf-8") == (
+        "plan_index,round,seed,target,horizon,config_path,score_stage_default\n"
+    )
+    experiment_doc = (experiment_dir / "EXPERIMENT.md").read_text(encoding="utf-8")
+    assert 'EXPERIMENT_ID = "2026-02-22_test-exp"' in launch_all_py.read_text(encoding="utf-8")
+    assert "## Round Log" in experiment_doc
+    assert "run_scripts/launch_all.sh" in experiment_doc
+    assert "uv run numereng experiment train --id 2026-02-22_test-exp" in experiment_doc
     assert record.experiment_id == "2026-02-22_test-exp"
     assert record.status == "draft"
     assert record.tags == ("quick", "baseline")
@@ -91,6 +119,24 @@ def test_create_experiment_fails_when_existing(tmp_path: Path) -> None:
         service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
 
 
+def test_create_experiment_generated_launcher_supports_external_store_root(tmp_path: Path) -> None:
+    store_root = tmp_path / "external-store"
+    service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
+
+    launcher_path = store_root / "experiments" / "2026-02-22_test-exp" / "run_scripts" / "launch_all.py"
+    repo_root = Path(__file__).resolve().parents[5]
+    result = subprocess.run(
+        ["uv", "run", "python", str(launcher_path), "--help"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "--score-stage" in result.stdout
+
+
 def test_train_experiment_appends_run_and_sets_active(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -99,19 +145,22 @@ def test_train_experiment_appends_run_and_sets_active(
     service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
 
     config_path = tmp_path / "run.json"
-    config_path.write_text("{}")
+    _write_training_config(config_path)
 
     def fake_run_training(
         *,
         config_path: str | Path,
         output_dir: str | Path | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
         experiment_id: str | None,
+        allow_round_batch_post_training_scoring: bool,
     ) -> TrainingRunResult:
         _ = (
             config_path,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -119,6 +168,7 @@ def test_train_experiment_appends_run_and_sets_active(
         assert output_dir is not None
         assert Path(output_dir) == store_root
         assert experiment_id == "2026-02-22_test-exp"
+        assert allow_round_batch_post_training_scoring is True
         return TrainingRunResult(
             run_id="run-123",
             predictions_path=Path("/tmp/preds.parquet"),
@@ -155,7 +205,7 @@ def test_train_experiment_rejects_mismatched_output_dir(tmp_path: Path) -> None:
     service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
 
     config_path = tmp_path / "run.json"
-    config_path.write_text("{}")
+    _write_training_config(config_path)
 
     with pytest.raises(ExperimentValidationError, match="experiment_output_dir_must_match_store_root"):
         service_module.train_experiment(
@@ -170,7 +220,7 @@ def test_train_experiment_wraps_index_errors(monkeypatch: pytest.MonkeyPatch, tm
     store_root = tmp_path / ".numereng"
     service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
     config_path = tmp_path / "run.json"
-    config_path.write_text("{}")
+    _write_training_config(config_path)
 
     monkeypatch.setattr(
         service_module,
@@ -193,6 +243,174 @@ def test_train_experiment_wraps_index_errors(monkeypatch: pytest.MonkeyPatch, tm
             experiment_id="2026-02-22_test-exp",
             config_path=config_path,
         )
+
+
+def test_train_experiment_round_post_training_scoring_triggers_round_batch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    config_path = store_root / "experiments" / experiment_id / "configs" / "r2_target_a_seed42.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"post_training_scoring": "round_full"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        service_module,
+        "run_training",
+        lambda **kwargs: TrainingRunResult(
+            run_id="run-123",
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+        ),
+    )
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+    scored_rounds: list[tuple[str, str]] = []
+
+    def fake_score_round(*, store_root: str | Path, experiment_id: str, round: str, stage: str) -> object:
+        _ = (store_root, experiment_id)
+        scored_rounds.append((round, stage))
+        return object()
+
+    monkeypatch.setattr(service_module, "score_experiment_round", fake_score_round)
+
+    result = service_module.train_experiment(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        config_path=config_path,
+    )
+
+    assert result.run_id == "run-123"
+    assert scored_rounds == [("r2", "post_training_full")]
+
+
+def test_train_experiment_round_post_training_scoring_requires_round_config(
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    config_path = tmp_path / "not_a_round.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"post_training_scoring": "round_core"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ExperimentValidationError, match="experiment_round_post_training_scoring_requires_round_config"):
+        service_module.train_experiment(
+            store_root=store_root,
+            experiment_id=experiment_id,
+            config_path=config_path,
+        )
+
+
+def test_train_experiment_round_batch_failure_is_recorded_and_training_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+    config_path = store_root / "experiments" / experiment_id / "configs" / "r1_target_a_seed42.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"post_training_scoring": "round_core"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_dir = store_root / "runs" / "run-123"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-123",
+                "status": "FINISHED",
+                "training": {
+                    "scoring": {
+                        "policy": "round_core",
+                        "status": "deferred",
+                        "requested_stage": "post_training_core",
+                        "refreshed_stages": [],
+                        "reason": "experiment_round_batch_pending",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "results.json").write_text(
+        json.dumps(
+            {
+                "metrics": {"status": "deferred", "reason": "experiment_round_batch_pending"},
+                "training": {
+                    "scoring": {
+                        "policy": "round_core",
+                        "status": "deferred",
+                        "requested_stage": "post_training_core",
+                        "refreshed_stages": [],
+                        "reason": "experiment_round_batch_pending",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "metrics.json").write_text(
+        json.dumps({"status": "deferred", "reason": "experiment_round_batch_pending"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        service_module,
+        "run_training",
+        lambda **kwargs: TrainingRunResult(
+            run_id="run-123",
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+        ),
+    )
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+    monkeypatch.setattr(
+        service_module,
+        "score_experiment_round",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("batch boom")),
+    )
+
+    result = service_module.train_experiment(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        config_path=config_path,
+    )
+
+    assert result.run_id == "run-123"
+    updated_run = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    updated_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    assert updated_run["training"]["scoring"]["status"] == "failed"
+    assert updated_results["training"]["scoring"]["status"] == "failed"
+    assert updated_results["metrics"]["status"] == "failed"
+    run_log = (run_dir / "run.log").read_text(encoding="utf-8")
+    assert "post_training_round_batch_failed" in run_log
 
 
 def test_score_experiment_round_resolves_round_run_ids(
@@ -747,7 +965,7 @@ def test_train_and_promote_reject_archived_experiment(
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
     config_path = tmp_path / "run.json"
-    config_path.write_text("{}")
+    _write_training_config(config_path)
     service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
 
     monkeypatch.setattr(

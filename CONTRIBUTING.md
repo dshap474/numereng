@@ -4,7 +4,7 @@ Thanks for contributing.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.12+
 - `uv`
 - Node.js 20+ (only needed for `make viz`)
 
@@ -31,6 +31,9 @@ Optional extras:
 ## Common checks
 
 ```bash
+# install the canonical local environment
+just bootstrap
+
 # auto-fix lint issues and normalize formatting
 make fmt
 
@@ -46,6 +49,13 @@ make test-all
 # build package artifacts
 uv build
 ```
+
+Factory-native repo context now lives in:
+
+- `AGENTS.md`
+- `.factory/memories.md`
+- `.factory/rules/*`
+- `.factory/skills/*`
 
 For targeted work, prefer direct `uv run` commands:
 

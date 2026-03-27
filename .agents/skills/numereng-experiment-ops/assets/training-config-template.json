@@ -64,7 +64,8 @@
         "cache_features": true,
         "cache_labels": true,
         "cache_fold_matrices": false
-      }
+      },
+      "post_training_scoring": "none"
     },
     "output": {
       "output_dir": null,
@@ -527,6 +528,17 @@
           true,
           false
         ]
+      },
+      "post_training_scoring": {
+        "allowed_values": [
+          "none",
+          "core",
+          "full",
+          "round_core",
+          "round_full"
+        ],
+        "default": "none",
+        "note": "Use `none` for deferred scoring, `core` or `full` for one-run post-train scoring, and `round_core` or `round_full` only on the last `rN_*` config in an experiment round."
       }
     },
     "output": {

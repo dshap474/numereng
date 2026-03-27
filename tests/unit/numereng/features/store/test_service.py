@@ -78,6 +78,7 @@ def test_init_store_db_creates_required_tables(tmp_path: Path) -> None:
     assert "run_job_events" in tables
     assert "run_job_logs" in tables
     assert "run_job_samples" in tables
+    assert "run_lifecycles" in tables
     assert "logical_runs" in tables
     assert "run_attempts" in tables
     assert "cloud_jobs" in tables
