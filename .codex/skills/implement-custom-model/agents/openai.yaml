@@ -1,0 +1,8 @@
+name: "skill:ImplementCustomModel"
+
+interface:
+  display_name: "skill:ImplementCustomModel"
+  default_prompt: "Use the implement-custom-model skill to add or update a numereng custom model plugin using the existing wrapper, factory, and test patterns."
+
+policy:
+  allow_implicit_invocation: true

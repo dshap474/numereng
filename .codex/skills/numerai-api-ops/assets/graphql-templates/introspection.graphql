@@ -1,0 +1,46 @@
+query IntrospectRootFields {
+  __schema {
+    queryType {
+      name
+      fields {
+        name
+        args {
+          name
+          type {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+    mutationType {
+      name
+      fields {
+        name
+        args {
+          name
+          type {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+query ClassicLeaderboard($limit: Int!, $offset: Int!) {
+  v2Leaderboard(limit: $limit, offset: $offset) {
+    rank
+    username
+    nmrStaked
+    corr20Rep
+    mmcRep
+    fncV3Rep
+  }
+}
+
+query SignalsLeaderboard($limit: Int!, $offset: Int!) {
+  signalsLeaderboard(limit: $limit, offset: $offset) {
+    rank
+    prevRank
+    username
+    sharpe
+    mmc
+    nmrStaked
+  }
+}
+
+query CryptoLeaderboard($limit: Int!, $offset: Int!) {
+  cryptosignalsLeaderboard(limit: $limit, offset: $offset) {
+    rank
+    username
+    nmrStaked
+    corrRep
+    mmcRep
+    return_1_day
+  }
+}
+
+query AccountLeaderboard($limit: Int!, $offset: Int!, $tournament: Int) {
+  accountLeaderboard(limit: $limit, offset: $offset, tournament: $tournament) {
+    rank
+    username
+    nmrStaked
+    reputation
+  }
+}
