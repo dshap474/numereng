@@ -7,7 +7,6 @@ import argparse
 import csv
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,9 +42,7 @@ RUN_PLAN_PATH = EXPERIMENT_DIR / "run_plan.csv"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run one experiment run_plan and batch-score each completed round."
-    )
+    parser = argparse.ArgumentParser(description="Run one experiment run_plan and batch-score each completed round.")
     parser.add_argument(
         "--start-index",
         type=int,

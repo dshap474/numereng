@@ -13,11 +13,12 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -26,10 +27,10 @@ VENDOR_NUMERAPI_ROOT = REPO_ROOT / "vendor" / "numerapi"
 if str(VENDOR_NUMERAPI_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDOR_NUMERAPI_ROOT))
 
-from numerapi.base_api import API_TOURNAMENT_URL  # type: ignore
-from numerapi.cryptoapi import CryptoAPI  # type: ignore
-from numerapi.numerapi import NumerAPI  # type: ignore
-from numerapi.signalsapi import SignalsAPI  # type: ignore
+from numerapi.base_api import API_TOURNAMENT_URL  # type: ignore  # noqa: E402
+from numerapi.cryptoapi import CryptoAPI  # type: ignore  # noqa: E402
+from numerapi.numerapi import NumerAPI  # type: ignore  # noqa: E402
+from numerapi.signalsapi import SignalsAPI  # type: ignore  # noqa: E402
 
 GRAPHQL_ENDPOINT = API_TOURNAMENT_URL
 DEFAULT_TIMEOUT = 600
@@ -821,9 +822,7 @@ def graphql_request(
     try:
         response.raise_for_status()
     except requests.HTTPError as exc:
-        raise ValueError(
-            f"GraphQL HTTP error {response.status_code}: {response.text}"
-        ) from exc
+        raise ValueError(f"GraphQL HTTP error {response.status_code}: {response.text}") from exc
     payload = response.json()
     if "errors" in payload:
         raise ValueError(payload["errors"])
@@ -879,7 +878,9 @@ def run_list_tournaments(args: dict[str, Any], auth_header: str | None, dry_run:
     plan = {"query": LIST_TOURNAMENTS_QUERY.strip(), "variables": {}}
     if dry_run:
         return dry_run_output(OPERATIONS["list_tournaments"], args, plan)
-    return {"result": graphql_request(LIST_TOURNAMENTS_QUERY, auth_required=False, auth_header=auth_header)["tournaments"]}
+    return {
+        "result": graphql_request(LIST_TOURNAMENTS_QUERY, auth_required=False, auth_header=auth_header)["tournaments"]
+    }
 
 
 def run_get_round_details(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
@@ -887,7 +888,11 @@ def run_get_round_details(args: dict[str, Any], auth_header: str | None, dry_run
     plan = {"query": ROUND_DETAILS_QUERY.strip(), "variables": variables}
     if dry_run:
         return dry_run_output(OPERATIONS["get_round_details"], args, plan)
-    return {"result": graphql_request(ROUND_DETAILS_QUERY, variables, auth_required=False, auth_header=auth_header)["roundDetails"]}
+    return {
+        "result": graphql_request(ROUND_DETAILS_QUERY, variables, auth_required=False, auth_header=auth_header)[
+            "roundDetails"
+        ]
+    }
 
 
 def run_check_api_credentials(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
@@ -926,7 +931,11 @@ def run_list_compute_pickles(args: dict[str, Any], auth_header: str | None, dry_
     plan = {"query": COMPUTE_PICKLES_QUERY.strip(), "variables": variables}
     if dry_run:
         return dry_run_output(OPERATIONS["list_compute_pickles"], args, plan)
-    return {"result": graphql_request(COMPUTE_PICKLES_QUERY, variables, auth_required=True, auth_header=auth_header)["computePickles"]}
+    return {
+        "result": graphql_request(COMPUTE_PICKLES_QUERY, variables, auth_required=True, auth_header=auth_header)[
+            "computePickles"
+        ]
+    }
 
 
 def run_assign_compute_pickle(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
@@ -970,7 +979,11 @@ def run_get_trigger_logs(args: dict[str, Any], auth_header: str | None, dry_run:
     plan = {"query": TRIGGER_LOGS_QUERY.strip(), "variables": variables}
     if dry_run:
         return dry_run_output(OPERATIONS["get_trigger_logs"], args, plan)
-    return {"result": graphql_request(TRIGGER_LOGS_QUERY, variables, auth_required=True, auth_header=auth_header)["triggerLogs"]}
+    return {
+        "result": graphql_request(TRIGGER_LOGS_QUERY, variables, auth_required=True, auth_header=auth_header)[
+            "triggerLogs"
+        ]
+    }
 
 
 def run_get_diagnostics_trigger_logs(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
