@@ -557,6 +557,18 @@
         "engine": {
           "$ref": "#/$defs/TrainingEngineConfig"
         },
+        "post_training_scoring": {
+          "default": "none",
+          "enum": [
+            "none",
+            "core",
+            "full",
+            "round_core",
+            "round_full"
+          ],
+          "title": "Post Training Scoring",
+          "type": "string"
+        },
         "resources": {
           "$ref": "#/$defs/TrainingResourcesConfig"
         }

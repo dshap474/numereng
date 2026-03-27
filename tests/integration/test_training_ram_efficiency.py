@@ -125,6 +125,7 @@ def _build_training_config(
     dataset: _SyntheticDataset,
     store_root: Path,
     parallel_folds: int,
+    post_training_scoring: str = "none",
 ) -> dict[str, object]:
     data_block: dict[str, object] = {
         "data_version": "v5.2",
@@ -164,6 +165,7 @@ def _build_training_config(
             "engine": {
                 "profile": "simple",
             },
+            "post_training_scoring": post_training_scoring,
             "resources": {
                 "parallel_folds": parallel_folds,
                 "parallel_backend": "joblib",
@@ -202,6 +204,7 @@ def test_run_training_materialized_smoke_indexes_and_writes_artifacts(
         dataset=dataset,
         store_root=store_root,
         parallel_folds=1,
+        post_training_scoring="core",
     )
     _write_config(config_path, config_payload)
 
@@ -221,6 +224,7 @@ def test_run_training_materialized_smoke_indexes_and_writes_artifacts(
 
     run_dir = store_root / "runs" / response.run_id
     assert (run_dir / "run.json").is_file()
+    assert (run_dir / "runtime.json").is_file()
     assert (run_dir / "resolved.json").is_file()
     assert (run_dir / "results.json").is_file()
     assert (run_dir / "metrics.json").is_file()
@@ -229,8 +233,15 @@ def test_run_training_materialized_smoke_indexes_and_writes_artifacts(
 
     run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert run_manifest["status"] == "FINISHED"
+    lifecycle_block = cast(dict[str, object], run_manifest["lifecycle"])
+    assert lifecycle_block["terminal_reason"] == "completed"
+    runtime_snapshot = json.loads((run_dir / "runtime.json").read_text(encoding="utf-8"))
+    assert runtime_snapshot["run_id"] == response.run_id
+    assert runtime_snapshot["status"] == "completed"
     training_block = cast(dict[str, object], run_manifest["training"])
     scoring_block = cast(dict[str, object], training_block["scoring"])
+    assert scoring_block["policy"] == "core"
+    assert scoring_block["status"] == "succeeded"
     assert scoring_block["requested_stage"] == "post_training_core"
     assert "post_training_core" in cast(list[str], scoring_block["refreshed_stages"])
     run_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
@@ -245,9 +256,66 @@ def test_run_training_materialized_smoke_indexes_and_writes_artifacts(
             "SELECT run_id, status FROM runs WHERE run_id = ?",
             (response.run_id,),
         ).fetchone()
+        lifecycle_row = conn.execute(
+            "SELECT status, current_stage, terminal_reason FROM run_lifecycles WHERE run_id = ?",
+            (response.run_id,),
+        ).fetchone()
     assert row is not None
     assert row[0] == response.run_id
     assert row[1] == "FINISHED"
+    assert lifecycle_row is not None
+    assert lifecycle_row[0] == "completed"
+    assert lifecycle_row[1] == "finalize_manifest"
+    assert lifecycle_row[2] == "completed"
+
+
+@pytest.mark.integration
+def test_run_training_defaults_post_training_scoring_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    dataset = _build_synthetic_dataset(tmp_path, n_eras=6, rows_per_era=120, n_features=6, seed=19)
+    store_root = tmp_path / ".numereng"
+    _write_features_metadata(tmp_path, dataset.features)
+    _stage_default_dataset_root(tmp_path, dataset)
+
+    config_path = tmp_path / "train_default_none.json"
+    _write_config(
+        config_path,
+        _build_training_config(
+            dataset=dataset,
+            store_root=store_root,
+            parallel_folds=1,
+        ),
+    )
+
+    monkeypatch.setattr(training_service_module, "create_training_data_client", lambda: _NoDownloadClient())
+    monkeypatch.setattr(
+        training_service_module,
+        "load_features",
+        lambda client, data_version, feature_set, dataset_variant="non_downsampled": dataset.features,
+    )
+
+    response = api_module.run_training(
+        TrainRunRequest(
+            config_path=str(config_path),
+            output_dir=str(store_root),
+        )
+    )
+
+    run_dir = store_root / "runs" / response.run_id
+    run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    scoring_block = cast(dict[str, object], cast(dict[str, object], run_manifest["training"])["scoring"])
+    assert scoring_block["policy"] == "none"
+    assert scoring_block["status"] == "deferred"
+    assert scoring_block["reason"] == "post_training_scoring_disabled"
+    assert scoring_block["requested_stage"] is None
+    assert cast(list[str], scoring_block["refreshed_stages"]) == []
+    metrics_payload = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics_payload["status"] == "deferred"
+    assert metrics_payload["reason"] == "post_training_scoring_disabled"
+    assert not (run_dir / "score_provenance.json").exists()
 
 
 @pytest.mark.integration
@@ -331,6 +399,7 @@ def test_parallel_memmap_outputs_match_single_worker(
             dataset=dataset,
             store_root=store_root,
             parallel_folds=1,
+            post_training_scoring="core",
         ),
     )
     _write_config(
@@ -339,6 +408,7 @@ def test_parallel_memmap_outputs_match_single_worker(
             dataset=dataset,
             store_root=store_root,
             parallel_folds=2,
+            post_training_scoring="core",
         ),
     )
 

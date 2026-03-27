@@ -1,7 +1,9 @@
 """Public surface for training feature services."""
 
+from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.scoring.run_service import score_run
 from numereng.features.training.errors import (
+    TrainingCanceledError,
     TrainingConfigError,
     TrainingDataError,
     TrainingError,
@@ -14,6 +16,8 @@ from numereng.features.training.strategies import TrainingEngineMode, TrainingPr
 
 __all__ = [
     "ScoreRunResult",
+    "PostTrainingScoringPolicy",
+    "TrainingCanceledError",
     "TrainingConfigError",
     "TrainingDataError",
     "TrainingError",

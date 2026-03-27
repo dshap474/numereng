@@ -1,1 +1,17 @@
 * @dshap474
+
+# Delivery and automation paths
+/.github/ @dshap474
+/.factory/ @dshap474
+
+# Public contract and boundary paths
+/AGENTS.md @dshap474
+/pyproject.toml @dshap474
+/justfile @dshap474
+/src/numereng/api/ @dshap474
+/src/numereng/cli/ @dshap474
+
+# Sensitive execution paths
+/src/numereng/features/cloud/ @dshap474
+/src/numereng/features/telemetry/ @dshap474
+/src/numereng/platform/remotes/ @dshap474

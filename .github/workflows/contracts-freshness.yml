@@ -1,0 +1,23 @@
+name: Contracts Freshness
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Check contract freshness
+        run: |
+          python .factory/hooks/check-contract-freshness.py \
+            "${{ github.event.pull_request.base.sha || 'origin/main' }}" \
+            "${{ github.sha }}"

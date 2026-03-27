@@ -5,6 +5,10 @@ from __future__ import annotations
 from contextlib import nullcontext
 
 from numereng.api.contracts import (
+    RunCancelRequest,
+    RunCancelResponse,
+    RunLifecycleRequest,
+    RunLifecycleResponse,
     ScoreRunRequest,
     ScoreRunResponse,
     SubmissionRequest,
@@ -17,6 +21,7 @@ from numereng.features.feature_neutralization import (
     NeutralizationExecutionError,
     NeutralizationValidationError,
 )
+from numereng.features.store import StoreError
 from numereng.features.submission import (
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
@@ -31,6 +36,7 @@ from numereng.features.submission import (
 )
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
 from numereng.features.training import (
+    TrainingCanceledError,
     TrainingConfigError,
     TrainingDataError,
     TrainingError,
@@ -130,6 +136,7 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
                     config_path=request.config_path,
                     output_dir=request.output_dir,
                     engine_mode=request.engine_mode,
+                    post_training_scoring=request.post_training_scoring,
                     window_size_eras=request.window_size_eras,
                     embargo_eras=request.embargo_eras,
                     experiment_id=request.experiment_id,
@@ -139,6 +146,7 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
                     config_path=request.config_path,
                     output_dir=request.output_dir,
                     profile=request.profile,
+                    post_training_scoring=request.post_training_scoring,
                     engine_mode=request.engine_mode,
                     window_size_eras=request.window_size_eras,
                     embargo_eras=request.embargo_eras,
@@ -155,7 +163,16 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
         raise PackageError("training_model_failed") from exc
     except TrainingMetricsError as exc:
         raise PackageError("training_metrics_failed") from exc
+    except TrainingCanceledError as exc:
+        raise PackageError("training_run_canceled") from exc
     except TrainingError as exc:
+        message = str(exc)
+        if message == "training_launch_metadata_missing":
+            raise PackageError(message) from exc
+        if message.startswith("training_lifecycle_bootstrap_failed:"):
+            raise PackageError("training_lifecycle_bootstrap_failed") from exc
+        if message == "training_post_training_scoring_round_requires_experiment_workflow":
+            raise PackageError(message) from exc
         raise PackageError("training_run_failed") from exc
     except ValueError as exc:
         raise PackageError("training_config_invalid") from exc
@@ -225,4 +242,79 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
     )
 
 
-__all__ = ["run_training", "score_run", "submit_predictions"]
+def get_run_lifecycle(request: RunLifecycleRequest) -> RunLifecycleResponse:
+    """Return current canonical lifecycle summary for one run."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.get_run_lifecycle_record(store_root=request.store_root, run_id=request.run_id)
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+    if result is None:
+        raise PackageError("run_lifecycle_not_found")
+
+    return RunLifecycleResponse(
+        run_id=result.run_id,
+        run_hash=result.run_hash,
+        config_hash=result.config_hash,
+        job_id=result.job_id,
+        logical_run_id=result.logical_run_id,
+        attempt_id=result.attempt_id,
+        attempt_no=result.attempt_no,
+        source=result.source,
+        operation_type=result.operation_type,
+        job_type=result.job_type,
+        status=result.status,
+        experiment_id=result.experiment_id,
+        config_id=result.config_id,
+        config_source=result.config_source,
+        config_path=result.config_path,
+        config_sha256=result.config_sha256,
+        run_dir=result.run_dir,
+        runtime_path=result.runtime_path,
+        backend=result.backend,
+        worker_id=result.worker_id,
+        pid=result.pid,
+        host=result.host,
+        current_stage=result.current_stage,
+        completed_stages=list(result.completed_stages),
+        progress_percent=result.progress_percent,
+        progress_label=result.progress_label,
+        progress_current=result.progress_current,
+        progress_total=result.progress_total,
+        cancel_requested=result.cancel_requested,
+        cancel_requested_at=result.cancel_requested_at,
+        created_at=result.created_at,
+        queued_at=result.queued_at,
+        started_at=result.started_at,
+        last_heartbeat_at=result.last_heartbeat_at,
+        updated_at=result.updated_at,
+        finished_at=result.finished_at,
+        terminal_reason=result.terminal_reason,
+        terminal_detail=result.terminal_detail,
+        latest_metrics=result.latest_metrics,
+        latest_sample=result.latest_sample,
+        reconciled=result.reconciled,
+    )
+
+
+def cancel_run(request: RunCancelRequest) -> RunCancelResponse:
+    """Request cooperative cancel for one active run."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.request_run_cancel_record(store_root=request.store_root, run_id=request.run_id)
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+
+    return RunCancelResponse(
+        run_id=result.run_id,
+        job_id=result.job_id,
+        status=result.status,
+        cancel_requested=result.cancel_requested,
+        cancel_requested_at=result.cancel_requested_at,
+        accepted=result.accepted,
+    )
+
+
+__all__ = ["cancel_run", "get_run_lifecycle", "run_training", "score_run", "submit_predictions"]

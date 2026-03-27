@@ -24,7 +24,9 @@ Documentation = "https://github.com/dshap474/numereng/tree/main/docs"
 [project.optional-dependencies]
 dev = [
     "catboost>=1.2",
+    "deptry>=0.23",
     "httpx>=0.28",
+    "import-linter>=2.3",
     "interpret>=0.6",
     "imodels>=2.0",
     "lightgbm>=4.0",
@@ -32,9 +34,12 @@ dev = [
     "numerai-tools>=0.5.3",
     "optuna>=4.0",
     "pandas-stubs>=2.2",
+    "pip-audit>=2.9",
+    "pre-commit>=4.3",
     "pyarrow>=15.0",
     "pytorch-tabnet>=4.1",
     "pytest>=8.0",
+    "pytest-cov>=7.0",
     "quantile-forest>=1.4",
     "ruff>=0.6",
     "scikit-learn>=1.8",
@@ -72,7 +77,7 @@ requires = ["hatchling>=1.26.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/numereng"]
+packages = ["src/numereng", "viz/api/numereng_viz"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -84,6 +89,15 @@ markers = [
     "e2e: End-to-end behavior tests",
     "slow: Long-running tests excluded from fast test gates",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["numereng", "numereng_viz"]
+
+[tool.coverage.report]
+fail_under = 60
+skip_covered = true
+show_missing = true
 
 [tool.ruff]
 line-length = 120
@@ -101,13 +115,49 @@ root = ["./src"]
 include = [
     "src/numereng/config",
     "src/numereng/platform",
+    "src/numereng/features/telemetry",
     "src/numereng/features/submission",
     "src/numereng/api/contracts.py",
     "src/numereng/api/pipeline.py",
     "src/numereng/api/_health.py",
     "tests/unit/numereng/config/test_training.py",
+    "tests/unit/numereng/platform",
     "tests/unit/numereng/features/submission",
+    "tests/unit/numereng/features/telemetry",
     "tests/integration/test_smoke_structure.py",
+]
+
+[tool.deptry]
+extend_exclude = [
+    "\\.agents",
+    "\\.factory",
+    "docs",
+    "runbooks",
+]
+ignore = ["DEP001", "DEP003", "DEP004"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = [
+    "catboost",
+    "deptry",
+    "httpx",
+    "import-linter",
+    "interpret",
+    "imodels",
+    "ngboost",
+    "pandas-stubs",
+    "pip-audit",
+    "pre-commit",
+    "pytest-cov",
+    "pytorch-tabnet",
+    "quantile-forest",
+    "ruff",
+    "scikit-learn",
+    "tabpfn",
+    "torch",
+    "ty",
+    "uvicorn",
+    "xgboost",
 ]
 
 [[tool.mypy.overrides]]

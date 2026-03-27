@@ -15,6 +15,7 @@ from numereng.api._pipeline import (
 from numereng.api.contracts import TrainRunRequest, TrainRunResponse
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
 from numereng.features.training import (
+    TrainingCanceledError,
     TrainingConfigError,
     TrainingDataError,
     TrainingError,
@@ -57,9 +58,17 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
         if state is not None:
             fail_training_run(state, exc)
         raise PackageError("training_metrics_failed") from exc
+    except TrainingCanceledError as exc:
+        if state is not None:
+            fail_training_run(state, exc)
+        raise PackageError("training_run_canceled") from exc
     except TrainingError as exc:
         if state is not None:
             fail_training_run(state, exc)
+        if str(exc) == "training_launch_metadata_missing":
+            raise PackageError("training_launch_metadata_missing") from exc
+        if str(exc).startswith("training_lifecycle_bootstrap_failed:"):
+            raise PackageError("training_lifecycle_bootstrap_failed") from exc
         raise PackageError("training_run_failed") from exc
     except ValueError as exc:
         if state is not None:

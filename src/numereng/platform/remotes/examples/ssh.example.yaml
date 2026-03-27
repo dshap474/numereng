@@ -1,0 +1,13 @@
+id: remote-gpu
+label: Remote GPU Box
+kind: ssh
+ssh_config_host: remote-gpu
+user_env: NUMERENG_REMOTE_GPU_USER
+identity_file_env: NUMERENG_REMOTE_GPU_KEY
+repo_root: /abs/path/to/numereng
+store_root: /abs/path/to/numereng/.numereng
+runner_cmd: uv run numereng
+enabled: true
+tags:
+  - gpu
+  - ssh

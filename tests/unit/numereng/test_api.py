@@ -45,6 +45,8 @@ from numereng.api import (
     ModalTrainPullRequest,
     ModalTrainStatusRequest,
     ModalTrainSubmitRequest,
+    MonitorSnapshotRequest,
+    MonitorSnapshotResponse,
     NumeraiCurrentRoundRequest,
     NumeraiCurrentRoundResponse,
     NumeraiDatasetDownloadRequest,
@@ -61,6 +63,10 @@ from numereng.api import (
     ResearchRunResponse,
     ResearchStatusRequest,
     ResearchStatusResponse,
+    RunCancelRequest,
+    RunCancelResponse,
+    RunLifecycleRequest,
+    RunLifecycleResponse,
     ScoreRunRequest,
     ScoreRunResponse,
     StoreDoctorRequest,
@@ -73,10 +79,14 @@ from numereng.api import (
     StoreMaterializeVizArtifactsResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunLifecycleRepairRequest,
+    StoreRunLifecycleRepairResponse,
     SubmissionRequest,
     SubmissionResponse,
     TrainRunRequest,
     TrainRunResponse,
+    build_monitor_snapshot,
+    cancel_run,
     download_numerai_dataset,
     experiment_archive,
     experiment_create,
@@ -90,6 +100,7 @@ from numereng.api import (
     experiment_unarchive,
     get_health,
     get_numerai_current_round,
+    get_run_lifecycle,
     list_numerai_datasets,
     list_numerai_models,
     research_init,
@@ -103,6 +114,7 @@ from numereng.api import (
     store_init,
     store_materialize_viz_artifacts,
     store_rebuild,
+    store_repair_run_lifecycles,
     submit_predictions,
 )
 from numereng.features.agentic_research import (
@@ -143,6 +155,7 @@ from numereng.features.submission import (
     SubmissionRunPredictionsPathUnsafeError,
 )
 from numereng.features.telemetry import get_launch_metadata
+from numereng.features.telemetry.contracts import RunCancelResult, RunLifecycleRecord, RunLifecycleRepairResult
 from numereng.features.training import ScoreRunResult, TrainingError, TrainingModelError, TrainingRunResult
 from numereng.platform.errors import ForumScraperError, NumeraiClientError
 
@@ -203,6 +216,42 @@ def test_public_pipeline_module_is_importable() -> None:
     pipeline_module = importlib.import_module("numereng.api.pipeline")
 
     assert hasattr(pipeline_module, "run_training_pipeline")
+
+
+def test_build_monitor_snapshot_returns_public_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "numereng_viz.build_monitor_snapshot",
+        lambda **_: {
+            "generated_at": "2026-03-25T00:00:00+00:00",
+            "source": {
+                "kind": "local",
+                "id": "local",
+                "label": "Local store",
+                "host": "host",
+                "store_root": ".numereng",
+                "state": "live",
+            },
+            "summary": {
+                "total_experiments": 1,
+                "active_experiments": 1,
+                "completed_experiments": 0,
+                "live_experiments": 1,
+                "live_runs": 1,
+                "queued_runs": 0,
+                "attention_count": 0,
+            },
+            "experiments": [],
+            "live_experiments": [],
+            "live_runs": [],
+            "recent_activity": [],
+        },
+    )
+
+    response = build_monitor_snapshot(MonitorSnapshotRequest(store_root=".numereng", refresh_cloud=False))
+
+    assert isinstance(response, MonitorSnapshotResponse)
+    assert response.source.kind == "local"
+    assert response.summary.live_runs == 1
 
 
 def test_old_deep_run_module_is_not_publicly_importable() -> None:
@@ -953,11 +1002,119 @@ def test_score_run_translates_run_not_found(monkeypatch: pytest.MonkeyPatch) -> 
         score_run(ScoreRunRequest(run_id="run-404"))
 
 
+def test_get_run_lifecycle_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_get_run_lifecycle_record(*, store_root: str, run_id: str) -> RunLifecycleRecord:
+        assert store_root == ".numereng"
+        assert run_id == "run-123"
+        return RunLifecycleRecord(
+            run_id="run-123",
+            run_hash="hash-run-123",
+            config_hash="cfg-hash",
+            job_id="job-123",
+            logical_run_id="logical-123",
+            attempt_id="attempt-123",
+            attempt_no=1,
+            source="cli.run.train",
+            operation_type="run",
+            job_type="run",
+            status="running",
+            experiment_id=None,
+            config_id="configs/run.json",
+            config_source="store",
+            config_path="configs/run.json",
+            config_sha256="sha",
+            run_dir="/tmp/.numereng/runs/run-123",
+            runtime_path="/tmp/.numereng/runs/run-123/runtime.json",
+            backend="local",
+            worker_id="local",
+            pid=1234,
+            host="localhost",
+            current_stage="train_model",
+            completed_stages=("initializing", "load_data"),
+            progress_percent=42.5,
+            progress_label="Fold 2 of 4",
+            progress_current=1,
+            progress_total=4,
+            cancel_requested=False,
+            cancel_requested_at=None,
+            created_at="2026-03-24T00:00:00+00:00",
+            queued_at="2026-03-24T00:00:00+00:00",
+            started_at="2026-03-24T00:00:01+00:00",
+            last_heartbeat_at="2026-03-24T00:00:02+00:00",
+            updated_at="2026-03-24T00:00:02+00:00",
+            finished_at=None,
+            terminal_reason=None,
+            terminal_detail={},
+            latest_metrics={"corr_mean": 0.1},
+            latest_sample={"process_rss_gb": 0.5},
+            reconciled=False,
+        )
+
+    monkeypatch.setattr(api_module, "get_run_lifecycle_record", fake_get_run_lifecycle_record)
+
+    response = get_run_lifecycle(RunLifecycleRequest(run_id="run-123"))
+    assert isinstance(response, RunLifecycleResponse)
+    assert response.run_id == "run-123"
+    assert response.current_stage == "train_model"
+    assert response.progress_percent == 42.5
+    assert response.latest_metrics["corr_mean"] == 0.1
+
+
+def test_cancel_run_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request_run_cancel_record(*, store_root: str, run_id: str) -> RunCancelResult:
+        assert store_root == ".numereng"
+        assert run_id == "run-123"
+        return RunCancelResult(
+            run_id="run-123",
+            job_id="job-123",
+            status="running",
+            cancel_requested=True,
+            cancel_requested_at="2026-03-24T00:00:03+00:00",
+            accepted=True,
+        )
+
+    monkeypatch.setattr(api_module, "request_run_cancel_record", fake_request_run_cancel_record)
+
+    response = cancel_run(RunCancelRequest(run_id="run-123"))
+    assert isinstance(response, RunCancelResponse)
+    assert response.accepted is True
+    assert response.cancel_requested is True
+
+
+def test_store_repair_run_lifecycles_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_reconcile_run_lifecycles_record(
+        *,
+        store_root: str,
+        run_id: str | None,
+        active_only: bool,
+    ) -> RunLifecycleRepairResult:
+        assert store_root == ".numereng"
+        assert run_id is None
+        assert active_only is True
+        return RunLifecycleRepairResult(
+            store_root=Path("/tmp/.numereng"),
+            scanned_count=2,
+            unchanged_count=1,
+            reconciled_count=1,
+            reconciled_stale_count=1,
+            reconciled_canceled_count=0,
+            run_ids=("run-stale",),
+        )
+
+    monkeypatch.setattr(api_module, "reconcile_run_lifecycles_record", fake_reconcile_run_lifecycles_record)
+
+    response = store_repair_run_lifecycles(StoreRunLifecycleRepairRequest())
+    assert isinstance(response, StoreRunLifecycleRepairResponse)
+    assert response.reconciled_stale_count == 1
+    assert response.run_ids == ["run-stale"]
+
+
 def test_run_training_success(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run_training_pipeline(
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -965,6 +1122,7 @@ def test_run_training_success(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> TrainingRunResult:
         assert config_path == "configs/run.json"
         assert output_dir is None
+        assert post_training_scoring is None
         assert engine_mode is None
         assert window_size_eras is None
         assert embargo_eras is None
@@ -988,6 +1146,7 @@ def test_run_training_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -996,6 +1155,7 @@ def test_run_training_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1021,6 +1181,7 @@ def test_run_training_sets_api_launch_metadata_when_unbound(monkeypatch: pytest.
 def test_train_run_request_allows_resolver_semantic_validation() -> None:
     request = TrainRunRequest(config_path="configs/run.json", engine_mode="custom")
     assert request.engine_mode == "custom"
+    assert request.post_training_scoring is None
     assert request.window_size_eras is None
     assert request.embargo_eras is None
 
@@ -1034,6 +1195,11 @@ def test_train_run_request_allows_custom_knobs_for_resolver_to_evaluate() -> Non
     assert request.engine_mode is None
     assert request.window_size_eras == 128
     assert request.embargo_eras == 8
+
+
+def test_train_run_request_accepts_post_training_scoring_policy() -> None:
+    request = TrainRunRequest(config_path="configs/run.json", post_training_scoring="round_core")
+    assert request.post_training_scoring == "round_core"
 
 
 def test_train_run_request_rejects_non_json_config_path() -> None:
@@ -1073,6 +1239,7 @@ def test_run_training_translates_backend_missing(monkeypatch: pytest.MonkeyPatch
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1081,6 +1248,7 @@ def test_run_training_translates_backend_missing(monkeypatch: pytest.MonkeyPatch
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1099,6 +1267,7 @@ def test_run_training_translates_value_error(monkeypatch: pytest.MonkeyPatch) ->
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1107,6 +1276,7 @@ def test_run_training_translates_value_error(monkeypatch: pytest.MonkeyPatch) ->
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1125,6 +1295,7 @@ def test_run_training_translates_training_error(monkeypatch: pytest.MonkeyPatch)
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1133,6 +1304,7 @@ def test_run_training_translates_training_error(monkeypatch: pytest.MonkeyPatch)
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1146,11 +1318,12 @@ def test_run_training_translates_training_error(monkeypatch: pytest.MonkeyPatch)
         run_training(TrainRunRequest(config_path="configs/run.json"))
 
 
-def test_run_training_translates_unexpected_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_training_passes_round_policy_error_through(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run_training_pipeline(
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1159,6 +1332,35 @@ def test_run_training_translates_unexpected_error(monkeypatch: pytest.MonkeyPatc
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
+            engine_mode,
+            window_size_eras,
+            embargo_eras,
+            experiment_id,
+        )
+        raise TrainingError("training_post_training_scoring_round_requires_experiment_workflow")
+
+    monkeypatch.setattr(api_module, "run_training_pipeline", fake_run_training_pipeline)
+
+    with pytest.raises(PackageError, match="training_post_training_scoring_round_requires_experiment_workflow"):
+        run_training(TrainRunRequest(config_path="configs/run.json", post_training_scoring="round_core"))
+
+
+def test_run_training_translates_unexpected_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run_training_pipeline(
+        *,
+        config_path: str,
+        output_dir: str | None,
+        post_training_scoring: str | None,
+        engine_mode: str | None,
+        window_size_eras: int | None,
+        embargo_eras: int | None,
+        experiment_id: str | None,
+    ) -> TrainingRunResult:
+        _ = (
+            config_path,
+            output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1177,6 +1379,7 @@ def test_run_training_passes_engine_settings(monkeypatch: pytest.MonkeyPatch) ->
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1184,6 +1387,7 @@ def test_run_training_passes_engine_settings(monkeypatch: pytest.MonkeyPatch) ->
     ) -> TrainingRunResult:
         assert config_path == "configs/run.json"
         assert output_dir == "out"
+        assert post_training_scoring is None
         assert engine_mode == "custom"
         assert window_size_eras == 144
         assert embargo_eras == 9
@@ -1214,6 +1418,7 @@ def test_run_training_passes_experiment_id(monkeypatch: pytest.MonkeyPatch) -> N
         *,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1222,6 +1427,7 @@ def test_run_training_passes_experiment_id(monkeypatch: pytest.MonkeyPatch) -> N
         _ = (
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1355,6 +1561,7 @@ def test_experiment_train_success(monkeypatch: pytest.MonkeyPatch) -> None:
         experiment_id: str,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1363,6 +1570,7 @@ def test_experiment_train_success(monkeypatch: pytest.MonkeyPatch) -> None:
         assert experiment_id == "2026-02-22_test-exp"
         assert config_path == "configs/run.json"
         assert output_dir == "out"
+        assert post_training_scoring is None
         assert engine_mode == "custom"
         assert window_size_eras == 128
         assert embargo_eras == 8
@@ -1395,6 +1603,7 @@ def test_experiment_train_sets_api_launch_metadata_when_unbound(monkeypatch: pyt
         experiment_id: str,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1404,6 +1613,7 @@ def test_experiment_train_sets_api_launch_metadata_when_unbound(monkeypatch: pyt
             experiment_id,
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,
@@ -1430,6 +1640,40 @@ def test_experiment_train_sets_api_launch_metadata_when_unbound(monkeypatch: pyt
     )
 
     assert isinstance(response, ExperimentTrainResponse)
+    assert response.run_id == "run-123"
+
+
+def test_experiment_train_passes_post_training_scoring_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_train_experiment(
+        *,
+        store_root: str,
+        experiment_id: str,
+        config_path: str,
+        output_dir: str | None,
+        post_training_scoring: str | None,
+        engine_mode: str | None,
+        window_size_eras: int | None,
+        embargo_eras: int | None,
+    ) -> ExperimentTrainResult:
+        _ = (store_root, experiment_id, config_path, output_dir, engine_mode, window_size_eras, embargo_eras)
+        assert post_training_scoring == "round_full"
+        return ExperimentTrainResult(
+            experiment_id=experiment_id,
+            run_id="run-123",
+            predictions_path=Path("/tmp/preds.parquet"),
+            results_path=Path("/tmp/results.json"),
+        )
+
+    monkeypatch.setattr(api_module, "train_experiment_record", fake_train_experiment)
+
+    response = experiment_train(
+        ExperimentTrainRequest(
+            experiment_id="2026-02-22_test-exp",
+            config_path="configs/run.json",
+            post_training_scoring="round_full",
+        )
+    )
+
     assert response.run_id == "run-123"
 
 
@@ -1590,6 +1834,7 @@ def test_experiment_train_translates_validation_error(monkeypatch: pytest.Monkey
         experiment_id: str,
         config_path: str,
         output_dir: str | None,
+        post_training_scoring: str | None,
         engine_mode: str | None,
         window_size_eras: int | None,
         embargo_eras: int | None,
@@ -1599,6 +1844,7 @@ def test_experiment_train_translates_validation_error(monkeypatch: pytest.Monkey
             experiment_id,
             config_path,
             output_dir,
+            post_training_scoring,
             engine_mode,
             window_size_eras,
             embargo_eras,

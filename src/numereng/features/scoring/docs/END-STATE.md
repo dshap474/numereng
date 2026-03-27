@@ -33,6 +33,8 @@ plot.
 Numereng now has one official persisted-run scorer.
 
 - Training emits only `post_fold` pruning artifacts during CV.
+- post-training scoring is optional and policy-driven; deferred runs keep
+  `results.json` / `metrics.json` placeholders until scoring is materialized
 - `run score` uses the persisted-run scorer to materialize deferred stages for one run.
 - `experiment score-round` batch-materializes deferred stages for one experiment round.
 - Older runs can be refreshed through the same path.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from numereng.api._agentic_research import research_init, research_run, research_status
+from numereng.api._baseline import baseline_build
 from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
 from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
 from numereng.api._experiment import (
@@ -26,6 +27,7 @@ from numereng.api._factories import (
 )
 from numereng.api._health import get_health, run_bootstrap_check
 from numereng.api._hpo import hpo_create, hpo_get, hpo_list, hpo_trials
+from numereng.api._monitor import build_monitor_snapshot
 from numereng.api._neutralization import neutralize_apply
 from numereng.api._numerai import (
     NumeraiForumScrapeResponse,
@@ -35,13 +37,14 @@ from numereng.api._numerai import (
     list_numerai_models,
     scrape_numerai_forum,
 )
-from numereng.api._run import run_training, score_run, submit_predictions
+from numereng.api._run import cancel_run, get_run_lifecycle, run_training, score_run, submit_predictions
 from numereng.api._store import (
     store_doctor,
     store_index_run,
     store_init,
     store_materialize_viz_artifacts,
     store_rebuild,
+    store_repair_run_lifecycles,
 )
 from numereng.api.cloud import (
     cloud_aws_image_build_push,
@@ -76,6 +79,8 @@ from numereng.api.cloud import (
     cloud_modal_train_submit,
 )
 from numereng.api.contracts import (
+    BaselineBuildRequest,
+    BaselineBuildResponse,
     DatasetToolsBuildDownsampleRequest,
     DatasetToolsBuildDownsampleResponse,
     EnsembleBuildRequest,
@@ -113,6 +118,14 @@ from numereng.api.contracts import (
     HpoStudyTrialsRequest,
     HpoStudyTrialsResponse,
     HpoTrialResponse,
+    MonitorExperimentResponse,
+    MonitorLiveExperimentResponse,
+    MonitorLiveRunResponse,
+    MonitorRecentActivityResponse,
+    MonitorSnapshotRequest,
+    MonitorSnapshotResponse,
+    MonitorSourceResponse,
+    MonitorSummaryResponse,
     NeutralizationMode,
     NeutralizeRequest,
     NeutralizeResponse,
@@ -125,6 +138,7 @@ from numereng.api.contracts import (
     NumeraiModelsRequest,
     NumeraiModelsResponse,
     NumeraiTournament,
+    PostTrainingScoringPolicy,
     ResearchBestRunResponse,
     ResearchInitRequest,
     ResearchInitResponse,
@@ -136,6 +150,10 @@ from numereng.api.contracts import (
     ResearchStatusResponse,
     ResearchStrategy,
     ResearchSupervisorStatus,
+    RunCancelRequest,
+    RunCancelResponse,
+    RunLifecycleRequest,
+    RunLifecycleResponse,
     ScoreRunRequest,
     ScoreRunResponse,
     StoreDoctorRequest,
@@ -150,6 +168,8 @@ from numereng.api.contracts import (
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunLifecycleRepairRequest,
+    StoreRunLifecycleRepairResponse,
     SubmissionRequest,
     SubmissionResponse,
     TrainingEngineMode,
@@ -157,15 +177,10 @@ from numereng.api.contracts import (
     TrainRunRequest,
     TrainRunResponse,
 )
-from numereng.features.agentic_research import (
-    get_research_status as get_research_program_status,
-)
-from numereng.features.agentic_research import (
-    init_research as init_research_program,
-)
-from numereng.features.agentic_research import (
-    run_research as run_research_program,
-)
+from numereng.features.agentic_research import get_research_status as get_research_program_status
+from numereng.features.agentic_research import init_research as init_research_program
+from numereng.features.agentic_research import run_research as run_research_program
+from numereng.features.baseline import build_baseline as build_baseline_record
 from numereng.features.cloud.aws import (
     AwsImageBuildPushRequest,
     AwsTrainCancelRequest,
@@ -226,50 +241,13 @@ from numereng.features.hpo import get_study_view as hpo_get_study
 from numereng.features.hpo import list_studies_view as hpo_list_studies
 from numereng.features.store import doctor_store, index_run, init_store_db, materialize_viz_artifacts, rebuild_run_index
 from numereng.features.submission import submit_predictions_file, submit_run_predictions
+from numereng.features.telemetry import get_run_lifecycle as get_run_lifecycle_record
+from numereng.features.telemetry import reconcile_run_lifecycles as reconcile_run_lifecycles_record
+from numereng.features.telemetry import request_run_cancel as request_run_cancel_record
 from numereng.features.training import run_training as run_training_pipeline
 from numereng.features.training import score_run as score_run_pipeline
 from numereng.platform.errors import PackageError
 from numereng.platform.forum_scraper import scrape_forum_posts
-
-# Compatibility references intentionally kept at module scope for tests/monkeypatching.
-_COMPAT_EXPORTS = (
-    _create_cloud_aws_managed_service,
-    _create_cloud_ec2_service,
-    _create_cloud_modal_service,
-    _create_numerai_client,
-    _default_dataset_dest_path,
-    get_research_program_status,
-    init_research_program,
-    archive_experiment_record,
-    create_experiment_record,
-    get_experiment_record,
-    list_experiment_records,
-    pack_experiment_record,
-    promote_experiment_record,
-    report_experiment_record,
-    score_experiment_round_record,
-    train_experiment_record,
-    unarchive_experiment_record,
-    build_ensemble_record,
-    get_ensemble_record_api,
-    list_ensemble_records_api,
-    hpo_create_study,
-    hpo_get_study,
-    hpo_get_study_trials,
-    hpo_list_studies,
-    doctor_store,
-    index_run,
-    init_store_db,
-    rebuild_run_index,
-    submit_predictions_file,
-    submit_run_predictions,
-    neutralize_prediction_artifact,
-    neutralize_run_prediction_artifact,
-    score_run_pipeline,
-    run_training_pipeline,
-    run_research_program,
-    scrape_forum_posts,
-)
 
 __all__ = [
     "AwsImageBuildPushRequest",
@@ -279,6 +257,8 @@ __all__ = [
     "AwsTrainPullRequest",
     "AwsTrainStatusRequest",
     "AwsTrainSubmitRequest",
+    "BaselineBuildRequest",
+    "BaselineBuildResponse",
     "ExperimentArchiveRequest",
     "ExperimentArchiveResponse",
     "CloudAwsResponse",
@@ -321,6 +301,10 @@ __all__ = [
     "ResearchStatusResponse",
     "ResearchStrategy",
     "ResearchSupervisorStatus",
+    "RunCancelRequest",
+    "RunCancelResponse",
+    "RunLifecycleRequest",
+    "RunLifecycleResponse",
     "Ec2ConfigUploadRequest",
     "Ec2InitIamRequest",
     "Ec2InstallRequest",
@@ -366,6 +350,14 @@ __all__ = [
     "ModalDataSyncResult",
     "ModalDeployRequest",
     "ModalDeployResult",
+    "MonitorExperimentResponse",
+    "MonitorLiveExperimentResponse",
+    "MonitorLiveRunResponse",
+    "MonitorRecentActivityResponse",
+    "MonitorSnapshotRequest",
+    "MonitorSnapshotResponse",
+    "MonitorSourceResponse",
+    "MonitorSummaryResponse",
     "ModalTrainCancelRequest",
     "ModalTrainLogsRequest",
     "ModalTrainPullRequest",
@@ -382,10 +374,13 @@ __all__ = [
     "StoreMaterializeVizArtifactsFailureResponse",
     "StoreMaterializeVizArtifactsRequest",
     "StoreMaterializeVizArtifactsResponse",
+    "StoreRunLifecycleRepairRequest",
+    "StoreRunLifecycleRepairResponse",
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
     "TrainingEngineMode",
+    "PostTrainingScoringPolicy",
     "TrainingProfile",
     "TrainRunRequest",
     "TrainRunResponse",
@@ -425,6 +420,9 @@ __all__ = [
     "_create_numerai_client",
     "_default_dataset_dest_path",
     "archive_experiment_record",
+    "baseline_build",
+    "build_baseline_record",
+    "cancel_run",
     "create_experiment_record",
     "dataset_tools_build_downsampled_full",
     "doctor_store",
@@ -445,6 +443,7 @@ __all__ = [
     "get_experiment_record",
     "get_health",
     "get_numerai_current_round",
+    "get_run_lifecycle",
     "index_run",
     "init_store_db",
     "hpo_create",
@@ -458,10 +457,14 @@ __all__ = [
     "hpo_list_studies",
     "list_experiment_records",
     "build_ensemble_record",
+    "build_monitor_snapshot",
     "get_ensemble_record_api",
+    "get_run_lifecycle_record",
     "list_ensemble_records_api",
     "list_numerai_datasets",
     "list_numerai_models",
+    "reconcile_run_lifecycles_record",
+    "request_run_cancel_record",
     "scrape_forum_posts",
     "scrape_numerai_forum",
     "promote_experiment_record",
@@ -471,6 +474,7 @@ __all__ = [
     "research_init",
     "research_run",
     "research_status",
+    "score_experiment_round_record",
     "score_run_pipeline",
     "run_training_pipeline",
     "score_run",
@@ -478,6 +482,7 @@ __all__ = [
     "store_index_run",
     "store_init",
     "store_materialize_viz_artifacts",
+    "store_repair_run_lifecycles",
     "store_rebuild",
     "run_training",
     "run_bootstrap_check",

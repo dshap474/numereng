@@ -20,6 +20,12 @@ from numereng.features.telemetry import bind_launch_metadata
 from numereng.platform.errors import PackageError
 
 
+def _parse_post_training_scoring(value: str) -> tuple[str | None, str | None]:
+    if value not in {"none", "core", "full", "round_core", "round_full"}:
+        return None, "invalid value for --post-training-scoring: expected none|core|full|round_core|round_full"
+    return value, None
+
+
 def _parse_experiment_output_format(value: str) -> tuple[str | None, str | None]:
     if value not in {"table", "json"}:
         return None, "invalid value for --format: expected table|json"
@@ -272,6 +278,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                 "--config",
                 "--output-dir",
                 "--profile",
+                "--post-training-scoring",
                 "--engine-mode",
                 "--window-size-eras",
                 "--embargo-eras",
@@ -309,6 +316,14 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                 print(USAGE, file=sys.stderr)
                 return 2
             profile = parsed_mode
+        post_training_scoring = None
+        if "--post-training-scoring" in values:
+            parsed_policy, parse_policy_err = _parse_post_training_scoring(values["--post-training-scoring"])
+            if parse_policy_err is not None:
+                print(parse_policy_err, file=sys.stderr)
+                print(USAGE, file=sys.stderr)
+                return 2
+            post_training_scoring = parsed_policy
 
         try:
             with bind_launch_metadata(source="cli.experiment.train", operation_type="run", job_type="run"):
@@ -318,6 +333,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                         config_path=config_path,
                         output_dir=values.get("--output-dir"),
                         profile=profile,
+                        post_training_scoring=post_training_scoring,
                         store_root=values.get("--store-root", ".numereng"),
                     )
                 )

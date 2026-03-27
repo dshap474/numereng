@@ -1,0 +1,32 @@
+minimum_pre_commit_version: "4.0.0"
+default_install_hook_types:
+  - pre-commit
+  - pre-push
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format-check
+        name: ruff format check
+        entry: uv run ruff format --check .
+        language: system
+        pass_filenames: false
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+      - id: oss-preflight
+        name: oss preflight
+        entry: make oss-preflight
+        language: system
+        pass_filenames: false
+  - repo: local
+    hooks:
+      - id: numereng-fast-gate
+        name: numereng fast gate
+        entry: make test
+        language: system
+        pass_filenames: false
+        stages:
+          - pre-push

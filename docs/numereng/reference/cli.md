@@ -9,13 +9,15 @@ Reference for the supported `numereng` CLI surface.
 
 ## `run`
 
-- `numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--experiment-id <id>]`
-- `numereng run score --run-id <id> [--store-root <path>]`
+- `numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--experiment-id <id>] [--post-training-scoring <none|core|full|round_core|round_full>]`
+- `numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--store-root <path>]`
 - `numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]`
 
 Notes:
 
 - `full_history_refit` is final-fit only and emits no validation metrics
+- `--post-training-scoring` overrides the config `training.post_training_scoring` policy for that run
+- `round_core` and `round_full` are accepted at parse time but rejected at runtime for `run train`; they require the experiment workflow
 - `run score` recomputes metrics from saved predictions and refreshes `results.json`, `metrics.json`, `score_provenance.json`, and store index rows
 - `run score` also refreshes canonical scoring artifacts under `artifacts/scoring/` and updates `artifacts/scoring/manifest.json`
 
@@ -26,17 +28,21 @@ Notes:
 - `numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]`
 - `numereng experiment archive --id <id> [--store-root <path>]`
 - `numereng experiment unarchive --id <id> [--store-root <path>]`
-- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--store-root <path>]`
+- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--store-root <path>]`
+- `numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--store-root <path>]`
 - `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]`
 - `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]`
 - `numereng experiment pack --id <id> [--store-root <path>]`
 
 Notes:
 
+- `experiment create` scaffolds `.numereng/experiments/<id>/` with `experiment.json`, a rich `EXPERIMENT.md` skeleton, `configs/`, a header-only `run_plan.csv`, and `run_scripts/launch_all.py|.sh|.ps1`
 - archived experiments are hidden from normal experiment and config catalogs but still readable by direct experiment ID
 - `archive` moves `.numereng/experiments/<id>` to `.numereng/experiments/_archive/<id>` and updates indexed experiment status to `archived`
 - `unarchive` moves the directory back to the live root and restores the pre-archive status when recorded
 - archived experiments are read-only; `experiment train` and `experiment promote` hard-fail until the experiment is unarchived
+- `--post-training-scoring` overrides the config policy for that experiment run
+- `round_core` and `round_full` require an `rN_*` config filename because the round label is derived from the config stem
 - `pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` with the current `EXPERIMENT.md` body plus one dashboard-aligned scalar metrics table across manifest-listed runs
 
 ## `hpo`

@@ -141,10 +141,17 @@ This package writes or refreshes the following scoring artifacts:
 - `artifacts/scoring/post_training_core_summary.parquet`
 - `artifacts/scoring/post_training_full_summary.parquet` when feature-neutral diagnostics are materialized
 
-`run train` automatically refreshes `post_training_core` after predictions are
-written. `run score` and `experiment score-round` can later refresh any stage,
-including the inclusive feature-heavy `post_training_full`. Historical runs may still expose the
-legacy filenames `post_training_summary.parquet` and
+Training always writes `post_fold` artifacts during CV when fold outputs exist.
+Post-training scoring is policy-driven:
+
+- `training.post_training_scoring = none` leaves scoring deferred
+- `core` refreshes `post_training_core`
+- `full` refreshes inclusive `post_training_full`
+- `round_core` and `round_full` defer single-run scoring and are materialized
+  later through the experiment round-batch workflow
+
+`run score` and `experiment score-round` can refresh any stage, including the
+inclusive feature-heavy `post_training_full`. Historical runs may still expose the legacy filenames `post_training_summary.parquet` and
 `post_training_features_summary.parquet`, which remain read-compatible.
 
 There is one official persisted-run scorer. It supports these canonical stage
@@ -161,6 +168,12 @@ into `artifacts/scoring/` and leaves non-selected existing stage files
 untouched. Each scoring invocation still refreshes `metrics.json`,
 `results.json`, `run.json`, `score_provenance.json`, and
 `artifacts/scoring/manifest.json`.
+
+Deferred or failed post-training scoring still leaves `results.json` and
+`metrics.json` on disk. The run metadata records `training.scoring.policy`,
+`training.scoring.status`, `training.scoring.requested_stage`,
+`training.scoring.refreshed_stages`, and a `reason` / `error` payload when
+scoring was skipped, deferred, or failed.
 
 `post_training_full` is inclusive and refreshes both the core summary and the
 feature-heavy full summary in one pass.

@@ -15,7 +15,34 @@ from typing import Any
 from uuid import uuid4
 
 from numereng.features.store import init_store_db
-from numereng.features.telemetry.contracts import LocalResourceSampler, LocalRunTelemetrySession, ResourceSample
+from numereng.features.telemetry.contracts import (
+    LocalResourceSampler,
+    LocalRunTelemetrySession,
+    ResourceSample,
+    RunCancelResult,
+    RunLifecycleRecord,
+    RunLifecycleRepairResult,
+)
+from numereng.features.telemetry.lifecycle import (
+    current_host_name,
+    initialize_run_lifecycle,
+    update_run_lifecycle_metrics,
+    update_run_lifecycle_sample,
+    update_run_lifecycle_stage,
+    update_run_lifecycle_status,
+)
+from numereng.features.telemetry.lifecycle import (
+    get_run_lifecycle as get_run_lifecycle_record,
+)
+from numereng.features.telemetry.lifecycle import (
+    is_cancel_requested as is_lifecycle_cancel_requested,
+)
+from numereng.features.telemetry.lifecycle import (
+    reconcile_run_lifecycles as reconcile_lifecycle_rows,
+)
+from numereng.features.telemetry.lifecycle import (
+    request_run_cancel as request_run_lifecycle_cancel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +55,11 @@ def begin_local_training_session(
     *,
     store_root: str | Path,
     config_path: str | Path,
+    run_id: str,
+    run_hash: str,
+    config_hash: str,
+    run_dir: str | Path,
+    runtime_path: str | Path,
     source: str,
     experiment_id: str | None,
     operation_type: str,
@@ -46,6 +78,8 @@ def begin_local_training_session(
             store_root=root,
         )
         config_id, config_source = _resolve_config_identity(resolved_config, root)
+        resolved_run_dir = Path(run_dir).expanduser().resolve()
+        resolved_runtime_path = Path(runtime_path).expanduser().resolve()
         token = uuid4().hex[:12]
         created_at = _utc_now_iso()
         session = LocalRunTelemetrySession(
@@ -67,6 +101,12 @@ def begin_local_training_session(
             queue_name=_DEFAULT_QUEUE_NAME,
             priority=_DEFAULT_PRIORITY,
             backend=_DEFAULT_BACKEND,
+            run_id=run_id,
+            run_hash=run_hash,
+            config_hash=config_hash,
+            run_dir=resolved_run_dir,
+            runtime_path=resolved_runtime_path,
+            host=current_host_name(),
             created_at=created_at,
         )
         metadata_json = _safe_json_dumps(
@@ -74,6 +114,8 @@ def begin_local_training_session(
                 "source": source,
                 "job_type": job_type,
                 "config_id": config_id,
+                "run_id": run_id,
+                "run_dir": str(resolved_run_dir),
             }
         )
         request_json = _safe_json_dumps(
@@ -84,6 +126,9 @@ def begin_local_training_session(
                 "config_id": config_id,
                 "config_path": str(resolved_config),
                 "experiment_id": resolved_experiment_id,
+                "run_id": run_id,
+                "run_dir": str(resolved_run_dir),
+                "runtime_path": str(resolved_runtime_path),
                 **(request_payload or {}),
             }
         )
@@ -152,10 +197,13 @@ def begin_local_training_session(
                     external_run_id,
                     run_dir,
                     cancel_requested,
+                    cancel_requested_at,
+                    terminal_reason,
+                    terminal_detail_json,
                     error_json
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -188,10 +236,13 @@ def begin_local_training_session(
                     None,
                     None,
                     None,
+                    session.run_id,
                     None,
-                    None,
-                    None,
+                    str(session.run_dir),
                     0,
+                    None,
+                    None,
+                    None,
                     None,
                 ),
             )
@@ -211,11 +262,14 @@ def begin_local_training_session(
                     pid,
                     exit_code,
                     signal,
+                    cancel_requested_at,
+                    terminal_reason,
+                    terminal_detail_json,
                     error_json,
                     canonical_run_id,
                     external_run_id,
                     run_dir
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.attempt_id,
@@ -235,8 +289,12 @@ def begin_local_training_session(
                     None,
                     None,
                     None,
+                    session.run_id,
+                    None,
+                    str(session.run_dir),
                 ),
             )
+            initialize_run_lifecycle(conn, session)
             conn.commit()
         emit_job_event(session, event_type="job_queued", payload={"status": "queued"})
         append_log_line(session, stream="stdout", line=f"[telemetry] queued {session.job_id}")
@@ -271,7 +329,14 @@ def mark_job_starting(session: LocalRunTelemetrySession, *, pid: int, worker_id:
             )
             conn.execute(
                 "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
-                ("running", now, session.logical_run_id),
+                ("starting", now, session.logical_run_id),
+            )
+            update_run_lifecycle_status(
+                conn,
+                session,
+                status="starting",
+                worker_id=worker_id,
+                pid=pid,
             )
             conn.commit()
     except Exception:
@@ -302,6 +367,7 @@ def mark_job_running(session: LocalRunTelemetrySession) -> None:
                 "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
                 ("running", now, session.logical_run_id),
             )
+            update_run_lifecycle_status(conn, session, status="running")
             conn.commit()
     except Exception:
         logger.exception("failed to mark job as running: %s", session.job_id)
@@ -315,6 +381,8 @@ def mark_job_completed(
     canonical_run_id: str,
     run_dir: str,
     exit_code: int = 0,
+    terminal_reason: str = "completed",
+    terminal_detail: dict[str, Any] | None = None,
 ) -> None:
     """Transition session state to completed and persist canonical run linkage."""
 
@@ -330,10 +398,22 @@ def mark_job_completed(
                     exit_code = ?,
                     canonical_run_id = ?,
                     run_dir = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
                     error_json = NULL
                 WHERE job_id = ?
                 """,
-                ("completed", now, now, exit_code, canonical_run_id, run_dir, session.job_id),
+                (
+                    "completed",
+                    now,
+                    now,
+                    exit_code,
+                    canonical_run_id,
+                    run_dir,
+                    terminal_reason,
+                    _safe_json_dumps(terminal_detail or {}),
+                    session.job_id,
+                ),
             )
             conn.execute(
                 """
@@ -344,14 +424,34 @@ def mark_job_completed(
                     exit_code = ?,
                     canonical_run_id = ?,
                     run_dir = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
                     error_json = NULL
                 WHERE attempt_id = ?
                 """,
-                ("completed", now, now, exit_code, canonical_run_id, run_dir, session.attempt_id),
+                (
+                    "completed",
+                    now,
+                    now,
+                    exit_code,
+                    canonical_run_id,
+                    run_dir,
+                    terminal_reason,
+                    _safe_json_dumps(terminal_detail or {}),
+                    session.attempt_id,
+                ),
             )
             conn.execute(
                 "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
                 ("completed", now, session.logical_run_id),
+            )
+            update_run_lifecycle_status(
+                conn,
+                session,
+                status="completed",
+                finished_at=now,
+                terminal_reason=terminal_reason,
+                terminal_detail=terminal_detail or {},
             )
             conn.commit()
     except Exception:
@@ -370,6 +470,8 @@ def mark_job_failed(
     error: dict[str, Any],
     exit_code: int | None = None,
     signal: int | None = None,
+    terminal_reason: str = "failed",
+    terminal_detail: dict[str, Any] | None = None,
 ) -> None:
     """Transition session state to failed and persist error payload."""
 
@@ -385,10 +487,22 @@ def mark_job_failed(
                     updated_at = ?,
                     exit_code = ?,
                     signal = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
                     error_json = ?
                 WHERE job_id = ?
                 """,
-                ("failed", now, now, exit_code, signal, error_json, session.job_id),
+                (
+                    "failed",
+                    now,
+                    now,
+                    exit_code,
+                    signal,
+                    terminal_reason,
+                    _safe_json_dumps(terminal_detail or {}),
+                    error_json,
+                    session.job_id,
+                ),
             )
             conn.execute(
                 """
@@ -398,20 +512,189 @@ def mark_job_failed(
                     updated_at = ?,
                     exit_code = ?,
                     signal = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
                     error_json = ?
                 WHERE attempt_id = ?
                 """,
-                ("failed", now, now, exit_code, signal, error_json, session.attempt_id),
+                (
+                    "failed",
+                    now,
+                    now,
+                    exit_code,
+                    signal,
+                    terminal_reason,
+                    _safe_json_dumps(terminal_detail or {}),
+                    error_json,
+                    session.attempt_id,
+                ),
             )
             conn.execute(
                 "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
                 ("failed", now, session.logical_run_id),
+            )
+            update_run_lifecycle_status(
+                conn,
+                session,
+                status="failed",
+                finished_at=now,
+                terminal_reason=terminal_reason,
+                terminal_detail=terminal_detail or error,
             )
             conn.commit()
     except Exception:
         logger.exception("failed to mark job as failed: %s", session.job_id)
         return
     emit_job_event(session, event_type="job_failed", payload={"status": "failed", "error": error})
+
+
+def mark_job_canceled(
+    session: LocalRunTelemetrySession,
+    *,
+    terminal_reason: str = "cancel_requested",
+    terminal_detail: dict[str, Any] | None = None,
+) -> None:
+    """Transition session state to canceled."""
+
+    now = _utc_now_iso()
+    payload = terminal_detail or {}
+    try:
+        with _connect_rw(session.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE run_jobs
+                SET status = ?,
+                    finished_at = ?,
+                    updated_at = ?,
+                    cancel_requested = 1,
+                    cancel_requested_at = COALESCE(cancel_requested_at, ?),
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
+                    error_json = NULL
+                WHERE job_id = ?
+                """,
+                (
+                    "canceled",
+                    now,
+                    now,
+                    now,
+                    terminal_reason,
+                    _safe_json_dumps(payload),
+                    session.job_id,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE run_attempts
+                SET status = ?,
+                    finished_at = ?,
+                    updated_at = ?,
+                    cancel_requested_at = COALESCE(cancel_requested_at, ?),
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
+                    error_json = NULL
+                WHERE attempt_id = ?
+                """,
+                (
+                    "canceled",
+                    now,
+                    now,
+                    now,
+                    terminal_reason,
+                    _safe_json_dumps(payload),
+                    session.attempt_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
+                ("canceled", now, session.logical_run_id),
+            )
+            update_run_lifecycle_status(
+                conn,
+                session,
+                status="canceled",
+                finished_at=now,
+                terminal_reason=terminal_reason,
+                terminal_detail=payload,
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("failed to mark job as canceled: %s", session.job_id)
+        return
+    emit_job_event(session, event_type="job_canceled", payload={"status": "canceled", **payload})
+
+
+def mark_job_stale(
+    session: LocalRunTelemetrySession,
+    *,
+    terminal_reason: str = "stale",
+    terminal_detail: dict[str, Any] | None = None,
+) -> None:
+    """Transition session state to stale."""
+
+    now = _utc_now_iso()
+    payload = terminal_detail or {}
+    try:
+        with _connect_rw(session.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE run_jobs
+                SET status = ?,
+                    finished_at = ?,
+                    updated_at = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
+                    error_json = ?
+                WHERE job_id = ?
+                """,
+                (
+                    "stale",
+                    now,
+                    now,
+                    terminal_reason,
+                    _safe_json_dumps(payload),
+                    _safe_json_dumps(payload),
+                    session.job_id,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE run_attempts
+                SET status = ?,
+                    finished_at = ?,
+                    updated_at = ?,
+                    terminal_reason = ?,
+                    terminal_detail_json = ?,
+                    error_json = ?
+                WHERE attempt_id = ?
+                """,
+                (
+                    "stale",
+                    now,
+                    now,
+                    terminal_reason,
+                    _safe_json_dumps(payload),
+                    _safe_json_dumps(payload),
+                    session.attempt_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE logical_runs SET status = ?, updated_at = ? WHERE logical_run_id = ?",
+                ("stale", now, session.logical_run_id),
+            )
+            update_run_lifecycle_status(
+                conn,
+                session,
+                status="stale",
+                finished_at=now,
+                terminal_reason=terminal_reason,
+                terminal_detail=payload,
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("failed to mark job as stale: %s", session.job_id)
+        return
+    emit_job_event(session, event_type="job_stale", payload={"status": "stale", **payload})
 
 
 def emit_job_event(
@@ -448,6 +731,22 @@ def emit_job_event(
                     now,
                 ),
             )
+            if event_type == "stage_update":
+                current_stage = payload.get("current_stage")
+                completed_stages = payload.get("completed_stages")
+                if isinstance(current_stage, str) and isinstance(completed_stages, list):
+                    update_run_lifecycle_stage(
+                        conn,
+                        session,
+                        current_stage=current_stage,
+                        completed_stages=[str(item) for item in completed_stages],
+                        progress_percent=_coerce_optional_float(payload.get("progress_percent")),
+                        progress_label=_coerce_optional_str(payload.get("progress_label")),
+                        progress_current=_coerce_optional_int(payload.get("progress_current")),
+                        progress_total=_coerce_optional_int(payload.get("progress_total")),
+                    )
+            elif event_type == "metric_update":
+                update_run_lifecycle_metrics(conn, session, metrics=payload)
             conn.commit()
     except Exception:
         logger.exception("failed to append run-job event: %s (%s)", session.job_id, event_type)
@@ -547,6 +846,7 @@ def append_resource_sample(session: LocalRunTelemetrySession, *, sample: Resourc
                     now,
                 ),
             )
+            update_run_lifecycle_sample(conn, session, sample=sample)
             conn.commit()
     except Exception:
         logger.exception("failed to append run-job resource sample: %s", session.job_id)
@@ -615,6 +915,39 @@ def stop_local_resource_sampler(sampler: LocalResourceSampler | None) -> None:
     sampler.thread.join(timeout=1.0)
 
 
+def get_run_lifecycle(*, store_root: str | Path = ".numereng", run_id: str) -> RunLifecycleRecord | None:
+    """Load one canonical lifecycle summary by run id."""
+
+    return get_run_lifecycle_record(store_root=store_root, run_id=run_id)
+
+
+def request_run_cancel(*, store_root: str | Path = ".numereng", run_id: str) -> RunCancelResult:
+    """Request cooperative cancel for one local run."""
+
+    return request_run_lifecycle_cancel(store_root=store_root, run_id=run_id)
+
+
+def reconcile_run_lifecycles(
+    *,
+    store_root: str | Path = ".numereng",
+    run_id: str | None = None,
+    active_only: bool = True,
+) -> RunLifecycleRepairResult:
+    """Reconcile active lifecycle rows against local liveness evidence."""
+
+    return reconcile_lifecycle_rows(store_root=store_root, run_id=run_id, active_only=active_only)
+
+
+def is_cancel_requested(session: LocalRunTelemetrySession) -> bool:
+    """Return whether one session has a cooperative cancel request pending."""
+
+    try:
+        return is_lifecycle_cancel_requested(session)
+    except Exception:
+        logger.exception("failed to read cancel-request flag: %s", session.run_id)
+        return False
+
+
 def _resolve_config_identity(config_path: Path, store_root: Path) -> tuple[str, str]:
     try:
         relative = config_path.relative_to(store_root).as_posix()
@@ -640,6 +973,7 @@ def _infer_experiment_id_from_config_path(*, config_path: Path, store_root: Path
 
 def _connect_rw(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, check_same_thread=False, timeout=3.0)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=3000;")
     return conn
@@ -650,6 +984,29 @@ def _safe_json_dumps(value: Any) -> str:
         return json.dumps(value, sort_keys=True, ensure_ascii=True, default=str)
     except TypeError:
         return json.dumps(str(value), ensure_ascii=True)
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _coerce_optional_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _process_rss_gb() -> float | None:
@@ -740,10 +1097,16 @@ __all__ = [
     "emit_job_event",
     "emit_metric_event",
     "emit_stage_event",
+    "get_run_lifecycle",
+    "is_cancel_requested",
+    "mark_job_canceled",
     "mark_job_completed",
     "mark_job_failed",
     "mark_job_running",
     "mark_job_starting",
+    "mark_job_stale",
+    "reconcile_run_lifecycles",
+    "request_run_cancel",
     "start_local_resource_sampler",
     "stop_local_resource_sampler",
 ]

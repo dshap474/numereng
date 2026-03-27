@@ -12,27 +12,30 @@ from typing import cast
 
 import pandas as pd
 
+from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.scoring.metrics import (
     append_post_fold_artifacts,
     attach_benchmark_predictions,
     load_custom_benchmark_predictions,
 )
-from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest
+from numereng.features.scoring.models import BenchmarkSource, CanonicalScoringStage, PostTrainingScoringRequest
 from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run
 from numereng.features.telemetry import (
     LocalResourceSampler,
     LocalRunTelemetrySession,
     begin_local_training_session,
+    emit_stage_event,
     get_launch_metadata,
+    get_run_lifecycle,
     mark_job_running,
     mark_job_starting,
     start_local_resource_sampler,
     stop_local_resource_sampler,
 )
 from numereng.features.training.client import TrainingDataClient, create_training_data_client
-from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions
-from numereng.features.training.errors import TrainingConfigError, TrainingError
+from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions, era_cv_splits
+from numereng.features.training.errors import TrainingCanceledError, TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run
 from numereng.features.training.models import (
     ModelDataLoaderProtocol,
@@ -54,6 +57,7 @@ from numereng.features.training.repo import (
     resolve_resolved_config_path,
     resolve_results_path,
     resolve_run_manifest_path,
+    resolve_runtime_snapshot_path,
     resolve_score_provenance_path,
     save_metrics,
     save_predictions,
@@ -88,9 +92,12 @@ from numereng.features.training.service import (
     _ensure_run_dir_is_fresh,
     _extract_metrics_payload,
     _is_full_history_refit_profile,
+    _lifecycle_manifest_payload,
+    _mark_telemetry_canceled,
     _mark_telemetry_completed,
     _mark_telemetry_failed,
     _optional_path,
+    _raise_if_cancel_requested,
     _record_telemetry_metrics,
     _record_telemetry_stage,
     _resolve_baseline_path,
@@ -103,8 +110,11 @@ from numereng.features.training.service import (
     _resolve_store_root_for_run,
     _scoring_targets_explicit,
     build_results_payload,
+    is_round_post_training_scoring_policy,
+    post_training_scoring_requested_stage,
     resolve_benchmark_source,
     resolve_model_config,
+    resolve_post_training_scoring_policy,
 )
 from numereng.features.training.strategies import TrainingEnginePlan, TrainingProfile, resolve_training_engine
 
@@ -116,6 +126,30 @@ _EMITTED_STAGE_FILE_ORDER = (
     "post_training_core_summary",
     "post_training_full_summary",
 )
+_STAGE_PROGRESS_STARTS: dict[str, float] = {
+    "queued": 0.0,
+    "initializing": 5.0,
+    "load_data": 15.0,
+    "train_model": 15.0,
+    "score_predictions": 80.0,
+    "persist_artifacts": 85.0,
+    "index_run": 92.0,
+    "score_predictions_post_run": 95.0,
+    "finalize_manifest": 99.0,
+}
+_TRAIN_MODEL_PROGRESS_START = 15.0
+_TRAIN_MODEL_PROGRESS_END = 80.0
+_PROGRESS_LABELS: dict[str, str] = {
+    "queued": "Queued",
+    "initializing": "Initializing",
+    "load_data": "Loading data",
+    "train_model": "Training model",
+    "score_predictions": "Scoring predictions",
+    "persist_artifacts": "Persisting artifacts",
+    "index_run": "Indexing run",
+    "score_predictions_post_run": "Post-run scoring",
+    "finalize_manifest": "Finalizing manifest",
+}
 
 
 @dataclass
@@ -126,10 +160,12 @@ class TrainingPipelineState:
     output_dir: Path | None
     client: TrainingDataClient | None
     profile: TrainingProfile | None
+    post_training_scoring: PostTrainingScoringPolicy | None
     engine_mode: str | None
     window_size_eras: int | None
     embargo_eras: int | None
     experiment_id: str | None
+    allow_round_batch_post_training_scoring: bool = False
     config: dict[str, object] | None = None
     data_config: dict[str, object] = field(default_factory=dict)
     preprocessing_config: dict[str, object] = field(default_factory=dict)
@@ -163,6 +199,7 @@ class TrainingPipelineState:
     predictions_dir: Path | None = None
     scoring_dir: Path | None = None
     run_manifest_path: Path | None = None
+    runtime_path: Path | None = None
     resolved_snapshot_path: Path | None = None
     metrics_path: Path | None = None
     score_provenance_path: Path | None = None
@@ -201,6 +238,93 @@ class TrainingPipelineState:
     summaries: dict[str, pd.DataFrame] | None = None
     metrics_status: dict[str, object] | None = None
     metrics_payload: dict[str, object] = field(default_factory=dict)
+    post_training_scoring_policy: PostTrainingScoringPolicy = "none"
+    post_training_requested_stage: CanonicalScoringStage | None = None
+    cancel_requested_at: str | None = None
+    train_model_progress_total: int | None = None
+    train_model_progress_current: int = 0
+
+
+def _stage_progress_payload(
+    state: TrainingPipelineState,
+    *,
+    stage_name: str,
+) -> dict[str, object]:
+    if stage_name == "train_model":
+        return _train_model_progress_payload(state)
+    return {
+        "progress_percent": _STAGE_PROGRESS_STARTS.get(stage_name),
+        "progress_label": _PROGRESS_LABELS.get(stage_name),
+        "progress_current": None,
+        "progress_total": None,
+    }
+
+
+def _train_model_progress_payload(state: TrainingPipelineState) -> dict[str, object]:
+    total = state.train_model_progress_total or 1
+    current = max(0, min(state.train_model_progress_current, total))
+    percent = _TRAIN_MODEL_PROGRESS_START
+    if total > 0:
+        percent = _TRAIN_MODEL_PROGRESS_START + (
+            (_TRAIN_MODEL_PROGRESS_END - _TRAIN_MODEL_PROGRESS_START) * (current / total)
+        )
+    engine_mode = state.engine_plan.mode if state.engine_plan is not None else None
+    if _is_full_history_refit_profile(engine_mode):
+        label = "Full fit"
+    elif current >= total:
+        label = f"Fold {total} of {total}"
+    else:
+        label = f"Fold {current + 1} of {total}"
+    return {
+        "progress_percent": percent,
+        "progress_label": label,
+        "progress_current": current,
+        "progress_total": total,
+    }
+
+
+def _resolve_train_model_progress_total(
+    *,
+    state: TrainingPipelineState,
+    cv_config: dict[str, object],
+) -> int:
+    engine_mode = state.engine_plan.mode if state.engine_plan is not None else None
+    if _is_full_history_refit_profile(engine_mode):
+        return 1
+    cv_mode_raw = cv_config.get("mode")
+    cv_mode = str(cv_mode_raw).strip() if isinstance(cv_mode_raw, str) else ""
+    try:
+        splits = era_cv_splits(
+            state.all_eras,
+            embargo=_coerce_int(cv_config.get("embargo"), default=0),
+            mode=cv_mode or "official_walkforward",
+            min_train_size=_coerce_int(cv_config.get("min_train_size"), default=0),
+            chunk_size=_coerce_int(cv_config.get("chunk_size"), default=156),
+            holdout_train_eras=cast(list[object] | None, cv_config.get("train_eras")),
+            holdout_val_eras=cast(list[object] | None, cv_config.get("val_eras")),
+        )
+    except TrainingConfigError:
+        return 1
+    total = 0
+    for train_eras, val_eras in splits:
+        if train_eras and val_eras:
+            total += 1
+    return max(total, 1)
+
+
+def _emit_train_model_progress(state: TrainingPipelineState) -> None:
+    session = state.telemetry_session
+    if session is None:
+        return
+    try:
+        emit_stage_event(
+            session,
+            current_stage="train_model",
+            completed_stages=list(state.completed_stages),
+            extra_payload=_train_model_progress_payload(state),
+        )
+    except Exception:
+        logger.exception("failed to emit train_model progress for run_id=%s", state.run_id)
 
 
 def prepare_training_run(
@@ -209,10 +333,12 @@ def prepare_training_run(
     output_dir: str | Path | None = None,
     client: TrainingDataClient | None = None,
     profile: TrainingProfile | None = None,
+    post_training_scoring: PostTrainingScoringPolicy | None = None,
     engine_mode: str | None = None,
     window_size_eras: int | None = None,
     embargo_eras: int | None = None,
     experiment_id: str | None = None,
+    allow_round_batch_post_training_scoring: bool = False,
     state: TrainingPipelineState | None = None,
 ) -> TrainingPipelineState:
     """Resolve config, run identity, runtime policy, and persistent run scaffolding."""
@@ -222,10 +348,12 @@ def prepare_training_run(
             output_dir=Path(output_dir).expanduser() if output_dir is not None else None,
             client=client,
             profile=profile,
+            post_training_scoring=post_training_scoring,
             engine_mode=engine_mode,
             window_size_eras=window_size_eras,
             embargo_eras=embargo_eras,
             experiment_id=experiment_id,
+            allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
         )
 
     state.config = load_config(state.config_path)
@@ -255,6 +383,15 @@ def prepare_training_run(
     state.resource_policy = _resolve_resource_policy(_as_dict(state.training_config.get("resources")))
     state.cache_policy = _resolve_cache_policy(_as_dict(state.training_config.get("cache")))
     _apply_resource_policy(state.resource_policy)
+    state.post_training_scoring_policy = resolve_post_training_scoring_policy(
+        training_config=state.training_config,
+        override=state.post_training_scoring,
+    )
+    state.post_training_requested_stage = post_training_scoring_requested_stage(state.post_training_scoring_policy)
+    if is_round_post_training_scoring_policy(state.post_training_scoring_policy) and not (
+        state.allow_round_batch_post_training_scoring
+    ):
+        raise TrainingError("training_post_training_scoring_round_requires_experiment_workflow")
 
     state.engine_plan = resolve_training_engine(
         training_config=state.training_config,
@@ -306,6 +443,7 @@ def prepare_training_run(
     state.predictions_dir = predictions_dir
     state.scoring_dir = scoring_dir
     state.run_manifest_path = resolve_run_manifest_path(output_root)
+    state.runtime_path = resolve_runtime_snapshot_path(output_root)
     state.resolved_snapshot_path = resolve_resolved_config_path(output_root)
     state.metrics_path = resolve_metrics_path(output_root)
     state.score_provenance_path = resolve_score_provenance_path(output_root)
@@ -314,12 +452,16 @@ def prepare_training_run(
             "dataset_scope": state.dataset_scope,
             "dataset_variant": state.dataset_variant,
         },
-        "scoring": {"requested_stage": "post_training_core", "refreshed_stages": []},
+        "scoring": _initial_scoring_metadata(
+            policy=state.post_training_scoring_policy,
+            requested_stage=state.post_training_requested_stage,
+        ),
         "resources": state.resource_policy,
         "cache": state.cache_policy,
     }
     state.run_log_path = resolve_run_log_path(output_root)
     state.artifacts = {
+        "runtime": str(cast(Path, state.runtime_path).relative_to(output_root)),
         "resolved_config": str(state.resolved_snapshot_path.relative_to(output_root)),
         "log": str(state.run_log_path.relative_to(output_root)),
     }
@@ -332,41 +474,46 @@ def prepare_training_run(
 
     _ensure_run_dir_is_fresh(output_root)
     launch_metadata = get_launch_metadata()
-    if launch_metadata is not None:
-        try:
-            state.run_store_root = _resolve_store_root_for_run(output_root)
-            state.telemetry_session = begin_local_training_session(
-                store_root=state.run_store_root,
-                config_path=state.config_path,
-                source=launch_metadata.source,
-                experiment_id=state.experiment_id,
-                operation_type=launch_metadata.operation_type,
-                job_type=launch_metadata.job_type,
-                request_payload={
-                    "run_hash": state.run_hash,
-                    "engine_mode": state.engine_plan.mode,
-                    "data_version": state.data_version,
-                    "feature_set": state.feature_set,
-                    "target_col": state.target_col,
-                },
-            )
-            if state.telemetry_session is not None:
-                mark_job_starting(state.telemetry_session, pid=os.getpid(), worker_id="local")
-                mark_job_running(state.telemetry_session)
-                state.telemetry_sampler = start_local_resource_sampler(
-                    state.telemetry_session,
-                    interval_seconds=5.0,
-                )
-                _record_telemetry_stage(
-                    state.telemetry_session,
-                    completed_stages=state.completed_stages,
-                    stage_name="initializing",
-                    message="Training session initialized.",
-                    run_log_path=None,
-                    attempt_id=state.run_attempt_id,
-                )
-        except Exception:
-            logger.exception("training telemetry bootstrap failed for run_id=%s", state.run_id)
+    if launch_metadata is None:
+        raise TrainingError("training_launch_metadata_missing")
+    state.run_store_root = _resolve_store_root_for_run(output_root)
+    state.telemetry_session = begin_local_training_session(
+        store_root=state.run_store_root,
+        config_path=state.config_path,
+        run_id=state.run_id,
+        run_hash=state.run_hash,
+        config_hash=state.config_hash,
+        run_dir=output_root,
+        runtime_path=cast(Path, state.runtime_path),
+        source=launch_metadata.source,
+        experiment_id=state.experiment_id,
+        operation_type=launch_metadata.operation_type,
+        job_type=launch_metadata.job_type,
+        request_payload={
+            "run_hash": state.run_hash,
+            "engine_mode": state.engine_plan.mode,
+            "data_version": state.data_version,
+            "feature_set": state.feature_set,
+            "target_col": state.target_col,
+        },
+    )
+    if state.telemetry_session is None:
+        raise TrainingError(f"training_lifecycle_bootstrap_failed:{state.run_id}")
+    mark_job_starting(state.telemetry_session, pid=os.getpid(), worker_id="local")
+    mark_job_running(state.telemetry_session)
+    state.telemetry_sampler = start_local_resource_sampler(
+        state.telemetry_session,
+        interval_seconds=5.0,
+    )
+    _record_telemetry_stage(
+        state.telemetry_session,
+        completed_stages=state.completed_stages,
+        stage_name="initializing",
+        message="Training session initialized.",
+        run_log_path=None,
+        attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="initializing"),
+    )
 
     running_manifest = build_run_manifest(
         run_id=state.run_id,
@@ -403,6 +550,7 @@ def prepare_training_run(
 
 def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
     """Load feature metadata and prepare training data providers."""
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="load_data")
     _record_telemetry_stage(
         state.telemetry_session,
         completed_stages=state.completed_stages,
@@ -410,6 +558,7 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Loading training datasets and feature metadata.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="load_data"),
     )
 
     state.features = load_features(
@@ -490,6 +639,7 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
 
 def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     """Build predictions and persist pre-scoring artifacts."""
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="train_model")
     if state.config is None:
         raise TrainingError("training_config_uninitialized")
     config = state.config
@@ -518,6 +668,8 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     elif state.data_embargo_eras is not None:
         cv_config.setdefault("embargo", state.data_embargo_eras)
     state.cv_enabled = bool(cv_config.get("enabled", True))
+    state.train_model_progress_total = _resolve_train_model_progress_total(state=state, cv_config=cv_config)
+    state.train_model_progress_current = 0
 
     _record_telemetry_stage(
         state.telemetry_session,
@@ -526,6 +678,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Building model predictions.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="train_model"),
     )
     on_fold_complete = None
     on_fold_start = None
@@ -545,6 +698,8 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             return f"{start}->{end}"
 
         def _on_fold_start(fold_metadata: dict[str, object]) -> None:
+            _raise_if_cancel_requested(state.telemetry_session, stage_name="train_model.fold_start")
+            _emit_train_model_progress(state)
             log_info(
                 state.run_log_path,
                 event="fold_started",
@@ -558,6 +713,9 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
             )
 
         def _on_fold_complete(fold_predictions: pd.DataFrame, fold_metadata: dict[str, object]) -> None:
+            _raise_if_cancel_requested(state.telemetry_session, stage_name="train_model.fold_complete")
+            state.train_model_progress_current += 1
+            _emit_train_model_progress(state)
             if state.benchmark_source is None or state.training_client is None or state.scoring_dir is None:
                 return
             try:
@@ -655,6 +813,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     state.oof_eras = int(state.predictions[state.era_col].nunique())
     state.scoring_feature_source_paths = None
 
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="score_predictions")
     _record_telemetry_stage(
         state.telemetry_session,
         completed_stages=state.completed_stages,
@@ -662,13 +821,15 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Deferring scoring to post-run metrics phase.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="score_predictions"),
     )
-    state.metrics_status = {
-        "status": "pending",
-        "reason": "post_run_metrics_pending",
-    }
-    state.training_runtime_metadata["scoring"] = {"requested_stage": "post_training_core", "refreshed_stages": []}
+    state.metrics_status = _initial_metrics_status(state.post_training_scoring_policy)
+    state.training_runtime_metadata["scoring"] = _initial_scoring_metadata(
+        policy=state.post_training_scoring_policy,
+        requested_stage=state.post_training_requested_stage,
+    )
 
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="persist_artifacts")
     _record_telemetry_stage(
         state.telemetry_session,
         completed_stages=state.completed_stages,
@@ -676,6 +837,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Persisting run artifacts and metrics.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="persist_artifacts"),
     )
     if (
         state.results_dir is None
@@ -731,6 +893,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Indexing run artifacts in store.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="index_run"),
     )
     state.run_store_root = _resolve_store_root_for_run(state.output_root)
     try:
@@ -742,6 +905,7 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
 
 def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     """Compute post-run scoring artifacts for the persisted predictions."""
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="score_predictions_post_run")
     engine_plan = state.engine_plan
     if engine_plan is None:
         raise TrainingError("training_engine_plan_uninitialized")
@@ -760,12 +924,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         message="Computing metrics in post-run phase.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
-    )
-    log_info(
-        state.run_log_path,
-        event="post_run_scoring_started",
-        message="stage=post_training_core",
-        attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="score_predictions_post_run"),
     )
     state.full = None
     state.baseline = None
@@ -773,6 +932,31 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     state.data_loader = None
     state.predictions = pd.DataFrame()
     gc.collect()
+
+    requested_stage = state.post_training_requested_stage
+    if requested_stage is None:
+        log_info(
+            state.run_log_path,
+            event="post_run_scoring_skipped",
+            message="policy=none",
+            attempt_id=state.run_attempt_id,
+        )
+        return state
+    if is_round_post_training_scoring_policy(state.post_training_scoring_policy):
+        log_info(
+            state.run_log_path,
+            event="post_run_scoring_deferred",
+            message=f"policy={state.post_training_scoring_policy} stage={requested_stage}",
+            attempt_id=state.run_attempt_id,
+        )
+        return state
+
+    log_info(
+        state.run_log_path,
+        event="post_run_scoring_started",
+        message=f"stage={requested_stage}",
+        attempt_id=state.run_attempt_id,
+    )
 
     try:
         scoring_result = run_scoring(
@@ -799,7 +983,7 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
                 era_col=state.era_col,
                 id_col=state.id_col,
                 data_root=DEFAULT_DATASETS_DIR,
-                stage="post_training_core",
+                stage=requested_stage,
             ),
             client=state.training_client,
         )
@@ -811,7 +995,19 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
             message=str(exc),
             attempt_id=state.run_attempt_id,
         )
-        raise TrainingError(f"training_post_run_scoring_failed:{state.run_id}") from exc
+        state.metrics_status = {
+            "status": "failed",
+            "reason": "post_training_scoring_failed",
+            "error": str(exc),
+        }
+        state.training_runtime_metadata["scoring"] = _failed_scoring_metadata(
+            policy=state.post_training_scoring_policy,
+            requested_stage=requested_stage,
+            error=str(exc),
+            reason="post_training_scoring_failed",
+        )
+        _persist_results_with_current_scoring_state(state)
+        return state
 
     state.summaries = scoring_result.summaries
     score_provenance = scoring_result.score_provenance
@@ -835,6 +1031,8 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
         persisted_scoring=persisted_scoring,
     )
     state.training_runtime_metadata["scoring"] = _scoring_metadata_from_manifest(
+        policy=state.post_training_scoring_policy,
+        status="succeeded",
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
         stage_metadata=stage_metadata,
@@ -894,8 +1092,59 @@ def score_predictions(state: TrainingPipelineState) -> TrainingPipelineState:
     return state
 
 
+def _persist_results_with_current_scoring_state(state: TrainingPipelineState) -> None:
+    engine_plan = state.engine_plan
+    if engine_plan is None:
+        raise TrainingError("training_engine_plan_uninitialized")
+    if (
+        state.results_path is None
+        or state.output_root is None
+        or state.predictions_relative is None
+        or state.metrics_path is None
+        or state.benchmark_source is None
+    ):
+        raise TrainingError("training_scoring_paths_uninitialized")
+
+    results = build_results_payload(
+        model_type=state.model_type,
+        model_params=state.model_params,
+        model_config=state.model_config,
+        nan_missing_all_twos=state.nan_missing_all_twos,
+        missing_value=state.missing_value,
+        data_version=state.data_version,
+        dataset_variant=state.dataset_variant,
+        feature_set=state.feature_set,
+        target_col=state.target_col,
+        dataset_scope=state.dataset_scope,
+        full_rows=state.full_rows,
+        full_eras=state.full_eras,
+        oof_rows=state.oof_rows,
+        oof_eras=state.oof_eras,
+        configured_embargo_eras=state.data_embargo_eras,
+        effective_embargo_eras=state.effective_embargo_eras,
+        benchmark_source=state.benchmark_source,
+        meta_model_col=state.meta_model_col,
+        meta_model_data_path=state.meta_model_data_path,
+        output_dir=state.output_root,
+        predictions_relative=state.predictions_relative,
+        score_provenance_relative=state.score_provenance_relative,
+        summaries=None,
+        cv_meta=state.cv_meta,
+        engine_plan=engine_plan,
+        cv_enabled=state.cv_enabled,
+        resource_policy=state.resource_policy,
+        cache_policy=state.cache_policy,
+        scoring_metadata=cast(dict[str, object], state.training_runtime_metadata["scoring"]),
+        metrics_status=state.metrics_status,
+    )
+    save_results(results, state.results_path)
+    state.metrics_payload = _extract_metrics_payload(results)
+    save_metrics(state.metrics_payload, state.metrics_path)
+
+
 def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
     """Persist final manifest state, refresh index, and return run outputs."""
+    _raise_if_cancel_requested(state.telemetry_session, stage_name="finalize_manifest")
     if state.config is None:
         raise TrainingError("training_config_uninitialized")
     config = state.config
@@ -916,6 +1165,7 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
         message="Writing final run manifest.",
         run_log_path=state.run_log_path,
         attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="finalize_manifest"),
     )
     finished_manifest = build_run_manifest(
         run_id=state.run_id,
@@ -933,6 +1183,7 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
         artifacts=state.artifacts,
         metrics_summary=state.metrics_payload,
         training_metadata=state.training_runtime_metadata,
+        lifecycle_metadata=_lifecycle_manifest_payload(terminal_reason="completed"),
     )
     if state.run_manifest_path is None or state.run_store_root is None or state.output_root is None:
         raise TrainingError("training_finalize_paths_uninitialized")
@@ -966,10 +1217,34 @@ def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
     """Persist failure manifest and telemetry for an interrupted run."""
     engine_plan = state.engine_plan
     if state.run_manifest_written:
+        is_canceled = isinstance(exc, TrainingCanceledError)
+        cancel_requested_at: str | None = None
+        terminal_reason = "failed"
+        terminal_detail: dict[str, object] | None = None
+        if state.telemetry_session is not None:
+            store_root_for_lookup = state.run_store_root
+            if store_root_for_lookup is None and state.output_root is not None:
+                store_root_for_lookup = _resolve_store_root_for_run(state.output_root)
+            lifecycle_record = (
+                get_run_lifecycle(store_root=store_root_for_lookup, run_id=state.run_id)
+                if store_root_for_lookup is not None
+                else None
+            )
+            if lifecycle_record is not None:
+                cancel_requested_at = lifecycle_record.cancel_requested_at
+        if is_canceled:
+            status = "CANCELED"
+            error_payload_value = None
+            terminal_reason = "cancel_requested"
+            terminal_detail = {"message": str(exc)}
+        else:
+            status = "FAILED"
+            error_payload_value = error_payload(exc)
+            terminal_detail = {"message": str(exc), "error": error_payload_value}
         failed_manifest = build_run_manifest(
             run_id=state.run_id,
             run_hash=state.run_hash,
-            status="FAILED",
+            status=status,
             config_path=state.config_path,
             config_hash=state.config_hash,
             data_version=state.data_version,
@@ -980,8 +1255,13 @@ def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
             experiment_id=state.experiment_id,
             created_at=state.created_at,
             artifacts=state.artifacts,
-            error=error_payload(exc),
+            error=error_payload_value,
             training_metadata=state.training_runtime_metadata,
+            lifecycle_metadata=_lifecycle_manifest_payload(
+                terminal_reason=terminal_reason,
+                cancel_requested_at=cancel_requested_at,
+                terminal_detail=terminal_detail,
+            ),
         )
         try:
             save_run_manifest(failed_manifest, cast(Path, state.run_manifest_path))
@@ -992,14 +1272,28 @@ def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
                 index_run(store_root=state.run_store_root, run_id=state.run_id)
             except Exception:
                 pass
-        _mark_telemetry_failed(
-            state.telemetry_session,
-            run_id=state.run_id,
-            error=error_payload(exc),
-            message=str(exc),
-            run_log_path=state.run_log_path,
-            attempt_id=state.run_attempt_id,
-        )
+        if is_canceled:
+            _mark_telemetry_canceled(
+                state.telemetry_session,
+                run_id=state.run_id,
+                message=str(exc),
+                run_log_path=state.run_log_path,
+                attempt_id=state.run_attempt_id,
+                cancel_requested_at=cancel_requested_at,
+                terminal_reason=terminal_reason,
+                terminal_detail=terminal_detail,
+            )
+        else:
+            _mark_telemetry_failed(
+                state.telemetry_session,
+                run_id=state.run_id,
+                error=error_payload(exc),
+                message=str(exc),
+                run_log_path=state.run_log_path,
+                attempt_id=state.run_attempt_id,
+                terminal_reason=terminal_reason,
+                terminal_detail=terminal_detail,
+            )
 
 
 def cleanup_training_run(state: TrainingPipelineState) -> None:
@@ -1016,10 +1310,12 @@ def run_training_pipeline(
     output_dir: str | Path | None = None,
     client: TrainingDataClient | None = None,
     profile: TrainingProfile | None = None,
+    post_training_scoring: PostTrainingScoringPolicy | None = None,
     engine_mode: str | None = None,
     window_size_eras: int | None = None,
     embargo_eras: int | None = None,
     experiment_id: str | None = None,
+    allow_round_batch_post_training_scoring: bool = False,
 ) -> TrainingRunResult:
     """Execute the full local train pipeline and persist canonical scoring artifacts."""
     state = TrainingPipelineState(
@@ -1027,10 +1323,12 @@ def run_training_pipeline(
         output_dir=Path(output_dir).expanduser() if output_dir is not None else None,
         client=client,
         profile=profile,
+        post_training_scoring=post_training_scoring,
         engine_mode=engine_mode,
         window_size_eras=window_size_eras,
         embargo_eras=embargo_eras,
         experiment_id=experiment_id,
+        allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
     )
     try:
         state = prepare_training_run(
@@ -1038,10 +1336,12 @@ def run_training_pipeline(
             output_dir=output_dir,
             client=client,
             profile=profile,
+            post_training_scoring=post_training_scoring,
             engine_mode=engine_mode,
             window_size_eras=window_size_eras,
             embargo_eras=embargo_eras,
             experiment_id=experiment_id,
+            allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
             state=state,
         )
         state = load_training_data(state)
@@ -1055,6 +1355,60 @@ def run_training_pipeline(
         cleanup_training_run(state)
 
 
+def _initial_metrics_status(policy: PostTrainingScoringPolicy) -> dict[str, object]:
+    if policy == "none":
+        return {
+            "status": "deferred",
+            "reason": "post_training_scoring_disabled",
+        }
+    if is_round_post_training_scoring_policy(policy):
+        return {
+            "status": "deferred",
+            "reason": "experiment_round_batch_pending",
+        }
+    return {
+        "status": "pending",
+        "reason": "post_training_metrics_pending",
+    }
+
+
+def _initial_scoring_metadata(
+    *,
+    policy: PostTrainingScoringPolicy,
+    requested_stage: CanonicalScoringStage | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "policy": policy,
+        "status": "pending",
+        "requested_stage": requested_stage,
+        "refreshed_stages": [],
+    }
+    if policy == "none":
+        payload["status"] = "deferred"
+        payload["reason"] = "post_training_scoring_disabled"
+    elif is_round_post_training_scoring_policy(policy):
+        payload["status"] = "deferred"
+        payload["reason"] = "experiment_round_batch_pending"
+    return payload
+
+
+def _failed_scoring_metadata(
+    *,
+    policy: PostTrainingScoringPolicy,
+    requested_stage: CanonicalScoringStage | None,
+    error: str,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        "policy": policy,
+        "status": "failed",
+        "requested_stage": requested_stage,
+        "refreshed_stages": [],
+        "reason": reason,
+        "error": error,
+    }
+
+
 def _era_sort_key(era: object) -> int | str:
     if isinstance(era, str) and era.isdigit():
         return int(era)
@@ -1065,12 +1419,16 @@ def _era_sort_key(era: object) -> int | str:
 
 def _scoring_metadata_from_manifest(
     *,
+    policy: PostTrainingScoringPolicy,
+    status: str,
     requested_stage: str,
     refreshed_stages: tuple[str, ...],
     stage_metadata: dict[str, object],
     manifest_payload: dict[str, object],
 ) -> dict[str, object]:
     payload: dict[str, object] = {
+        "policy": policy,
+        "status": status,
         "requested_stage": requested_stage,
         "refreshed_stages": list(refreshed_stages),
     }

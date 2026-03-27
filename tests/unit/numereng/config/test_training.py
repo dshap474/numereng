@@ -33,6 +33,8 @@ def test_load_training_config_json_accepts_canonical_payload(tmp_path: Path) -> 
 
     payload = load_training_config_json(config_path)
     assert payload["model"] == {"type": "LGBMRegressor", "params": {}}
+    training_block = cast(dict[str, object], payload["training"])
+    assert training_block["post_training_scoring"] == "none"
 
 
 def test_load_training_config_json_accepts_explicit_model_device(tmp_path: Path) -> None:
@@ -87,6 +89,24 @@ def test_load_training_config_json_accepts_full_history_refit_profile(tmp_path: 
     training_block = cast(dict[str, object], payload["training"])
     engine_block = cast(dict[str, object], training_block["engine"])
     assert engine_block["profile"] == "full_history_refit"
+
+
+def test_load_training_config_json_accepts_post_training_scoring_policy(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"post_training_scoring": "round_full"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_training_config_json(config_path)
+    training_block = cast(dict[str, object], payload["training"])
+    assert training_block["post_training_scoring"] == "round_full"
 
 
 def test_load_training_config_json_rejects_submission_profile_rename(tmp_path: Path) -> None:
@@ -387,6 +407,23 @@ def test_load_training_config_json_rejects_invalid_loading_mode(tmp_path: Path) 
                 },
                 "model": {"type": "LGBMRegressor", "params": {}},
                 "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TrainingConfigLoaderError, match="training_config_schema_invalid"):
+        load_training_config_json(config_path)
+
+
+def test_load_training_config_json_rejects_invalid_post_training_scoring(tmp_path: Path) -> None:
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"post_training_scoring": "batch_everything"},
             }
         ),
         encoding="utf-8",

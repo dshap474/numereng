@@ -95,6 +95,29 @@ class HpoStudyTrialsResponse(BaseModel):
     trials: list[HpoTrialResponse]
 
 
+class BaselineBuildRequest(BaseModel):
+    run_ids: list[str]
+    name: str = Field(min_length=1)
+    default_target: str = "target_ender_20"
+    description: str | None = None
+    promote_active: bool = False
+    store_root: str = ".numereng"
+
+
+class BaselineBuildResponse(BaseModel):
+    name: str
+    baseline_dir: str
+    predictions_path: str
+    metadata_path: str
+    available_targets: list[str]
+    default_target: str
+    source_run_ids: list[str]
+    source_experiment_id: str | None = None
+    active_predictions_path: str | None = None
+    active_metadata_path: str | None = None
+    created_at: str
+
+
 class EnsembleBuildRequest(BaseModel):
     run_ids: list[str]
     experiment_id: str | None = None
@@ -226,6 +249,22 @@ class StoreDoctorResponse(BaseModel):
     missing_paths: list[str] = Field(default_factory=list)
 
 
+class StoreRunLifecycleRepairRequest(BaseModel):
+    store_root: str = ".numereng"
+    run_id: str | None = None
+    active_only: bool = True
+
+
+class StoreRunLifecycleRepairResponse(BaseModel):
+    store_root: str
+    scanned_count: int
+    unchanged_count: int
+    reconciled_count: int
+    reconciled_stale_count: int
+    reconciled_canceled_count: int
+    run_ids: list[str] = Field(default_factory=list)
+
+
 class StoreMaterializeVizArtifactsRequest(BaseModel):
     store_root: str = ".numereng"
     kind: str
@@ -278,6 +317,8 @@ class DatasetToolsBuildDownsampleResponse(BaseModel):
 
 
 __all__ = [
+    "BaselineBuildRequest",
+    "BaselineBuildResponse",
     "DatasetToolsBuildDownsampleRequest",
     "DatasetToolsBuildDownsampleResponse",
     "EnsembleBuildRequest",
@@ -304,6 +345,8 @@ __all__ = [
     "StoreMaterializeVizArtifactsFailureResponse",
     "StoreMaterializeVizArtifactsRequest",
     "StoreMaterializeVizArtifactsResponse",
+    "StoreRunLifecycleRepairRequest",
+    "StoreRunLifecycleRepairResponse",
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",

@@ -11,7 +11,6 @@ from numereng.features import (
     submission,
     telemetry,
     training,
-    viz,
 )
 
 __all__ = [
@@ -25,5 +24,4 @@ __all__ = [
     "submission",
     "telemetry",
     "training",
-    "viz",
 ]

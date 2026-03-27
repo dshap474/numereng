@@ -32,9 +32,10 @@ Source map:
 - `src/numereng/platform/*`: boundary errors + Numerai adapter + forum scraper tooling.
 - `src/numereng/features/training/*`: deterministic run orchestration + artifacts.
 - `src/numereng/features/models/custom_models/*`: plugin model adapters; numereng routes `TabPFNRegressor` cache traffic into `<effective_store_root>/cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
-- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> finalize`); training uses the materialized loader only and automatically refreshes `post_training_core` after predictions are written.
+- `src/numereng/features/training/_pipeline.py`: staged internal train workflow (`prepare -> load_data -> train_model -> finalize`); training uses the materialized loader only, always writes fold-time `post_fold` artifacts for CV runs, and applies policy-driven post-training scoring (`none|core|full|round_core|round_full`).
 - `src/numereng/features/scoring/*`: canonical run-scoring service + metric engines; hot-path metric math is array-kernel based in `features/scoring/_fastops.py` and orchestrated from `metrics.py`.
 - `src/numereng/features/submission/*`: run/file prediction resolution + upload.
+- `src/numereng/features/baseline/*`: shared benchmark baseline construction from persisted run predictions; canonical outputs live under `.numereng/datasets/baselines/<name>/` and can promote the active benchmark artifact.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
 - `src/numereng/features/agentic_research/*`: foreground supervisor that persists program state under one root experiment, pivots into child experiments when a path plateaus, and selects a persisted research strategy at `research init`. Current strategies are `numerai-experiment-loop` and the phase-aware `kaggle-gm-loop`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the dedicated lean `CODEX_HOME`, while `openrouter` uses the configured `ACTIVE_MODEL`. Numerai rounds are now config-centric: Python chooses one parent config, the LLM proposes a small mutation, Python clones/validates/names the child config, then training runs exactly one child config per autonomous iteration.
@@ -45,7 +46,9 @@ Source map:
 - `src/numereng/features/dataset-tools/*`: local dataset downsampling utilities for stored derived downsampled artifacts.
 - `src/numereng/features/cloud/aws/*`: EC2 + managed AWS train/image/state.
 - `src/numereng/features/cloud/modal/*`: Modal deploy/data/train/state.
-- `src/numereng/features/viz/*`: read-only API over store filesystem/sqlite.
+- `viz/api/numereng_viz/*`: authoritative read-only viz backend package (routes, services, monitor snapshot composition, store merge logic).
+- `src/numereng/features/viz/*`: compatibility shim only; no real viz business logic should live here.
+- `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`.
 - `src/numereng/api/__init__.py`: curated public Python facade.
 - `src/numereng/api/pipeline.py`: public workflow entrypoint for full local train flows.
 - `src/numereng/api/_*.py`: internal API operation/stage wrappers; not stable import paths.
@@ -58,6 +61,7 @@ Default store layout (`.numereng`):
 
 Key artifacts:
 - `runs/<run_id>/run.json`
+- `runs/<run_id>/runtime.json`
 - `runs/<run_id>/run.log`
 - `runs/<run_id>/resolved.json`
 - `runs/<run_id>/results.json`
@@ -65,6 +69,8 @@ Key artifacts:
 - `runs/<run_id>/score_provenance.json`
 - `runs/<run_id>/artifacts/predictions/*.parquet`
   - numereng-managed parquet artifacts use `ZSTD` compression level `3`
+- `datasets/baselines/<baseline_name>/baseline.json`
+- `datasets/baselines/<baseline_name>/pred_<baseline_name>.parquet`
 - `experiments/<experiment_id>/experiment.json`
 - `experiments/<experiment_id>/EXPERIMENT.md`
 - `experiments/<experiment_id>/EXPERIMENT.pack.md`
@@ -88,6 +94,10 @@ Wiring map:
   `numereng.api.pipeline.run_training_pipeline(TrainRunRequest) -> internal API stages -> features.training._pipeline`
 - Re-score persisted run:
   `cli run score [--stage <canonical-stage>] -> bind cli metadata -> api.score_run -> features.scoring.run_service.score_run`
+- Build shared benchmark baseline:
+  `cli baseline build --run-ids <id1,id2,...> --name <baseline_name> [--default-target <target_col>] [--promote-active] -> api.baseline_build -> features.baseline.build_baseline`
+- Request cooperative cancel:
+  `cli run cancel --run-id <id> -> api.cancel_run -> features.telemetry.request_run_cancel`
 - Experiment train:
   `cli experiment train -> bind cli metadata -> api.experiment_train -> features.experiments.train_experiment -> features.training.run_training`
 - Experiment deferred round scoring:
@@ -121,6 +131,9 @@ Wiring map:
   `cli neutralize apply -> api.neutralize_apply -> features.feature_neutralization`
 - Store:
   `cli store * -> api.store_* -> features.store`
+  - `cli store repair-run-lifecycles [--run-id <id>|--all] -> api.store_repair_run_lifecycles -> features.telemetry.reconcile_run_lifecycles`
+- Monitor:
+  `cli monitor snapshot [--store-root <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
 - Dataset tooling command:
   `uv run numereng dataset-tools build-downsampled-full --data-version v5.2`
 - Cloud AWS:
@@ -138,20 +151,32 @@ Telemetry launch-source precedence:
 - Source binding is context-based via `bind_launch_metadata(...)` / `get_launch_metadata()`.
 - CLI run binds `cli.run.train`; CLI experiment train binds `cli.experiment.train`.
 - API defaults bind only when unbound (`api.run.train`, `api.experiment.train`).
+- Public workflow entrypoint defaults bind when unbound (`api.pipeline.train`).
 - HPO fallback default source for trials: `api.hpo.create` (only when unbound).
 - Modal runtime fallback default source: `cloud.modal.runtime` (only when unbound).
 
 Local run telemetry write path:
 - `features.training.run_training` reads launch metadata.
-- If present, training opens a telemetry session (`begin_local_training_session`) and writes:
+- Public local train entrypoints must bind launch metadata before calling the training pipeline.
+- Training bootstrap requires launch metadata and a successful lifecycle session (`begin_local_training_session`) before dataset/model work starts.
+- Bootstrap writes canonical current-truth surfaces:
   - `run_jobs`
   - `run_attempts`
   - `logical_runs`
+  - `run_lifecycles`
+  - `runs/<run_id>/runtime.json`
+- During execution, training also appends:
   - `run_job_events`
   - `run_job_logs`
   - `run_job_samples`
-- Status lifecycle: `queued -> starting -> running -> completed|failed`.
-- Telemetry is fail-open: telemetry failures must not fail training.
+- Status lifecycle: `queued -> starting -> running -> completed|failed|canceled|stale`.
+- `run_lifecycles` is the canonical sqlite read model for current run state; `runtime.json` is the canonical filesystem snapshot for current run state.
+- Both surfaces also carry canonical backend-owned progress fields:
+  `progress_percent`, `progress_label`, `progress_current`, `progress_total`.
+- `run_job_events` / `run_job_logs` / `run_job_samples` remain append-only history, not the source of current truth.
+- Cooperative cancel is by `run_id` and sets `cancel_requested` in lifecycle/job rows; training exits through canonical `canceled` finalization at safe checkpoints.
+- Active lifecycle reads may auto-reconcile orphaned local runs to `canceled` or `stale`.
+- Lifecycle bootstrap is mandatory for local public training; later telemetry event/log/sample updates remain fail-open.
 
 Experiment scoping behavior:
 - Preferred: pass `experiment_id` explicitly (`run train --experiment-id ...` or experiment train flow).
@@ -160,11 +185,23 @@ Experiment scoping behavior:
 
 Viz/frontend topology:
 - Frontend routes: `/docs`, `/docs/numerai`, `/notes`, `/experiments`, `/experiments/[id]`.
+- Viz backend launcher shim is `viz/api.py`; the actual backend package is `viz/api/numereng_viz`.
 - No standalone frontend routes for `/run-ops` or `/configs`.
-- Experiment page contains Analysis + Run Ops tabs; Run Ops is monitor-only (configs list + run queue + live monitor).
+- `/experiments` is the mission-control dashboard. It route-loads `/api/experiments/overview`, keeps a page-local snapshot, and polls the same read-only overview every 3 seconds while the page is visible. The left rail lists all experiments; the right pane shows live experiments plus recent terminal activity and attention states.
+- Experiment page contains Analysis + Progress + Run Ops tabs; all launch/control remains monitor-only and CLI/API-driven.
+- The Progress tab is the only experiment-detail UI surface that live-polls per-run lifecycle state. It reads `/api/run-jobs?experiment_id=<id>` plus per-run `/api/runs/{run_id}/lifecycle`, keeps a page-local lifecycle cache, and renders backend-owned progress bars without inferring percent in the browser.
+- Progress display labels map canonical lifecycle state to UI-only labels:
+  `NOT_STARTED`, `QUEUED`, `TRAINING`, `COMPLETED`, `FAILED`, `CANCELED`, `STALE`.
 - Run launch/control is CLI/API-only.
+- Monitor snapshots are now a public read-only package contract:
+  - Python API: `numereng.api.build_monitor_snapshot`
+  - CLI: `numereng monitor snapshot --store-root <path> --json`
+- Snapshot monitoring is store-based:
+  - local live runs come from active `run_lifecycles`
+  - SageMaker/Batch live truth is refreshed from `cloud_jobs`
+  - SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles
 - `experiment pack` writes `EXPERIMENT.pack.md` beside `EXPERIMENT.md`; it embeds the current experiment narrative plus a dashboard-aligned scalar run-metrics table only (no per-era/time-series payloads).
-- Backend still exposes read-only catalog/query endpoints (`/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
+- Backend still exposes read-only catalog/query endpoints (`/experiments/overview`, `/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
 - Normal experiment/config catalogs exclude archived experiments; direct experiment detail/doc/config reads remain available by ID.
 - Viz metric payloads are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, feature exposure metrics, `max_drawdown`, and `mmc_coverage_ratio_rows`.
 - Viz also exposes payout-target aliases `corr_payout_mean` and `mmc_payout_mean`; `corr_payout_mean` comes from `corr_ender20`, while `mmc_mean` / `mmc_payout_mean` now normalize to the payout-backed MMC surface with legacy `mmc_ender20` fallback for older runs.
@@ -176,6 +213,8 @@ Viz/frontend topology:
 - Viz prefers persisted scoring artifacts, and historical runs can be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` is a deprecated alias to the same backfill path. Explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Legacy scoring fallback is read-only and does not write artifacts on request.
 
 Critical invariants:
+- `baseline build` requires at least two persisted run IDs, a safe baseline name, and a `default_target` shared by every source run.
+- Successful `--promote-active` baseline builds refresh the shared active benchmark artifacts consumed by payout-target scoring fallback paths.
 - Submission source XOR: exactly one of `run_id` or `predictions_path`.
 - Classic submissions use `numerai_tools.submissions.validate_submission_numerai` against the current classic `live.parquet` id universe unless `allow_non_live_artifact=true`.
 - Neutralization source XOR: exactly one of `run_id` or `predictions_path`.
@@ -188,8 +227,9 @@ Critical invariants:
 - `model.device` is valid only for `LGBMRegressor`; if `model.params.device_type` is also set it must exactly match.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
-- Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV and then automatically refreshes the canonical `post_training_core` stage from saved predictions. Later `run score` or `experiment score-round` can refresh any stage, including `post_training_full`.
+- Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV, then applies the resolved `training.post_training_scoring` policy: `none` leaves scoring deferred, `core` refreshes `post_training_core`, `full` refreshes inclusive `post_training_full`, and `round_core|round_full` defer single-run scoring for later experiment round batch materialization.
 - Scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle. The bundle writes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when feature-neutral diagnostics are materialized. Historical runs may still have legacy `post_training_summary` / `post_training_features_summary` files, which remain readable.
+- Deferred or failed post-training scoring still leaves `results.json` and `metrics.json` on disk with `training.scoring` status metadata; `score_provenance.json` and staged scoring artifacts appear once scoring materializes successfully.
 - Training-time and persisted-run scoring metadata derive `emitted_stage_files` and recorded artifact file lists from the persisted `artifacts/scoring/manifest.json`, so `results.json`, `run.json`, and `score_provenance.json` match the materialized bundle exactly.
 - `post_training_core_summary` is the flattened scorecard stage: native/payout CORR summaries plus payout-backed `mmc`, `bmc`, `bmc_last_200_eras`, scalar `avg_corr_with_benchmark`, and `corr_delta_vs_baseline` summary stats when those inputs are available.
 - When the requested stage is only `post_training_core`, provenance/metadata should report `post_training_full` as `not_requested` rather than `feature_diagnostics_unavailable`; that omission switches to availability-based reasons only when `all` or `post_training_full` was actually requested.
@@ -200,7 +240,7 @@ Critical invariants:
 - The experiment-page analysis panel now has three chart views: `BMC Ranking`, `Payout Proxy`, and `Target Analysis`. `Target Analysis` is frontend-only filtering over actual runs and compares native `corr_mean` vs payout-backed `mmc_mean` within one selected training target.
 - Viz defaults rank/sort experiment views by `bmc_last_200_eras_mean`.
 - Feature exposure diagnostics are informational only: scoring computes rank-based exposures against `fncv3_features`, persists nested summaries for `feature_exposure` and `max_feature_exposure`, and viz normalizes `feature_exposure_mean` plus scalar `max_feature_exposure`.
-- Post-run scoring is fail-closed: scoring exceptions mark the run `FAILED` and fail the command.
+- Post-training scoring is best-effort: scoring exceptions leave the training run `FINISHED` and record failure state under `training.scoring` plus `metrics.json`.
 - `features.scoring.run_service.score_run` can recompute the same staged scoring bundle for an already-persisted run and refresh `results.json`/`metrics.json`/`run.json` plus store index rows, including `artifacts/scoring/manifest.json`. Stage-selective rescoring overwrites only the requested canonical stage artifacts, leaves non-selected existing stage files in place, and rewrites both `score_provenance.json -> artifacts` and `training.scoring.emitted_stage_files` from the persisted scoring manifest so recorded charts/stage files match the materialized bundle.
 - Canonical FNC neutralizes against dataset feature set `fncv3_features`, independent of the run training feature set, then correlates against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `score_provenance.json` records `policy.fnc_feature_set=fncv3_features`, `policy.fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`, join row/era counts, benchmark/meta missing-row/era counts, whether meta-dependent metrics were emitted, and the persisted scoring-artifact manifest summary.
@@ -224,7 +264,7 @@ Critical invariants:
 - `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
 - In `train_plus_validation` mode, `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
-- `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, but training still refreshes `post_training_core` automatically and later rescoring can materialize `post_training_full`.
+- `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, and post-training scoring remains policy-driven in the same way as other profiles.
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
 - Training never performs row-level sampling; dataset-size reduction must be done via dataset-level downsampling.
 - Training command requires successful pre-finalization `index_run`; post-finish index refresh is best-effort.
@@ -262,6 +302,11 @@ CLI families:
 - `numereng cloud aws image|train ...`
 - `numereng cloud modal deploy|data sync|train ...`
 - `numereng numerai datasets (list|download) | models | round | forum scrape`
+
+Experiment scaffolding:
+- `experiment create` requires experiment IDs in `YYYY-MM-DD_slug` format.
+- `experiment create` now scaffolds the deterministic experiment skeleton: `experiment.json`, a rich `EXPERIMENT.md`, `configs/`, a header-only `run_plan.csv`, and `run_scripts/launch_all.py|.sh|.ps1`.
+- Scripted sweeps should treat the generated launchers as the canonical entrypoint and keep per-run training at `--post-training-scoring none`, then batch-score rounds with `experiment score-round`.
 
 Verification anchors:
 - Format: `uv run ruff format --check .`

@@ -33,6 +33,7 @@ from numereng.features.experiments import (
 )
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
 from numereng.features.training import (
+    TrainingCanceledError,
     TrainingConfigError,
     TrainingDataError,
     TrainingError,
@@ -189,6 +190,7 @@ def experiment_train(request: ExperimentTrainRequest) -> ExperimentTrainResponse
                     experiment_id=request.experiment_id,
                     config_path=request.config_path,
                     output_dir=request.output_dir,
+                    post_training_scoring=request.post_training_scoring,
                     engine_mode=request.engine_mode,
                     window_size_eras=request.window_size_eras,
                     embargo_eras=request.embargo_eras,
@@ -200,6 +202,7 @@ def experiment_train(request: ExperimentTrainRequest) -> ExperimentTrainResponse
                     config_path=request.config_path,
                     output_dir=request.output_dir,
                     profile=request.profile,
+                    post_training_scoring=request.post_training_scoring,
                     engine_mode=request.engine_mode,
                     window_size_eras=request.window_size_eras,
                     embargo_eras=request.embargo_eras,
@@ -212,11 +215,17 @@ def experiment_train(request: ExperimentTrainRequest) -> ExperimentTrainResponse
         TrainingDataError,
         TrainingModelError,
         TrainingMetricsError,
-        TrainingError,
     ) as exc:
         message = str(exc)
         if "training_model_backend_missing_lightgbm" in message:
             raise PackageError("training_model_backend_missing") from exc
+        raise PackageError(message) from exc
+    except TrainingCanceledError as exc:
+        raise PackageError("training_run_canceled") from exc
+    except TrainingError as exc:
+        message = str(exc)
+        if message.startswith("training_lifecycle_bootstrap_failed:"):
+            raise PackageError("training_lifecycle_bootstrap_failed") from exc
         raise PackageError(message) from exc
     except ValueError as exc:
         raise PackageError("training_config_invalid") from exc

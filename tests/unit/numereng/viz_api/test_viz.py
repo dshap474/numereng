@@ -9,16 +9,19 @@ import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
-from numereng.features.viz.contracts import capabilities_payload
-from numereng.features.viz.routes import create_router
-from numereng.features.viz.services import VizService
-from numereng.features.viz.store_adapter import (
+from numereng_viz.contracts import capabilities_payload
+from numereng_viz.monitor_snapshot import RemoteSnapshotCoordinator, build_monitor_snapshot
+from numereng_viz.routes import create_router
+from numereng_viz.services import VizService
+from numereng_viz.store_adapter import (
     VizStoreAdapter,
     VizStoreConfig,
     _normalize_round_metrics,
     resolve_store_root,
 )
+
+from numereng.features.store import init_store_db, upsert_experiment
+from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 
 
 def test_resolve_store_root_prefers_explicit(tmp_path: Path) -> None:
@@ -386,6 +389,1082 @@ def _make_client(*, repo_root: Path, store_root: Path) -> TestClient:
     app.state.viz_service = service
     app.include_router(create_router(service))
     return TestClient(app)
+
+
+def _seed_experiments_overview_store(tmp_path: Path) -> Path:
+    store_root = tmp_path / ".numereng"
+    init_result = init_store_db(store_root=store_root)
+
+    experiments = [
+        {
+            "experiment_id": "exp-live-alert",
+            "name": "Live Alert",
+            "status": "active",
+            "created_at": "2026-03-20T00:00:00+00:00",
+            "updated_at": "2026-03-25T10:10:30+00:00",
+            "metadata": {"tags": ["alert", "monitor"]},
+        },
+        {
+            "experiment_id": "exp-live",
+            "name": "Live Queue",
+            "status": "active",
+            "created_at": "2026-03-21T00:00:00+00:00",
+            "updated_at": "2026-03-25T10:11:30+00:00",
+            "metadata": {"tags": ["live"]},
+        },
+        {
+            "experiment_id": "exp-stale",
+            "name": "Recovered Stale",
+            "status": "active",
+            "created_at": "2026-03-22T00:00:00+00:00",
+            "updated_at": "2026-03-25T10:12:00+00:00",
+            "metadata": {"tags": ["reconcile"]},
+        },
+        {
+            "experiment_id": "exp-canceled",
+            "name": "Canceled Work",
+            "status": "complete",
+            "created_at": "2026-03-23T00:00:00+00:00",
+            "updated_at": "2026-03-25T10:13:00+00:00",
+            "metadata": {"tags": ["cancel"]},
+        },
+        {
+            "experiment_id": "exp-done",
+            "name": "Completed Work",
+            "status": "complete",
+            "created_at": "2026-03-24T00:00:00+00:00",
+            "updated_at": "2026-03-25T10:14:00+00:00",
+            "metadata": {"tags": ["done"]},
+        },
+    ]
+    for item in experiments:
+        upsert_experiment(store_root=store_root, **item)
+
+    run_rows: list[dict[str, object]] = []
+    run_jobs: list[dict[str, object]] = []
+    lifecycles: list[dict[str, object]] = []
+
+    def add_run(
+        *,
+        run_id: str,
+        experiment_id: str,
+        status: str,
+        created_at: str,
+        finished_at: str | None,
+        config_id: str,
+    ) -> None:
+        run_dir = store_root / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_rows.append(
+            {
+                "run_id": run_id,
+                "run_hash": f"hash-{run_id}",
+                "status": status,
+                "run_type": "training",
+                "created_at": created_at,
+                "finished_at": finished_at,
+                "config_hash": f"cfg-{run_id}",
+                "experiment_id": experiment_id,
+                "run_path": str(run_dir),
+                "manifest_json": json.dumps({"run_id": run_id, "status": status, "config_id": config_id}),
+                "manifest_mtime_ns": 1,
+                "ingested_at": created_at,
+            }
+        )
+
+    def add_job(
+        *,
+        job_id: str,
+        run_id: str,
+        experiment_id: str,
+        logical_run_id: str,
+        config_id: str,
+        status: str,
+        created_at: str,
+        updated_at: str,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        cancel_requested: int = 0,
+        cancel_requested_at: str | None = None,
+        terminal_reason: str | None = None,
+        error_json: dict[str, object] | None = None,
+    ) -> None:
+        run_dir = store_root / "runs" / run_id
+        run_jobs.append(
+            {
+                "job_id": job_id,
+                "batch_id": f"batch-{experiment_id}",
+                "experiment_id": experiment_id,
+                "logical_run_id": logical_run_id,
+                "operation_type": "run",
+                "attempt_no": 1,
+                "attempt_id": f"attempt-{job_id}",
+                "config_id": config_id,
+                "config_source": "store",
+                "config_path": config_id,
+                "config_sha256": f"sha-{config_id}",
+                "request_json": "{}",
+                "job_type": "run",
+                "status": status,
+                "queue_name": "default",
+                "priority": 0,
+                "created_at": created_at,
+                "queued_at": created_at,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "updated_at": updated_at,
+                "worker_id": "worker-local",
+                "pid": 1234,
+                "exit_code": None,
+                "signal": None,
+                "backend": "local",
+                "tier": None,
+                "budget": None,
+                "timeout_seconds": None,
+                "canonical_run_id": run_id,
+                "external_run_id": None,
+                "run_dir": str(run_dir),
+                "cancel_requested": cancel_requested,
+                "cancel_requested_at": cancel_requested_at,
+                "terminal_reason": terminal_reason,
+                "terminal_detail_json": json.dumps({"terminal_reason": terminal_reason}) if terminal_reason else None,
+                "error_json": json.dumps(error_json) if error_json else None,
+            }
+        )
+
+    def add_lifecycle(
+        *,
+        run_id: str,
+        job_id: str,
+        logical_run_id: str,
+        experiment_id: str,
+        config_id: str,
+        status: str,
+        created_at: str,
+        updated_at: str,
+        current_stage: str | None,
+        progress_percent: float | None,
+        progress_label: str | None,
+        progress_current: int | None,
+        progress_total: int | None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+        last_heartbeat_at: str | None = None,
+        cancel_requested: int = 0,
+        cancel_requested_at: str | None = None,
+        terminal_reason: str | None = None,
+        reconciled: int = 0,
+    ) -> None:
+        run_dir = store_root / "runs" / run_id
+        lifecycles.append(
+            {
+                "run_id": run_id,
+                "run_hash": f"hash-{run_id}",
+                "config_hash": f"cfg-{run_id}",
+                "job_id": job_id,
+                "logical_run_id": logical_run_id,
+                "attempt_id": f"attempt-{job_id}",
+                "attempt_no": 1,
+                "source": "cli.run.train",
+                "operation_type": "run",
+                "job_type": "run",
+                "status": status,
+                "experiment_id": experiment_id,
+                "config_id": config_id,
+                "config_source": "store",
+                "config_path": config_id,
+                "config_sha256": f"sha-{config_id}",
+                "run_dir": str(run_dir),
+                "runtime_path": str(run_dir / "runtime.json"),
+                "backend": "local",
+                "worker_id": "worker-local",
+                "pid": 1234,
+                "host": "localhost",
+                "current_stage": current_stage,
+                "completed_stages_json": json.dumps(["initializing", "load_data"] if progress_current else []),
+                "progress_percent": progress_percent,
+                "progress_label": progress_label,
+                "progress_current": progress_current,
+                "progress_total": progress_total,
+                "cancel_requested": cancel_requested,
+                "cancel_requested_at": cancel_requested_at,
+                "created_at": created_at,
+                "queued_at": created_at,
+                "started_at": started_at,
+                "last_heartbeat_at": last_heartbeat_at,
+                "updated_at": updated_at,
+                "finished_at": finished_at,
+                "terminal_reason": terminal_reason,
+                "terminal_detail_json": json.dumps({"reason": terminal_reason}) if terminal_reason else json.dumps({}),
+                "latest_metrics_json": json.dumps({"corr_mean": 0.11})
+                if progress_percent is not None
+                else json.dumps({}),
+                "latest_sample_json": json.dumps({"process_rss_gb": 0.42})
+                if progress_percent is not None
+                else json.dumps({}),
+                "reconciled": reconciled,
+            }
+        )
+
+    add_run(
+        run_id="run-live-alert-active",
+        experiment_id="exp-live-alert",
+        status="RUNNING",
+        created_at="2026-03-25T10:00:00+00:00",
+        finished_at=None,
+        config_id="configs/alert_active.json",
+    )
+    add_job(
+        job_id="job-live-alert-active",
+        run_id="run-live-alert-active",
+        experiment_id="exp-live-alert",
+        logical_run_id="logical-live-alert-active",
+        config_id="configs/alert_active.json",
+        status="running",
+        created_at="2026-03-25T10:00:00+00:00",
+        started_at="2026-03-25T10:00:02+00:00",
+        updated_at="2026-03-25T10:10:30+00:00",
+    )
+    add_lifecycle(
+        run_id="run-live-alert-active",
+        job_id="job-live-alert-active",
+        logical_run_id="logical-live-alert-active",
+        experiment_id="exp-live-alert",
+        config_id="configs/alert_active.json",
+        status="running",
+        created_at="2026-03-25T10:00:00+00:00",
+        started_at="2026-03-25T10:00:02+00:00",
+        last_heartbeat_at="2026-03-25T10:10:30+00:00",
+        updated_at="2026-03-25T10:10:30+00:00",
+        current_stage="train_model",
+        progress_percent=72.0,
+        progress_label="Fold 5 of 7",
+        progress_current=5,
+        progress_total=7,
+    )
+
+    add_run(
+        run_id="run-live-alert-failed",
+        experiment_id="exp-live-alert",
+        status="FAILED",
+        created_at="2026-03-25T09:40:00+00:00",
+        finished_at="2026-03-25T10:09:59+00:00",
+        config_id="configs/alert_failed.json",
+    )
+    add_job(
+        job_id="job-live-alert-failed",
+        run_id="run-live-alert-failed",
+        experiment_id="exp-live-alert",
+        logical_run_id="logical-live-alert-failed",
+        config_id="configs/alert_failed.json",
+        status="failed",
+        created_at="2026-03-25T09:40:00+00:00",
+        started_at="2026-03-25T09:40:02+00:00",
+        finished_at="2026-03-25T10:09:59+00:00",
+        updated_at="2026-03-25T10:09:59+00:00",
+        terminal_reason="training_run_failed",
+        error_json={"message": "boom"},
+    )
+    add_lifecycle(
+        run_id="run-live-alert-failed",
+        job_id="job-live-alert-failed",
+        logical_run_id="logical-live-alert-failed",
+        experiment_id="exp-live-alert",
+        config_id="configs/alert_failed.json",
+        status="failed",
+        created_at="2026-03-25T09:40:00+00:00",
+        started_at="2026-03-25T09:40:02+00:00",
+        finished_at="2026-03-25T10:09:59+00:00",
+        updated_at="2026-03-25T10:09:59+00:00",
+        current_stage="train_model",
+        progress_percent=44.0,
+        progress_label="Fold 3 of 7",
+        progress_current=3,
+        progress_total=7,
+        terminal_reason="training_run_failed",
+    )
+
+    add_run(
+        run_id="run-live-1",
+        experiment_id="exp-live",
+        status="RUNNING",
+        created_at="2026-03-25T10:01:00+00:00",
+        finished_at=None,
+        config_id="configs/live_fold.json",
+    )
+    add_job(
+        job_id="job-live-1",
+        run_id="run-live-1",
+        experiment_id="exp-live",
+        logical_run_id="logical-live-1",
+        config_id="configs/live_fold.json",
+        status="running",
+        created_at="2026-03-25T10:01:00+00:00",
+        started_at="2026-03-25T10:01:01+00:00",
+        updated_at="2026-03-25T10:11:30+00:00",
+    )
+    add_lifecycle(
+        run_id="run-live-1",
+        job_id="job-live-1",
+        logical_run_id="logical-live-1",
+        experiment_id="exp-live",
+        config_id="configs/live_fold.json",
+        status="running",
+        created_at="2026-03-25T10:01:00+00:00",
+        started_at="2026-03-25T10:01:01+00:00",
+        last_heartbeat_at="2026-03-25T10:11:30+00:00",
+        updated_at="2026-03-25T10:11:30+00:00",
+        current_stage="train_model",
+        progress_percent=38.0,
+        progress_label="Fold 3 of 7",
+        progress_current=3,
+        progress_total=7,
+    )
+
+    add_run(
+        run_id="run-live-2",
+        experiment_id="exp-live",
+        status="RUNNING",
+        created_at="2026-03-25T10:05:00+00:00",
+        finished_at=None,
+        config_id="configs/live_queued.json",
+    )
+    add_job(
+        job_id="job-live-2",
+        run_id="run-live-2",
+        experiment_id="exp-live",
+        logical_run_id="logical-live-2",
+        config_id="configs/live_queued.json",
+        status="queued",
+        created_at="2026-03-25T10:05:00+00:00",
+        updated_at="2026-03-25T10:11:00+00:00",
+    )
+    add_lifecycle(
+        run_id="run-live-2",
+        job_id="job-live-2",
+        logical_run_id="logical-live-2",
+        experiment_id="exp-live",
+        config_id="configs/live_queued.json",
+        status="queued",
+        created_at="2026-03-25T10:05:00+00:00",
+        updated_at="2026-03-25T10:11:00+00:00",
+        current_stage="queued",
+        progress_percent=0.0,
+        progress_label="Queued for worker",
+        progress_current=0,
+        progress_total=1,
+    )
+
+    add_run(
+        run_id="run-stale",
+        experiment_id="exp-stale",
+        status="STALE",
+        created_at="2026-03-25T09:20:00+00:00",
+        finished_at="2026-03-25T10:12:00+00:00",
+        config_id="configs/stale.json",
+    )
+    add_job(
+        job_id="job-stale",
+        run_id="run-stale",
+        experiment_id="exp-stale",
+        logical_run_id="logical-stale",
+        config_id="configs/stale.json",
+        status="stale",
+        created_at="2026-03-25T09:20:00+00:00",
+        started_at="2026-03-25T09:20:02+00:00",
+        finished_at="2026-03-25T10:12:00+00:00",
+        updated_at="2026-03-25T10:12:00+00:00",
+        terminal_reason="reconciled_stale",
+    )
+    add_lifecycle(
+        run_id="run-stale",
+        job_id="job-stale",
+        logical_run_id="logical-stale",
+        experiment_id="exp-stale",
+        config_id="configs/stale.json",
+        status="stale",
+        created_at="2026-03-25T09:20:00+00:00",
+        started_at="2026-03-25T09:20:02+00:00",
+        finished_at="2026-03-25T10:12:00+00:00",
+        updated_at="2026-03-25T10:12:00+00:00",
+        current_stage="train_model",
+        progress_percent=61.0,
+        progress_label="Fold 5 of 8",
+        progress_current=5,
+        progress_total=8,
+        terminal_reason="reconciled_stale",
+        reconciled=1,
+    )
+
+    add_run(
+        run_id="run-canceled",
+        experiment_id="exp-canceled",
+        status="CANCELED",
+        created_at="2026-03-25T09:30:00+00:00",
+        finished_at="2026-03-25T10:13:00+00:00",
+        config_id="configs/canceled.json",
+    )
+    add_job(
+        job_id="job-canceled",
+        run_id="run-canceled",
+        experiment_id="exp-canceled",
+        logical_run_id="logical-canceled",
+        config_id="configs/canceled.json",
+        status="canceled",
+        created_at="2026-03-25T09:30:00+00:00",
+        started_at="2026-03-25T09:30:01+00:00",
+        finished_at="2026-03-25T10:13:00+00:00",
+        updated_at="2026-03-25T10:13:00+00:00",
+        cancel_requested=1,
+        cancel_requested_at="2026-03-25T10:12:30+00:00",
+        terminal_reason="cancel_requested",
+    )
+    add_lifecycle(
+        run_id="run-canceled",
+        job_id="job-canceled",
+        logical_run_id="logical-canceled",
+        experiment_id="exp-canceled",
+        config_id="configs/canceled.json",
+        status="canceled",
+        created_at="2026-03-25T09:30:00+00:00",
+        started_at="2026-03-25T09:30:01+00:00",
+        finished_at="2026-03-25T10:13:00+00:00",
+        updated_at="2026-03-25T10:13:00+00:00",
+        current_stage="train_model",
+        progress_percent=22.0,
+        progress_label="Fold 2 of 7",
+        progress_current=2,
+        progress_total=7,
+        cancel_requested=1,
+        cancel_requested_at="2026-03-25T10:12:30+00:00",
+        terminal_reason="cancel_requested",
+    )
+
+    add_run(
+        run_id="run-done",
+        experiment_id="exp-done",
+        status="FINISHED",
+        created_at="2026-03-25T09:45:00+00:00",
+        finished_at="2026-03-25T10:14:00+00:00",
+        config_id="configs/done.json",
+    )
+    add_job(
+        job_id="job-done",
+        run_id="run-done",
+        experiment_id="exp-done",
+        logical_run_id="logical-done",
+        config_id="configs/done.json",
+        status="completed",
+        created_at="2026-03-25T09:45:00+00:00",
+        started_at="2026-03-25T09:45:01+00:00",
+        finished_at="2026-03-25T10:14:00+00:00",
+        updated_at="2026-03-25T10:14:00+00:00",
+        terminal_reason="success",
+    )
+    add_lifecycle(
+        run_id="run-done",
+        job_id="job-done",
+        logical_run_id="logical-done",
+        experiment_id="exp-done",
+        config_id="configs/done.json",
+        status="completed",
+        created_at="2026-03-25T09:45:00+00:00",
+        started_at="2026-03-25T09:45:01+00:00",
+        finished_at="2026-03-25T10:14:00+00:00",
+        updated_at="2026-03-25T10:14:00+00:00",
+        current_stage="finalize_manifest",
+        progress_percent=100.0,
+        progress_label="Finalized",
+        progress_current=1,
+        progress_total=1,
+        terminal_reason="success",
+    )
+
+    add_run(
+        run_id="run-ghost-active",
+        experiment_id="exp-done",
+        status="RUNNING",
+        created_at="2026-03-25T09:50:00+00:00",
+        finished_at=None,
+        config_id="configs/ghost_active.json",
+    )
+    add_job(
+        job_id="job-ghost-active",
+        run_id="run-ghost-active",
+        experiment_id="exp-done",
+        logical_run_id="logical-ghost-active",
+        config_id="configs/ghost_active.json",
+        status="running",
+        created_at="2026-03-25T09:50:00+00:00",
+        started_at="2026-03-25T09:50:01+00:00",
+        updated_at="2026-03-25T10:14:30+00:00",
+    )
+
+    with sqlite3.connect(init_result.db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO runs (
+                run_id,
+                run_hash,
+                status,
+                run_type,
+                created_at,
+                finished_at,
+                config_hash,
+                experiment_id,
+                run_path,
+                manifest_json,
+                manifest_mtime_ns,
+                ingested_at
+            ) VALUES (
+                :run_id,
+                :run_hash,
+                :status,
+                :run_type,
+                :created_at,
+                :finished_at,
+                :config_hash,
+                :experiment_id,
+                :run_path,
+                :manifest_json,
+                :manifest_mtime_ns,
+                :ingested_at
+            )
+            """,
+            run_rows,
+        )
+        conn.executemany(
+            """
+            INSERT INTO run_jobs (
+                job_id,
+                batch_id,
+                experiment_id,
+                logical_run_id,
+                operation_type,
+                attempt_no,
+                attempt_id,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                request_json,
+                job_type,
+                status,
+                queue_name,
+                priority,
+                created_at,
+                queued_at,
+                started_at,
+                finished_at,
+                updated_at,
+                worker_id,
+                pid,
+                exit_code,
+                signal,
+                backend,
+                tier,
+                budget,
+                timeout_seconds,
+                canonical_run_id,
+                external_run_id,
+                run_dir,
+                cancel_requested,
+                cancel_requested_at,
+                terminal_reason,
+                terminal_detail_json,
+                error_json
+            ) VALUES (
+                :job_id,
+                :batch_id,
+                :experiment_id,
+                :logical_run_id,
+                :operation_type,
+                :attempt_no,
+                :attempt_id,
+                :config_id,
+                :config_source,
+                :config_path,
+                :config_sha256,
+                :request_json,
+                :job_type,
+                :status,
+                :queue_name,
+                :priority,
+                :created_at,
+                :queued_at,
+                :started_at,
+                :finished_at,
+                :updated_at,
+                :worker_id,
+                :pid,
+                :exit_code,
+                :signal,
+                :backend,
+                :tier,
+                :budget,
+                :timeout_seconds,
+                :canonical_run_id,
+                :external_run_id,
+                :run_dir,
+                :cancel_requested,
+                :cancel_requested_at,
+                :terminal_reason,
+                :terminal_detail_json,
+                :error_json
+            )
+            """,
+            run_jobs,
+        )
+        conn.executemany(
+            """
+            INSERT INTO run_lifecycles (
+                run_id,
+                run_hash,
+                config_hash,
+                job_id,
+                logical_run_id,
+                attempt_id,
+                attempt_no,
+                source,
+                operation_type,
+                job_type,
+                status,
+                experiment_id,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                run_dir,
+                runtime_path,
+                backend,
+                worker_id,
+                pid,
+                host,
+                current_stage,
+                completed_stages_json,
+                progress_percent,
+                progress_label,
+                progress_current,
+                progress_total,
+                cancel_requested,
+                cancel_requested_at,
+                created_at,
+                queued_at,
+                started_at,
+                last_heartbeat_at,
+                updated_at,
+                finished_at,
+                terminal_reason,
+                terminal_detail_json,
+                latest_metrics_json,
+                latest_sample_json,
+                reconciled
+            ) VALUES (
+                :run_id,
+                :run_hash,
+                :config_hash,
+                :job_id,
+                :logical_run_id,
+                :attempt_id,
+                :attempt_no,
+                :source,
+                :operation_type,
+                :job_type,
+                :status,
+                :experiment_id,
+                :config_id,
+                :config_source,
+                :config_path,
+                :config_sha256,
+                :run_dir,
+                :runtime_path,
+                :backend,
+                :worker_id,
+                :pid,
+                :host,
+                :current_stage,
+                :completed_stages_json,
+                :progress_percent,
+                :progress_label,
+                :progress_current,
+                :progress_total,
+                :cancel_requested,
+                :cancel_requested_at,
+                :created_at,
+                :queued_at,
+                :started_at,
+                :last_heartbeat_at,
+                :updated_at,
+                :finished_at,
+                :terminal_reason,
+                :terminal_detail_json,
+                :latest_metrics_json,
+                :latest_sample_json,
+                :reconciled
+            )
+            """,
+            lifecycles,
+        )
+        conn.commit()
+
+    return store_root
+
+
+def test_get_experiments_overview_summarizes_live_and_terminal_state(tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.get_experiments_overview()
+
+    assert payload["summary"] == {
+        "total_experiments": 5,
+        "active_experiments": 3,
+        "completed_experiments": 2,
+        "live_experiments": 2,
+        "live_runs": 3,
+        "queued_runs": 1,
+        "attention_count": 3,
+    }
+    assert [item["experiment_id"] for item in payload["experiments"]] == [
+        "exp-live-alert",
+        "exp-live",
+        "exp-stale",
+        "exp-canceled",
+        "exp-done",
+    ]
+    assert payload["experiments"][0]["attention_state"] == "failed"
+    assert payload["experiments"][1]["has_live"] is True
+    assert payload["experiments"][2]["attention_state"] == "stale"
+    assert payload["experiments"][3]["attention_state"] == "canceled"
+    assert payload["experiments"][4]["attention_state"] == "none"
+    assert payload["experiments"][4]["has_live"] is False
+
+    assert [item["experiment_id"] for item in payload["live_experiments"]] == [
+        "exp-live-alert",
+        "exp-live",
+    ]
+    assert payload["live_experiments"][0]["attention_state"] == "failed"
+    assert payload["live_experiments"][0]["aggregate_progress_percent"] == pytest.approx(72.0)
+    assert payload["live_experiments"][1]["aggregate_progress_percent"] == pytest.approx(19.0)
+    assert payload["live_experiments"][1]["aggregate_progress_percent"] <= 100.0
+    assert payload["live_experiments"][1]["queued_run_count"] == 1
+    assert [run["status"] for run in payload["live_experiments"][1]["runs"]] == ["running", "queued"]
+    assert payload["live_experiments"][1]["runs"][0]["progress_label"] == "Fold 3 of 7"
+    assert all(item["experiment_id"] != "exp-done" for item in payload["live_experiments"])
+
+    assert [item["status"] for item in payload["recent_activity"]] == [
+        "completed",
+        "canceled",
+        "stale",
+        "failed",
+    ]
+    assert payload["recent_activity"][1]["terminal_reason"] == "cancel_requested"
+    assert payload["recent_activity"][2]["terminal_reason"] == "reconciled_stale"
+    assert payload["recent_activity"][3]["experiment_name"] == "Live Alert"
+
+
+def test_build_monitor_snapshot_ignores_active_looking_jobs_without_live_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    init_result = init_store_db(store_root=store_root)
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+    with sqlite3.connect(init_result.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO run_jobs (
+                job_id,
+                batch_id,
+                experiment_id,
+                logical_run_id,
+                operation_type,
+                attempt_no,
+                attempt_id,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                request_json,
+                job_type,
+                status,
+                queue_name,
+                priority,
+                created_at,
+                queued_at,
+                started_at,
+                finished_at,
+                updated_at,
+                worker_id,
+                pid,
+                exit_code,
+                signal,
+                backend,
+                tier,
+                budget,
+                timeout_seconds,
+                canonical_run_id,
+                external_run_id,
+                run_dir,
+                cancel_requested,
+                cancel_requested_at,
+                terminal_reason,
+                terminal_detail_json,
+                error_json
+            ) VALUES (
+                'job-ghost',
+                'batch-ghost',
+                'exp-done',
+                'logical-ghost',
+                'run',
+                1,
+                'attempt-ghost',
+                'ghost.json',
+                'config',
+                '.numereng/experiments/exp-done/configs/ghost.json',
+                'sha256',
+                '{}',
+                'run',
+                'running',
+                'default',
+                0,
+                '2026-03-25T10:12:00+00:00',
+                '2026-03-25T10:12:00+00:00',
+                '2026-03-25T10:12:01+00:00',
+                NULL,
+                '2026-03-25T10:12:02+00:00',
+                'worker-ghost',
+                9999,
+                NULL,
+                NULL,
+                'local',
+                NULL,
+                NULL,
+                NULL,
+                'run-ghost',
+                NULL,
+                '.numereng/runs/run-ghost',
+                0,
+                NULL,
+                NULL,
+                '{}',
+                NULL
+            )
+            """
+        )
+        conn.commit()
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=False)
+
+    assert payload["summary"]["live_runs"] == 3
+    assert all(item["experiment_id"] != "exp-done" for item in payload["live_experiments"])
+
+
+def test_remote_snapshot_coordinator_uses_one_cycle_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = SshRemoteTargetProfile.model_validate(
+        {
+            "id": "remote-pc",
+            "label": "Remote PC",
+            "kind": "ssh",
+            "ssh_config_host": "remote-pc",
+            "repo_root": "/srv/numereng",
+            "store_root": "/srv/numereng/.numereng",
+        }
+    )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.load_remote_targets", lambda: [target])
+
+    class _SuccessResult:
+        returncode = 0
+        stdout = (
+            json.dumps(
+                {
+                    "generated_at": "2026-03-25T00:00:00+00:00",
+                    "source": {
+                        "kind": "local",
+                        "id": "local",
+                        "label": "Local store",
+                        "host": "remote",
+                        "store_root": "/srv/numereng/.numereng",
+                        "state": "live",
+                    },
+                    "summary": {
+                        "total_experiments": 0,
+                        "active_experiments": 0,
+                        "completed_experiments": 0,
+                        "live_experiments": 1,
+                        "live_runs": 1,
+                        "queued_runs": 0,
+                        "attention_count": 0,
+                    },
+                    "experiments": [],
+                    "live_experiments": [
+                        {
+                            "experiment_id": "remote-exp",
+                            "name": "Remote Experiment",
+                            "status": "active",
+                            "tags": [],
+                            "live_run_count": 1,
+                            "queued_run_count": 0,
+                            "attention_state": "none",
+                            "latest_activity_at": "2026-03-25T00:00:00+00:00",
+                            "aggregate_progress_percent": 25.0,
+                            "runs": [
+                                {
+                                    "run_id": "run-1",
+                                    "config_label": "base.json",
+                                    "status": "running",
+                                    "current_stage": "train_model",
+                                    "progress_percent": 25.0,
+                                    "progress_label": "Fold 1 of 4",
+                                    "updated_at": "2026-03-25T00:00:00+00:00",
+                                    "terminal_reason": None,
+                                }
+                            ],
+                        }
+                    ],
+                    "recent_activity": [],
+                }
+            )
+            + "\n"
+        )
+        stderr = ""
+
+    class _FailureResult:
+        returncode = 1
+        stdout = ""
+        stderr = "ssh failed"
+
+    coordinator = RemoteSnapshotCoordinator(cache_ttl_seconds=60.0)
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.subprocess.run", lambda *args, **kwargs: _SuccessResult())
+    first = coordinator.fetch_snapshots()
+    assert first[0]["source"]["state"] == "live"
+
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.subprocess.run", lambda *args, **kwargs: _FailureResult())
+    second = coordinator.fetch_snapshots()
+    assert second[0]["source"]["state"] == "cached"
+
+
+def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+    monkeypatch.setattr("numereng_viz.services.reconcile_run_lifecycles", lambda **_: None)
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+    service.remote_snapshots.fetch_snapshots = lambda: [
+        {
+            "source": {
+                "kind": "ssh",
+                "id": "remote-pc",
+                "label": "Remote PC",
+                "host": "remote-pc",
+                "store_root": "/srv/numereng/.numereng",
+                "state": "live",
+            },
+            "summary": {
+                "total_experiments": 1,
+                "active_experiments": 1,
+                "completed_experiments": 0,
+                "live_experiments": 1,
+                "live_runs": 1,
+                "queued_runs": 0,
+                "attention_count": 0,
+            },
+            "experiments": [
+                {
+                    "experiment_id": "remote-exp",
+                    "name": "Remote Experiment",
+                    "status": "active",
+                    "created_at": "2026-03-25T00:00:00+00:00",
+                    "updated_at": "2026-03-25T00:00:00+00:00",
+                    "run_count": 1,
+                    "tags": ["remote"],
+                    "has_live": True,
+                    "live_run_count": 1,
+                    "attention_state": "none",
+                    "latest_activity_at": "2026-03-25T00:00:00+00:00",
+                    "source_kind": "ssh",
+                    "source_id": "remote-pc",
+                    "source_label": "Remote PC",
+                    "detail_href": None,
+                }
+            ],
+            "live_experiments": [
+                {
+                    "experiment_id": "remote-exp",
+                    "name": "Remote Experiment",
+                    "status": "active",
+                    "tags": ["remote"],
+                    "live_run_count": 1,
+                    "queued_run_count": 0,
+                    "attention_state": "none",
+                    "latest_activity_at": "2026-03-25T00:00:00+00:00",
+                    "aggregate_progress_percent": 25.0,
+                    "source_kind": "ssh",
+                    "source_id": "remote-pc",
+                    "source_label": "Remote PC",
+                    "detail_href": None,
+                    "runs": [
+                        {
+                            "run_id": "remote-run-1",
+                            "config_label": "base.json",
+                            "status": "running",
+                            "current_stage": "train_model",
+                            "progress_percent": 25.0,
+                            "progress_label": "Fold 1 of 4",
+                            "updated_at": "2026-03-25T00:00:00+00:00",
+                            "terminal_reason": None,
+                            "source_kind": "ssh",
+                            "source_id": "remote-pc",
+                            "source_label": "Remote PC",
+                            "backend": "local",
+                            "provider_run_id": None,
+                            "detail_href": None,
+                        }
+                    ],
+                }
+            ],
+            "recent_activity": [],
+        }
+    ]
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/overview")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["live_experiments"] == 3
+    assert any(item["experiment_id"] == "remote-exp" for item in payload["experiments"])
+    remote_live = next(item for item in payload["live_experiments"] if item["experiment_id"] == "remote-exp")
+    assert remote_live["source_kind"] == "ssh"
+    assert remote_live["runs"][0]["detail_href"] is None
+
+
+def test_experiments_overview_route_returns_mission_control_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    monkeypatch.setattr(
+        "numereng_viz.services.reconcile_run_lifecycles",
+        lambda **_: None,
+    )
+    monkeypatch.setattr(
+        "numereng_viz.monitor_snapshot.reconcile_run_lifecycles",
+        lambda **_: None,
+    )
+
+    client = _make_client(repo_root=tmp_path, store_root=store_root)
+    response = client.get("/api/experiments/overview")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    payload = response.json()
+    assert payload["summary"]["live_experiments"] == 2
+    assert payload["experiments"][0]["experiment_id"] == "exp-live-alert"
+    assert payload["live_experiments"][1]["runs"][1]["status"] == "queued"
+    assert payload["recent_activity"][0]["status"] == "completed"
 
 
 def test_numereng_docs_tree_uses_docs_numereng_root_only(tmp_path: Path) -> None:
@@ -912,6 +1991,74 @@ def test_run_diagnostics_sources_route_returns_payload(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["columns"]["target_col"] == "target_ender_20"
     assert payload["joins"]["predictions_rows"] == 100
+
+
+def test_run_lifecycle_route_returns_runtime_snapshot_fallback(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "runtime.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "run_id": "run-1",
+                "run_hash": "hash-run-1",
+                "config_hash": "cfg-hash",
+                "job_id": "job-1",
+                "logical_run_id": "logical-1",
+                "attempt_id": "attempt-1",
+                "attempt_no": 1,
+                "source": "cli.run.train",
+                "operation_type": "run",
+                "job_type": "run",
+                "status": "running",
+                "config": {
+                    "id": "configs/base.json",
+                    "source": "store",
+                    "path": "configs/base.json",
+                    "sha256": "sha",
+                },
+                "runtime": {
+                    "run_dir": str(run_dir),
+                    "runtime_path": str(run_dir / "runtime.json"),
+                    "backend": "local",
+                    "worker_id": "local",
+                    "pid": 1234,
+                    "host": "localhost",
+                    "current_stage": "train_model",
+                    "completed_stages": ["initializing", "load_data"],
+                    "progress_percent": 42.5,
+                    "progress_label": "Fold 2 of 4",
+                    "progress_current": 1,
+                    "progress_total": 4,
+                    "cancel_requested": False,
+                    "cancel_requested_at": None,
+                    "created_at": "2026-03-24T00:00:00+00:00",
+                    "queued_at": "2026-03-24T00:00:00+00:00",
+                    "started_at": "2026-03-24T00:00:01+00:00",
+                    "last_heartbeat_at": "2026-03-24T00:00:02+00:00",
+                    "updated_at": "2026-03-24T00:00:02+00:00",
+                    "finished_at": None,
+                    "terminal_reason": None,
+                    "terminal_detail": {},
+                    "latest_metrics": {"corr_mean": 0.1},
+                    "latest_sample": {"process_rss_gb": 0.4},
+                    "reconciled": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    client = _make_client(repo_root=tmp_path, store_root=store_root)
+    response = client.get("/api/runs/run-1/lifecycle")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == "run-1"
+    assert payload["current_stage"] == "train_model"
+    assert payload["progress_percent"] == 42.5
+    assert payload["latest_metrics"]["corr_mean"] == 0.1
 
 
 @pytest.mark.parametrize(

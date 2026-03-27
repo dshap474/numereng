@@ -165,6 +165,7 @@ def score_run(
     results["metrics"] = metrics_payload
     results_training = _as_mapping(results.get("training"))
     results_training["scoring"] = _updated_scoring_payload(
+        existing_payload=_as_mapping(results_training.get("scoring")),
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
         manifest_payload=manifest_payload,
@@ -183,6 +184,7 @@ def score_run(
     run_manifest["metrics_summary"] = metrics_payload
     manifest_training = _as_mapping(run_manifest.get("training"))
     manifest_training["scoring"] = _updated_scoring_payload(
+        existing_payload=_as_mapping(manifest_training.get("scoring")),
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
         manifest_payload=manifest_payload,
@@ -276,15 +278,20 @@ def _metrics_payload_from_summaries(
 
 def _updated_scoring_payload(
     *,
+    existing_payload: dict[str, object],
     requested_stage: CanonicalScoringStage,
     refreshed_stages: tuple[str, ...],
     manifest_payload: dict[str, object],
     stage_metadata: dict[str, object],
 ) -> dict[str, object]:
     payload: dict[str, object] = {
+        "status": "succeeded",
         "requested_stage": requested_stage,
         "refreshed_stages": list(refreshed_stages),
     }
+    policy = existing_payload.get("policy")
+    if isinstance(policy, str):
+        payload["policy"] = policy
     refreshed_stage_files = _as_mapping(manifest_payload.get("refreshed_stage_files"))
     emitted = refreshed_stage_files.keys() if refreshed_stage_files else stage_metadata.get("emitted")
     omissions = _as_mapping(_as_mapping(manifest_payload.get("stages")).get("omissions")) or stage_metadata.get(

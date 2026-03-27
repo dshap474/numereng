@@ -64,9 +64,16 @@ Optional overrides:
 - `--output-dir <path>`
 - `--profile <simple|purged_walk_forward|full_history_refit>`
 - `--experiment-id <id>` if you want the run linked to an experiment while still using `run train`
+- `--post-training-scoring <none|core|full|round_core|round_full>`
 
-`run train` now always uses the materialized loader and automatically refreshes
-the `post_training_core` scoring stage after predictions are written.
+`run train` always uses the materialized loader. Post-training scoring is
+policy-driven:
+
+- default is `none`, so training finishes with deferred scoring metadata
+- `--post-training-scoring core` auto-materializes `post_training_core`
+- `--post-training-scoring full` auto-materializes inclusive `post_training_full`
+- `round_core` and `round_full` are parsed but rejected at runtime because
+  round-batch scoring requires the experiment workflow
 
 ## Re-Score A Saved Run
 
@@ -76,20 +83,30 @@ uv run numereng run score --run-id <run_id>
 
 Use this when the predictions artifact already exists and you want to rebuild `results.json`, `metrics.json`, `score_provenance.json`, and the store index rows.
 
-Use `--stage post_training_full` or `--stage all` when you want the feature-heavy
-FNC / exposure diagnostics in addition to the default core summary.
+`run score` defaults to `--stage all`. Use `--stage post_training_core` for the
+lighter scorecard-only pass, or `--stage post_training_full` when you want the
+inclusive feature-heavy FNC / exposure diagnostics without the broader `all`
+stage refresh.
 
 ## Outputs
 
-Successful scored runs write under `.numereng/runs/<run_id>/`:
+Successful runs write under `.numereng/runs/<run_id>/`:
 
 - `run.json`
 - `run.log`
 - `resolved.json`
 - `results.json`
 - `metrics.json`
-- `score_provenance.json`
 - `artifacts/predictions/*`
+
+When post-training scoring materializes, the run also writes:
+
+- `score_provenance.json`
+- `artifacts/scoring/*`
+
+If `training.post_training_scoring = "none"` or a round-batch policy is still
+pending, `results.json` and `metrics.json` stay on a deferred scoring payload
+until `run score` or `experiment score-round` materializes the summaries.
 
 Run indexing is mandatory. If indexing fails, the command fails.
 
@@ -105,6 +122,7 @@ Run indexing is mandatory. If indexing fails, the command fails.
 - `full_history_refit` is final-fit only and emits no validation metrics
 - default benchmark scoring requires a seeded active benchmark artifact unless
   the config uses `benchmark_source.source = "path"`
-- `run train` refreshes `post_training_core` by default; feature-heavy diagnostics are stage-driven through `run score`
+- `training.post_training_scoring` defaults to `none`; auto-scoring only happens when the resolved policy is `core` or `full`
+- post-training scoring failures are best-effort: the run still finishes `FINISHED`, but `training.scoring.status` and `metrics.json` record the failure
 - post-run FNC always neutralizes to `fncv3_features`
 - numereng does not emit `payout_estimate_mean`

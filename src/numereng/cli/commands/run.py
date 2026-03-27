@@ -19,6 +19,7 @@ from numereng.platform.errors import PackageError
 
 NeutralizationModeValue = Literal["era", "global"]
 ScoreStageValue = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
+PostTrainingScoringValue = Literal["none", "core", "full", "round_core", "round_full"]
 
 
 def _parse_neutralization_mode(value: str) -> tuple[NeutralizationModeValue | None, str | None]:
@@ -51,6 +52,15 @@ def _parse_score_stage(value: str) -> tuple[ScoreStageValue | None, str | None]:
             "invalid value for --stage: expected all|run_metric_series|post_fold|post_training_core|post_training_full",
         )
     return cast(ScoreStageValue, value), None
+
+
+def _parse_post_training_scoring(value: str) -> tuple[PostTrainingScoringValue | None, str | None]:
+    if value not in {"none", "core", "full", "round_core", "round_full"}:
+        return (
+            None,
+            "invalid value for --post-training-scoring: expected none|core|full|round_core|round_full",
+        )
+    return cast(PostTrainingScoringValue, value), None
 
 
 def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | None, str | None]:
@@ -169,6 +179,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
     config_path: str | None = None
     output_dir: str | None = None
     profile: api.TrainingProfile | None = None
+    post_training_scoring: PostTrainingScoringValue | None = None
     window_size_eras: int | None = None
     embargo_eras: int | None = None
     experiment_id: str | None = None
@@ -192,6 +203,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
             "--config",
             "--output-dir",
             "--profile",
+            "--post-training-scoring",
             "--experiment-id",
         }:
             if idx + 1 >= len(argv):
@@ -206,6 +218,11 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
                 if parse_error is not None:
                     return None, parse_error
                 profile = parsed_profile
+            elif arg == "--post-training-scoring":
+                parsed_policy, parse_error = _parse_post_training_scoring(value)
+                if parse_error is not None:
+                    return None, parse_error
+                post_training_scoring = parsed_policy
             else:
                 experiment_id = value
             idx += 2
@@ -220,6 +237,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
             config_path=config_path,
             output_dir=output_dir,
             profile=profile,
+            post_training_scoring=post_training_scoring,
             window_size_eras=window_size_eras,
             embargo_eras=embargo_eras,
             experiment_id=experiment_id,
@@ -267,6 +285,41 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
 
     try:
         request = api.ScoreRunRequest(run_id=run_id, store_root=store_root, stage=stage)
+    except ValidationError as exc:
+        errors = exc.errors()
+        if errors:
+            return None, str(errors[0]["msg"])
+        return None, str(exc)
+
+    return request, None
+
+
+def _parse_cancel_request(argv: Sequence[str]) -> tuple[api.RunCancelRequest | None, str | None]:
+    run_id: str | None = None
+    store_root = ".numereng"
+
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg in {"-h", "--help"}:
+            return None, "__help__"
+        if arg in {"--run-id", "--store-root"}:
+            if idx + 1 >= len(argv):
+                return None, f"missing value for {arg}"
+            value = argv[idx + 1]
+            if arg == "--run-id":
+                run_id = value
+            else:
+                store_root = value
+            idx += 2
+            continue
+        return None, f"unknown arguments: {arg}"
+
+    if run_id is None:
+        return None, "missing required argument: --run-id"
+
+    try:
+        request = api.RunCancelRequest(run_id=run_id, store_root=store_root)
     except ValidationError as exc:
         errors = exc.errors()
         if errors:
@@ -348,6 +401,28 @@ def handle_run_command(args: Sequence[str]) -> int:
             return 1
 
         print(score_payload.model_dump_json())
+        return 0
+
+    if args[0] == "cancel":
+        cancel_request, parse_error = _parse_cancel_request(args[1:])
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        if cancel_request is None:  # pragma: no cover - parse_error branch guards this
+            print("cancel_request_invalid", file=sys.stderr)
+            return 2
+
+        try:
+            cancel_payload = api.cancel_run(cancel_request)
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+        print(cancel_payload.model_dump_json())
         return 0
 
     if args[0] in {"-h", "--help"}:

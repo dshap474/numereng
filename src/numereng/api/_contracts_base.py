@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from numereng.config.training import ensure_json_config_path
+from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.experiments import ExperimentStatus
 from numereng.features.training import TrainingEngineMode, TrainingProfile
 
@@ -131,6 +132,7 @@ class TrainRunRequest(BaseModel):
     config_path: str
     output_dir: str | None = None
     profile: TrainingProfile | None = None
+    post_training_scoring: PostTrainingScoringPolicy | None = None
     engine_mode: TrainingEngineMode | None = None
     window_size_eras: int | None = Field(default=None, ge=1)
     embargo_eras: int | None = Field(default=None, ge=1)
@@ -169,6 +171,69 @@ class ScoreRunResponse(BaseModel):
     score_provenance_path: str
     requested_stage: ScoringStage = "all"
     refreshed_stages: list[str] = Field(default_factory=list)
+
+
+class RunLifecycleRequest(BaseModel):
+    run_id: str = Field(min_length=1)
+    store_root: str = ".numereng"
+
+
+class RunLifecycleResponse(BaseModel):
+    run_id: str
+    run_hash: str
+    config_hash: str
+    job_id: str
+    logical_run_id: str
+    attempt_id: str
+    attempt_no: int
+    source: str
+    operation_type: str
+    job_type: str
+    status: str
+    experiment_id: str | None = None
+    config_id: str
+    config_source: str
+    config_path: str
+    config_sha256: str
+    run_dir: str
+    runtime_path: str
+    backend: str | None = None
+    worker_id: str | None = None
+    pid: int | None = None
+    host: str | None = None
+    current_stage: str | None = None
+    completed_stages: list[str] = Field(default_factory=list)
+    progress_percent: float | None = None
+    progress_label: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    cancel_requested: bool = False
+    cancel_requested_at: str | None = None
+    created_at: str
+    queued_at: str | None = None
+    started_at: str | None = None
+    last_heartbeat_at: str | None = None
+    updated_at: str
+    finished_at: str | None = None
+    terminal_reason: str | None = None
+    terminal_detail: dict[str, object] = Field(default_factory=dict)
+    latest_metrics: dict[str, object] = Field(default_factory=dict)
+    latest_sample: dict[str, object] = Field(default_factory=dict)
+    reconciled: bool = False
+
+
+class RunCancelRequest(BaseModel):
+    run_id: str = Field(min_length=1)
+    store_root: str = ".numereng"
+
+
+class RunCancelResponse(BaseModel):
+    run_id: str
+    job_id: str
+    status: str
+    cancel_requested: bool
+    cancel_requested_at: str | None = None
+    accepted: bool
 
 
 class ExperimentCreateRequest(BaseModel):
@@ -224,6 +289,7 @@ class ExperimentTrainRequest(BaseModel):
     config_path: str
     output_dir: str | None = None
     profile: TrainingProfile | None = None
+    post_training_scoring: PostTrainingScoringPolicy | None = None
     engine_mode: TrainingEngineMode | None = None
     window_size_eras: int | None = Field(default=None, ge=1)
     embargo_eras: int | None = Field(default=None, ge=1)
@@ -476,10 +542,15 @@ __all__ = [
     "NumeraiModelsRequest",
     "NumeraiModelsResponse",
     "NumeraiTournament",
+    "RunCancelRequest",
+    "RunCancelResponse",
+    "RunLifecycleRequest",
+    "RunLifecycleResponse",
     "ScoreRunRequest",
     "ScoreRunResponse",
     "SubmissionRequest",
     "SubmissionResponse",
+    "PostTrainingScoringPolicy",
     "TrainingEngineMode",
     "TrainingProfile",
     "TrainRunRequest",

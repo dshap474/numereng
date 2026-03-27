@@ -1,4 +1,4 @@
-.PHONY: ci fmt test test-all viz kill-viz oss-preflight
+.PHONY: ci fmt test test-all viz kill-viz oss-preflight security readiness deps-lint arch-lint
 
 API_PORT ?= 8502
 VITE_PORT ?= 5173
@@ -7,7 +7,7 @@ VIZ_WEB := $(VIZ_DIR)/web
 API_PID_FILE := $(VIZ_DIR)/api.pid
 VITE_PID_FILE := $(VIZ_DIR)/vite.pid
 
-ci: test
+ci: security readiness test
 
 fmt:
 	uv run ruff check --fix-only .
@@ -17,13 +17,35 @@ test:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run ty check
-	uv run pytest -q -m "not slow"
+	uv run pytest -q -m "not slow" --cov=numereng --cov=numereng_viz --cov-report=term-missing
 
 test-all:
 	uv run ruff format --check .
 	uv run ruff check .
 	uv run ty check
-	uv run pytest -q
+	uv run pytest -q --cov=numereng --cov=numereng_viz --cov-report=term-missing
+
+deps-lint:
+	uv run deptry .
+
+arch-lint:
+	uv run lint-imports
+
+readiness: deps-lint arch-lint
+	@test -f AGENTS.md
+	@test -f .python-version
+	@test -f justfile
+	@test -f .devcontainer/devcontainer.json
+	@test -f .factory/memories.md
+	@test -f .factory/rules/architecture.md
+	@test -f .factory/rules/python.md
+	@test -f .factory/rules/testing.md
+	@test -f .factory/rules/security.md
+	@test -f .factory/rules/observability.md
+	@find runbooks -maxdepth 1 -type f | grep -q .
+
+security: oss-preflight
+	uv run pip-audit --ignore-vuln CVE-2026-4539
 
 oss-preflight:
 	@echo "Running OSS preflight checks..."

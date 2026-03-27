@@ -10,6 +10,7 @@
 		type HpoStudy,
 		type RunJob,
 		type RunJobEvent,
+		type RunLifecycle,
 		type RunJobListResponse,
 		type RunJobLog,
 		type RunJobSample,
@@ -93,6 +94,9 @@
 	let runJobsTotal = $state<number>(0);
 	let jobsBusy = $state(false);
 	let jobsError = $state<string | null>(null);
+	let runLifecycles = $state(new Map<string, RunLifecycle>());
+	let progressPollGeneration = 0;
+	let documentVisible = $state(true);
 
 	let selectedJobId = $state<string | null>(null);
 	let selectedJob = $state<RunJob | null>(null);
@@ -310,7 +314,14 @@
 		return map;
 	});
 
-	type ProgressState = 'not_started' | 'running' | 'finished' | 'failed';
+	type ProgressState =
+		| 'not_started'
+		| 'queued'
+		| 'training'
+		| 'completed'
+		| 'failed'
+		| 'canceled'
+		| 'stale';
 
 	interface ProgressRow {
 		config_id: string;
@@ -322,6 +333,10 @@
 		run_id: string | null;
 		job_id: string | null;
 		job_status: string | null;
+		current_stage: string | null;
+		progress_percent: number | null;
+		progress_label: string | null;
+		updated_at: string | null;
 		finished_at: string | null;
 		created_at: string | null;
 	}
@@ -352,14 +367,12 @@
 			const latestJob = latestJobByConfigId.get(item.config_id) ?? null;
 			const linkedRunId = latestJob?.canonical_run_id ?? item.summary.run_id ?? null;
 			const linkedRun = linkedRunId ? runById.get(linkedRunId) ?? null : null;
-			let status: ProgressState = 'not_started';
-			if (latestJob && ACTIVE_JOB_STATUSES.has(latestJob.status)) {
-				status = 'running';
-			} else if (linkedRun || latestJob?.status === 'completed') {
-				status = 'finished';
-			} else if (latestJob && TERMINAL_JOB_STATUSES.has(latestJob.status)) {
-				status = latestJob.status === 'completed' ? 'finished' : 'failed';
-			}
+			const lifecycle = linkedRunId ? runLifecycles.get(linkedRunId) ?? null : null;
+			const status = resolveProgressStatus({
+				latestJob,
+				linkedRun,
+				lifecycle
+			});
 			return {
 				config_id: item.config_id,
 				relative_path: item.relative_path,
@@ -370,7 +383,19 @@
 				run_id: linkedRunId,
 				job_id: latestJob?.job_id ?? null,
 				job_status: latestJob?.status ?? null,
-				finished_at: latestJob?.finished_at ?? linkedRun?.created_at ?? null,
+				current_stage: lifecycle?.current_stage ?? null,
+				progress_percent:
+					status === 'queued' || status === 'training' ? lifecycle?.progress_percent ?? null : null,
+				progress_label:
+					status === 'queued' || status === 'training' ? lifecycle?.progress_label ?? null : null,
+				updated_at:
+					lifecycle?.last_heartbeat_at ??
+					lifecycle?.updated_at ??
+					latestJob?.updated_at ??
+					latestJob?.finished_at ??
+					linkedRun?.created_at ??
+					null,
+				finished_at: lifecycle?.finished_at ?? latestJob?.finished_at ?? linkedRun?.created_at ?? null,
 				created_at: latestJob?.created_at ?? linkedRun?.created_at ?? null
 			};
 		});
@@ -380,9 +405,12 @@
 		const counts = {
 			total: progressRows.length,
 			not_started: 0,
-			running: 0,
-			finished: 0,
-			failed: 0
+			queued: 0,
+			training: 0,
+			completed: 0,
+			failed: 0,
+			canceled: 0,
+			stale: 0
 		};
 		for (const row of progressRows) {
 			counts[row.status] += 1;
@@ -394,9 +422,13 @@
 		() => progressRows.find((row) => row.status === 'not_started') ?? null
 	);
 
-	let nextAttentionRow = $derived.by(
-		() => progressRows.find((row) => row.status === 'failed') ?? null
-	);
+	let nextAttentionRow = $derived.by(() => {
+		for (const status of ['failed', 'stale', 'canceled'] as const) {
+			const match = progressRows.find((row) => row.status === status);
+			if (match) return match;
+		}
+		return null;
+	});
 
 	let filteredProgressRows = $derived.by(() => {
 		const query = progressQuery.trim().toLowerCase();
@@ -409,7 +441,9 @@
 				row.feature_set,
 				row.status,
 				row.run_id ?? '',
-				row.job_id ?? ''
+				row.job_id ?? '',
+				row.current_stage ?? '',
+				row.progress_label ?? ''
 			]
 				.join(' ')
 				.toLowerCase()
@@ -634,7 +668,32 @@
 	});
 
 	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const updateVisibility = () => {
+			documentVisible = document.visibilityState !== 'hidden';
+		};
+		updateVisibility();
+		document.addEventListener('visibilitychange', updateVisibility);
+		return () => document.removeEventListener('visibilitychange', updateVisibility);
+	});
+
+	$effect(() => {
+		if (pageTab !== 'progress') return;
+		if (!documentVisible) return;
+		void refreshProgressLifecycles();
 		const timer = setInterval(() => {
+			if (!documentVisible) return;
+			void refreshProgressLifecycles();
+		}, 3000);
+		return () => {
+			progressPollGeneration += 1;
+			clearInterval(timer);
+		};
+	});
+
+	$effect(() => {
+		const timer = setInterval(() => {
+			if (pageTab === 'progress') return;
 			if (streamState === 'open') return;
 			void refreshRunJobs({ keepSelection: true });
 		}, 4000);
@@ -711,14 +770,67 @@
 		}
 	}
 
+	function resolveProgressStatus({
+		latestJob,
+		linkedRun,
+		lifecycle
+	}: {
+		latestJob: RunJob | null;
+		linkedRun: ExperimentRun | null;
+		lifecycle: RunLifecycle | null;
+	}): ProgressState {
+		if (lifecycle && !ACTIVE_JOB_STATUSES.has(lifecycle.status)) {
+			return mapLifecycleStatus(lifecycle.status);
+		}
+		if (latestJob && TERMINAL_JOB_STATUSES.has(latestJob.status)) {
+			return mapLifecycleStatus(latestJob.status);
+		}
+		if (lifecycle) {
+			return mapLifecycleStatus(lifecycle.status);
+		}
+		if (latestJob) {
+			return mapLifecycleStatus(latestJob.status);
+		}
+		if (linkedRun) {
+			return 'completed';
+		}
+		return 'not_started';
+	}
+
+	function mapLifecycleStatus(status: string): ProgressState {
+		switch (status) {
+			case 'queued':
+				return 'queued';
+			case 'starting':
+			case 'running':
+				return 'training';
+			case 'completed':
+				return 'completed';
+			case 'failed':
+				return 'failed';
+			case 'canceled':
+				return 'canceled';
+			case 'stale':
+				return 'stale';
+			default:
+				return 'not_started';
+		}
+	}
+
 	function progressStatusClass(status: ProgressState): string {
 		switch (status) {
-			case 'finished':
+			case 'completed':
 				return 'bg-positive/15 text-positive';
-			case 'running':
+			case 'training':
 				return 'bg-sky-500/15 text-sky-300';
+			case 'queued':
+				return 'bg-muted text-muted-foreground';
 			case 'failed':
 				return 'bg-negative/15 text-negative';
+			case 'canceled':
+				return 'bg-amber-500/20 text-amber-300';
+			case 'stale':
+				return 'bg-muted text-muted-foreground';
 			default:
 				return 'bg-muted text-muted-foreground';
 		}
@@ -728,9 +840,16 @@
 		switch (status) {
 			case 'not_started':
 				return 'not started';
+			case 'training':
+				return 'training';
 			default:
 				return status;
 		}
+	}
+
+	function progressBarWidth(percent: number | null | undefined): string {
+		if (percent == null || Number.isNaN(percent)) return '0%';
+		return `${Math.min(100, Math.max(0, percent))}%`;
 	}
 
 	function shortId(value: string | null | undefined, length = 8): string {
@@ -802,6 +921,51 @@
 			if (generation !== jobsRefreshGeneration) return;
 			jobsBusy = false;
 		}
+	}
+
+	async function refreshProgressLifecycles() {
+		const generation = ++progressPollGeneration;
+		await refreshRunJobs({ keepSelection: true });
+		if (generation !== progressPollGeneration) return;
+
+		const runIds = new Set<string>();
+		for (const job of runJobs) {
+			const runId = job.canonical_run_id;
+			if (!runId) continue;
+			if (!TERMINAL_JOB_STATUSES.has(job.status) || runLifecycles.has(runId)) {
+				runIds.add(runId);
+			}
+		}
+
+		if (runIds.size === 0) {
+			if (generation === progressPollGeneration) {
+				runLifecycles = new Map();
+			}
+			return;
+		}
+
+		const results = await Promise.allSettled(
+			[...runIds].map(async (runId) => {
+				const lifecycle = await api.getRunLifecycle(runId);
+				return [runId, lifecycle] as const;
+			})
+		);
+		if (generation !== progressPollGeneration) return;
+
+		const next = new Map<string, RunLifecycle>();
+		const existing = runLifecycles;
+		for (const [index, runId] of [...runIds].entries()) {
+			const result = results[index];
+			if (result?.status === 'fulfilled') {
+				next.set(result.value[0], result.value[1]);
+				continue;
+			}
+			const previous = existing.get(runId);
+			if (previous) {
+				next.set(runId, previous);
+			}
+		}
+		runLifecycles = next;
 	}
 
 	function closeMonitorStream() {
@@ -1291,26 +1455,38 @@
 	{:else if pageTab === 'progress'}
 		<div class="flex-1 min-h-0 px-6 py-4 overflow-auto">
 			<div class="space-y-4">
-				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
 					<div class="rounded-lg border border-border bg-card px-4 py-3">
 						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Total Configs</div>
 						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.total}</div>
 					</div>
 					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Finished</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-positive">{progressCounts.finished}</div>
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Not Started</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.not_started}</div>
 					</div>
 					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Running</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-sky-300">{progressCounts.running}</div>
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Queued</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-muted-foreground">{progressCounts.queued}</div>
 					</div>
 					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Needs Attention</div>
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Training</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-sky-300">{progressCounts.training}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Completed</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-positive">{progressCounts.completed}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Failed</div>
 						<div class="mt-1 text-2xl font-semibold tabular-nums text-negative">{progressCounts.failed}</div>
 					</div>
 					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Not Started</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.not_started}</div>
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Canceled</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-amber-300">{progressCounts.canceled}</div>
+					</div>
+					<div class="rounded-lg border border-border bg-card px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Stale</div>
+						<div class="mt-1 text-2xl font-semibold tabular-nums text-muted-foreground">{progressCounts.stale}</div>
 					</div>
 				</div>
 
@@ -1332,10 +1508,10 @@
 						{#if nextAttentionRow}
 							<div class="mt-2 font-mono text-sm">{fileName(nextAttentionRow.relative_path)}</div>
 							<div class="mt-1 text-xs text-muted-foreground">
-								Last job {nextAttentionRow.job_id ? shortId(nextAttentionRow.job_id, 12) : '-'}
+								{progressStatusLabel(nextAttentionRow.status)} · last job {nextAttentionRow.job_id ? shortId(nextAttentionRow.job_id, 12) : '-'}
 							</div>
 						{:else}
-							<div class="mt-2 text-sm text-muted-foreground">No failed configs currently tracked.</div>
+							<div class="mt-2 text-sm text-muted-foreground">No failed, stale, or canceled configs currently tracked.</div>
 						{/if}
 					</div>
 				</div>
@@ -1344,7 +1520,7 @@
 					<div class="flex items-center gap-3 border-b border-border px-4 py-3">
 						<div>
 							<h2 class="text-sm font-semibold">Config Status</h2>
-							<p class="text-xs text-muted-foreground">Durable execution state derived from configs, runs, and latest job outcomes.</p>
+							<p class="text-xs text-muted-foreground">Live lifecycle state for the latest known attempt per config, with progress for queued and training runs.</p>
 						</div>
 						<input
 							type="text"
@@ -1370,10 +1546,27 @@
 							<tbody class="divide-y divide-border/50">
 								{#each filteredProgressRows as row (row.config_id)}
 									<tr class="hover:bg-muted/15">
-										<td class="px-4 py-2.5">
+										<td class="px-4 py-2.5 min-w-[220px]">
 											<span class="inline-flex rounded px-2 py-0.5 text-[10px] font-medium uppercase {progressStatusClass(row.status)}">
 												{progressStatusLabel(row.status)}
 											</span>
+											{#if row.status === 'queued' || row.status === 'training'}
+												<div class="mt-2 h-2 overflow-hidden rounded-full bg-muted/60">
+													<div
+														class="h-full rounded-full bg-sky-400 transition-[width] duration-500"
+														style={`width: ${progressBarWidth(row.progress_percent)}`}
+													></div>
+												</div>
+												<div class="mt-1 text-[11px] text-muted-foreground">
+													{row.progress_label ?? 'Waiting for lifecycle progress...'}
+													{#if row.progress_percent != null}
+														<span class="ml-1 tabular-nums">{Math.round(row.progress_percent)}%</span>
+													{/if}
+												</div>
+											{/if}
+											{#if row.current_stage}
+												<div class="mt-1 text-[11px] text-muted-foreground font-mono">{row.current_stage}</div>
+											{/if}
 										</td>
 										<td class="px-4 py-2.5">
 											<div class="font-mono text-[12px]">{fileName(row.relative_path)}</div>
@@ -1396,7 +1589,7 @@
 												<span class="text-muted-foreground">-</span>
 											{/if}
 										</td>
-										<td class="px-4 py-2.5 text-muted-foreground">{fmtTime(row.finished_at ?? row.created_at)}</td>
+										<td class="px-4 py-2.5 text-muted-foreground">{fmtTime(row.updated_at ?? row.finished_at ?? row.created_at)}</td>
 									</tr>
 								{:else}
 									<tr>

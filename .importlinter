@@ -1,0 +1,40 @@
+[importlinter]
+root_package = numereng
+
+[importlinter:contract:config_is_foundational]
+name = Config must not depend on higher layers
+type = forbidden
+source_modules =
+    numereng.config
+forbidden_modules =
+    numereng.platform
+    numereng.features
+    numereng.api
+    numereng.cli
+
+[importlinter:contract:platform_isolated]
+name = Platform must not depend on higher layers
+type = forbidden
+source_modules =
+    numereng.platform
+forbidden_modules =
+    numereng.features
+    numereng.api
+    numereng.cli
+
+[importlinter:contract:features_do_not_depend_on_api]
+name = Features must not depend on API or CLI
+type = forbidden
+source_modules =
+    numereng.features
+forbidden_modules =
+    numereng.api
+    numereng.cli
+
+[importlinter:contract:api_does_not_depend_on_cli]
+name = API must not depend on CLI
+type = forbidden
+source_modules =
+    numereng.api
+forbidden_modules =
+    numereng.cli
