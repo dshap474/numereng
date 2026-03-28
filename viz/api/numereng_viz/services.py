@@ -29,7 +29,7 @@ class VizService:
 
     def __init__(self, adapter: VizStoreAdapter) -> None:
         self.adapter = adapter
-        self.remote_snapshots = RemoteSnapshotCoordinator()
+        self.remote_snapshots = RemoteSnapshotCoordinator(store_root=self.adapter.store_root)
 
     def list_experiments(self) -> list[dict[str, Any]]:
         return self.adapter.list_experiments()

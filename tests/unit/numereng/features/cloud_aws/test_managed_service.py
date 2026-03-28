@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import tarfile
 from pathlib import Path
 
@@ -301,6 +302,61 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     )
     assert status.action == "cloud.aws.train.status"
     assert status.result["status"] == "Completed"
+
+
+def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_context(tmp_path: Path) -> None:
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
+    state_path = _state_path(tmp_path)
+    config_dir = tmp_path / ".numereng" / "experiments" / "exp-live" / "configs"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    submit = service.train_submit(
+        AwsTrainSubmitRequest(
+            run_id="run-1",
+            backend="sagemaker",
+            config_path=str(config_path),
+            image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+            role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+            state_path=str(state_path),
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+    assert submit.state is not None
+
+    status = service.train_status(
+        AwsTrainStatusRequest(
+            state_path=str(state_path),
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    with sqlite3.connect(tmp_path / ".numereng" / "numereng.db") as conn:
+        row = conn.execute(
+            """
+            SELECT metadata_json
+            FROM cloud_jobs
+            WHERE run_id = ? AND provider = ? AND provider_job_id = ?
+            """,
+            ("run-1", "sagemaker", status.result["training_job_name"]),
+        ).fetchone()
+
+    assert row is not None
+    metadata = json.loads(str(row[0]))
+    assert metadata["experiment_id"] == "exp-live"
+    assert metadata["config_path"] == str(config_path)
+    assert metadata["config_id"] == str(config_path)
+    assert metadata["config_label"] == "train.json"
+    assert metadata["state_path"] == str(state_path.resolve())
+    assert metadata["secondary_status"] == "Completed"
+    assert metadata["last_progress_percent"] == "100.0"
 
 
 def test_train_submit_cuda_requires_cuda_runtime_profile(tmp_path: Path) -> None:

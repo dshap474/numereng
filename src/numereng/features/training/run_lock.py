@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import os
@@ -104,11 +105,31 @@ def is_pid_alive(pid: int) -> bool:
     """Best-effort local PID liveness check."""
     if pid <= 0:
         return False
+    if os.name == "nt":
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
     except OSError:
         return False
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    process_query_limited_information = 0x1000
+    still_active = 259
+
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if handle == 0:
+        return ctypes.get_last_error() == 5
+
+    try:
+        exit_code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)) == 0:
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _lock_owner_label(payload: dict[str, object]) -> str:

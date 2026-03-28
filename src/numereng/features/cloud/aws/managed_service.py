@@ -538,6 +538,16 @@ class CloudAwsManagedService:
                 next_artifacts["output_s3_uri"] = training_status.output_s3_uri
 
             next_metadata = dict(state.metadata)
+            if training_status.secondary_status is not None:
+                next_metadata["secondary_status"] = training_status.secondary_status
+            progress_percent = _monitor_progress_percent_for_status(
+                backend="sagemaker",
+                status=training_status.status,
+                stage=training_status.secondary_status,
+                previous=next_metadata.get("last_progress_percent"),
+            )
+            if progress_percent is not None:
+                next_metadata["last_progress_percent"] = f"{progress_percent:.1f}"
             if training_status.failure_reason is not None:
                 next_metadata["failure_reason"] = training_status.failure_reason
 
@@ -597,6 +607,14 @@ class CloudAwsManagedService:
                 next_metadata["status_reason"] = batch_status.status_reason
             if batch_status.log_stream_name is not None:
                 next_metadata["log_stream_name"] = batch_status.log_stream_name
+            progress_percent = _monitor_progress_percent_for_status(
+                backend="batch",
+                status=batch_status.status,
+                stage=batch_status.status_reason,
+                previous=next_metadata.get("last_progress_percent"),
+            )
+            if progress_percent is not None:
+                next_metadata["last_progress_percent"] = f"{progress_percent:.1f}"
 
             next_state = state.model_copy(
                 update={
@@ -1123,6 +1141,9 @@ class CloudAwsManagedService:
             "backend": backend,
             "status": status,
         }
+        state_path = request.state_file()
+        if state_path is not None:
+            metadata_payload["state_path"] = str(state_path.expanduser().resolve())
         if metadata:
             metadata_payload.update({key: value for key, value in metadata.items() if value})
         config_path = getattr(request, "config_path", None)
@@ -1156,6 +1177,9 @@ class CloudAwsManagedService:
 
     def _monitor_metadata_from_submit(self, request: AwsTrainSubmitRequest) -> dict[str, str]:
         metadata: dict[str, str] = {}
+        state_path = request.state_file()
+        if state_path is not None:
+            metadata["state_path"] = str(state_path.expanduser().resolve())
         if request.config_path is None:
             return metadata
         metadata["config_path"] = request.config_path
@@ -1228,6 +1252,71 @@ def _finished_timestamp(status: str) -> str | None:
     if status in terminal_states:
         return _utc_now_iso()
     return None
+
+
+def _monitor_progress_percent_for_status(
+    *,
+    backend: str,
+    status: str,
+    stage: str | None,
+    previous: str | None,
+) -> float | None:
+    normalized_status = status.strip().lower()
+    normalized_stage = _normalize_cloud_progress_stage(stage)
+    previous_value = _parse_progress_percent(previous)
+    stage_value = _cloud_progress_stage_value(normalized_stage)
+
+    if normalized_status in {"queued", "submitted", "pending", "created", "validating"}:
+        return 0.0
+    if normalized_status in {"stopping"}:
+        if previous_value is not None:
+            return previous_value
+        if stage_value is not None:
+            return stage_value
+        return 96.0
+    if normalized_status in {"completed", "complete", "succeeded", "success"}:
+        return 100.0
+    if normalized_status in {"failed", "error", "stopped", "cancelled", "canceled", "terminated"}:
+        if previous_value is not None:
+            return previous_value
+        return stage_value
+    if normalized_status in {"starting", "inprogress", "in_progress", "running", "downloading", "training"}:
+        if stage_value is not None:
+            return stage_value
+        if previous_value is not None:
+            return previous_value
+        if backend == "batch":
+            return 68.0
+    return previous_value
+
+
+def _cloud_progress_stage_value(stage: str | None) -> float | None:
+    if stage is None:
+        return None
+    return {
+        "starting": 8.0,
+        "downloading": 22.0,
+        "training": 68.0,
+        "uploading": 92.0,
+        "stopping": 96.0,
+    }.get(stage)
+
+
+def _normalize_cloud_progress_stage(stage: str | None) -> str | None:
+    if stage is None:
+        return None
+    normalized = stage.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return normalized or None
+
+
+def _parse_progress_percent(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return max(0.0, min(100.0, float(value.strip())))
+    except ValueError:
+        return None
 
 
 def _extract_run_tarball(*, archive_path: Path, store_root: Path) -> tuple[list[str], list[str]]:

@@ -710,7 +710,7 @@ def _sort_records_by_era(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def repository_root() -> Path:
     """Return repository root (`numereng/`)."""
 
-    return Path(__file__).resolve().parents[4]
+    return Path(__file__).resolve().parents[3]
 
 
 def resolve_store_root(explicit: str | Path | None = None) -> Path:

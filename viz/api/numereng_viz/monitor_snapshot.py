@@ -5,8 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import os
-import shlex
 import socket
 import subprocess
 import threading
@@ -19,9 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from numereng.features.cloud.aws import AwsTrainStatusRequest, CloudAwsManagedService
+from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
+from numereng.features.remote_ops import load_viz_bootstrap_state
 from numereng.features.telemetry import reconcile_run_lifecycles
 from numereng.platform import load_remote_targets
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
+from numereng.platform.remotes.ssh import build_monitor_snapshot_command, build_ssh_command
 from numereng_viz.store_adapter import (
     _ATTENTION_STATUS_RANK,
     VizStoreAdapter,
@@ -35,6 +36,14 @@ logger = logging.getLogger(__name__)
 _ACTIVE_MONITOR_STATUSES = {"queued", "starting", "running", "canceling"}
 _TERMINAL_MONITOR_STATUSES = {"completed", "failed", "canceled", "stale"}
 _REMOTE_CACHE_TTL_SECONDS = 5.0
+_CLOUD_STATE_STORE = CloudAwsStateStore()
+_CLOUD_PHASE_PROGRESS = {
+    "starting": 8.0,
+    "downloading": 22.0,
+    "training": 68.0,
+    "uploading": 92.0,
+    "stopping": 96.0,
+}
 
 
 def build_monitor_snapshot(
@@ -145,7 +154,13 @@ def merge_monitor_snapshots(local_snapshot: dict[str, Any], remote_snapshots: li
 class RemoteSnapshotCoordinator:
     """Fetch SSH-backed remote store snapshots with one-poll-cycle cache fallback."""
 
-    def __init__(self, *, cache_ttl_seconds: float = _REMOTE_CACHE_TTL_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        store_root: str | Path = ".numereng",
+        cache_ttl_seconds: float = _REMOTE_CACHE_TTL_SECONDS,
+    ) -> None:
+        self._store_root = Path(store_root).expanduser().resolve()
         self._cache_ttl_seconds = cache_ttl_seconds
         self._lock = threading.RLock()
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -154,22 +169,31 @@ class RemoteSnapshotCoordinator:
         targets = load_remote_targets()
         if not targets:
             return []
+        bootstrap_state = load_viz_bootstrap_state(store_root=self._store_root)
+        bootstrap_by_target_id = {
+            item.target.id: item for item in (bootstrap_state.targets if bootstrap_state is not None else ())
+        }
 
         max_workers = min(len(targets), 4)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(self._fetch_one, target): target for target in targets}
+            futures = {
+                executor.submit(self._fetch_one, target, bootstrap_by_target_id.get(target.id)): target
+                for target in targets
+            }
             snapshots: list[dict[str, Any]] = []
             for future, target in futures.items():
+                bootstrap = bootstrap_by_target_id.get(target.id)
                 try:
                     snapshot = future.result()
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.warning("Remote snapshot fetch failed for %s: %s", target.id, exc)
-                    snapshot = self._cached_snapshot(target.id)
-                if snapshot is not None:
-                    snapshots.append(snapshot)
+                    snapshot = self._cached_snapshot(target, bootstrap=bootstrap)
+                if snapshot is None:
+                    snapshot = _empty_remote_snapshot(target=target, state="unavailable", bootstrap=bootstrap)
+                snapshots.append(snapshot)
             return snapshots
 
-    def _fetch_one(self, target: SshRemoteTargetProfile) -> dict[str, Any] | None:
+    def _fetch_one(self, target: SshRemoteTargetProfile, bootstrap: Any) -> dict[str, Any] | None:
         command = self._ssh_command(target)
         result = subprocess.run(
             command,
@@ -180,59 +204,31 @@ class RemoteSnapshotCoordinator:
         )
         if result.returncode != 0:
             logger.warning("Remote snapshot command failed for %s: %s", target.id, result.stderr.strip())
-            return self._cached_snapshot(target.id)
+            return self._cached_snapshot(target, bootstrap=bootstrap)
 
         raw = _extract_json_object(result.stdout)
         if raw is None:
             logger.warning("Remote snapshot did not return JSON for %s", target.id)
-            return self._cached_snapshot(target.id)
+            return self._cached_snapshot(target, bootstrap=bootstrap)
 
-        snapshot = _retag_remote_snapshot(raw, target=target, state="live")
+        snapshot = _retag_remote_snapshot(raw, target=target, state="live", bootstrap=bootstrap)
         with self._lock:
             self._cache[target.id] = (time.monotonic(), copy.deepcopy(snapshot))
         return snapshot
 
-    def _cached_snapshot(self, target_id: str) -> dict[str, Any] | None:
+    def _cached_snapshot(self, target: SshRemoteTargetProfile, *, bootstrap: Any) -> dict[str, Any] | None:
         with self._lock:
-            cached = self._cache.get(target_id)
+            cached = self._cache.get(target.id)
             if cached is None:
                 return None
             fetched_at, snapshot = cached
             if (time.monotonic() - fetched_at) > self._cache_ttl_seconds:
-                self._cache.pop(target_id, None)
+                self._cache.pop(target.id, None)
                 return None
-            result = copy.deepcopy(snapshot)
-            if isinstance(result.get("source"), dict):
-                result["source"]["state"] = "cached"
-            return result
+            return _retag_remote_snapshot(snapshot, target=target, state="cached", bootstrap=bootstrap)
 
     def _ssh_command(self, target: SshRemoteTargetProfile) -> list[str]:
-        args = [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            f"ConnectTimeout={target.connect_timeout_seconds}",
-        ]
-        identity_file = _env_value(target.identity_file_env)
-        if identity_file:
-            args.extend(["-i", identity_file])
-        if target.port is not None:
-            args.extend(["-p", str(target.port)])
-
-        destination = target.ssh_config_host or target.host or ""
-        if target.ssh_config_host is None:
-            user = _env_value(target.user_env)
-            if user:
-                destination = f"{user}@{destination}"
-        args.append(destination)
-
-        remote_command = (
-            f"cd {shlex.quote(target.repo_root)} && "
-            f"{target.runner_cmd} monitor snapshot --store-root {shlex.quote(target.store_root)} --json"
-        )
-        args.append(remote_command)
-        return args
+        return build_ssh_command(target, build_monitor_snapshot_command(target))
 
 
 def _local_source(store_root: Path) -> dict[str, Any]:
@@ -287,6 +283,7 @@ def _decorate_live_experiment(
         run_item["source_label"] = source["label"]
         run_item["backend"] = backend_by_run_id.get(run_id or "") or "local"
         run_item["provider_run_id"] = None
+        run_item["progress_mode"] = _local_progress_mode(run_item.get("progress_percent"))
         run_item["detail_href"] = item["detail_href"]
         runs.append(run_item)
     item["runs"] = runs
@@ -305,6 +302,7 @@ def _decorate_recent_activity(
     item["source_label"] = source["label"]
     item["backend"] = backend_by_run_id.get(run_id or "") or "local"
     item["provider_run_id"] = None
+    item["progress_mode"] = _local_progress_mode(item.get("progress_percent"))
     return item
 
 
@@ -399,11 +397,23 @@ def _normalize_cloud_job_row(
         return None
 
     metadata = _parse_json_object(row.get("metadata_json"))
-    if refresh_cloud and backend in {"sagemaker", "batch"}:
+    state_path = _resolve_cloud_state_path(store_root=adapter.store_root, run_id=run_id, metadata=metadata)
+    recovered_metadata = _load_cloud_state_metadata(state_path)
+    if recovered_metadata:
+        metadata.update(recovered_metadata)
+    if state_path is not None:
+        metadata["state_path"] = str(state_path)
+    existing_canonical_status = _canonical_cloud_status(str(refreshed_row.get("status") or "unknown"))
+    if (
+        refresh_cloud
+        and backend in {"sagemaker", "batch"}
+        and _should_refresh_cloud_job_status(existing_canonical_status)
+    ):
         try:
             response = service.train_status(
                 AwsTrainStatusRequest(
                     store_root=str(adapter.store_root),
+                    state_path=str(state_path) if state_path is not None else None,
                     backend=backend,
                     run_id=run_id,
                     training_job_name=provider_job_id if backend == "sagemaker" else None,
@@ -421,6 +431,10 @@ def _normalize_cloud_job_row(
             else:
                 refreshed_row["error_message"] = response.result.get("status_reason")
                 refreshed_row["secondary_status"] = response.result.get("status_reason")
+            if response.state is not None and response.state.metadata:
+                metadata.update({key: value for key, value in response.state.metadata.items() if value})
+                if state_path is not None:
+                    metadata["state_path"] = str(state_path)
         except Exception as exc:  # pragma: no cover - defensive cloud failure path
             logger.warning("Cloud status refresh failed for %s/%s: %s", backend, provider_job_id, exc)
 
@@ -429,8 +443,15 @@ def _normalize_cloud_job_row(
     config_label = Path(config_path).name if config_path else _to_non_empty_str(metadata.get("config_label")) or run_id
     experiment_context = _resolve_cloud_experiment_context(adapter, run_id=run_id, metadata=metadata)
     canonical_status = _canonical_cloud_status(str(refreshed_row.get("status") or "unknown"))
-    stage = _to_non_empty_str(refreshed_row.get("secondary_status"))
-    progress_percent = 0.0 if canonical_status == "queued" else None
+    stage = _to_non_empty_str(refreshed_row.get("secondary_status")) or _to_non_empty_str(
+        metadata.get("secondary_status")
+    )
+    progress_percent, progress_mode = _cloud_progress_state(
+        backend=backend,
+        canonical_status=canonical_status,
+        stage=stage,
+        metadata=metadata,
+    )
     terminal_reason = _to_non_empty_str(refreshed_row.get("error_message"))
     updated_at = _to_non_empty_str(refreshed_row.get("updated_at")) or _to_non_empty_str(
         refreshed_row.get("finished_at")
@@ -447,6 +468,7 @@ def _normalize_cloud_job_row(
         "status": canonical_status,
         "current_stage": stage,
         "progress_percent": progress_percent,
+        "progress_mode": progress_mode,
         "progress_label": stage or _cloud_progress_label(backend, canonical_status),
         "updated_at": updated_at,
         "terminal_reason": terminal_reason,
@@ -467,6 +489,7 @@ def _normalize_cloud_job_row(
         "status": canonical_status,
         "current_stage": stage,
         "progress_percent": progress_percent,
+        "progress_mode": progress_mode,
         "progress_label": stage or _cloud_progress_label(backend, canonical_status),
         "updated_at": updated_at,
         "finished_at": _to_non_empty_str(refreshed_row.get("finished_at")),
@@ -488,6 +511,82 @@ def _normalize_cloud_job_row(
         "run": run_item,
         "activity": activity_item,
     }
+
+
+def _should_refresh_cloud_job_status(canonical_status: str) -> bool:
+    return canonical_status in _ACTIVE_MONITOR_STATUSES
+
+
+def _local_progress_mode(progress_percent: Any) -> str:
+    return "exact" if isinstance(progress_percent, (int, float)) else "indeterminate"
+
+
+def _cloud_progress_state(
+    *,
+    backend: str,
+    canonical_status: str,
+    stage: str | None,
+    metadata: dict[str, Any],
+) -> tuple[float | None, str]:
+    previous = _parse_progress_percent(metadata.get("last_progress_percent"))
+    stage_value = _cloud_phase_progress(stage)
+
+    if canonical_status == "queued":
+        return 0.0, "estimated"
+    if canonical_status == "canceling":
+        return previous if previous is not None else (stage_value if stage_value is not None else 96.0), "estimated"
+    if canonical_status == "running":
+        if stage_value is not None:
+            return stage_value, "estimated"
+        if previous is not None:
+            return previous, "estimated"
+        fallback = _cloud_backend_active_default(backend)
+        if fallback is not None:
+            return fallback, "estimated"
+        return None, "indeterminate"
+    if canonical_status == "completed":
+        return 100.0, "estimated"
+    if canonical_status in {"failed", "canceled", "stale"}:
+        if previous is not None:
+            return previous, "estimated"
+        if stage_value is not None:
+            return stage_value, "estimated"
+        return None, "indeterminate"
+    return None, "indeterminate"
+
+
+def _parse_progress_percent(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return max(0.0, min(100.0, float(value)))
+    if isinstance(value, str):
+        try:
+            return max(0.0, min(100.0, float(value.strip())))
+        except ValueError:
+            return None
+    return None
+
+
+def _cloud_phase_progress(stage: str | None) -> float | None:
+    normalized = _normalize_cloud_phase(stage)
+    if normalized is None:
+        return None
+    return _CLOUD_PHASE_PROGRESS.get(normalized)
+
+
+def _normalize_cloud_phase(stage: str | None) -> str | None:
+    if stage is None:
+        return None
+    normalized = stage.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return normalized or None
+
+
+def _cloud_backend_active_default(backend: str) -> float | None:
+    if backend == "batch":
+        return 68.0
+    return None
 
 
 def _resolve_cloud_experiment_context(
@@ -548,6 +647,28 @@ def _resolve_cloud_experiment_context(
     }
 
 
+def _resolve_cloud_state_path(*, store_root: Path, run_id: str, metadata: dict[str, Any]) -> Path | None:
+    explicit = _to_non_empty_str(metadata.get("state_path"))
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    canonical = (store_root / "cloud" / f"{run_id}.json").resolve()
+    if canonical.is_file():
+        return canonical
+    return None
+
+
+def _load_cloud_state_metadata(state_path: Path | None) -> dict[str, Any]:
+    if state_path is None:
+        return {}
+    try:
+        state = _CLOUD_STATE_STORE.load(state_path)
+    except ValueError:
+        return {}
+    if state is None:
+        return {}
+    return {str(key): value for key, value in state.metadata.items() if value}
+
+
 def _infer_experiment_id_from_config_path(config_path: str, *, store_root: Path) -> str | None:
     path = Path(config_path)
     if not path.is_absolute():
@@ -568,7 +689,9 @@ def _canonical_cloud_status(status: str) -> str:
         return "queued"
     if normalized in {"starting", "inprogress", "in_progress", "running", "downloading", "training"}:
         return "running"
-    if normalized in {"stopping", "stopped", "cancelled", "canceled", "terminating", "terminated"}:
+    if normalized in {"stopping"}:
+        return "canceling"
+    if normalized in {"stopped", "cancelled", "canceled", "terminating", "terminated"}:
         return "canceled"
     if normalized in {"completed", "complete", "succeeded", "success"}:
         return "completed"
@@ -710,16 +833,10 @@ def _retag_remote_snapshot(
     *,
     target: SshRemoteTargetProfile,
     state: str,
+    bootstrap: Any = None,
 ) -> dict[str, Any]:
     result = copy.deepcopy(snapshot)
-    result["source"] = {
-        "kind": "ssh",
-        "id": target.id,
-        "label": target.label,
-        "host": target.ssh_config_host or target.host,
-        "store_root": target.store_root,
-        "state": state,
-    }
+    result["source"] = _remote_source(target=target, state=state, bootstrap=bootstrap)
     for item in result.get("experiments", []):
         item["source_kind"] = "ssh"
         item["source_id"] = target.id
@@ -742,6 +859,43 @@ def _retag_remote_snapshot(
     return result
 
 
+def _remote_source(*, target: SshRemoteTargetProfile, state: str, bootstrap: Any) -> dict[str, Any]:
+    source = {
+        "kind": "ssh",
+        "id": target.id,
+        "label": target.label,
+        "host": target.ssh_config_host or target.host,
+        "store_root": target.store_root,
+        "state": state,
+    }
+    if bootstrap is None:
+        return source
+    source["bootstrap_status"] = getattr(bootstrap, "bootstrap_status", None)
+    source["last_bootstrap_at"] = getattr(bootstrap, "last_bootstrap_at", None)
+    source["last_bootstrap_error"] = getattr(bootstrap, "last_bootstrap_error", None)
+    return source
+
+
+def _empty_remote_snapshot(*, target: SshRemoteTargetProfile, state: str, bootstrap: Any) -> dict[str, Any]:
+    return {
+        "generated_at": _utc_now_iso(),
+        "source": _remote_source(target=target, state=state, bootstrap=bootstrap),
+        "summary": {
+            "total_experiments": 0,
+            "active_experiments": 0,
+            "completed_experiments": 0,
+            "live_experiments": 0,
+            "live_runs": 0,
+            "queued_runs": 0,
+            "attention_count": 0,
+        },
+        "experiments": [],
+        "live_experiments": [],
+        "live_runs": [],
+        "recent_activity": [],
+    }
+
+
 def _extract_json_object(stdout: str) -> dict[str, Any] | None:
     for line in reversed(stdout.splitlines()):
         stripped = line.strip()
@@ -754,12 +908,6 @@ def _extract_json_object(stdout: str) -> dict[str, Any] | None:
         if isinstance(payload, dict):
             return payload
     return None
-
-
-def _env_value(env_name: str | None) -> str | None:
-    if env_name is None or not env_name.strip():
-        return None
-    return _to_non_empty_str(os.getenv(env_name))
 
 
 def _utc_now_iso() -> str:

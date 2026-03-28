@@ -16,6 +16,7 @@ from numereng.cli.commands import (
     handle_monitor_command,
     handle_neutralize_command,
     handle_numerai_command,
+    handle_remote_command,
     handle_research_command,
     handle_run_command,
     handle_store_command,
@@ -64,6 +65,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args and args[0] == "research":
         return handle_research_command(args[1:])
+
+    if args and args[0] == "remote":
+        return handle_remote_command(args[1:])
 
     if any(arg in {"-h", "--help"} for arg in args):
         print(USAGE)

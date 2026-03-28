@@ -541,6 +541,55 @@ def test_upsert_cloud_job_keeps_distinct_rows_per_provider(tmp_path: Path) -> No
     assert count[0] == 2
 
 
+def test_upsert_cloud_job_merges_metadata_json(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-1",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-1",
+            status="InProgress",
+            metadata_json=json.dumps(
+                {
+                    "experiment_id": "exp-1",
+                    "config_path": ".numereng/experiments/exp-1/configs/base.json",
+                    "config_label": "base.json",
+                }
+            ),
+        ),
+    )
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-1",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-1",
+            status="Completed",
+            metadata_json=json.dumps({"status": "Completed", "backend": "sagemaker"}),
+        ),
+    )
+
+    with sqlite3.connect(store_root / "numereng.db") as conn:
+        row = conn.execute(
+            """
+            SELECT metadata_json
+            FROM cloud_jobs
+            WHERE run_id = ? AND provider = ? AND provider_job_id = ?
+            """,
+            ("run-1", "sagemaker", "job-1"),
+        ).fetchone()
+
+    assert row is not None
+    metadata = json.loads(str(row[0]))
+    assert metadata["experiment_id"] == "exp-1"
+    assert metadata["config_path"] == ".numereng/experiments/exp-1/configs/base.json"
+    assert metadata["config_label"] == "base.json"
+    assert metadata["status"] == "Completed"
+
+
 def test_init_store_db_migrates_cloud_jobs_legacy_primary_key(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)

@@ -24,6 +24,7 @@ dist/
 build/
 .tmp/
 .venv-test/
+.import_linter_cache
 
 # Testing
 .pytest_cache/
@@ -31,6 +32,7 @@ build/
 .coverage
 htmlcov/
 .pre-commit-cache/
+.playwright-cli
 
 # OS / generated logs
 .DS_Store
