@@ -48,7 +48,8 @@ Source map:
 - `src/numereng/features/cloud/modal/*`: Modal deploy/data/train/state.
 - `viz/api/numereng_viz/*`: authoritative read-only viz backend package (routes, services, monitor snapshot composition, store merge logic).
 - `src/numereng/features/viz/*`: compatibility shim only; no real viz business logic should live here.
-- `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`.
+- `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs + shell-aware SSH helpers; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`. SSH targets declare `shell: posix|powershell`; use `powershell` for Windows remotes. Remote targets also declare `python_cmd` for helper scripts (`uv run python` default).
+- `src/numereng/features/remote_ops/*`: SSH remote doctor + repo sync + experiment sync + ad hoc config push + detached remote launch.
 - `src/numereng/api/__init__.py`: curated public Python facade.
 - `src/numereng/api/pipeline.py`: public workflow entrypoint for full local train flows.
 - `src/numereng/api/_*.py`: internal API operation/stage wrappers; not stable import paths.
@@ -134,6 +135,7 @@ Wiring map:
   - `cli store repair-run-lifecycles [--run-id <id>|--all] -> api.store_repair_run_lifecycles -> features.telemetry.reconcile_run_lifecycles`
 - Monitor:
   `cli monitor snapshot [--store-root <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
+  `cli remote list|doctor|repo sync|experiment sync|config push|run train -> api.remote_* -> features.remote_ops.*`
 - Dataset tooling command:
   `uv run numereng dataset-tools build-downsampled-full --data-version v5.2`
 - Cloud AWS:
@@ -188,6 +190,8 @@ Viz/frontend topology:
 - Viz backend launcher shim is `viz/api.py`; the actual backend package is `viz/api/numereng_viz`.
 - No standalone frontend routes for `/run-ops` or `/configs`.
 - `/experiments` is the mission-control dashboard. It route-loads `/api/experiments/overview`, keeps a page-local snapshot, and polls the same read-only overview every 3 seconds while the page is visible. The left rail lists all experiments; the right pane shows live experiments plus recent terminal activity and attention states.
+- Mission control also exposes remote source health from `overview.sources`; enabled SSH remotes can appear as `live`, `cached`, or `unavailable`, and carry persisted bootstrap metadata (`bootstrap_status`, `last_bootstrap_at`, `last_bootstrap_error`) from the local viz bootstrap step.
+- Mission control live cards render one canonical progress instrument per live experiment, chosen from the freshest active `primary` run (`updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`). The card keeps a single progress bar plus adjacent percent instead of stacked aggregate/per-run rails.
 - Experiment page contains Analysis + Progress + Run Ops tabs; all launch/control remains monitor-only and CLI/API-driven.
 - The Progress tab is the only experiment-detail UI surface that live-polls per-run lifecycle state. It reads `/api/run-jobs?experiment_id=<id>` plus per-run `/api/runs/{run_id}/lifecycle`, keeps a page-local lifecycle cache, and renders backend-owned progress bars without inferring percent in the browser.
 - Progress display labels map canonical lifecycle state to UI-only labels:
@@ -199,7 +203,20 @@ Viz/frontend topology:
 - Snapshot monitoring is store-based:
   - local live runs come from active `run_lifecycles`
   - SageMaker/Batch live truth is refreshed from `cloud_jobs`
-  - SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles
+- SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles; the poller builds either a POSIX `cd ... && ...` command or an explicit `powershell -NoProfile -Command "Set-Location ...; ..."` command based on the profile shell
+- `numereng remote bootstrap-viz` is the canonical federated viz bootstrap flow. It loads all enabled remote profiles, runs repo sync in `auto` mode, then runs `remote doctor`, and persists per-target `ready|degraded` state under `<store_root>/remote_ops/bootstrap/viz.json`.
+- `make viz` automatically runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before starting the local FastAPI + Vite stack. It never starts a remote viz server; the local viz backend remains the only UI/API process and keeps polling remote monitor snapshots over SSH.
+- `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
+- `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
+- `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.tmp/numereng-remote-configs/*` before detached launch
+- Live-run payloads now carry `progress_mode`:
+  - `exact` for local lifecycle-backed percentages
+  - `estimated` for cloud runs with coarse phase/status mapping
+  - `indeterminate` when no honest percent can be derived
+- Cloud progress is deliberately coarse and phase-based in mission control v1:
+  `queued/submitted/pending/created/validating=0`, `starting=8`, `downloading=22`,
+  `training=68`, `uploading=92`, `stopping=96`, `completed=100`.
+  Failed/canceled/stale cloud rows preserve `last_progress_percent` when present.
 - `experiment pack` writes `EXPERIMENT.pack.md` beside `EXPERIMENT.md`; it embeds the current experiment narrative plus a dashboard-aligned scalar run-metrics table only (no per-era/time-series payloads).
 - Backend still exposes read-only catalog/query endpoints (`/experiments/overview`, `/configs`, `/experiments/{id}/configs`, `/run-jobs*`).
 - Normal experiment/config catalogs exclude archived experiments; direct experiment detail/doc/config reads remain available by ID.

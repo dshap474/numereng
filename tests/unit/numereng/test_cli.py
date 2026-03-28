@@ -90,6 +90,130 @@ def test_cli_monitor_snapshot_success(
     assert payload["summary"]["live_runs"] == 1
 
 
+def test_cli_remote_list_json_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_list_targets(request: api_module.RemoteTargetListRequest) -> api_module.RemoteTargetListResponse:
+        _ = request
+        return api_module.RemoteTargetListResponse(
+            targets=[
+                api_module.RemoteTargetResponse(
+                    id="pc",
+                    label="Daniel's PC",
+                    kind="ssh",
+                    shell="powershell",
+                    repo_root=r"C:\Users\dansh\remote-access\numereng",
+                    store_root=r"C:\Users\dansh\remote-access\numereng\.numereng",
+                    runner_cmd="uv run numereng",
+                    python_cmd="uv run python",
+                    tags=["pc"],
+                )
+            ]
+        )
+
+    monkeypatch.setattr(api_module, "remote_list_targets", fake_remote_list_targets)
+
+    exit_code = cli.main(["remote", "list", "--format", "json"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["targets"][0]["id"] == "pc"
+
+
+def test_cli_remote_bootstrap_viz_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_bootstrap_viz(
+        request: api_module.RemoteVizBootstrapRequest,
+    ) -> api_module.RemoteVizBootstrapResponse:
+        assert request.store_root == ".numereng"
+        return api_module.RemoteVizBootstrapResponse(
+            store_root=".numereng",
+            state_path=".numereng/remote_ops/bootstrap/viz.json",
+            bootstrapped_at="2026-03-28T00:00:00+00:00",
+            ready_count=1,
+            degraded_count=1,
+            targets=[
+                api_module.RemoteVizBootstrapTargetResponse(
+                    target=api_module.RemoteTargetResponse(
+                        id="pc",
+                        label="Daniel's PC",
+                        kind="ssh",
+                        shell="powershell",
+                        repo_root=r"C:\Users\dansh\remote-access\numereng",
+                        store_root=r"C:\Users\dansh\remote-access\numereng\.numereng",
+                        runner_cmd="uv run numereng",
+                        python_cmd="uv run python",
+                        tags=["pc"],
+                    ),
+                    bootstrap_status="ready",
+                    last_bootstrap_at="2026-03-28T00:00:00+00:00",
+                    last_bootstrap_error=None,
+                    repo_synced=True,
+                    repo_sync_skipped=False,
+                    doctor_ok=True,
+                    issues=[],
+                )
+            ],
+        )
+
+    monkeypatch.setattr(api_module, "remote_bootstrap_viz", fake_remote_bootstrap_viz)
+
+    exit_code = cli.main(["remote", "bootstrap-viz"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["ready_count"] == 1
+
+
+def test_cli_remote_run_train_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_train_launch(request: api_module.RemoteTrainLaunchRequest) -> api_module.RemoteTrainLaunchResponse:
+        assert request.target_id == "pc"
+        assert request.config_path == "configs/run.json"
+        assert request.sync_repo == "always"
+        assert request.profile == "simple"
+        return api_module.RemoteTrainLaunchResponse(
+            target_id="pc",
+            launch_id="launch-1",
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.tmp\numereng-remote-configs\run.json",
+            remote_log_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.log",
+            remote_metadata_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.json",
+            remote_pid=4321,
+            launched_at="2026-03-27T00:00:00+00:00",
+            sync_repo_policy="always",
+            repo_synced=True,
+            experiment_synced=False,
+        )
+
+    monkeypatch.setattr(api_module, "remote_train_launch", fake_remote_train_launch)
+
+    exit_code = cli.main(
+        [
+            "remote",
+            "run",
+            "train",
+            "--target",
+            "pc",
+            "--config",
+            "configs/run.json",
+            "--sync-repo",
+            "always",
+            "--profile",
+            "simple",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["launch_id"] == "launch-1"
+    assert payload["repo_synced"] is True
+
+
 def test_cli_run_submit_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

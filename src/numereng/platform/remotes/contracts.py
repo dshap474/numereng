@@ -22,9 +22,11 @@ class SshRemoteTargetProfile(BaseModel):
     user_env: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
     identity_file_env: str | None = None
+    shell: Literal["posix", "powershell"] = "posix"
     repo_root: str = Field(min_length=1)
     store_root: str = Field(min_length=1)
     runner_cmd: str = Field(default="uv run numereng", min_length=1)
+    python_cmd: str = Field(default="uv run python", min_length=1)
     enabled: bool = True
     tags: list[str] = Field(default_factory=list)
     connect_timeout_seconds: int = Field(default=5, ge=1, le=60)

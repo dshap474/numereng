@@ -17,6 +17,8 @@
 		};
 	} = $props();
 
+	type OverviewSource = NonNullable<ExperimentOverviewResponse['sources']>[number];
+
 	const routeOverview = () => data.overview;
 	let overview = $state<ExperimentOverviewResponse>(routeOverview());
 	let documentVisible = $state(true);
@@ -35,6 +37,8 @@
 	let experiments = $derived(overview.experiments ?? []);
 	let liveExperiments = $derived(overview.live_experiments ?? []);
 	let recentActivity = $derived(overview.recent_activity ?? []);
+	let sources = $derived(overview.sources ?? []);
+	let remoteSources = $derived(sources.filter((source) => source.kind === 'ssh'));
 	let summary = $derived(overview.summary);
 	let lastSurfacePulse = $derived(
 		liveExperiments[0]?.latest_activity_at ??
@@ -184,19 +188,6 @@
 		}
 	}
 
-	function liveSectionClass(item: LiveExperimentOverview): string {
-		switch (item.attention_state) {
-			case 'failed':
-				return 'border-white/8 bg-card';
-			case 'stale':
-				return 'border-white/8 bg-card';
-			case 'canceled':
-				return 'border-white/8 bg-card';
-			default:
-				return 'border-white/8 bg-card';
-		}
-	}
-
 	function activityTone(item: RecentExperimentActivityItem): string {
 		switch ((item.status ?? '').toLowerCase()) {
 			case 'failed':
@@ -270,27 +261,138 @@
 		return `${sourceKind.toUpperCase()} · ${sourceLabel}`;
 	}
 
-	function liveRunHint(run: LiveRunOverview): string {
+	function sourceAvailabilityLabel(source: OverviewSource): string {
+		switch ((source.state ?? '').toLowerCase()) {
+			case 'live':
+				return 'LIVE';
+			case 'cached':
+				return 'CACHED';
+			case 'unavailable':
+				return 'UNAVAILABLE';
+			default:
+				return (source.state ?? 'unknown').toUpperCase();
+		}
+	}
+
+	function sourceAvailabilityClass(source: OverviewSource): string {
+		switch ((source.state ?? '').toLowerCase()) {
+			case 'live':
+				return 'bg-emerald-400/12 text-emerald-200 ring-1 ring-emerald-400/20';
+			case 'cached':
+				return 'bg-amber-400/12 text-amber-100 ring-1 ring-amber-400/20';
+			case 'unavailable':
+				return 'bg-red-400/12 text-red-200 ring-1 ring-red-400/20';
+			default:
+				return 'bg-white/[0.06] text-slate-300 ring-1 ring-white/8';
+		}
+	}
+
+	function sourceBootstrapClass(source: OverviewSource): string {
+		return (source.bootstrap_status ?? '').toLowerCase() === 'degraded'
+			? 'bg-red-500/[0.08] text-red-200 border-red-400/20'
+			: 'bg-white/[0.03] text-slate-200 border-white/10';
+	}
+
+	function sourceBootstrapLabel(source: OverviewSource): string {
+		return (source.bootstrap_status ?? 'ready').toUpperCase();
+	}
+
+	function sourceDetail(source: OverviewSource): string {
+		if (source.last_bootstrap_error) return source.last_bootstrap_error;
+		if ((source.state ?? '').toLowerCase() === 'cached') return 'using last successful snapshot';
+		if ((source.state ?? '').toLowerCase() === 'unavailable') return 'snapshot unavailable';
+		if (source.last_bootstrap_at) return `bootstrapped ${formatSurfaceTime(source.last_bootstrap_at)}`;
+		return 'remote source ready';
+	}
+
+	function normalizedProgressMode(run: LiveRunOverview): 'exact' | 'estimated' | 'indeterminate' {
+		const mode = (run.progress_mode ?? '').toLowerCase();
+		if (mode === 'exact' || mode === 'estimated' || mode === 'indeterminate') return mode;
+		return run.progress_percent == null ? 'indeterminate' : 'exact';
+	}
+
+	function progressModeRank(run: LiveRunOverview): number {
+		switch (normalizedProgressMode(run)) {
+			case 'exact':
+				return 2;
+			case 'estimated':
+				return 1;
+			default:
+				return 0;
+		}
+	}
+
+	function primaryRun(item: LiveExperimentOverview): LiveRunOverview | null {
+		if (item.runs.length === 0) return null;
+		return [...item.runs].sort((left, right) => {
+			const updatedCompare = String(right.updated_at ?? '').localeCompare(String(left.updated_at ?? ''));
+			if (updatedCompare !== 0) return updatedCompare;
+			const modeCompare = progressModeRank(right) - progressModeRank(left);
+			if (modeCompare !== 0) return modeCompare;
+			return String(left.run_id).localeCompare(String(right.run_id));
+		})[0];
+	}
+
+	function additionalActiveRuns(item: LiveExperimentOverview, run: LiveRunOverview | null): number {
+		if (!run) return 0;
+		return Math.max(0, item.runs.length - 1);
+	}
+
+	function primaryRunDetail(run: LiveRunOverview): string {
 		if (run.progress_label) return run.progress_label;
 		if (run.current_stage) return formatStageLabel(run.current_stage);
-		return 'Awaiting lifecycle update';
+		return 'Awaiting progress signal';
 	}
 
-	function isIndeterminateRun(run: LiveRunOverview): boolean {
-		return (
-			(!run.current_stage || run.current_stage === 'awaiting_stage') &&
-			(run.progress_percent == null || !run.progress_label)
-		);
+	function primaryRunMeta(item: LiveExperimentOverview, run: LiveRunOverview): string {
+		const detail = primaryRunDetail(run);
+		const status = formatStatusLabel(run.status);
+		const parts: string[] = [];
+		if (detail && detail.toLowerCase() !== status.toLowerCase()) {
+			parts.push(detail);
+		}
+		parts.push(status);
+		const extra = additionalActiveRuns(item, run);
+		if (extra > 0) {
+			parts.push(`+${extra} more active`);
+		}
+		return parts.join(' · ');
 	}
 
-	function liveStageChipLabel(run: LiveRunOverview): string {
-		if (isIndeterminateRun(run)) return 'SYNCING · telemetry';
-		return `${formatStatusLabel(run.status)} · ${formatStageLabel(run.current_stage)}`;
+	function progressValueLabel(run: LiveRunOverview): string {
+		if (run.progress_percent == null || Number.isNaN(run.progress_percent)) return '—';
+		return `${Math.round(run.progress_percent)}%`;
 	}
 
-	function runTelemetryLabel(run: LiveRunOverview): string {
-		if (isIndeterminateRun(run)) return 'Telemetry sync pending';
-		return liveRunHint(run);
+	function progressAriaValueText(run: LiveRunOverview): string {
+		const detail = primaryRunDetail(run);
+		switch (normalizedProgressMode(run)) {
+			case 'exact':
+				return `${progressValueLabel(run)} complete${detail ? `, ${detail}` : ''}`;
+			case 'estimated':
+				return `${progressValueLabel(run)} complete, estimated${detail ? `, ${detail}` : ''}`;
+			default:
+				return detail ? `Progress indeterminate, ${detail}` : 'Progress indeterminate';
+		}
+	}
+
+	function progressAriaLabel(item: LiveExperimentOverview, run: LiveRunOverview): string {
+		return `${item.name} ${run.config_label}`;
+	}
+
+	function isActiveRunStatus(status: string | null | undefined): boolean {
+		return ['queued', 'starting', 'running', 'canceling'].includes((status ?? '').toLowerCase());
+	}
+
+	function progressFillClass(run: LiveRunOverview): string {
+		const classes = ['mission-progress-fill'];
+		if (normalizedProgressMode(run) === 'estimated') {
+			classes.push('mission-progress-fill-estimated');
+		}
+		if (isActiveRunStatus(run.status)) {
+			classes.push('mission-progress-fill-active');
+		}
+		return classes.join(' ');
 	}
 
 	function recentActivityHint(item: RecentExperimentActivityItem): string {
@@ -418,6 +520,51 @@
 				</div>
 			</section>
 
+			{#if remoteSources.length > 0}
+				<section class="mission-panel overflow-hidden rounded-[1.45rem] border border-white/8 shadow-[0_16px_44px_rgba(0,0,0,0.18)]">
+					<div class="border-b border-white/8 px-5 py-4">
+						<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+							<div>
+								<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Remote Sources</p>
+								<h2 class="mt-2 text-base font-semibold text-white">Federated monitors</h2>
+							</div>
+							<p class="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-300/80">
+								{remoteSources.length} enabled
+							</p>
+						</div>
+					</div>
+
+					<div class="grid gap-3 px-4 py-4 md:grid-cols-2 2xl:grid-cols-3">
+						{#each remoteSources as source (source.id)}
+							<article class="rounded-[1.1rem] border border-white/8 bg-white/[0.018] px-4 py-4">
+								<div class="flex items-start justify-between gap-3">
+									<div class="min-w-0">
+										<p class="truncate text-sm font-semibold text-white">{source.label}</p>
+										<p class="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+											{source.id}{#if source.host} · {source.host}{/if}
+										</p>
+									</div>
+									<span class="rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {sourceAvailabilityClass(source)}">
+										{sourceAvailabilityLabel(source)}
+									</span>
+								</div>
+
+								<div class="mt-3 flex flex-wrap items-center gap-2">
+									<span class="rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase {sourceBootstrapClass(source)}">
+										{sourceBootstrapLabel(source)}
+									</span>
+									{#if source.store_root}
+										<span class="truncate font-mono text-[10px] text-slate-500">{source.store_root}</span>
+									{/if}
+								</div>
+
+								<p class="mt-3 text-xs leading-5 text-slate-400">{sourceDetail(source)}</p>
+							</article>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
 			<div class="grid gap-6 2xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
 				<section class="mission-panel overflow-hidden rounded-[1.6rem] border border-white/8 shadow-[0_18px_50px_rgba(0,0,0,0.18)] scroll-mt-20">
 					<div class="border-b border-white/8 px-5 py-4">
@@ -440,6 +587,7 @@
 					{:else}
 						<div class="divide-y divide-white/8">
 							{#each liveExperiments as item (item.experiment_id)}
+								{@const featuredRun = primaryRun(item)}
 								<article class="px-5 py-5">
 									<div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
 										<div class="min-w-0">
@@ -470,54 +618,59 @@
 
 									<div class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_170px]">
 										<div>
-											<div class="flex items-center justify-between gap-3 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
-												<span>Aggregate progress</span>
-												<span class="text-white">{fmtPercent(item.aggregate_progress_percent)}</span>
-											</div>
-											<div class="progress-rail mt-2 h-2 overflow-hidden rounded-full bg-white/[0.05]">
-												<div
-													class="progress-fill h-full rounded-full transition-[width] duration-700"
-													style={`width: ${progressWidth(item.aggregate_progress_percent)}`}
-												></div>
-											</div>
-
-											<div class="mt-4 space-y-4">
-												{#each item.runs as run (run.run_id)}
-													<div class="border-t border-white/8 pt-4 first:border-t-0 first:pt-0">
-														<div class="flex items-start justify-between gap-4">
-															<div class="min-w-0">
-																<p class="truncate text-sm font-medium text-white">{run.config_label}</p>
-																<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-slate-300/88">
-																	<span>{formatStageLabel(run.current_stage)}</span>
-																	<span>{runTelemetryLabel(run)}</span>
-																</div>
-															</div>
-
-															<div class="text-right">
-																<span class="rounded-full px-2 py-0.5 text-[10px] font-medium uppercase {statusChipClass(run.status)}">
-																	{formatStatusLabel(run.status)}
-																</span>
-																<p class="mt-2 font-mono text-sm text-white">{fmtPercent(run.progress_percent)}</p>
-															</div>
+											{#if featuredRun}
+												<div class="mission-primary-run rounded-[1.25rem] border border-white/8 bg-white/[0.015] px-4 py-4">
+													<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+														<div class="min-w-0">
+															<p class="truncate text-base font-semibold text-white">{featuredRun.config_label}</p>
+															<p class="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-300/82">
+																{primaryRunMeta(item, featuredRun)}
+															</p>
 														</div>
 
-														<div class="progress-rail mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
+														<span
+															class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {statusChipClass(featuredRun.status)}"
+														>
+															{formatStatusLabel(featuredRun.status)}
+														</span>
+													</div>
+
+													<div class="mission-progress-layout mt-4">
+														<div class="min-w-0">
 															<div
-																class="progress-fill h-full rounded-full transition-[width] duration-700 {isIndeterminateRun(run)
-																	? 'progress-fill-indeterminate'
-																	: ''}"
-																style={`width: ${isIndeterminateRun(run) ? '24%' : progressWidth(run.progress_percent)}`}
-															></div>
+																class="mission-progress-rail"
+																role="progressbar"
+																aria-label={progressAriaLabel(item, featuredRun)}
+																aria-valuemin="0"
+																aria-valuemax="100"
+																aria-valuenow={normalizedProgressMode(featuredRun) === 'indeterminate'
+																	? undefined
+																	: Math.round(featuredRun.progress_percent ?? 0)}
+																aria-valuetext={progressAriaValueText(featuredRun)}
+															>
+																{#if normalizedProgressMode(featuredRun) === 'indeterminate'}
+																	<span class="mission-progress-indeterminate"></span>
+																{:else}
+																	<span
+																		class={progressFillClass(featuredRun)}
+																		style={`width: ${progressWidth(featuredRun.progress_percent)}`}
+																	></span>
+																{/if}
+															</div>
+															<p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-400">
+																{primaryRunDetail(featuredRun)}
+															</p>
 														</div>
 
-														<div class="mt-3 flex flex-wrap gap-2">
-															<span class="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-200">
-																{liveStageChipLabel(run)}
-															</span>
+														<div class="mission-progress-value-wrap">
+															<p class="mission-progress-value">{progressValueLabel(featuredRun)}</p>
+															{#if normalizedProgressMode(featuredRun) === 'estimated'}
+																<span class="mission-estimate-pill">EST</span>
+															{/if}
 														</div>
 													</div>
-												{/each}
-											</div>
+												</div>
+											{/if}
 										</div>
 
 										<div class="grid gap-3 border-t border-white/8 pt-4 lg:border-t-0 lg:border-l lg:border-white/8 lg:pt-0 lg:pl-4">
@@ -675,23 +828,94 @@
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
-	.progress-rail {
-		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+	.mission-primary-run {
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
-	.progress-fill {
-		background: rgb(56 189 248 / 0.7);
+	.mission-progress-layout {
+		display: grid;
+		gap: 1rem;
+		align-items: center;
+		grid-template-columns: minmax(0, 1fr) auto;
 	}
 
-	.progress-fill-indeterminate {
-		background:
-			repeating-linear-gradient(
-				90deg,
-				rgba(148, 163, 184, 0.42),
-				rgba(148, 163, 184, 0.42) 10px,
-				rgba(71, 85, 105, 0.18) 10px,
-				rgba(71, 85, 105, 0.18) 20px
-			);
+	.mission-progress-rail {
+		position: relative;
+		height: 0.7rem;
+		overflow: hidden;
+		border-radius: 9999px;
+		background: rgba(255, 255, 255, 0.045);
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+	}
+
+	.mission-progress-fill {
+		position: relative;
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: linear-gradient(90deg, rgba(34, 211, 238, 0.72), rgba(56, 189, 248, 0.92));
+		transition:
+			width 720ms cubic-bezier(0.22, 1, 0.36, 1),
+			background-color 240ms ease;
+	}
+
+	.mission-progress-fill-estimated {
+		background: linear-gradient(90deg, rgba(103, 232, 249, 0.58), rgba(56, 189, 248, 0.78));
+	}
+
+	.mission-progress-fill-active::after {
+		content: '';
+		position: absolute;
+		inset: 0 auto 0 -22%;
+		width: 22%;
+		background: linear-gradient(
+			90deg,
+			rgba(255, 255, 255, 0),
+			rgba(255, 255, 255, 0.18),
+			rgba(255, 255, 255, 0)
+		);
+		transform: skewX(-18deg);
+		animation: mission-progress-sheen 2.2s linear infinite;
+	}
+
+	.mission-progress-indeterminate {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: -24%;
+		width: 24%;
+		border-radius: inherit;
+		background: linear-gradient(90deg, rgba(103, 232, 249, 0.15), rgba(56, 189, 248, 0.72), rgba(103, 232, 249, 0.15));
+		animation: mission-progress-travel 1.25s cubic-bezier(0.33, 1, 0.68, 1) infinite;
+	}
+
+	.mission-progress-value-wrap {
+		display: inline-flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.55rem;
+	}
+
+	.mission-progress-value {
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+		font-size: 1rem;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: rgba(248, 250, 252, 0.96);
+	}
+
+	.mission-estimate-pill {
+		display: inline-flex;
+		align-items: center;
+		border-radius: 9999px;
+		border: 1px solid rgba(56, 189, 248, 0.16);
+		background: rgba(56, 189, 248, 0.08);
+		padding: 0.2rem 0.5rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+		font-size: 0.68rem;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: rgba(186, 230, 253, 0.94);
 	}
 
 	@keyframes telemetry-pulse {
@@ -706,9 +930,50 @@
 		}
 	}
 
+	@keyframes mission-progress-sheen {
+		to {
+			transform: translateX(460%) skewX(-18deg);
+		}
+	}
+
+	@keyframes mission-progress-travel {
+		0% {
+			transform: translateX(0);
+			opacity: 0.55;
+		}
+		50% {
+			opacity: 1;
+		}
+		100% {
+			transform: translateX(520%);
+			opacity: 0.55;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.mission-progress-layout {
+			grid-template-columns: 1fr;
+		}
+
+		.mission-progress-value-wrap {
+			justify-content: flex-start;
+		}
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.live-dot {
 			animation: none !important;
+		}
+
+		.mission-progress-fill,
+		.mission-progress-indeterminate {
+			transition: none;
+			animation: none !important;
+		}
+
+		.mission-progress-fill-active::after {
+			animation: none !important;
+			opacity: 0;
 		}
 	}
 </style>

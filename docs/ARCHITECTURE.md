@@ -648,11 +648,27 @@ Backend packaging/layout:
 
 Store/remote monitor contract:
 - `numereng.api.build_monitor_snapshot(request)` and `numereng monitor snapshot --store-root <path> --json` build one normalized read-only monitor snapshot for a single numereng store.
+- `numereng.api.remote_*` and `numereng remote ...` provide SSH-backed repo sync, experiment authoring sync, ad hoc config push, and detached remote launch.
 - Mission control overview merges:
   - the local store snapshot
   - zero or more SSH remote store snapshots loaded from `src/numereng/platform/remotes/profiles/*.yaml` or `NUMERENG_REMOTE_PROFILES_DIR`
 - SSH monitoring is numereng-owned and read-only: the local viz backend runs `numereng monitor snapshot --json` on the remote machine over SSH and merges the returned snapshot.
+- SSH remote profiles declare `shell: posix|powershell`; `posix` keeps the existing `cd ... && ...` command path, while `powershell` wraps the snapshot command in `powershell -NoProfile -Command "Set-Location ...; ..."` for Windows SSH targets.
+- Remote ops use the same target profiles plus `python_cmd` for helper scripts. Sync is local-driven and archive-based over SSH:
+  - repo sync includes tracked files plus untracked nonignored files from the local working tree
+  - repo sync excludes `.git`, `.numereng`, gitignored machine profiles, envs, caches, and build outputs
+  - experiment sync includes only `.numereng/experiments/<id>/experiment.json|EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
+  - no command mirrors the full `.numereng` store
+- Sync metadata is stored under each machine's `.numereng/remote_ops/sync/<target_id>/*.json`, and detached remote launch metadata/logs live under `.numereng/remote_ops/launches/*` on the remote machine.
 - SageMaker/Batch monitoring is store-local: snapshot refresh reads tracked `cloud_jobs` and asks AWS for current job truth before normalization.
+- Live run payloads carry `progress_mode`:
+  - `exact` for lifecycle-backed local percentages
+  - `estimated` for cloud phase/status mappings
+  - `indeterminate` when no honest percentage exists
+- Cloud mission-control percentages are intentionally coarse phase estimates rather than log-derived model progress:
+  `queued/submitted/pending/created/validating=0`, `starting=8`, `downloading=22`,
+  `training=68`, `uploading=92`, `stopping=96`, `completed=100`.
+  Terminal cloud rows reuse `last_progress_percent` when the latest estimate was previously known.
 
 Live monitor streaming route:
 - `/api/run-jobs/{job_id}/stream` (SSE)
@@ -679,6 +695,9 @@ Current frontend routes:
 Important UI contract:
 - There are no standalone `/run-ops` or `/configs` frontend pages.
 - `/experiments` is a mission-control dashboard, not a launch surface. It route-loads `/api/experiments/overview`, polls that endpoint every 3 seconds while visible, preserves the last successful snapshot on transient failures, and renders a left-rail experiment navigator with a right-pane live/attention/recent-activity dashboard.
+- The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
+- `make viz` runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before local API/frontend startup. That bootstrap step repo-syncs each enabled remote in `auto` mode, runs `remote doctor`, persists `ready|degraded` source state under `.numereng/remote_ops/bootstrap/viz.json`, and never starts a remote viz server on the target host.
+- Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
 - Launch/control actions are CLI/API-only by design.
 - `experiment pack` writes `EXPERIMENT.pack.md` into the experiment directory and includes `EXPERIMENT.md` plus a dashboard-aligned scalar run summary table only.

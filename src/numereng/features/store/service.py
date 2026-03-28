@@ -1040,6 +1040,13 @@ def upsert_cloud_job(
     try:
         with _connect_rw(init_result.db_path) as conn:
             _init_schema(conn)
+            merged_metadata_json = _merge_cloud_job_metadata_json(
+                conn,
+                run_id=run_id,
+                provider=job.provider,
+                provider_job_id=job.provider_job_id,
+                incoming=job.metadata_json,
+            )
             conn.execute(
                 """
                 INSERT INTO cloud_jobs (
@@ -1079,7 +1086,7 @@ def upsert_cloud_job(
                     job.region,
                     job.image_uri,
                     job.output_s3_uri,
-                    job.metadata_json,
+                    merged_metadata_json,
                     job.error_message,
                     job.started_at,
                     job.finished_at,
@@ -1089,6 +1096,32 @@ def upsert_cloud_job(
             conn.commit()
     except sqlite3.Error as exc:
         raise _wrap_sqlite_error(operation="upsert_cloud_job", db_path=init_result.db_path, exc=exc) from exc
+
+
+def _merge_cloud_job_metadata_json(
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    provider: str,
+    provider_job_id: str,
+    incoming: str | None,
+) -> str | None:
+    existing_row = conn.execute(
+        """
+        SELECT metadata_json
+        FROM cloud_jobs
+        WHERE run_id = ? AND provider = ? AND provider_job_id = ?
+        """,
+        (run_id, provider, provider_job_id),
+    ).fetchone()
+    existing_payload = _parse_json_object(existing_row[0]) if existing_row is not None else None
+    incoming_payload = _parse_json_object(incoming)
+    if existing_payload is None:
+        return incoming
+    if incoming_payload is None:
+        return _safe_json_dumps(existing_payload)
+    existing_payload.update(incoming_payload)
+    return _safe_json_dumps(existing_payload)
 
 
 def upsert_experiment(
@@ -2566,6 +2599,18 @@ def _safe_json_dumps(value: Any) -> str:
         return json.dumps(value, sort_keys=True, ensure_ascii=True, default=str)
     except TypeError:
         return json.dumps(str(value), ensure_ascii=True)
+
+
+def _parse_json_object(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return {str(key): payload[key] for key in payload}
 
 
 def _canonical_json(value: Any) -> str:

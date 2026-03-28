@@ -103,7 +103,12 @@ viz: kill-viz
 		echo "Installing npm dependencies..."; \
 		cd $(VIZ_WEB) && npm install --include=dev; \
 	fi
-	@rm -f "$(VIZ_DIR)/api.log" "$(VIZ_DIR)/vite.log"
+	@rm -f "$(VIZ_DIR)/bootstrap.log" "$(VIZ_DIR)/api.log" "$(VIZ_DIR)/vite.log"
+	@cd $(CURDIR); \
+	uv run numereng remote bootstrap-viz --store-root "$(CURDIR)/.numereng" > "$(VIZ_DIR)/bootstrap.log" 2>&1; \
+	status=$$?; \
+	cat "$(VIZ_DIR)/bootstrap.log"; \
+	exit $$status
 	@cd $(CURDIR); nohup uv run python -m uvicorn viz.api:app --host 127.0.0.1 --port $(API_PORT) \
 		> "$(VIZ_DIR)/api.log" 2>&1 & echo $$! > "$(API_PID_FILE)"
 	@cd $(VIZ_WEB); nohup npm run dev -- --host 127.0.0.1 --port $(VITE_PORT) \
@@ -130,4 +135,4 @@ viz: kill-viz
 	done
 	@echo "API started (pid $$(cat "$(API_PID_FILE)")) on http://127.0.0.1:$(API_PORT)"
 	@echo "Vite started (pid $$(cat "$(VITE_PID_FILE)")) on http://127.0.0.1:$(VITE_PORT)"
-	@echo "Viz running - logs: viz/api.log, viz/vite.log"
+	@echo "Viz running - logs: viz/bootstrap.log, viz/api.log, viz/vite.log"

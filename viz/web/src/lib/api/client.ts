@@ -62,6 +62,7 @@ export interface LiveRunOverview {
 	status: string;
 	current_stage: string | null;
 	progress_percent: number | null;
+	progress_mode?: 'exact' | 'estimated' | 'indeterminate' | string;
 	progress_label: string | null;
 	updated_at: string | null;
 	terminal_reason: string | null;
@@ -100,6 +101,7 @@ export interface RecentExperimentActivityItem {
 	status: string;
 	current_stage: string | null;
 	progress_percent: number | null;
+	progress_mode?: 'exact' | 'estimated' | 'indeterminate' | string;
 	progress_label: string | null;
 	updated_at: string | null;
 	finished_at: string | null;
@@ -123,6 +125,9 @@ export interface ExperimentOverviewResponse {
 		host?: string | null;
 		store_root?: string;
 		state?: string;
+		bootstrap_status?: 'ready' | 'degraded' | string;
+		last_bootstrap_at?: string | null;
+		last_bootstrap_error?: string | null;
 	}>;
 }
 

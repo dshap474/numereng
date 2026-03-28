@@ -57,6 +57,14 @@ from numereng.api import (
     NumeraiModelsResponse,
     NumeraiTournament,
     PackageError,
+    RemoteRepoSyncRequest,
+    RemoteRepoSyncResponse,
+    RemoteTargetListRequest,
+    RemoteTargetListResponse,
+    RemoteTrainLaunchRequest,
+    RemoteTrainLaunchResponse,
+    RemoteVizBootstrapRequest,
+    RemoteVizBootstrapResponse,
     ResearchInitRequest,
     ResearchInitResponse,
     ResearchRunRequest,
@@ -103,6 +111,10 @@ from numereng.api import (
     get_run_lifecycle,
     list_numerai_datasets,
     list_numerai_models,
+    remote_bootstrap_viz,
+    remote_list_targets,
+    remote_repo_sync,
+    remote_train_launch,
     research_init,
     research_run,
     research_status,
@@ -136,6 +148,13 @@ from numereng.features.experiments import (
     ExperimentScoreRoundResult,
     ExperimentTrainResult,
     ExperimentValidationError,
+)
+from numereng.features.remote_ops.contracts import (
+    RemoteRepoSyncResult,
+    RemoteTargetRecord,
+    RemoteTrainLaunchResult,
+    RemoteVizBootstrapResult,
+    RemoteVizBootstrapTargetResult,
 )
 from numereng.features.store import (
     StoreDoctorResult,
@@ -252,6 +271,143 @@ def test_build_monitor_snapshot_returns_public_model(monkeypatch: pytest.MonkeyP
     assert isinstance(response, MonitorSnapshotResponse)
     assert response.source.kind == "local"
     assert response.summary.live_runs == 1
+
+
+def test_remote_list_targets_returns_public_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "numereng.api._remote.list_remote_targets_record",
+        lambda: (
+            RemoteTargetRecord(
+                id="pc",
+                label="Daniel's PC",
+                kind="ssh",
+                shell="powershell",
+                repo_root=r"C:\Users\dansh\remote-access\numereng",
+                store_root=r"C:\Users\dansh\remote-access\numereng\.numereng",
+                runner_cmd="uv run numereng",
+                python_cmd="uv run python",
+                tags=("pc", "windows"),
+            ),
+        ),
+    )
+
+    response = remote_list_targets(RemoteTargetListRequest())
+
+    assert isinstance(response, RemoteTargetListResponse)
+    assert response.targets[0].python_cmd == "uv run python"
+    assert response.targets[0].id == "pc"
+
+
+def test_remote_repo_sync_returns_public_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "numereng.api._remote.sync_remote_repo_record",
+        lambda **_: RemoteRepoSyncResult(
+            target_id="pc",
+            repo_root=r"C:\Users\dansh\remote-access\numereng",
+            manifest_hash="hash",
+            local_commit_sha="abc123",
+            dirty=False,
+            synced_files=10,
+            deleted_files=1,
+            synced_at="2026-03-27T00:00:00+00:00",
+            local_marker_path=r"/tmp/.numereng/remote_ops/sync/pc/repo.json",
+            remote_marker_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\sync\pc\repo.json",
+        ),
+    )
+
+    response = remote_repo_sync(RemoteRepoSyncRequest(target_id="pc"))
+
+    assert isinstance(response, RemoteRepoSyncResponse)
+    assert response.target_id == "pc"
+    assert response.synced_files == 10
+
+
+def test_remote_bootstrap_viz_returns_public_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    state_path = store_root / "remote_ops" / "bootstrap" / "viz.json"
+    monkeypatch.setattr(
+        "numereng.api._remote.bootstrap_viz_remotes_record",
+        lambda **_: RemoteVizBootstrapResult(
+            store_root=store_root,
+            state_path=state_path,
+            bootstrapped_at="2026-03-28T00:00:00+00:00",
+            ready_count=1,
+            degraded_count=1,
+            targets=(
+                RemoteVizBootstrapTargetResult(
+                    target=RemoteTargetRecord(
+                        id="pc",
+                        label="Daniel's PC",
+                        kind="ssh",
+                        shell="powershell",
+                        repo_root=r"C:\Users\dansh\remote-access\numereng",
+                        store_root=r"C:\Users\dansh\remote-access\numereng\.numereng",
+                        runner_cmd="uv run numereng",
+                        python_cmd="uv run python",
+                        tags=("pc",),
+                    ),
+                    bootstrap_status="ready",
+                    last_bootstrap_at="2026-03-28T00:00:00+00:00",
+                    last_bootstrap_error=None,
+                    repo_synced=True,
+                    repo_sync_skipped=False,
+                    doctor_ok=True,
+                    issues=(),
+                ),
+                RemoteVizBootstrapTargetResult(
+                    target=RemoteTargetRecord(
+                        id="offline",
+                        label="Offline Host",
+                        kind="ssh",
+                        shell="posix",
+                        repo_root="/srv/numereng",
+                        store_root="/srv/numereng/.numereng",
+                        runner_cmd="uv run numereng",
+                        python_cmd="uv run python",
+                        tags=("ci",),
+                    ),
+                    bootstrap_status="degraded",
+                    last_bootstrap_at="2026-03-28T00:00:00+00:00",
+                    last_bootstrap_error="monitor_snapshot_failed",
+                    repo_synced=False,
+                    repo_sync_skipped=True,
+                    doctor_ok=False,
+                    issues=("monitor_snapshot_failed",),
+                ),
+            ),
+        ),
+    )
+
+    response = remote_bootstrap_viz(RemoteVizBootstrapRequest(store_root=str(store_root)))
+
+    assert isinstance(response, RemoteVizBootstrapResponse)
+    assert response.ready_count == 1
+    assert response.degraded_count == 1
+    assert response.targets[1].bootstrap_status == "degraded"
+
+
+def test_remote_train_launch_returns_public_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "numereng.api._remote.remote_run_train_record",
+        lambda **_: RemoteTrainLaunchResult(
+            target_id="pc",
+            launch_id="launch-1",
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.tmp\numereng-remote-configs\cfg.json",
+            remote_log_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.log",
+            remote_metadata_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.json",
+            remote_pid=4321,
+            launched_at="2026-03-27T00:00:00+00:00",
+            sync_repo_policy="auto",
+            repo_synced=True,
+            experiment_synced=False,
+        ),
+    )
+
+    response = remote_train_launch(RemoteTrainLaunchRequest(target_id="pc", config_path="cfg.json"))
+
+    assert isinstance(response, RemoteTrainLaunchResponse)
+    assert response.remote_pid == 4321
+    assert response.repo_synced is True
 
 
 def test_old_deep_run_module_is_not_publicly_importable() -> None:

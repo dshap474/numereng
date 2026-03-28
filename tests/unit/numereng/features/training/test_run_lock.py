@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from numereng.features.training.run_lock import (
     acquire_run_lock,
     build_local_attempt_id,
     is_lock_payload_active,
+    is_pid_alive,
     read_run_lock,
     release_run_lock,
     resolve_run_lock_path,
@@ -55,3 +57,12 @@ def test_is_lock_payload_active_handles_missing_pid() -> None:
     assert is_lock_payload_active({}) is False
     assert is_lock_payload_active({"pid": "123"}) is False
     assert is_lock_payload_active({"pid": -5}) is False
+
+
+def test_is_pid_alive_uses_windows_helper_when_running_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_lock_module = importlib.import_module("numereng.features.training.run_lock")
+    monkeypatch.setattr(run_lock_module.os, "name", "nt", raising=False)
+    monkeypatch.setattr(run_lock_module, "_windows_pid_alive", lambda pid: pid == 123)
+
+    assert is_pid_alive(123) is True
+    assert is_pid_alive(456) is False

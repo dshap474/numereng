@@ -1,4 +1,4 @@
-import { createApi, type Experiment, type ExperimentOverviewResponse } from '$lib/api/client';
+import type { Experiment, ExperimentOverviewResponse } from '$lib/api/client';
 import type { PageLoad } from './$types';
 
 function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse {
@@ -34,17 +34,10 @@ function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse
 	};
 }
 
-export const load: PageLoad = async ({ fetch, parent }) => {
-	const api = createApi(fetch);
+export const load: PageLoad = async ({ parent }) => {
 	const parentData = await parent();
 	const experiments = Array.isArray(parentData.experiments)
 		? (parentData.experiments as Experiment[])
 		: [];
-
-	try {
-		const overview = await api.getExperimentsOverview();
-		return { overview };
-	} catch {
-		return { overview: fallbackOverview(experiments) };
-	}
+	return { overview: fallbackOverview(experiments) };
 };

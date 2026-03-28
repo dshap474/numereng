@@ -17,10 +17,12 @@ from numereng_viz.store_adapter import (
     VizStoreAdapter,
     VizStoreConfig,
     _normalize_round_metrics,
+    repository_root,
     resolve_store_root,
 )
 
-from numereng.features.store import init_store_db, upsert_experiment
+from numereng.features.remote_ops import service as remote_service
+from numereng.features.store import StoreCloudJobUpsert, init_store_db, upsert_cloud_job, upsert_experiment
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 
 
@@ -31,6 +33,10 @@ def test_resolve_store_root_prefers_explicit(tmp_path: Path) -> None:
     resolved = resolve_store_root(explicit)
 
     assert resolved == explicit.resolve()
+
+
+def test_repository_root_resolves_project_root() -> None:
+    assert repository_root() == Path(__file__).resolve().parents[4]
 
 
 def test_capabilities_payload_read_only_flag() -> None:
@@ -385,6 +391,7 @@ def _make_client(*, repo_root: Path, store_root: Path) -> TestClient:
         )
     )
     service = VizService(adapter)
+    service.remote_snapshots.fetch_snapshots = lambda: []
     app = FastAPI()
     app.state.viz_service = service
     app.include_router(create_router(service))
@@ -1342,6 +1349,403 @@ def test_remote_snapshot_coordinator_uses_one_cycle_cache(monkeypatch: pytest.Mo
     monkeypatch.setattr("numereng_viz.monitor_snapshot.subprocess.run", lambda *args, **kwargs: _FailureResult())
     second = coordinator.fetch_snapshots()
     assert second[0]["source"]["state"] == "cached"
+
+
+def test_remote_snapshot_coordinator_builds_posix_ssh_command() -> None:
+    target = SshRemoteTargetProfile.model_validate(
+        {
+            "id": "remote-posix",
+            "label": "Remote Posix",
+            "kind": "ssh",
+            "ssh_config_host": "remote-posix",
+            "shell": "posix",
+            "repo_root": "/srv/numereng",
+            "store_root": "/srv/numereng/.numereng",
+        }
+    )
+
+    coordinator = RemoteSnapshotCoordinator()
+    command = coordinator._ssh_command(target)
+
+    assert command[-1] == (
+        "cd /srv/numereng && uv run numereng monitor snapshot --store-root /srv/numereng/.numereng --json"
+    )
+
+
+def test_remote_snapshot_coordinator_builds_powershell_ssh_command() -> None:
+    target = SshRemoteTargetProfile.model_validate(
+        {
+            "id": "remote-pc",
+            "label": "Remote PC",
+            "kind": "ssh",
+            "ssh_config_host": "pc",
+            "shell": "powershell",
+            "repo_root": r"C:\Users\dansh\remote-access\numereng",
+            "store_root": r"C:\Users\dansh\remote-access\numereng\.numereng",
+        }
+    )
+
+    coordinator = RemoteSnapshotCoordinator()
+    command = coordinator._ssh_command(target)
+
+    assert command[-1] == (
+        'powershell -NoProfile -Command "'
+        r"Set-Location 'C:\Users\dansh\remote-access\numereng'; "
+        r"uv run numereng monitor snapshot --store-root 'C:\Users\dansh\remote-access\numereng\.numereng' --json"
+        '"'
+    )
+
+
+def test_remote_snapshot_coordinator_emits_unavailable_source_with_bootstrap_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    target = SshRemoteTargetProfile.model_validate(
+        {
+            "id": "remote-pc",
+            "label": "Remote PC",
+            "kind": "ssh",
+            "ssh_config_host": "pc",
+            "shell": "powershell",
+            "repo_root": r"C:\Users\dansh\remote-access\numereng",
+            "store_root": r"C:\Users\dansh\remote-access\numereng\.numereng",
+        }
+    )
+
+    class _FailureResult:
+        returncode = 1
+        stdout = ""
+        stderr = "ssh failed"
+
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.load_remote_targets", lambda: [target])
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.subprocess.run", lambda *args, **kwargs: _FailureResult())
+    monkeypatch.setattr(
+        "numereng_viz.monitor_snapshot.load_viz_bootstrap_state",
+        lambda **_: remote_service.RemoteVizBootstrapResult(
+            store_root=tmp_path / ".numereng",
+            state_path=tmp_path / ".numereng" / "remote_ops" / "bootstrap" / "viz.json",
+            bootstrapped_at="2026-03-28T00:00:00+00:00",
+            ready_count=0,
+            degraded_count=1,
+            targets=(
+                remote_service.RemoteVizBootstrapTargetResult(
+                    target=remote_service.RemoteTargetRecord(
+                        id="remote-pc",
+                        label="Remote PC",
+                        kind="ssh",
+                        shell="powershell",
+                        repo_root=r"C:\Users\dansh\remote-access\numereng",
+                        store_root=r"C:\Users\dansh\remote-access\numereng\.numereng",
+                        runner_cmd="uv run numereng",
+                        python_cmd="uv run python",
+                        tags=("pc",),
+                    ),
+                    bootstrap_status="degraded",
+                    last_bootstrap_at="2026-03-28T00:00:00+00:00",
+                    last_bootstrap_error="monitor_snapshot_failed",
+                    repo_synced=False,
+                    repo_sync_skipped=True,
+                    doctor_ok=False,
+                    issues=("monitor_snapshot_failed",),
+                ),
+            ),
+        ),
+    )
+
+    coordinator = RemoteSnapshotCoordinator(store_root=tmp_path / ".numereng")
+    snapshots = coordinator.fetch_snapshots()
+
+    assert snapshots[0]["source"]["state"] == "unavailable"
+    assert snapshots[0]["source"]["bootstrap_status"] == "degraded"
+    assert snapshots[0]["source"]["last_bootstrap_error"] == "monitor_snapshot_failed"
+    assert snapshots[0]["live_experiments"] == []
+
+
+def test_build_monitor_snapshot_repairs_cloud_experiment_context_from_state_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    upsert_experiment(
+        store_root=store_root,
+        experiment_id="exp-live",
+        name="Live Experiment",
+        status="active",
+        created_at="2026-03-27T10:00:00+00:00",
+        updated_at="2026-03-27T10:00:00+00:00",
+        metadata={"tags": ["live"]},
+    )
+    config_path = store_root / "experiments" / "exp-live" / "configs" / "train.json"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-cloud-1",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-cloud-1",
+            status="InProgress",
+            region="us-east-2",
+            metadata_json=json.dumps({"provider": "sagemaker", "backend": "sagemaker", "status": "InProgress"}),
+        ),
+    )
+    cloud_dir = store_root / "cloud"
+    cloud_dir.mkdir(parents=True, exist_ok=True)
+    (cloud_dir / "run-cloud-1.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-cloud-1",
+                "backend": "sagemaker",
+                "region": "us-east-2",
+                "training_job_name": "job-cloud-1",
+                "status": "InProgress",
+                "metadata": {
+                    "experiment_id": "exp-live",
+                    "config_path": str(config_path),
+                    "config_id": str(config_path),
+                    "config_label": "train.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+
+    class _FakeCloudService:
+        def train_status(self, request):
+            _ = request
+            return type(
+                "_Response",
+                (),
+                {
+                    "state": type(
+                        "_State",
+                        (),
+                        {
+                            "last_updated_at": "2026-03-27T10:05:00+00:00",
+                            "metadata": {
+                                "experiment_id": "exp-live",
+                                "config_path": str(config_path),
+                                "config_id": str(config_path),
+                                "config_label": "train.json",
+                            },
+                        },
+                    )(),
+                    "result": {
+                        "status": "InProgress",
+                        "secondary_status": "Training",
+                        "failure_reason": None,
+                    },
+                },
+            )()
+
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.CloudAwsManagedService", lambda: _FakeCloudService())
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=True)
+
+    assert payload["summary"]["live_runs"] == 1
+    assert payload["live_experiments"][0]["experiment_id"] == "exp-live"
+    assert payload["live_experiments"][0]["runs"][0]["config_label"] == "train.json"
+    assert payload["live_experiments"][0]["runs"][0]["provider_run_id"] == "job-cloud-1"
+
+
+def test_build_monitor_snapshot_refreshes_only_active_cloud_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    upsert_experiment(
+        store_root=store_root,
+        experiment_id="exp-live",
+        name="Live Experiment",
+        status="active",
+        created_at="2026-03-27T10:00:00+00:00",
+        updated_at="2026-03-27T10:00:00+00:00",
+        metadata={"tags": ["live"]},
+    )
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-cloud-live",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-cloud-live",
+            status="InProgress",
+            region="us-east-2",
+            metadata_json=json.dumps({"experiment_id": "exp-live", "config_label": "live.json"}),
+        ),
+    )
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-cloud-done",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-cloud-done",
+            status="Completed",
+            region="us-east-2",
+            metadata_json=json.dumps({"experiment_id": "exp-live", "config_label": "done.json"}),
+        ),
+    )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+    calls: list[str] = []
+
+    class _FakeCloudService:
+        def train_status(self, request):
+            calls.append(request.run_id or "")
+            return type(
+                "_Response",
+                (),
+                {
+                    "state": type("_State", (), {"last_updated_at": "2026-03-27T10:05:00+00:00", "metadata": {}})(),
+                    "result": {
+                        "status": "InProgress",
+                        "secondary_status": "Training",
+                        "failure_reason": None,
+                    },
+                },
+            )()
+
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.CloudAwsManagedService", lambda: _FakeCloudService())
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=True)
+
+    assert calls == ["run-cloud-live"]
+    assert payload["summary"]["live_runs"] == 1
+    assert payload["live_experiments"][0]["runs"][0]["run_id"] == "run-cloud-live"
+    assert payload["recent_activity"][0]["run_id"] == "run-cloud-done"
+    assert payload["recent_activity"][0]["status"] == "completed"
+    assert payload["recent_activity"][0]["progress_percent"] == 100.0
+    assert payload["recent_activity"][0]["progress_mode"] == "estimated"
+
+
+def test_build_monitor_snapshot_marks_local_lifecycle_progress_as_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=False)
+
+    live_experiment = next(item for item in payload["live_experiments"] if item["experiment_id"] == "exp-live")
+    assert live_experiment["runs"][0]["progress_mode"] == "exact"
+    assert live_experiment["runs"][0]["progress_percent"] == pytest.approx(38.0)
+    assert live_experiment["runs"][1]["progress_mode"] == "exact"
+    assert live_experiment["runs"][1]["progress_percent"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("secondary_status", "expected_progress"),
+    [
+        ("Starting", 8.0),
+        ("Downloading", 22.0),
+        ("Training", 68.0),
+        ("Uploading", 92.0),
+    ],
+)
+def test_build_monitor_snapshot_estimates_sagemaker_progress_from_secondary_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    secondary_status: str,
+    expected_progress: float,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    upsert_experiment(
+        store_root=store_root,
+        experiment_id="exp-live",
+        name="Live Experiment",
+        status="active",
+        created_at="2026-03-27T10:00:00+00:00",
+        updated_at="2026-03-27T10:00:00+00:00",
+        metadata={"tags": ["live"]},
+    )
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-cloud-live",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-cloud-live",
+            status="InProgress",
+            region="us-east-2",
+            metadata_json=json.dumps({"experiment_id": "exp-live", "config_label": "live.json"}),
+        ),
+    )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+
+    class _FakeCloudService:
+        def train_status(self, request):
+            _ = request
+            return type(
+                "_Response",
+                (),
+                {
+                    "state": type("_State", (), {"last_updated_at": "2026-03-27T10:05:00+00:00", "metadata": {}})(),
+                    "result": {
+                        "status": "InProgress",
+                        "secondary_status": secondary_status,
+                        "failure_reason": None,
+                    },
+                },
+            )()
+
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.CloudAwsManagedService", lambda: _FakeCloudService())
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=True)
+
+    run = payload["live_experiments"][0]["runs"][0]
+    assert run["progress_percent"] == expected_progress
+    assert run["progress_mode"] == "estimated"
+    assert run["progress_label"] == secondary_status
+
+
+def test_build_monitor_snapshot_preserves_terminal_cloud_progress_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    upsert_experiment(
+        store_root=store_root,
+        experiment_id="exp-live",
+        name="Live Experiment",
+        status="active",
+        created_at="2026-03-27T10:00:00+00:00",
+        updated_at="2026-03-27T10:00:00+00:00",
+        metadata={"tags": ["live"]},
+    )
+    upsert_cloud_job(
+        store_root=store_root,
+        job=StoreCloudJobUpsert(
+            run_id="run-cloud-failed",
+            provider="sagemaker",
+            backend="sagemaker",
+            provider_job_id="job-cloud-failed",
+            status="Failed",
+            region="us-east-2",
+            metadata_json=json.dumps(
+                {
+                    "experiment_id": "exp-live",
+                    "config_label": "failed.json",
+                    "last_progress_percent": "68.0",
+                }
+            ),
+        ),
+    )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=True)
+
+    activity = payload["recent_activity"][0]
+    assert activity["run_id"] == "run-cloud-failed"
+    assert activity["status"] == "failed"
+    assert activity["progress_percent"] == 68.0
+    assert activity["progress_mode"] == "estimated"
 
 
 def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
