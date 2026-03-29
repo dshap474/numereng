@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
-from numereng.features.training.run_store import compute_run_hash
+from numereng.features.training.run_store import build_run_manifest, compute_run_hash
 
 
 def test_compute_run_hash_changes_when_output_baselines_dir_changes() -> None:
@@ -121,3 +122,31 @@ def test_compute_run_hash_ignores_removed_loading_block() -> None:
         engine_settings=engine_settings,
     )
     assert base_hash == alt_hash
+
+
+def test_build_run_manifest_includes_execution_payload() -> None:
+    manifest = build_run_manifest(
+        run_id="run-1",
+        run_hash="hash-run-1",
+        status="RUNNING",
+        config_path=Path("/tmp/train.json"),
+        config_hash="cfg-hash",
+        data_version="v5.2",
+        feature_set="small",
+        target_col="target",
+        model_type="LGBMRegressor",
+        engine_mode="official",
+        execution={
+            "kind": "cloud",
+            "provider": "aws",
+            "backend": "sagemaker",
+            "provider_job_id": "job-1",
+        },
+    )
+
+    assert manifest["execution"] == {
+        "kind": "cloud",
+        "provider": "aws",
+        "backend": "sagemaker",
+        "provider_job_id": "job-1",
+    }

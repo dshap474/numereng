@@ -96,6 +96,7 @@ class CloudModalRequestBase(BaseModel):
     """Common request fields shared by Modal command set."""
 
     state_path: str | None = None
+    store_root: str = ".numereng"
 
     def state_file(self) -> Path | None:
         if self.state_path is None:

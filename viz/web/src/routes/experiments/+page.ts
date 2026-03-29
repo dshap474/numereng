@@ -3,6 +3,7 @@ import type { PageLoad } from './$types';
 
 function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse {
 	return {
+		generated_at: null,
 		summary: {
 			total_experiments: experiments.length,
 			active_experiments: experiments.filter((item) => item.status === 'active').length,
@@ -30,7 +31,8 @@ function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse
 			detail_href: `/experiments/${item.experiment_id}`
 		})),
 		live_experiments: [],
-		recent_activity: []
+		recent_activity: [],
+		sources: []
 	};
 }
 
@@ -39,5 +41,8 @@ export const load: PageLoad = async ({ parent }) => {
 	const experiments = Array.isArray(parentData.experiments)
 		? (parentData.experiments as Experiment[])
 		: [];
-	return { overview: fallbackOverview(experiments) };
+	return {
+		overview: fallbackOverview(experiments),
+		overviewPending: true
+	};
 };

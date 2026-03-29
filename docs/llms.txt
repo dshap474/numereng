@@ -38,7 +38,7 @@ Source map:
 - `src/numereng/features/baseline/*`: shared benchmark baseline construction from persisted run predictions; canonical outputs live under `.numereng/datasets/baselines/<name>/` and can promote the active benchmark artifact.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
-- `src/numereng/features/agentic_research/*`: foreground supervisor that persists program state under one root experiment, pivots into child experiments when a path plateaus, and selects a persisted research strategy at `research init`. Current strategies are `numerai-experiment-loop` and the phase-aware `kaggle-gm-loop`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the dedicated lean `CODEX_HOME`, while `openrouter` uses the configured `ACTIVE_MODEL`. Numerai rounds are now config-centric: Python chooses one parent config, the LLM proposes a small mutation, Python clones/validates/names the child config, then training runs exactly one child config per autonomous iteration.
+- `src/numereng/features/agentic_research/*`: foreground supervisor that persists program state under one root experiment, pivots into child experiments when a path plateaus, and selects one persisted research program at `research init`. The default tracked program is `numerai-experiment-loop`, stored under `src/numereng/features/agentic_research/programs/`; that same folder is the default local catalog for custom programs and includes a README plus `.gitignore` so extra `.md` files stay untracked by default. The runtime is localized into `run.py` plus `utils/planning.py`, `utils/mutation.py`, `utils/programs.py`, `utils/store.py`, `utils/llm.py`, and `utils/types.py`. `program.json` stores the resolved `program_snapshot`; `session_program.md` stores the exact selected markdown for the session; runtime resume always uses the persisted snapshot, not the live catalog. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the user’s normal Codex configuration and environment, while `openrouter` uses the configured `ACTIVE_MODEL`. Numerai rounds remain config-centric: Python chooses one parent config, the LLM proposes a small mutation, Python clones/validates/names the child config, then training runs exactly one child config per autonomous iteration.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -48,20 +48,22 @@ Source map:
 - `src/numereng/features/cloud/modal/*`: Modal deploy/data/train/state.
 - `viz/api/numereng_viz/*`: authoritative read-only viz backend package (routes, services, monitor snapshot composition, store merge logic).
 - `src/numereng/features/viz/*`: compatibility shim only; no real viz business logic should live here.
-- `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs + shell-aware SSH helpers; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`. SSH targets declare `shell: posix|powershell`; use `powershell` for Windows remotes. Remote targets also declare `python_cmd` for helper scripts (`uv run python` default).
+- `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs + shell-aware SSH helpers; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`. SSH targets declare `shell: posix|powershell`; use `powershell` for Windows remotes. Remote targets also declare `python_cmd` for helper scripts and may declare `runner_cmd` for detached CLI launches; Windows detached targets should point directly at the remote venv executables rather than `uv run ...`.
 - `src/numereng/features/remote_ops/*`: SSH remote doctor + repo sync + experiment sync + ad hoc config push + detached remote launch.
-- `src/numereng/api/__init__.py`: curated public Python facade.
+- `src/numereng/api/__init__.py`: curated public Python facade; research exports lazy-load so unrelated CLI/API entrypoints do not import `agentic_research` at package import time.
 - `src/numereng/api/pipeline.py`: public workflow entrypoint for full local train flows.
 - `src/numereng/api/_*.py`: internal API operation/stage wrappers; not stable import paths.
 - `src/numereng/cli/*`: parsing/dispatch/help.
 
 Default store layout (`.numereng`):
-- Top-level dirs: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
+- Top-level dirs: `runs`, `datasets`, `experiments`, `notes`, `cache`, `tmp`, `remote_ops`.
 - Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
 - Dynamic roots may appear: `hpo/`, `ensembles/`.
+- Legacy compatibility state may still appear under `cloud/` during migration, but new cloud writers use `cache/cloud/`.
 
 Key artifacts:
 - `runs/<run_id>/run.json`
+  - includes durable `execution` provenance for `local|remote_host|cloud`
 - `runs/<run_id>/runtime.json`
 - `runs/<run_id>/run.log`
 - `runs/<run_id>/resolved.json`
@@ -70,6 +72,13 @@ Key artifacts:
 - `runs/<run_id>/score_provenance.json`
 - `runs/<run_id>/artifacts/predictions/*.parquet`
   - numereng-managed parquet artifacts use `ZSTD` compression level `3`
+- `cache/cloud/<provider>/runs/<run_id>/state.json`
+- `cache/cloud/<provider>/runs/<run_id>/pull/`
+- `cache/cloud/<provider>/ops/<op_id>/state.json`
+- `tmp/remote-configs/*.json`
+  - retention-managed staging for detached/ad hoc remote launches only; not canonical run provenance
+- `tmp/lifecycle_smoke/<session>/*.json`
+  - generated smoke-test configs; successful sessions delete their own session dir, failed sessions stay for debugging
 - `datasets/baselines/<baseline_name>/baseline.json`
 - `datasets/baselines/<baseline_name>/pred_<baseline_name>.parquet`
 - `experiments/<experiment_id>/experiment.json`
@@ -77,6 +86,7 @@ Key artifacts:
 - `experiments/<experiment_id>/EXPERIMENT.pack.md`
 - `experiments/<experiment_id>/configs/*.json`
 - `experiments/<experiment_id>/agentic_research/program.json`
+- `experiments/<experiment_id>/agentic_research/session_program.md`
 - `experiments/<experiment_id>/agentic_research/lineage.json`
 - `experiments/<experiment_id>/agentic_research/llm_trace.jsonl`
 - `experiments/<experiment_id>/agentic_research/llm_trace.md`
@@ -106,19 +116,23 @@ Wiring map:
 - Experiment pack:
   `cli experiment pack -> api.experiment_pack -> features.experiments.pack_experiment`
 - Agentic research:
+  `cli research program list|show -> api.research_program_list|research_program_show -> features.agentic_research.list_research_programs|get_research_program`
   `cli research init|status|run -> api.research_init|research_status|research_run -> features.agentic_research.init_research|get_research_status|run_research`
-  - `research init` now requires `strategy`
+  - `research init` requires `program_id`; `strategy` is only recognized when migrating old persisted state
   - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`); checked-in default is `codex-exec`
-  - strategy is persisted in `program.json`; old initialized programs without a strategy must be re-initialized
-  - phase-aware strategies expose `current_phase` in API/CLI status and run responses
-  - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime is isolated from the user’s interactive Codex defaults via a feature-managed learner `CODEX_HOME`
-  - prompt templates now live under `src/numereng/features/agentic_research/prompts/*`; prompt text is no longer embedded in orchestration code or strategy assets
+  - `program.json` persists the canonical program state, including `program_id`, `program_title`, `program_source`, `program_sha256`, and `program_snapshot`
+  - `session_program.md` persists the exact selected markdown for the initialized session
+  - legacy sessions that only stored `strategy` are auto-migrated to a normalized program snapshot on load/save
+  - phase-aware programs expose `current_phase` in API/CLI status and run responses
+  - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime uses the user’s ambient Codex config and environment; agentic research does not create a separate learner `CODEX_HOME`
+  - the default tracked program lives under `src/numereng/features/agentic_research/programs/numerai-experiment-loop.md`; extra local custom programs can live in that same folder and remain untracked by default
   - `numerai-experiment-loop` now uses a compact mutation contract instead of a dense schema-valid planner JSON object
   - the numerai planner sees one parent config, a short lineage summary, and only the three core metrics: `bmc_last_200_eras_mean`, `bmc_mean`, and `corr_mean`
   - the numerai planner returns a plain-text `RATIONALE:` + `CHANGES:` block with dotted `config.path = <json-literal>` edits; Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, retries once with validation feedback, and writes one child config
-  - `kaggle-gm-loop` still uses the structured planner JSON/schema contract, but its prompt text is also externalized under `prompts/`
+  - phase-aware custom programs still use the structured planner JSON/schema contract, and the schema is generated from the persisted program definition
   - planner trace logs are append-only under `agentic_research/llm_trace.jsonl` with a human-readable companion at `agentic_research/llm_trace.md`
   - per-round readability now lives in `rounds/rN/round.md`, which embeds the exact prompt sent to the planner, the raw planner response, the parsed final response, and the round outcome in one document
+  - round bundles and planner traces now also record `program_id`, `program_sha256`, and `session_program_path` for auditability
   - the root markdown trace remains intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
@@ -173,6 +187,7 @@ Local run telemetry write path:
   - `run_job_samples`
 - Status lifecycle: `queued -> starting -> running -> completed|failed|canceled|stale`.
 - `run_lifecycles` is the canonical sqlite read model for current run state; `runtime.json` is the canonical filesystem snapshot for current run state.
+- `run.json -> execution` is the canonical durable record of where a materialized run executed (`local`, `remote_host`, or `cloud`) and on which backend/provider.
 - Both surfaces also carry canonical backend-owned progress fields:
   `progress_percent`, `progress_label`, `progress_current`, `progress_total`.
 - `run_job_events` / `run_job_logs` / `run_job_samples` remain append-only history, not the source of current truth.
@@ -201,14 +216,15 @@ Viz/frontend topology:
   - Python API: `numereng.api.build_monitor_snapshot`
   - CLI: `numereng monitor snapshot --store-root <path> --json`
 - Snapshot monitoring is store-based:
-  - local live runs come from active `run_lifecycles`
-  - SageMaker/Batch live truth is refreshed from `cloud_jobs`
+  - materialized local/remote/cloud runs read durable backend/provider provenance from `runs/<run_id>/run.json -> execution`
+  - local live progress comes from active `run_lifecycles`
+  - SageMaker/Batch jobs that are not yet materialized into `runs/<run_id>` are refreshed from `cloud_jobs`
 - SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles; the poller builds either a POSIX `cd ... && ...` command or an explicit `powershell -NoProfile -Command "Set-Location ...; ..."` command based on the profile shell
 - `numereng remote bootstrap-viz` is the canonical federated viz bootstrap flow. It loads all enabled remote profiles, runs repo sync in `auto` mode, then runs `remote doctor`, and persists per-target `ready|degraded` state under `<store_root>/remote_ops/bootstrap/viz.json`.
 - `make viz` automatically runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before starting the local FastAPI + Vite stack. It never starts a remote viz server; the local viz backend remains the only UI/API process and keeps polling remote monitor snapshots over SSH.
 - `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
 - `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
-- `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.tmp/numereng-remote-configs/*` before detached launch
+- `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
 - Live-run payloads now carry `progress_mode`:
   - `exact` for local lifecycle-backed percentages
   - `estimated` for cloud runs with coarse phase/status mapping
@@ -242,6 +258,7 @@ Critical invariants:
 - Legacy `data.loading` is removed from the training schema. Config loading hard-fails if it is present, but run hashing strips that removed subtree so historical configs keep the same deterministic run identity.
 - `model.device` is the canonical explicit training-device contract and is allowed only: `cpu|cuda`.
 - `model.device` is valid only for `LGBMRegressor`; if `model.params.device_type` is also set it must exactly match.
+- Windows LightGBM GPU/OpenCL runs should use `model.params.device_type=gpu` without top-level `model.device`; `model.device=gpu` is invalid.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
 - Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV, then applies the resolved `training.post_training_scoring` policy: `none` leaves scoring deferred, `core` refreshes `post_training_core`, `full` refreshes inclusive `post_training_full`, and `round_core|round_full` defer single-run scoring for later experiment round batch materialization.
@@ -290,18 +307,21 @@ Critical invariants:
 - Archived experiments are operationally frozen: `experiment train` and `experiment promote` hard-fail until unarchived.
 - Ensemble supports only `rank_avg` and >=2 deduped run IDs.
 - Cloud AWS submit backend allowed only `sagemaker|batch`; `--spot` and `--on-demand` are mutually exclusive.
-- `cloud aws train pull` is download-only and writes managed artifacts under `.numereng/cloud/<run_id>/pull`.
+- `cloud aws train pull` is download-only and writes managed artifacts under `.numereng/cache/cloud/aws/runs/<run_id>/pull`.
 - `cloud aws train extract` is the separate step that unpacks pulled tarballs into `.numereng/runs/*` and indexes runs.
 - `cloud aws train extract` only promotes `runs/<run_id>/*` members from archives; non-`runs/*` members are skipped with warnings.
 - Managed archive extraction hard-fails on unsafe tar members (absolute/traversal paths, links, invalid run ids) and on run-dir hash conflicts.
 - Managed extraction indexes only extracted run IDs (no fallback indexing of outer cloud run id).
 - SageMaker managed entrypoint deletes `numereng.db`, `numereng.db-shm`, and `numereng.db-wal` from output artifacts before packaging.
-- Managed AWS `--state-path` must resolve under `<store_root>/cloud/*.json`.
+- Materialized cloud and remote-host runs persist durable provenance in `runs/<run_id>/run.json -> execution`; transient cloud state/pull staging under `cache/cloud` is disposable after extraction.
+- `.numereng/tmp/*` is store-owned scratch space; `store doctor --fix-strays` may prune `tmp/remote-configs/*.json` files older than 30 days when they are not referenced by active run lifecycles.
+- Managed AWS `--state-path` defaults under `<store_root>/cache/cloud/aws/...`; explicit overrides must resolve under `<store_root>/cache/cloud/**/*.json` or legacy `<store_root>/cloud/*.json` during migration.
+- Managed AWS submit trims `NUMERENG_RUN_EXECUTION_JSON` to the provider/runtime fields needed inside the container so long descriptive run IDs and canonical state paths stay under SageMaker's env-value limit; full provenance is still recovered from managed state during pull/extract.
 - Managed AWS/EC2 cloud `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
 - SageMaker CUDA runs require all three: config resolves to `model.device=cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`).
 - EC2 CUDA runtime install requires a GPU instance state and `cloud ec2 install --runtime-profile lgbm-cuda`.
 - CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
-- EC2 and Modal `--state-path` must resolve to `.numereng/cloud/*.json` with `.json` extension.
+- EC2 and Modal `--state-path` follow the same cache-first rule: default under `<store_root>/cache/cloud/...`, explicit override under `<store_root>/cache/cloud/**/*.json`, legacy `<store_root>/cloud/*.json` accepted for compatibility only.
 - EC2 `pull` and `s3 cp` prefix downloads skip unsafe relative keys and report them in `skipped_unsafe_keys`.
 - Cloud Modal deploy requires ECR URI `<registry>/<repository>:<tag>`.
 - Cloud state file flags (`--state-path`) must decode to valid typed JSON state objects.
@@ -309,6 +329,7 @@ Critical invariants:
 CLI families:
 - `numereng run train|score|submit`
 - `numereng experiment create|list|details|archive|unarchive|train|score-round|promote|report|pack`
+- `numereng research program list|show`
 - `numereng research init|status|run`
 - `numereng hpo create|list|details|trials`
 - `numereng ensemble build|list|details`

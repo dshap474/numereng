@@ -117,6 +117,7 @@ from numereng.features.training.service import (
     resolve_post_training_scoring_policy,
 )
 from numereng.features.training.strategies import TrainingEnginePlan, TrainingProfile, resolve_training_engine
+from numereng.platform.run_execution import build_local_run_execution, merge_run_execution
 
 logger = logging.getLogger(__name__)
 _EMITTED_STAGE_FILE_ORDER = (
@@ -243,6 +244,7 @@ class TrainingPipelineState:
     cancel_requested_at: str | None = None
     train_model_progress_total: int | None = None
     train_model_progress_current: int = 0
+    run_execution: dict[str, object] = field(default_factory=dict)
 
 
 def _stage_progress_payload(
@@ -476,6 +478,11 @@ def prepare_training_run(
     launch_metadata = get_launch_metadata()
     if launch_metadata is None:
         raise TrainingError("training_launch_metadata_missing")
+    state.run_execution = (
+        merge_run_execution(None, launch_metadata.execution)
+        if launch_metadata.execution is not None
+        else build_local_run_execution(source=launch_metadata.source)
+    )
     state.run_store_root = _resolve_store_root_for_run(output_root)
     state.telemetry_session = begin_local_training_session(
         store_root=state.run_store_root,
@@ -529,6 +536,7 @@ def prepare_training_run(
         experiment_id=state.experiment_id,
         artifacts=state.artifacts,
         training_metadata=state.training_runtime_metadata,
+        execution=state.run_execution,
     )
     save_run_manifest(running_manifest, state.run_manifest_path)
     state.run_manifest_written = True
@@ -1184,6 +1192,7 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
         metrics_summary=state.metrics_payload,
         training_metadata=state.training_runtime_metadata,
         lifecycle_metadata=_lifecycle_manifest_payload(terminal_reason="completed"),
+        execution=state.run_execution,
     )
     if state.run_manifest_path is None or state.run_store_root is None or state.output_root is None:
         raise TrainingError("training_finalize_paths_uninitialized")
@@ -1262,6 +1271,7 @@ def fail_training_run(state: TrainingPipelineState, exc: Exception) -> None:
                 cancel_requested_at=cancel_requested_at,
                 terminal_detail=terminal_detail,
             ),
+            execution=state.run_execution,
         )
         try:
             save_run_manifest(failed_manifest, cast(Path, state.run_manifest_path))

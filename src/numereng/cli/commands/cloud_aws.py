@@ -390,6 +390,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--output-s3-uri",
                 "--output-dir",
                 "--state-path",
+                "--store-root",
             },
         )
         if parse_error == "__help__":
@@ -407,7 +408,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 output_s3_uri=values.get("--output-s3-uri"),
                 output_dir=values.get("--output-dir"),
                 state_path=values.get("--state-path"),
-                store_root=".numereng",
+                store_root=values.get("--store-root", ".numereng"),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -430,6 +431,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--bucket",
                 "--output-dir",
                 "--state-path",
+                "--store-root",
             },
         )
         if parse_error == "__help__":
@@ -446,7 +448,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 bucket=values.get("--bucket"),
                 output_dir=values.get("--output-dir"),
                 state_path=values.get("--state-path"),
-                store_root=".numereng",
+                store_root=values.get("--store-root", ".numereng"),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)

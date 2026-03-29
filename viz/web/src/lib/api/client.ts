@@ -114,6 +114,7 @@ export interface RecentExperimentActivityItem {
 }
 
 export interface ExperimentOverviewResponse {
+	generated_at?: string | null;
 	summary: ExperimentOverviewSummary;
 	experiments: ExperimentOverviewItem[];
 	live_experiments: LiveExperimentOverview[];

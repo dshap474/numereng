@@ -15,6 +15,8 @@ from numereng.api.contracts import (
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunExecutionBackfillRequest,
+    StoreRunExecutionBackfillResponse,
     StoreRunLifecycleRepairRequest,
     StoreRunLifecycleRepairResponse,
 )
@@ -162,8 +164,35 @@ def store_repair_run_lifecycles(
     )
 
 
+def store_backfill_run_execution(
+    request: StoreRunExecutionBackfillRequest,
+) -> StoreRunExecutionBackfillResponse:
+    """Backfill durable run execution provenance into existing manifests."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.backfill_run_execution(
+            store_root=request.store_root,
+            run_id=request.run_id,
+            all_runs=request.all,
+        )
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+
+    return StoreRunExecutionBackfillResponse(
+        store_root=str(result.store_root),
+        scanned_count=result.scanned_runs,
+        updated_count=result.updated_runs,
+        skipped_count=result.skipped_runs,
+        ambiguous_runs=list(result.ambiguous_runs),
+        updated_run_ids=list(result.updated_run_ids),
+        skipped_run_ids=list(result.skipped_run_ids),
+    )
+
+
 __all__ = [
     "store_doctor",
+    "store_backfill_run_execution",
     "store_index_run",
     "store_init",
     "store_materialize_viz_artifacts",

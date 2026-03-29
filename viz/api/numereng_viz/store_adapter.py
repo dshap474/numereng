@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from numbers import Integral, Real
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -1092,8 +1092,13 @@ class VizStoreAdapter:
         ):
             text = _to_non_empty_str(raw_value)
             if text:
-                return Path(text).name
+                return self._overview_path_label(text)
         return "unknown-config"
+
+    def _overview_path_label(self, value: str) -> str:
+        if "\\" in value:
+            return PureWindowsPath(value).name
+        return Path(value).name
 
     def _overview_summary_from_experiments(self, experiments: list[dict[str, Any]]) -> dict[str, int]:
         return {
@@ -1106,17 +1111,50 @@ class VizStoreAdapter:
             "attention_count": 0,
         }
 
+    def _overview_synthesized_experiment_status(
+        self,
+        *,
+        job: dict[str, Any],
+        lifecycle: dict[str, Any] | None,
+    ) -> str:
+        status = _to_non_empty_str(lifecycle.get("status")) if lifecycle else None
+        if status is None:
+            status = _to_non_empty_str(job.get("status"))
+        if status in _TERMINAL_JOB_STATUSES:
+            return "complete"
+        return "active"
+
+    def _overview_synthesized_experiment_item(
+        self,
+        *,
+        experiment_id: str,
+        job: dict[str, Any],
+        lifecycle: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        created_at = self._overview_activity_at(job.get("created_at"))
+        updated_at = self._overview_activity_at(
+            lifecycle.get("updated_at") if lifecycle else None,
+            job.get("updated_at"),
+            job.get("finished_at"),
+            job.get("started_at"),
+            job.get("created_at"),
+        )
+        return {
+            "experiment_id": experiment_id,
+            "name": experiment_id,
+            "status": self._overview_synthesized_experiment_status(job=job, lifecycle=lifecycle),
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "run_count": 0,
+            "tags": [],
+            "has_live": False,
+            "live_run_count": 0,
+            "attention_state": "none",
+            "latest_activity_at": updated_at or created_at,
+        }
+
     def get_experiments_overview(self) -> dict[str, Any]:
         experiments = [dict(item) for item in self.list_experiments()]
-        summary = self._overview_summary_from_experiments(experiments)
-        if not experiments:
-            return {
-                "summary": summary,
-                "experiments": [],
-                "live_experiments": [],
-                "recent_activity": [],
-            }
-
         experiment_items: dict[str, dict[str, Any]] = {}
         for item in experiments:
             experiment_id = _to_non_empty_str(item.get("experiment_id"))
@@ -1142,7 +1180,7 @@ class VizStoreAdapter:
                 reverse=True,
             )
             return {
-                "summary": summary,
+                "summary": self._overview_summary_from_experiments(ordered),
                 "experiments": ordered,
                 "live_experiments": [],
                 "recent_activity": [],
@@ -1179,14 +1217,26 @@ class VizStoreAdapter:
         latest_terminal_by_experiment: dict[str, dict[str, Any]] = {}
         live_runs_by_experiment: dict[str, list[dict[str, Any]]] = {}
         recent_activity: list[dict[str, Any]] = []
+        synthesized_experiment_ids: set[str] = set()
 
         for job in latest_jobs:
             experiment_id = _to_non_empty_str(job.get("experiment_id"))
-            if experiment_id is None or experiment_id not in experiment_items:
+            if experiment_id is None:
                 continue
 
             run_id = _to_non_empty_str(job.get("canonical_run_id")) or _to_non_empty_str(job.get("job_id"))
             lifecycle = lifecycle_by_run_id.get(run_id or "")
+            if experiment_id not in experiment_items:
+                experiment_items[experiment_id] = self._overview_synthesized_experiment_item(
+                    experiment_id=experiment_id,
+                    job=job,
+                    lifecycle=lifecycle,
+                )
+                synthesized_experiment_ids.add(experiment_id)
+            if experiment_id in synthesized_experiment_ids:
+                experiment_items[experiment_id]["run_count"] = (
+                    int(experiment_items[experiment_id].get("run_count") or 0) + 1
+                )
             activity_at = self._overview_activity_at(
                 lifecycle.get("last_heartbeat_at") if lifecycle else None,
                 lifecycle.get("updated_at") if lifecycle else None,
@@ -1344,7 +1394,7 @@ class VizStoreAdapter:
             if latest_terminal is not None:
                 item["attention_state"] = self._attention_state_for_status(latest_terminal.get("status"))
 
-        ordered_experiments = sorted(
+            ordered_experiments = sorted(
             experiment_items.values(),
             key=lambda item: (
                 int(bool(item.get("has_live"))),
@@ -1355,6 +1405,7 @@ class VizStoreAdapter:
             reverse=True,
         )
 
+        summary = self._overview_summary_from_experiments(ordered_experiments)
         summary["live_experiments"] = len(live_experiments)
         summary["live_runs"] = sum(int(item.get("live_run_count") or 0) for item in live_experiments)
         summary["queued_runs"] = sum(int(item.get("queued_run_count") or 0) for item in live_experiments)

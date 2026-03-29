@@ -265,6 +265,29 @@ class StoreRunLifecycleRepairResponse(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
 
 
+class StoreRunExecutionBackfillRequest(BaseModel):
+    store_root: str = ".numereng"
+    run_id: str | None = None
+    all: bool = False
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> StoreRunExecutionBackfillRequest:
+        scope_flags = int(self.run_id is not None) + int(self.all)
+        if scope_flags != 1:
+            raise ValueError("exactly one of run_id or all=true is required")
+        return self
+
+
+class StoreRunExecutionBackfillResponse(BaseModel):
+    store_root: str
+    scanned_count: int
+    updated_count: int
+    skipped_count: int
+    ambiguous_runs: list[str] = Field(default_factory=list)
+    updated_run_ids: list[str] = Field(default_factory=list)
+    skipped_run_ids: list[str] = Field(default_factory=list)
+
+
 class StoreMaterializeVizArtifactsRequest(BaseModel):
     store_root: str = ".numereng"
     kind: str
@@ -345,6 +368,8 @@ __all__ = [
     "StoreMaterializeVizArtifactsFailureResponse",
     "StoreMaterializeVizArtifactsRequest",
     "StoreMaterializeVizArtifactsResponse",
+    "StoreRunExecutionBackfillRequest",
+    "StoreRunExecutionBackfillResponse",
     "StoreRunLifecycleRepairRequest",
     "StoreRunLifecycleRepairResponse",
     "StoreRebuildFailureResponse",

@@ -323,6 +323,7 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
         "by_experiment": {
             "experiments": count_rows(cur, "experiments", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "runs": count_rows(cur, "runs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
+            "run_lifecycles": count_rows(cur, "run_lifecycles", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "run_jobs": count_rows(cur, "run_jobs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "logical_runs": count_rows(cur, "logical_runs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "hpo_studies": count_rows(cur, "hpo_studies", f"experiment_id IN ({placeholders_exp})", experiment_ids),
@@ -335,6 +336,7 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
         db_counts["by_run"] = {
             "metrics": count_rows(cur, "metrics", f"run_id IN ({placeholders_runs})", target_run_ids_list),
             "run_artifacts": count_rows(cur, "run_artifacts", f"run_id IN ({placeholders_runs})", target_run_ids_list),
+            "run_lifecycles": count_rows(cur, "run_lifecycles", f"run_id IN ({placeholders_runs})", target_run_ids_list),
             "run_attempts_canonical": count_rows(
                 cur,
                 "run_attempts",
@@ -492,6 +494,11 @@ def mutate(paths: StorePaths, scope: Scope, preserve_policy: str) -> dict[str, A
 
         if scope.target_run_ids:
             placeholders_runs = ",".join("?" for _ in scope.target_run_ids)
+            table_deletes["run_lifecycles(run_id)"] = exec_delete(
+                cur,
+                f"DELETE FROM run_lifecycles WHERE run_id IN ({placeholders_runs})",
+                scope.target_run_ids,
+            )
             table_deletes["metrics"] = exec_delete(
                 cur,
                 f"DELETE FROM metrics WHERE run_id IN ({placeholders_runs})",
@@ -534,6 +541,11 @@ def mutate(paths: StorePaths, scope: Scope, preserve_policy: str) -> dict[str, A
                 scope.job_ids,
             )
 
+        table_deletes["run_lifecycles(experiment)"] = exec_delete(
+            cur,
+            f"DELETE FROM run_lifecycles WHERE experiment_id IN ({placeholders_exp})",
+            scope.experiment_ids,
+        )
         table_deletes["run_jobs(experiment)"] = exec_delete(
             cur,
             f"DELETE FROM run_jobs WHERE experiment_id IN ({placeholders_exp})",

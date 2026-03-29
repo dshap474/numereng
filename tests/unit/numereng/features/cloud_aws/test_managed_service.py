@@ -31,6 +31,7 @@ from numereng.features.cloud.aws.managed_contracts import (
     AwsTrainSubmitRequest,
 )
 from numereng.features.cloud.aws.managed_service import CloudAwsError, CloudAwsManagedService
+from numereng.platform.run_execution import RUN_EXECUTION_ENV_VAR
 
 
 class _FakeEcr(EcrAdapter):
@@ -304,6 +305,44 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     assert status.result["status"] == "Completed"
 
 
+def test_train_submit_trims_execution_env_payload_for_sagemaker(tmp_path: Path) -> None:
+    service, _ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+    long_run_id = "testing-ender20-small-cuda-sagemaker-verify-20260328-123456-spot"
+    state_path = _state_path(tmp_path)
+
+    submit = service.train_submit(
+        AwsTrainSubmitRequest(
+            run_id=long_run_id,
+            backend="sagemaker",
+            config_path=str(config_path),
+            image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:verify-g54-amd64",
+            role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+            state_path=str(state_path),
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    assert submit.state is not None
+    assert sagemaker.last_spec is not None
+    execution_payload = json.loads(sagemaker.last_spec.environment[RUN_EXECUTION_ENV_VAR])
+    assert execution_payload["kind"] == "cloud"
+    assert execution_payload["provider"] == "aws"
+    assert execution_payload["backend"] == "sagemaker"
+    assert execution_payload["output_uri"] == f"s3://numereng-artifacts/runs/{long_run_id}/managed-output/"
+    assert execution_payload["metadata"] == {"runtime_profile": "standard"}
+    assert "state_path" not in execution_payload
+    assert "submitted_at" not in execution_payload
+    assert len(sagemaker.last_spec.environment[RUN_EXECUTION_ENV_VAR]) < 512
+
+
 def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_context(tmp_path: Path) -> None:
     service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
     state_path = _state_path(tmp_path)
@@ -537,7 +576,7 @@ def test_train_pull_defaults_output_dir_to_cloud_pull(
         )
     )
 
-    expected_output_dir = (store_root / "cloud" / "run-1" / "pull").resolve()
+    expected_output_dir = (store_root / "cache" / "cloud" / "aws" / "runs" / "run-1" / "pull").resolve()
     expected_download_path = (expected_output_dir / "job-1" / "output" / "output.tar.gz").resolve()
 
     assert pulled.result["output_dir"] == str(expected_output_dir)

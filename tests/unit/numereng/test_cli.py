@@ -180,7 +180,7 @@ def test_cli_remote_run_train_success(
         return api_module.RemoteTrainLaunchResponse(
             target_id="pc",
             launch_id="launch-1",
-            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.tmp\numereng-remote-configs\run.json",
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.numereng\tmp\remote-configs\run.json",
             remote_log_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.log",
             remote_metadata_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-1.json",
             remote_pid=4321,
@@ -1198,6 +1198,36 @@ def test_cli_store_doctor_fix_strays_success(
     assert exit_code == 0
     assert payload["stray_cleanup_applied"] is True
     assert payload["deleted_paths"] == ["/tmp/.numereng/modal_smoke_data"]
+
+
+def test_cli_store_backfill_run_execution_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_store_backfill(
+        request: api_module.StoreRunExecutionBackfillRequest,
+    ) -> api_module.StoreRunExecutionBackfillResponse:
+        assert request.store_root == ".numereng"
+        assert request.run_id is None
+        assert request.all is True
+        return api_module.StoreRunExecutionBackfillResponse(
+            store_root="/tmp/.numereng",
+            scanned_count=3,
+            updated_count=2,
+            skipped_count=1,
+            ambiguous_runs=["run-3"],
+            updated_run_ids=["run-1", "run-2"],
+            skipped_run_ids=["run-3"],
+        )
+
+    monkeypatch.setattr(api_module, "store_backfill_run_execution", fake_store_backfill)
+
+    exit_code = cli.main(["store", "backfill-run-execution", "--all"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["updated_count"] == 2
+    assert payload["ambiguous_runs"] == ["run-3"]
 
 
 def test_cli_store_repair_run_lifecycles_success(
@@ -3161,8 +3191,8 @@ def test_cli_research_commands_success(
         "research_init",
         lambda request: api_module.ResearchInitResponse(
             root_experiment_id=request.experiment_id,
-            strategy=request.strategy,
-            strategy_description="Numerai Experiment Loop",
+            program_id=request.program_id or "numerai-experiment-loop",
+            program_title="Numerai Experiment Loop",
             status="initialized",
             active_experiment_id=request.experiment_id,
             active_path_id="p00",
@@ -3171,6 +3201,57 @@ def test_cli_research_commands_success(
             agentic_research_dir="/tmp/agentic_research",
             program_path="/tmp/agentic_research/program.json",
             lineage_path="/tmp/agentic_research/lineage.json",
+            session_program_path="/tmp/agentic_research/session_program.md",
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "research_program_list",
+        lambda request: api_module.ResearchProgramListResponse(
+            programs=[
+                api_module.ResearchProgramCatalogEntryResponse(
+                    program_id="numerai-experiment-loop",
+                    title="Numerai Experiment Loop",
+                    description="Builtin numerai loop.",
+                    source="builtin",
+                    planner_contract="config_mutation",
+                    phase_aware=False,
+                    source_path="/tmp/numerai-experiment-loop.md",
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "research_program_show",
+        lambda request: api_module.ResearchProgramShowResponse(
+            program_id=request.program_id,
+            title="Numerai Experiment Loop",
+            description="Builtin numerai loop.",
+            source="builtin",
+            planner_contract="config_mutation",
+            scoring_stage="post_training_full",
+            metric_policy=api_module.ResearchProgramMetricPolicyResponse(
+                primary="bmc_last_200_eras.mean",
+                tie_break="bmc.mean",
+                sanity_checks=["corr.mean"],
+            ),
+            round_policy=api_module.ResearchProgramRoundPolicyResponse(
+                plateau_non_improving_rounds=2,
+                require_scale_confirmation=True,
+                scale_confirmation_rounds=1,
+            ),
+            improvement_threshold_default=0.0002,
+            config_policy=api_module.ResearchProgramConfigPolicyResponse(
+                allowed_paths=["model.params.*"],
+                min_candidate_configs=None,
+                max_candidate_configs=1,
+                min_changes=1,
+                max_changes=2,
+            ),
+            phases=[],
+            source_path="/tmp/numerai-experiment-loop.md",
+            raw_markdown="---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n",
         ),
     )
     monkeypatch.setattr(
@@ -3178,8 +3259,8 @@ def test_cli_research_commands_success(
         "research_status",
         lambda request: api_module.ResearchStatusResponse(
             root_experiment_id=request.experiment_id,
-            strategy="numerai-experiment-loop",
-            strategy_description="Numerai Experiment Loop",
+            program_id="numerai-experiment-loop",
+            program_title="Numerai Experiment Loop",
             status="running",
             active_experiment_id=request.experiment_id,
             active_path_id="p00",
@@ -3194,6 +3275,7 @@ def test_cli_research_commands_success(
             current_phase=None,
             program_path="/tmp/agentic_research/program.json",
             lineage_path="/tmp/agentic_research/lineage.json",
+            session_program_path="/tmp/agentic_research/session_program.md",
         ),
     )
     monkeypatch.setattr(
@@ -3201,8 +3283,8 @@ def test_cli_research_commands_success(
         "research_run",
         lambda request: api_module.ResearchRunResponse(
             root_experiment_id=request.experiment_id,
-            strategy="numerai-experiment-loop",
-            strategy_description="Numerai Experiment Loop",
+            program_id="numerai-experiment-loop",
+            program_title="Numerai Experiment Loop",
             status="stopped",
             active_experiment_id=request.experiment_id,
             active_path_id="p00",
@@ -3222,12 +3304,20 @@ def test_cli_research_commands_success(
             "init",
             "--experiment-id",
             "2026-02-22_test-exp",
-            "--strategy",
+            "--program",
             "numerai-experiment-loop",
         ]
     )
     assert exit_code == 0
     assert _parse_stdout_json(capsys.readouterr().out)["active_path_id"] == "p00"
+
+    exit_code = cli.main(["research", "program", "list"])
+    assert exit_code == 0
+    assert "numerai-experiment-loop" in capsys.readouterr().out
+
+    exit_code = cli.main(["research", "program", "show", "--program", "numerai-experiment-loop"])
+    assert exit_code == 0
+    assert "program_id: numerai-experiment-loop" in capsys.readouterr().out
 
     exit_code = cli.main(["research", "status", "--experiment-id", "2026-02-22_test-exp"])
     assert exit_code == 0
@@ -3236,6 +3326,19 @@ def test_cli_research_commands_success(
     exit_code = cli.main(["research", "run", "--experiment-id", "2026-02-22_test-exp", "--max-rounds", "1"])
     assert exit_code == 0
     assert _parse_stdout_json(capsys.readouterr().out)["stop_reason"] == "max_rounds_reached"
+
+    exit_code = cli.main(
+        [
+            "research",
+            "init",
+            "--experiment-id",
+            "2026-02-22_test-exp",
+            "--program",
+            "numerai-experiment-loop",
+        ]
+    )
+    assert exit_code == 0
+    assert _parse_stdout_json(capsys.readouterr().out)["program_id"] == "numerai-experiment-loop"
 
 
 def test_cli_baseline_build_success(

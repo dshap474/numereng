@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from numereng.api._agentic_research import research_init, research_run, research_status
+from importlib import import_module
+
+import numereng.api._remote as _remote
 from numereng.api._baseline import baseline_build
 from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
 from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
@@ -48,6 +50,7 @@ from numereng.api._remote import (
 )
 from numereng.api._run import cancel_run, get_run_lifecycle, run_training, score_run, submit_predictions
 from numereng.api._store import (
+    store_backfill_run_execution,
     store_doctor,
     store_index_run,
     store_init,
@@ -168,12 +171,22 @@ from numereng.api.contracts import (
     ResearchInitRequest,
     ResearchInitResponse,
     ResearchPhaseResponse,
+    ResearchPlannerContract,
+    ResearchProgramCatalogEntryResponse,
+    ResearchProgramConfigPolicyResponse,
+    ResearchProgramListRequest,
+    ResearchProgramListResponse,
+    ResearchProgramMetricPolicyResponse,
+    ResearchProgramPhaseResponse,
+    ResearchProgramRoundPolicyResponse,
+    ResearchProgramShowRequest,
+    ResearchProgramShowResponse,
+    ResearchProgramSource,
     ResearchRoundResponse,
     ResearchRunRequest,
     ResearchRunResponse,
     ResearchStatusRequest,
     ResearchStatusResponse,
-    ResearchStrategy,
     ResearchSupervisorStatus,
     RunCancelRequest,
     RunCancelResponse,
@@ -190,6 +203,8 @@ from numereng.api.contracts import (
     StoreMaterializeVizArtifactsFailureResponse,
     StoreMaterializeVizArtifactsRequest,
     StoreMaterializeVizArtifactsResponse,
+    StoreRunExecutionBackfillRequest,
+    StoreRunExecutionBackfillResponse,
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
@@ -202,9 +217,6 @@ from numereng.api.contracts import (
     TrainRunRequest,
     TrainRunResponse,
 )
-from numereng.features.agentic_research import get_research_status as get_research_program_status
-from numereng.features.agentic_research import init_research as init_research_program
-from numereng.features.agentic_research import run_research as run_research_program
 from numereng.features.baseline import build_baseline as build_baseline_record
 from numereng.features.cloud.aws import (
     AwsImageBuildPushRequest,
@@ -264,7 +276,14 @@ from numereng.features.hpo import create_study as hpo_create_study
 from numereng.features.hpo import get_study_trials_view as hpo_get_study_trials
 from numereng.features.hpo import get_study_view as hpo_get_study
 from numereng.features.hpo import list_studies_view as hpo_list_studies
-from numereng.features.store import doctor_store, index_run, init_store_db, materialize_viz_artifacts, rebuild_run_index
+from numereng.features.store import (
+    backfill_run_execution,
+    doctor_store,
+    index_run,
+    init_store_db,
+    materialize_viz_artifacts,
+    rebuild_run_index,
+)
 from numereng.features.submission import submit_predictions_file, submit_run_predictions
 from numereng.features.telemetry import get_run_lifecycle as get_run_lifecycle_record
 from numereng.features.telemetry import reconcile_run_lifecycles as reconcile_run_lifecycles_record
@@ -273,6 +292,54 @@ from numereng.features.training import run_training as run_training_pipeline
 from numereng.features.training import score_run as score_run_pipeline
 from numereng.platform.errors import PackageError
 from numereng.platform.forum_scraper import scrape_forum_posts
+
+
+def _agentic_research_api_module():
+    return import_module("numereng.api._agentic_research")
+
+
+def _agentic_research_feature_module():
+    return import_module("numereng.features.agentic_research")
+
+
+def research_init(*args, **kwargs):
+    return _agentic_research_api_module().research_init(*args, **kwargs)
+
+
+def research_program_list(*args, **kwargs):
+    return _agentic_research_api_module().research_program_list(*args, **kwargs)
+
+
+def research_program_show(*args, **kwargs):
+    return _agentic_research_api_module().research_program_show(*args, **kwargs)
+
+
+def research_run(*args, **kwargs):
+    return _agentic_research_api_module().research_run(*args, **kwargs)
+
+
+def research_status(*args, **kwargs):
+    return _agentic_research_api_module().research_status(*args, **kwargs)
+
+
+def get_research_program_record(*args, **kwargs):
+    return _agentic_research_feature_module().get_research_program(*args, **kwargs)
+
+
+def get_research_program_status(*args, **kwargs):
+    return _agentic_research_feature_module().get_research_status(*args, **kwargs)
+
+
+def init_research_program(*args, **kwargs):
+    return _agentic_research_feature_module().init_research(*args, **kwargs)
+
+
+def list_research_program_records(*args, **kwargs):
+    return _agentic_research_feature_module().list_research_programs(*args, **kwargs)
+
+
+def run_research_program(*args, **kwargs):
+    return _agentic_research_feature_module().run_research(*args, **kwargs)
 
 __all__ = [
     "AwsImageBuildPushRequest",
@@ -319,12 +386,22 @@ __all__ = [
     "ResearchInitRequest",
     "ResearchInitResponse",
     "ResearchPhaseResponse",
+    "ResearchPlannerContract",
+    "ResearchProgramCatalogEntryResponse",
+    "ResearchProgramConfigPolicyResponse",
+    "ResearchProgramListRequest",
+    "ResearchProgramListResponse",
+    "ResearchProgramMetricPolicyResponse",
+    "ResearchProgramPhaseResponse",
+    "ResearchProgramRoundPolicyResponse",
+    "ResearchProgramShowRequest",
+    "ResearchProgramShowResponse",
+    "ResearchProgramSource",
     "ResearchRoundResponse",
     "ResearchRunRequest",
     "ResearchRunResponse",
     "ResearchStatusRequest",
     "ResearchStatusResponse",
-    "ResearchStrategy",
     "ResearchSupervisorStatus",
     "RunCancelRequest",
     "RunCancelResponse",
@@ -415,6 +492,8 @@ __all__ = [
     "StoreMaterializeVizArtifactsFailureResponse",
     "StoreMaterializeVizArtifactsRequest",
     "StoreMaterializeVizArtifactsResponse",
+    "StoreRunExecutionBackfillRequest",
+    "StoreRunExecutionBackfillResponse",
     "StoreRunLifecycleRepairRequest",
     "StoreRunLifecycleRepairResponse",
     "StoreRebuildFailureResponse",
@@ -462,6 +541,7 @@ __all__ = [
     "_default_dataset_dest_path",
     "archive_experiment_record",
     "baseline_build",
+    "backfill_run_execution",
     "build_baseline_record",
     "cancel_run",
     "create_experiment_record",
@@ -520,12 +600,15 @@ __all__ = [
     "remote_repo_sync",
     "remote_train_launch",
     "research_init",
+    "research_program_list",
+    "research_program_show",
     "research_run",
     "research_status",
     "score_experiment_round_record",
     "score_run_pipeline",
     "run_training_pipeline",
     "score_run",
+    "store_backfill_run_execution",
     "store_doctor",
     "store_index_run",
     "store_init",

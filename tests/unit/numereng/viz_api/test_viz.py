@@ -1170,6 +1170,202 @@ def test_get_experiments_overview_summarizes_live_and_terminal_state(tmp_path: P
     assert payload["recent_activity"][3]["experiment_name"] == "Live Alert"
 
 
+def test_get_experiments_overview_synthesizes_missing_experiment_from_live_job(tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    init_result = init_store_db(store_root=store_root)
+    run_dir = store_root / "runs" / "run-synth-live"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(init_result.db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO run_jobs (
+                job_id,
+                batch_id,
+                experiment_id,
+                logical_run_id,
+                operation_type,
+                attempt_no,
+                attempt_id,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                request_json,
+                job_type,
+                status,
+                queue_name,
+                priority,
+                created_at,
+                queued_at,
+                started_at,
+                finished_at,
+                updated_at,
+                worker_id,
+                pid,
+                exit_code,
+                signal,
+                backend,
+                tier,
+                budget,
+                timeout_seconds,
+                canonical_run_id,
+                external_run_id,
+                run_dir,
+                cancel_requested,
+                cancel_requested_at,
+                terminal_reason,
+                terminal_detail_json,
+                error_json
+            ) VALUES (
+                'job-synth-live',
+                'batch-synth-live',
+                'testing',
+                'logical-synth-live',
+                'run',
+                1,
+                'attempt-synth-live',
+                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'external',
+                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'sha-synth-live',
+                '{}',
+                'run',
+                'running',
+                'default',
+                0,
+                '2026-03-28T20:09:11+00:00',
+                '2026-03-28T20:09:11+00:00',
+                '2026-03-28T20:09:12+00:00',
+                NULL,
+                '2026-03-28T20:09:18+00:00',
+                'worker-local',
+                9604,
+                NULL,
+                NULL,
+                'local',
+                NULL,
+                NULL,
+                NULL,
+                'run-synth-live',
+                NULL,
+                ?,
+                0,
+                NULL,
+                NULL,
+                '{}',
+                NULL
+            )
+            """,
+            (str(run_dir),),
+        )
+        conn.execute(
+            """
+            INSERT INTO run_lifecycles (
+                run_id,
+                run_hash,
+                config_hash,
+                job_id,
+                logical_run_id,
+                attempt_id,
+                attempt_no,
+                source,
+                operation_type,
+                job_type,
+                status,
+                experiment_id,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                run_dir,
+                runtime_path,
+                backend,
+                worker_id,
+                pid,
+                host,
+                current_stage,
+                completed_stages_json,
+                progress_percent,
+                progress_label,
+                progress_current,
+                progress_total,
+                cancel_requested,
+                cancel_requested_at,
+                created_at,
+                queued_at,
+                started_at,
+                last_heartbeat_at,
+                updated_at,
+                finished_at,
+                terminal_reason,
+                terminal_detail_json,
+                latest_metrics_json,
+                latest_sample_json,
+                reconciled
+            ) VALUES (
+                'run-synth-live',
+                'hash-run-synth-live',
+                'cfg-run-synth-live',
+                'job-synth-live',
+                'logical-synth-live',
+                'attempt-synth-live',
+                1,
+                'cli.run.train',
+                'run',
+                'run',
+                'running',
+                'testing',
+                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'external',
+                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'sha-synth-live',
+                ?,
+                ?,
+                'local',
+                'worker-local',
+                9604,
+                'Daniels-PC',
+                'train_model',
+                '[\"initializing\",\"load_data\"]',
+                52.0,
+                'Fold 4 of 7',
+                4,
+                7,
+                0,
+                NULL,
+                '2026-03-28T20:09:11+00:00',
+                '2026-03-28T20:09:11+00:00',
+                '2026-03-28T20:09:12+00:00',
+                '2026-03-28T20:09:18+00:00',
+                '2026-03-28T20:09:18+00:00',
+                NULL,
+                NULL,
+                '{}',
+                '{\"corr_mean\":0.11}',
+                '{\"process_rss_gb\":0.42}',
+                0
+            )
+            """,
+            (str(run_dir), str(run_dir / "runtime.json")),
+        )
+        conn.commit()
+
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    payload = adapter.get_experiments_overview()
+    testing_experiment = next(item for item in payload["experiments"] if item["experiment_id"] == "testing")
+    testing_live = next(item for item in payload["live_experiments"] if item["experiment_id"] == "testing")
+
+    assert payload["summary"]["total_experiments"] == 6
+    assert payload["summary"]["active_experiments"] == 4
+    assert payload["summary"]["live_experiments"] == 3
+    assert payload["summary"]["live_runs"] == 4
+    assert testing_experiment["name"] == "testing"
+    assert testing_experiment["has_live"] is True
+    assert testing_experiment["run_count"] == 1
+    assert testing_live["runs"][0]["run_id"] == "run-synth-live"
+    assert testing_live["runs"][0]["config_label"] == "synthetic.json"
+
+
 def test_build_monitor_snapshot_ignores_active_looking_jobs_without_live_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1636,6 +1832,41 @@ def test_build_monitor_snapshot_marks_local_lifecycle_progress_as_exact(
     assert live_experiment["runs"][0]["progress_percent"] == pytest.approx(38.0)
     assert live_experiment["runs"][1]["progress_mode"] == "exact"
     assert live_experiment["runs"][1]["progress_percent"] == pytest.approx(0.0)
+
+
+def test_build_monitor_snapshot_prefers_manifest_execution_for_materialized_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    with sqlite3.connect(store_root / "numereng.db") as conn:
+        conn.execute(
+            "UPDATE runs SET manifest_json = ? WHERE run_id = ?",
+            (
+                json.dumps(
+                    {
+                        "run_id": "run-live-alert-active",
+                        "status": "RUNNING",
+                        "config_id": "configs/alert_active.json",
+                        "execution": {
+                            "kind": "cloud",
+                            "provider": "aws",
+                            "backend": "sagemaker",
+                            "provider_job_id": "job-sm-123",
+                        },
+                    }
+                ),
+                "run-live-alert-active",
+            ),
+        )
+    monkeypatch.setattr("numereng_viz.monitor_snapshot.reconcile_run_lifecycles", lambda **_: None)
+
+    payload = build_monitor_snapshot(store_root=store_root, refresh_cloud=False)
+
+    live_experiment = next(item for item in payload["live_experiments"] if item["experiment_id"] == "exp-live-alert")
+    run_item = next(item for item in live_experiment["runs"] if item["run_id"] == "run-live-alert-active")
+    assert run_item["backend"] == "sagemaker"
+    assert run_item["provider_run_id"] == "job-sm-123"
 
 
 @pytest.mark.parametrize(

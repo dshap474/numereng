@@ -12,25 +12,29 @@ Validate the config locally first:
 uv run numereng run train --config configs/run.json
 ```
 
+By default, numereng now writes transient cloud state under `.numereng/cache/cloud/<provider>/...` and keeps durable run provenance under `.numereng/runs/<run_id>/run.json -> execution`. Legacy `.numereng/cloud/*.json` state paths remain read-compatible during migration, but new writes should use the cache-backed layout.
+
 ## EC2 Workflow
 
 ```bash
+STATE=.numereng/cache/cloud/aws/runs/run-0001/state.json
+
 uv run numereng cloud ec2 init-iam
 uv run numereng cloud ec2 setup-data --data-version v5.2
 
 uv run numereng cloud ec2 provision \
   --run-id run-0001 \
-  --state-path .numereng/cloud/run-0001.json
+  --state-path "$STATE"
 
-uv run numereng cloud ec2 package build-upload --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 config upload --config configs/run.json --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 push --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 install --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
+uv run numereng cloud ec2 package build-upload --state-path "$STATE"
+uv run numereng cloud ec2 config upload --config configs/run.json --state-path "$STATE"
+uv run numereng cloud ec2 push --instance-id i-abc123 --state-path "$STATE"
+uv run numereng cloud ec2 install --instance-id i-abc123 --state-path "$STATE"
 
-uv run numereng cloud ec2 train start --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 train poll --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 pull --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
-uv run numereng cloud ec2 terminate --instance-id i-abc123 --state-path .numereng/cloud/run-0001.json
+uv run numereng cloud ec2 train start --instance-id i-abc123 --state-path "$STATE"
+uv run numereng cloud ec2 train poll --instance-id i-abc123 --state-path "$STATE"
+uv run numereng cloud ec2 pull --instance-id i-abc123 --state-path "$STATE"
+uv run numereng cloud ec2 terminate --instance-id i-abc123 --state-path "$STATE"
 ```
 
 Use `cloud ec2 logs`, `cloud ec2 status`, and `cloud ec2 s3 ls|cp|rm` for monitoring and recovery.
@@ -56,7 +60,8 @@ Current constraints:
 - managed backends are `sagemaker|batch`
 - `--spot` and `--on-demand` are mutually exclusive
 - `runtime_profile` controls packaging, not the training-config device
-- `cloud aws train extract` is the step that unpacks pulled archives into `.numereng/runs/*` and indexes the extracted runs
+- `cloud aws train pull` stages archives under `.numereng/cache/cloud/aws/runs/<run_id>/pull`
+- `cloud aws train extract` is the step that unpacks pulled archives into `.numereng/runs/*`, stamps durable execution provenance into `run.json`, and indexes the extracted runs
 
 ### CUDA LightGBM On SageMaker
 
@@ -91,6 +96,9 @@ Current constraints:
 
 ## State Path Rules
 
-- keep cloud state under `.numereng/cloud/*.json`
-- reuse the same `--state-path` across provision, submit, monitor, and pull steps
+- omit `--state-path` for normal usage when the command already has a stable run/job identity; numereng defaults transient state under `.numereng/cache/cloud/<provider>/...`
+- if you pass `--state-path`, reuse the same path across provision, submit, monitor, and pull steps
+- explicit state-path overrides must resolve under `<store_root>/cache/cloud/**/*.json`; legacy `<store_root>/cloud/*.json` paths remain accepted during migration
+- pulled archives under `cache/cloud` are staging, not durable run storage
+- materialized run provenance lives in `.numereng/runs/<run_id>/run.json -> execution`
 - prefer explicit `--run-id`, `--instance-id`, `--training-job-name`, or `--batch-job-id` when recovering from partial state

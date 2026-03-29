@@ -1,6 +1,6 @@
 """Public surface for agentic research supervisor services."""
 
-from numereng.features.agentic_research.contracts import (
+from numereng.features.agentic_research.utils.types import (
     CodexConfigPayload,
     CodexDecision,
     MutationChange,
@@ -11,18 +11,21 @@ from numereng.features.agentic_research.contracts import (
     ResearchLineageState,
     ResearchPathState,
     ResearchPhaseState,
+    ResearchProgramCatalogEntry,
+    ResearchProgramDetails,
     ResearchProgramState,
     ResearchRoundState,
     ResearchRunResult,
     ResearchStatusResult,
-    ResearchStrategyId,
 )
-from numereng.features.agentic_research.service import (
+from numereng.features.agentic_research.run import (
     AgenticResearchError,
     AgenticResearchNotInitializedError,
     AgenticResearchValidationError,
+    get_research_program,
     get_research_status,
     init_research,
+    list_research_programs,
     run_research,
 )
 
@@ -40,12 +43,15 @@ __all__ = [
     "ResearchLineageState",
     "ResearchPathState",
     "ResearchPhaseState",
+    "ResearchProgramCatalogEntry",
+    "ResearchProgramDetails",
     "ResearchProgramState",
     "ResearchRoundState",
     "ResearchRunResult",
-    "ResearchStrategyId",
     "ResearchStatusResult",
+    "get_research_program",
     "get_research_status",
     "init_research",
+    "list_research_programs",
     "run_research",
 ]

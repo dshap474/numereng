@@ -31,6 +31,7 @@ from numereng.features.cloud.modal.data_sync import MODAL_DATASETS_MOUNT_PATH, r
 from numereng.features.cloud.modal.modal_adapters import SdkModalTrainingAdapter
 from numereng.features.cloud.modal.runtime import build_runtime_payload_from_config
 from numereng.features.cloud.modal.state_store import CloudModalStateStore
+from numereng.features.store.layout import resolve_cloud_op_state_path, resolve_path, validate_cloud_state_path
 
 
 class CloudModalError(Exception):
@@ -38,6 +39,7 @@ class CloudModalError(Exception):
 
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{20,}")
+_CLOUD_PROVIDER = "modal"
 
 
 class CloudModalService:
@@ -52,20 +54,54 @@ class CloudModalService:
         self._adapter = adapter or SdkModalTrainingAdapter()
         self._state_store = state_store or CloudModalStateStore()
 
-    def _validated_state_path(self, request: CloudModalRequestBase) -> Path | None:
+    def _resolved_state_path(
+        self,
+        request: CloudModalRequestBase,
+        *,
+        state: CloudModalState | None = None,
+    ) -> Path | None:
         state_path = request.state_file()
-        if state_path is None:
+        if state_path is not None:
+            try:
+                return validate_cloud_state_path(
+                    target_path=state_path,
+                    store_root=request.store_root,
+                    error_code="modal_state_path_noncanonical",
+                    allow_legacy_cloud=True,
+                )
+            except ValueError as exc:
+                resolved = resolve_path(state_path)
+                if resolved.suffix.lower() != ".json":
+                    raise CloudModalError(f"modal_state_path_extension_invalid:{resolved}") from exc
+                raise CloudModalError(str(exc)) from exc
+        op_id = self._default_state_op_id(request, state=state)
+        if op_id is None:
             return None
-        resolved = state_path.expanduser().resolve()
-        if resolved.suffix.lower() != ".json":
-            raise CloudModalError(f"modal_state_path_extension_invalid:{resolved}")
-        if not _is_canonical_cloud_state_path(resolved):
-            raise CloudModalError(f"modal_state_path_noncanonical:{resolved}")
-        return resolved
+        return resolve_cloud_op_state_path(store_root=request.store_root, provider=_CLOUD_PROVIDER, op_id=op_id)
+
+    def _default_state_op_id(
+        self,
+        request: CloudModalRequestBase,
+        *,
+        state: CloudModalState | None = None,
+    ) -> str | None:
+        call_id = getattr(request, "call_id", None) or (state.call_id if state is not None else None)
+        if isinstance(call_id, str) and call_id.strip():
+            return call_id
+        if hasattr(request, "function_name") and hasattr(request, "app_name"):
+            app_name = getattr(request, "app_name", None)
+            function_name = getattr(request, "function_name", None)
+            if isinstance(app_name, str) and app_name.strip() and isinstance(function_name, str) and function_name.strip():
+                return f"deploy-{app_name}-{function_name}"
+        if hasattr(request, "volume_name"):
+            volume_name = getattr(request, "volume_name", None)
+            if isinstance(volume_name, str) and volume_name.strip():
+                return f"data-sync-{volume_name}"
+        return None
 
     def _load_state(self, request: CloudModalRequestBase) -> CloudModalState:
         try:
-            state_path = self._validated_state_path(request)
+            state_path = self._resolved_state_path(request)
             if state_path is None:
                 return CloudModalState()
             loaded = self._state_store.load(state_path)
@@ -78,7 +114,7 @@ class CloudModalService:
     def _persist_state(self, request: CloudModalRequestBase, state: CloudModalState) -> CloudModalState:
         touched = state.touched()
         try:
-            state_path = self._validated_state_path(request)
+            state_path = self._resolved_state_path(request, state=touched)
             if state_path is not None:
                 self._state_store.save(state_path, touched)
             return touched

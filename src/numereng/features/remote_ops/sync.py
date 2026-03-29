@@ -18,7 +18,7 @@ from numereng.platform.remotes.ssh import build_remote_python_command, build_ssh
 
 _SYNC_MANIFEST_NAME = "__numereng_sync_manifest__.json"
 _REMOTE_SYNC_DIR = ("remote_ops", "sync")
-_REMOTE_CONFIG_DIR = (".tmp", "numereng-remote-configs")
+_REMOTE_CONFIG_DIR = (".numereng", "tmp", "remote-configs")
 _NO_MARKER_SENTINEL = "__NUMERENG_NO_MARKER__"
 
 

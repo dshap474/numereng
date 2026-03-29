@@ -1,0 +1,46 @@
+viz
+
+purpose
+- read-only monitoring surface for numereng
+- local aggregator over one local store plus optional SSH remote stores
+
+authoritative packages
+- backend: `viz/api/numereng_viz/*`
+- launcher shim: `viz/api.py`
+- frontend: `viz/web/*`
+
+core contract
+- experiments mission control uses only `/api/experiments/overview`
+- overview is a merged payload from:
+  - local `build_monitor_snapshot(store_root=...)`
+  - zero or more SSH `numereng monitor snapshot --json` calls
+
+federation rules
+- stores stay per-machine; never sync full `.numereng`
+- remote snapshot fetch success sets source state; it does not imply live runs exist
+- `experiment_id` is not globally unique across sources
+- UI list keys must include `source_kind + source_id + experiment_id`
+
+critical frontend rules
+- initial experiments page load should fetch real overview, not fallback-only parent data
+- overview polling must be single-flight; do not overlap requests
+- `generated_at` from merged overview is the page pulse clock
+- if polling fails, hold the last good snapshot instead of blanking
+
+critical backend rules
+- merged overview must include `generated_at`
+- remote snapshots may be cached for one poll cycle only
+- sort/merge logic must tolerate duplicate experiment ids from different sources
+
+debug workflow
+- compare page against `GET /api/experiments/overview`
+- if browser shows stale pulse, suspect client tab/session first
+- verify remote directly with `ssh <target> ... numereng monitor snapshot --json`
+- for short runs, confirm started/finished timestamps from remote `runtime.json`
+
+files to inspect first
+- `viz/api/numereng_viz/monitor_snapshot.py`
+- `viz/api/numereng_viz/store_adapter.py`
+- `viz/web/src/routes/experiments/+page.ts`
+- `viz/web/src/routes/experiments/+page.svelte`
+- `viz/web/src/lib/api/client.ts`

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import subprocess
 from pathlib import Path
 
@@ -191,7 +193,7 @@ def test_remote_run_train_pushes_ad_hoc_config_when_outside_experiment(
         lambda **kwargs: remote_service.RemoteConfigPushResult(
             target_id="pc",
             local_config_path=config_path,
-            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.tmp\numereng-remote-configs\adhoc.json",
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.numereng\tmp\remote-configs\adhoc.json",
             synced_at="2026-03-27T00:00:00+00:00",
         ),
     )
@@ -211,6 +213,93 @@ def test_remote_run_train_pushes_ad_hoc_config_when_outside_experiment(
     assert result.repo_synced is False
     assert result.experiment_synced is False
     assert result.remote_config_path.endswith(r"adhoc.json")
+
+
+def test_remote_run_train_preserves_windows_runner_executable_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "adhoc.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+    target = _target().model_copy(
+        update={"runner_cmd": r"C:\Users\dansh\remote-access\numereng\.venv\Scripts\numereng.exe"}
+    )
+    captured: dict[str, object] = {}
+
+    def fake_run_remote_python(*args: object, **kwargs: object) -> dict[str, object]:
+        _ = args
+        raw_args = kwargs["args"]
+        assert isinstance(raw_args, list)
+        captured["command"] = json.loads(base64.b64decode(raw_args[0]).decode("utf-8"))
+        return {"ok": True, "pid": 4321, "launched_at": "2026-03-28T00:00:00+00:00"}
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: target)
+    monkeypatch.setattr(
+        remote_service,
+        "push_remote_config",
+        lambda **kwargs: remote_service.RemoteConfigPushResult(
+            target_id="pc",
+            local_config_path=config_path,
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.numereng\tmp\remote-configs\adhoc.json",
+            synced_at="2026-03-27T00:00:00+00:00",
+        ),
+    )
+    monkeypatch.setattr(remote_service, "_run_remote_python", fake_run_remote_python)
+
+    remote_service.remote_run_train(
+        target_id="pc",
+        config_path=config_path,
+        sync_repo="never",
+        store_root=tmp_path / ".numereng",
+    )
+
+    command = captured["command"]
+    assert isinstance(command, list)
+    assert command[0] == r"C:\Users\dansh\remote-access\numereng\.venv\Scripts\numereng.exe"
+    assert command[1:4] == ["run", "train", "--config"]
+
+
+def test_remote_run_train_raises_when_launcher_reports_startup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "adhoc.json"
+    config_path.write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "push_remote_config",
+        lambda **kwargs: remote_service.RemoteConfigPushResult(
+            target_id="pc",
+            local_config_path=config_path,
+            remote_config_path=r"C:\Users\dansh\remote-access\numereng\.numereng\tmp\remote-configs\adhoc.json",
+            synced_at="2026-03-27T00:00:00+00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "ok": False,
+            "error": "remote_train_launch_child_exited_early",
+            "exit_code": 1,
+        },
+    )
+
+    with pytest.raises(remote_service.RemoteExecutionError, match="remote_train_launch_child_exited_early:exit_code=1"):
+        remote_service.remote_run_train(
+            target_id="pc",
+            config_path=config_path,
+            sync_repo="never",
+            store_root=tmp_path / ".numereng",
+        )
+
+
+def test_launch_python_script_breaks_away_from_windows_job_object() -> None:
+    script = remote_service._launch_python_script()
+
+    assert "CREATE_BREAKAWAY_FROM_JOB" in script
 
 
 def test_bootstrap_viz_remotes_persists_ready_and_degraded_targets(
