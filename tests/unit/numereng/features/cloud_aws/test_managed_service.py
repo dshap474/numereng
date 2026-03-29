@@ -38,6 +38,7 @@ class _FakeEcr(EcrAdapter):
     def __init__(self) -> None:
         self.repository: str | None = None
         self.image_tag: str | None = None
+        self.digests_by_tag: dict[tuple[str, str], str | None] = {}
 
     def ensure_repository(self, repository_name: str) -> str:
         self.repository = repository_name
@@ -55,7 +56,7 @@ class _FakeEcr(EcrAdapter):
     def get_image_digest(self, repository_name: str, image_tag: str) -> str | None:
         self.repository = repository_name
         self.image_tag = image_tag
-        return "sha256:abc"
+        return self.digests_by_tag.get((repository_name, image_tag), "sha256:abc")
 
 
 class _FakeS3(S3Adapter):
@@ -241,8 +242,31 @@ def test_image_build_push_happy_path(tmp_path: Path) -> None:
     assert response.action == "cloud.aws.image.build-push"
     assert response.state is not None
     assert response.state.image_uri is not None
+    assert response.state.image_digest == "sha256:abc"
     assert docker.built
     assert docker.pushed
+
+
+def test_image_build_push_defaults_to_catalog_alias_tag(tmp_path: Path) -> None:
+    service, ecr, _s3, _sm, _batch, _logs, docker = _build_service()
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / "Dockerfile.sagemaker").write_text("FROM scratch\n", encoding="utf-8")
+
+    response = service.image_build_push(
+        AwsImageBuildPushRequest(
+            run_id="run-standard",
+            context_dir=str(tmp_path),
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    assert response.state is not None
+    assert response.state.repository == "numereng-training"
+    assert response.state.image_tag == "sagemaker-standard-current"
+    assert response.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    assert ecr.image_tag == "sagemaker-standard-current"
+    assert docker.pushed[-1] == response.state.image_uri
 
 
 def test_image_build_push_cuda_profile_uses_cuda_dockerfile(tmp_path: Path) -> None:
@@ -269,7 +293,7 @@ def test_image_build_push_cuda_profile_uses_cuda_dockerfile(tmp_path: Path) -> N
 
 
 def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
-    service, _ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
+    service, ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
     config_path = tmp_path / "train.json"
     config_path.write_text(
         (
@@ -284,7 +308,6 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
             run_id="run-1",
             backend="sagemaker",
             config_path=str(config_path),
-            image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
             role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
             state_path=str(_state_path(tmp_path)),
             store_root=str(tmp_path / ".numereng"),
@@ -293,7 +316,10 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     assert submit.action == "cloud.aws.train.submit"
     assert submit.state is not None
     assert submit.state.training_job_name is not None
+    assert submit.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    assert submit.state.image_digest == "sha256:abc"
     assert sagemaker.last_spec is not None
+    assert ecr.image_tag == "sagemaker-standard-current"
 
     status = service.train_status(
         AwsTrainStatusRequest(
@@ -343,6 +369,63 @@ def test_train_submit_trims_execution_env_payload_for_sagemaker(tmp_path: Path) 
     assert len(sagemaker.last_spec.environment[RUN_EXECUTION_ENV_VAR]) < 512
 
 
+def test_train_submit_sagemaker_explicit_image_overrides_catalog(tmp_path: Path) -> None:
+    service, ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    submit = service.train_submit(
+        AwsTrainSubmitRequest(
+            run_id="run-explicit",
+            backend="sagemaker",
+            config_path=str(config_path),
+            image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:custom-tag",
+            role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+            state_path=str(_state_path(tmp_path)),
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    assert submit.state is not None
+    assert submit.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:custom-tag"
+    assert submit.state.image_digest is None
+    assert sagemaker.last_spec is not None
+    assert sagemaker.last_spec.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:custom-tag"
+    assert ecr.image_tag is None
+
+
+def test_train_submit_sagemaker_missing_catalog_image_fails_pre_submit(tmp_path: Path) -> None:
+    fake_ecr = _FakeEcr()
+    fake_ecr.digests_by_tag[("numereng-training", "sagemaker-standard-current")] = None
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service(ecr=fake_ecr)
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CloudAwsError, match="aws_sagemaker_default_image_missing:"):
+        service.train_submit(
+            AwsTrainSubmitRequest(
+                run_id="run-missing",
+                backend="sagemaker",
+                config_path=str(config_path),
+                role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+                state_path=str(_state_path(tmp_path)),
+                store_root=str(tmp_path / ".numereng"),
+            )
+        )
+
+
 def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_context(tmp_path: Path) -> None:
     service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
     state_path = _state_path(tmp_path)
@@ -362,7 +445,6 @@ def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_conte
             run_id="run-1",
             backend="sagemaker",
             config_path=str(config_path),
-            image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
             role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
             state_path=str(state_path),
             store_root=str(tmp_path / ".numereng"),
@@ -393,6 +475,7 @@ def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_conte
     assert metadata["config_path"] == str(config_path)
     assert metadata["config_id"] == str(config_path)
     assert metadata["config_label"] == "train.json"
+    assert metadata["image_digest"] == "sha256:abc"
     assert metadata["state_path"] == str(state_path.resolve())
     assert metadata["secondary_status"] == "Completed"
     assert metadata["last_progress_percent"] == "100.0"
@@ -421,6 +504,37 @@ def test_train_submit_cuda_requires_cuda_runtime_profile(tmp_path: Path) -> None
                 store_root=str(tmp_path / ".numereng"),
             )
         )
+
+
+def test_train_submit_cuda_uses_catalog_alias_when_image_uri_omitted(tmp_path: Path) -> None:
+    service, ecr, _s3, sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "device": "cuda", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    submit = service.train_submit(
+        AwsTrainSubmitRequest(
+            run_id="run-cuda",
+            backend="sagemaker",
+            config_path=str(config_path),
+            runtime_profile="lgbm-cuda",
+            role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+            instance_type="ml.g5.2xlarge",
+            store_root=str(tmp_path / ".numereng"),
+        )
+    )
+
+    assert submit.state is not None
+    assert submit.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-lgbm-cuda-current"
+    assert submit.state.image_digest == "sha256:abc"
+    assert sagemaker.last_spec is not None
+    assert sagemaker.last_spec.image_uri == submit.state.image_uri
+    assert ecr.image_tag == "sagemaker-lgbm-cuda-current"
 
 
 def test_train_submit_cuda_rejects_cpu_instance_type(tmp_path: Path) -> None:
@@ -678,6 +792,128 @@ def test_train_extract_rejects_noncanonical_store_output_dir(tmp_path: Path) -> 
                 store_root=str(store_root),
             )
         )
+
+
+def test_train_extract_refreshes_execution_for_existing_same_hash_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, _ecr, s3, _sm, _batch, _logs, _docker = _build_service()
+    store_root = tmp_path / ".numereng"
+    run_id = "inner-run-1"
+    managed_run_id = "managed-run-1"
+    s3.keys = [f"runs/{managed_run_id}/managed-output/job-1/output/output.tar.gz"]
+
+    existing_run_dir = store_root / "runs" / run_id
+    existing_run_dir.mkdir(parents=True, exist_ok=True)
+    existing_manifest = {
+        "run_id": run_id,
+        "run_hash": "run-hash-1",
+        "status": "FINISHED",
+        "created_at": "2026-01-01T00:00:00Z",
+        "config": {"path": "cfg", "hash": "cfg-hash"},
+        "data": {"version": "v5.2", "feature_set": "small", "target_col": "target"},
+        "model": {"type": "LGBMRegressor"},
+        "training": {"engine": "custom"},
+        "artifacts": {"predictions": "artifacts/predictions/preds.parquet"},
+        "execution": {
+            "kind": "cloud",
+            "provider": "aws",
+            "backend": "sagemaker",
+            "provider_job_id": "old-job",
+            "image_uri": "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:old-tag",
+            "output_uri": "s3://numereng-artifacts/runs/old-managed-output/",
+            "metadata": {"image_digest": "sha256:old"},
+        },
+    }
+    (existing_run_dir / "run.json").write_text(json.dumps(existing_manifest), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text("{}", encoding="utf-8")
+
+    def _fake_download_file(bucket: str, key: str, local_path: Path) -> Path:
+        _ = (bucket, key)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(local_path, mode="w:gz") as archive:
+            members: list[tuple[str, bytes]] = [
+                ("runs/inner-run-1/run.json", json.dumps(existing_manifest).encode("utf-8")),
+                ("runs/inner-run-1/results.json", b"{}"),
+            ]
+            for name, payload in members:
+                info = tarfile.TarInfo(name=name)
+                info.size = len(payload)
+                archive.addfile(info, io.BytesIO(payload))
+        return local_path
+
+    monkeypatch.setattr(s3, "download_file", _fake_download_file)
+
+    indexed_run_ids: list[str] = []
+
+    def _fake_index_run(*, store_root: str, run_id: str) -> None:
+        _ = store_root
+        indexed_run_ids.append(run_id)
+
+    monkeypatch.setattr("numereng.features.cloud.aws.managed_service.index_run", _fake_index_run)
+
+    state_path = store_root / "cache" / "cloud" / "aws" / "runs" / managed_run_id / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": managed_run_id,
+                "backend": "sagemaker",
+                "region": "us-east-2",
+                "bucket": "numereng-artifacts",
+                "image_uri": "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current",
+                "image_digest": "sha256:new",
+                "runtime_profile": "standard",
+                "training_job_name": "job-1",
+                "status": "artifacts_pulled",
+                "artifacts": {
+                    "config_s3_uri": f"s3://numereng-artifacts/runs/{managed_run_id}/config/config.json",
+                    "output_s3_uri": f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/",
+                },
+                "metadata": {
+                    "config_label": "config.json",
+                    "submitted_at": "2026-03-29T20:00:00Z",
+                    "pulled_at": "2026-03-29T20:05:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service.train_pull(
+        AwsTrainPullRequest(
+            run_id=managed_run_id,
+            output_s3_uri=f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/",
+            output_dir=str(tmp_path / "pull"),
+            state_path=str(state_path),
+            store_root=str(store_root),
+        )
+    )
+
+    extracted = service.train_extract(
+        AwsTrainExtractRequest(
+            run_id=managed_run_id,
+            output_dir=str(tmp_path / "pull"),
+            state_path=str(state_path),
+            store_root=str(store_root),
+        )
+    )
+
+    assert extracted.result["extracted_run_ids"] == []
+    assert extracted.result["provenance_refreshed_run_ids"] == [run_id]
+    assert extracted.result["indexed_run_ids"] == [run_id]
+    assert indexed_run_ids == [run_id]
+    assert extracted.result["archive_extract_warnings"] == [f"run_dir_exists_same_hash_skipped:{run_id}"]
+
+    refreshed_manifest = json.loads((existing_run_dir / "run.json").read_text(encoding="utf-8"))
+    execution = refreshed_manifest["execution"]
+    assert execution["provider_job_id"] == "job-1"
+    assert execution["image_uri"].endswith(":sagemaker-standard-current")
+    assert execution["output_uri"] == f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/"
+    assert isinstance(execution["pulled_at"], str)
+    assert execution["pulled_at"].endswith("Z")
+    assert execution["metadata"]["image_digest"] == "sha256:new"
 
 
 def test_train_cancel_batch_running_uses_terminate(tmp_path: Path) -> None:

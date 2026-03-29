@@ -114,6 +114,13 @@ Notes:
 - `numereng cloud aws train pull [--run-id <id>] [--output-s3-uri <s3://...>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>]`
 - `numereng cloud aws train extract [--run-id <id>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>]`
 
+Notes:
+
+- `cloud aws train submit --backend sagemaker` auto-resolves a checked-in default image when `--image-uri` is omitted
+- current SageMaker default aliases are `numereng-training:sagemaker-standard-current` and `numereng-training:sagemaker-lgbm-cuda-current`
+- `cloud aws image build-push` refreshes that profile alias when `--image-tag` is omitted
+- Batch still requires an explicit `--image-uri`
+
 ### `cloud modal`
 
 - `numereng cloud modal deploy --ecr-image-uri <uri:tag> [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--aws-profile <name>] [--timeout-seconds <n>] [--gpu <value>] [--cpu <n>] [--memory-mb <n>] [--data-volume-name <name>] [--metadata <k=v,...>] [--state-path <path>]`

@@ -60,8 +60,20 @@ Current constraints:
 - managed backends are `sagemaker|batch`
 - `--spot` and `--on-demand` are mutually exclusive
 - `runtime_profile` controls packaging, not the training-config device
+- SageMaker resolves a checked-in default ECR image when `--image-uri` is omitted
+- default SageMaker aliases are `numereng-training:sagemaker-standard-current` and `numereng-training:sagemaker-lgbm-cuda-current`
 - `cloud aws train pull` stages archives under `.numereng/cache/cloud/aws/runs/<run_id>/pull`
 - `cloud aws train extract` is the step that unpacks pulled archives into `.numereng/runs/*`, stamps durable execution provenance into `run.json`, and indexes the extracted runs
+- if extracted artifacts match an already-materialized run hash, `extract` skips moving files but still refreshes the existing run's durable cloud execution provenance from managed state
+
+Refresh the default SageMaker images with:
+
+```bash
+uv run numereng cloud aws image build-push --context-dir . --runtime-profile standard
+uv run numereng cloud aws image build-push --context-dir . --runtime-profile lgbm-cuda
+```
+
+If you need a one-off image instead of the stable profile alias, pass `--image-tag <tag>` or `--image-uri <uri>` explicitly.
 
 ### CUDA LightGBM On SageMaker
 

@@ -39,7 +39,7 @@ config_policy:
 ---
 You are evolving one Numereng training config for the agentic research program `numerai-experiment-loop`.
 
-Your job is only to decide the next targeted config mutation. Python will clone the selected parent config, validate it, name the child file, and run training.
+Your job is only to decide the next targeted config mutation. Python will clone the selected parent config, validate it, name the child file, run training, and score the round.
 
 Optimization policy:
 - maximize `bmc_last_200_eras_mean`
@@ -69,6 +69,7 @@ Rules:
 - do not invent filenames
 - do not emit shell commands
 - do not restate the full parent config outside the required output
+- reason only from the supplied mutable config snapshot and effective scoring stage
 
 Context:
 $CONTEXT_JSON

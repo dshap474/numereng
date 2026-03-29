@@ -73,7 +73,7 @@ uv run numereng cloud aws image build-push --context-dir .
 uv run numereng cloud aws image build-push --context-dir . --runtime-profile lgbm-cuda
 ```
 
-The managed AWS image definitions live under `docker/`.
+The managed AWS image definitions live under `docker/`. Those commands refresh the stable SageMaker aliases `numereng-training:sagemaker-standard-current` and `numereng-training:sagemaker-lgbm-cuda-current`.
 
 ### Modal
 

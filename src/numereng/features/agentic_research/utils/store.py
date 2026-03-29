@@ -69,19 +69,19 @@ def session_program_path(agentic_research_dir: Path) -> Path:
     return agentic_research_dir / _SESSION_PROGRAM_FILENAME
 
 
-def llm_trace_path(agentic_research_dir: Path) -> Path:
-    """Return the canonical append-only planner trace log path."""
-    return agentic_research_dir / _LLM_TRACE_FILENAME
-
-
-def llm_trace_markdown_path(agentic_research_dir: Path) -> Path:
-    """Return the canonical human-readable planner trace markdown path."""
-    return agentic_research_dir / _LLM_TRACE_MARKDOWN_FILENAME
-
-
 def round_dir(agentic_research_dir: Path, round_label: str) -> Path:
     """Return one round artifact directory path."""
     return agentic_research_dir / "rounds" / round_label
+
+
+def round_llm_trace_path(round_artifact_dir: Path) -> Path:
+    """Return the canonical per-round planner trace log path."""
+    return round_artifact_dir / _LLM_TRACE_FILENAME
+
+
+def round_llm_trace_markdown_path(round_artifact_dir: Path) -> Path:
+    """Return the canonical per-round human-readable planner trace path."""
+    return round_artifact_dir / _LLM_TRACE_MARKDOWN_FILENAME
 
 
 def round_record_path(round_artifact_dir: Path) -> Path:
@@ -275,6 +275,7 @@ def _round_from_obj(payload: object) -> ResearchRoundState | None:
         decision_path_slug=_as_str(payload.get("decision_path_slug")),
         parent_run_id=_as_str(payload.get("parent_run_id")),
         parent_config_filename=_as_str(payload.get("parent_config_filename")),
+        parent_selection_reason=_as_str(payload.get("parent_selection_reason")),
         change_set=_as_dict_list(payload.get("change_set")),
         llm_rationale=_as_str(payload.get("llm_rationale")),
         phase_id=_as_str(payload.get("phase_id")),
@@ -608,8 +609,6 @@ _LEGACY_ROUND_ARTIFACT_FILENAMES = (
     "planned_configs.json",
     "report.json",
     "round_summary.json",
-    "llm_trace.jsonl",
-    "llm_trace.md",
     "codex_failure.txt",
     "codex_validation_error.txt",
 )
@@ -679,13 +678,17 @@ def planner_trace_payload(
         "raw_response_text": _trace_response_text(executions[-1]) if executions else "",
         "parsed_response": parsed_response,
         "decision": parsed_response,
+        "parent_selection_reason": round_state.parent_selection_reason,
         "error": error,
     }
 
 
-def append_planner_trace(*, auto_dir: Path, payload: dict[str, object]) -> None:
-    append_jsonl_artifact(llm_trace_path(auto_dir), payload)
-    append_text_artifact(llm_trace_markdown_path(auto_dir), _render_planner_trace_markdown(payload))
+def append_planner_trace(*, round_artifact_dir: Path, payload: dict[str, object]) -> None:
+    append_jsonl_artifact(round_llm_trace_path(round_artifact_dir), payload)
+    append_text_artifact(
+        round_llm_trace_markdown_path(round_artifact_dir),
+        _render_planner_trace_markdown(payload),
+    )
 
 
 def _render_planner_trace_markdown(payload: dict[str, object]) -> str:
@@ -767,6 +770,8 @@ def save_round_bundle(
     payload = {
         "round_number": round_state.round_number,
         "round_label": round_state.round_label,
+        "round_path": str(round_record_path(round_artifact_dir)),
+        "round_markdown_path": str(round_markdown_path(round_artifact_dir)),
         "experiment_id": round_state.experiment_id,
         "path_id": round_state.path_id,
         "status": round_state.status,
@@ -793,6 +798,7 @@ def save_round_bundle(
         "lineage": {
             "parent_run_id": round_state.parent_run_id,
             "parent_config_filename": round_state.parent_config_filename,
+            "parent_selection_reason": round_state.parent_selection_reason,
             "child_config_filenames": list(round_state.config_filenames),
             "change_set": list(round_state.change_set),
             "llm_rationale": round_state.llm_rationale,
@@ -801,7 +807,7 @@ def save_round_bundle(
             "run_ids": list(round_state.run_ids),
             "next_config_index": round_state.next_config_index,
         },
-        "planner": planner_payload,
+        "planner": _round_planner_payload(round_artifact_dir=round_artifact_dir, planner_payload=planner_payload),
         "results": results_payload,
     }
     save_round_artifact(round_record_path(round_artifact_dir), payload)
@@ -830,6 +836,9 @@ def render_round_markdown(payload: dict[str, object]) -> str:
     parent_config = lineage.get("parent_config_filename")
     if parent_config:
         lines.append(f"- Parent config: `{parent_config}`")
+    parent_selection_reason = lineage.get("parent_selection_reason")
+    if parent_selection_reason:
+        lines.append(f"- Parent selection: `{parent_selection_reason}`")
     parent_run_id = lineage.get("parent_run_id")
     if parent_run_id:
         lines.append(f"- Parent run: `{parent_run_id}`")
@@ -863,14 +872,62 @@ def render_round_markdown(payload: dict[str, object]) -> str:
     llm_rationale = lineage.get("llm_rationale")
     if isinstance(llm_rationale, str) and llm_rationale.strip():
         lines.extend(["", "## LLM Rationale", "", llm_rationale.strip()])
-    _append_code_block(lines, "## Sent To LLM", planner.get("prompt_text"))
-    _append_code_block(lines, "## Raw LLM Response", planner.get("raw_response_text"))
-    _append_json_block(lines, "## Parsed Final Response", planner.get("parsed_response"))
-    _append_json_block(lines, "## Usage", planner.get("usage"))
+    lines.extend(["", "## Trace", ""])
+    if planner.get("llm_trace_markdown_path"):
+        lines.append(f"- LLM trace: `{planner.get('llm_trace_markdown_path')}`")
+    if payload.get("round_path"):
+        lines.append(f"- Round record: `{payload.get('round_path')}`")
+    usage = planner.get("usage")
+    if isinstance(usage, dict):
+        final_attempt = usage.get("final_attempt")
+        if isinstance(final_attempt, dict):
+            lines.append(
+                "- Planner usage: "
+                f"`input={final_attempt.get('input_tokens')}, "
+                f"cached={final_attempt.get('cached_input_tokens')}, "
+                f"output={final_attempt.get('output_tokens')}, "
+                f"elapsed={final_attempt.get('elapsed_seconds')}`"
+            )
     planner_error = planner.get("error")
     if planner_error:
         lines.extend(["", "## Error", "", str(planner_error)])
     return "\n".join(lines) + "\n"
+
+
+def _round_planner_payload(
+    *,
+    round_artifact_dir: Path,
+    planner_payload: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(planner_payload, dict):
+        return planner_payload
+    usage = planner_payload.get("usage")
+    final_attempt = usage.get("final_attempt") if isinstance(usage, dict) else None
+    if isinstance(planner_payload.get("attempt_count"), int):
+        attempt_count = planner_payload["attempt_count"]
+    elif isinstance(usage, dict) and isinstance(usage.get("attempts"), list):
+        attempt_count = len(usage["attempts"])
+    elif isinstance(planner_payload.get("attempts"), list):
+        attempt_count = len(planner_payload["attempts"])
+    else:
+        attempt_count = 0
+    return {
+        "status": planner_payload.get("status"),
+        "planner_source": planner_payload.get("planner_source"),
+        "planner_model": planner_payload.get("planner_model"),
+        "program_id": planner_payload.get("program_id"),
+        "program_sha256": planner_payload.get("program_sha256"),
+        "session_program_path": planner_payload.get("session_program_path"),
+        "round_path": planner_payload.get("round_path"),
+        "round_markdown_path": planner_payload.get("round_markdown_path"),
+        "llm_trace_jsonl_path": str(round_llm_trace_path(round_artifact_dir)),
+        "llm_trace_markdown_path": str(round_llm_trace_markdown_path(round_artifact_dir)),
+        "attempt_count": attempt_count,
+        "thread_id": final_attempt.get("thread_id") if isinstance(final_attempt, dict) else None,
+        "usage": usage,
+        "parent_selection_reason": planner_payload.get("parent_selection_reason"),
+        "error": planner_payload.get("error"),
+    }
 
 
 def _cleanup_legacy_round_artifacts(round_artifact_dir: Path) -> None:
@@ -923,6 +980,7 @@ def _round_summary_view(payload: dict[str, object]) -> dict[str, object]:
         "decision_rationale": decision.get("decision_rationale"),
         "parent_run_id": lineage.get("parent_run_id"),
         "parent_config_filename": lineage.get("parent_config_filename"),
+        "parent_selection_reason": lineage.get("parent_selection_reason"),
         "change_set": lineage.get("change_set") if isinstance(lineage.get("change_set"), list) else [],
         "llm_rationale": lineage.get("llm_rationale"),
         "best_row": results.get("best_row") if isinstance(results.get("best_row"), dict) else None,

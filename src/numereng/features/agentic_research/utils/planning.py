@@ -291,7 +291,6 @@ def _stop_failed_planning_round(
     lineage: ResearchLineageState,
 ) -> tuple[ResearchProgramState, ResearchLineageState, str]:
     planner_payload = _persist_planner_trace(
-        auto_dir=auto_dir,
         round_state=round_state,
         program_state=program_state,
         round_artifact_dir=round_artifact_dir,
@@ -313,7 +312,6 @@ def _stop_failed_planning_round(
 
 def _persist_planner_trace(
     *,
-    auto_dir: Path,
     round_state: Any,
     program_state: ResearchProgramState,
     round_artifact_dir: Path,
@@ -333,7 +331,7 @@ def _persist_planner_trace(
         status=status,
         error=error,
     )
-    append_planner_trace(auto_dir=auto_dir, payload=payload)
+    append_planner_trace(round_artifact_dir=round_artifact_dir, payload=payload)
     return payload
 
 
@@ -528,7 +526,6 @@ def plan_structured_round(
             lineage=lineage,
         )
     planner_payload = _persist_planner_trace(
-        auto_dir=auto_dir,
         round_state=round_state,
         program_state=state,
         round_artifact_dir=round_artifact_dir,
@@ -626,6 +623,13 @@ def plan_mutation_round(
             error=str(exc),
             lineage=lineage,
         )
+    round_state = replace(
+        round_state,
+        parent_config_filename=parent.config_filename,
+        parent_run_id=parent.run_id,
+        parent_selection_reason=parent.selection_reason,
+        updated_at=utc_now_iso(),
+    )
     prompt, executions, rationale, candidate, error = _run_mutation_planner_attempts(
         root=root,
         state=state,
@@ -649,7 +653,6 @@ def plan_mutation_round(
             lineage=lineage,
         )
     planner_payload = _persist_planner_trace(
-        auto_dir=auto_dir,
         round_state=round_state,
         program_state=state,
         round_artifact_dir=round_artifact_dir,
@@ -682,8 +685,6 @@ def plan_mutation_round(
         experiment_question=_mutation_experiment_question(parent),
         winner_criteria=_mutation_winner_criteria(definition),
         decision_rationale=rationale,
-        parent_run_id=parent.run_id,
-        parent_config_filename=parent.config_filename,
         change_set=candidate.change_set,
         llm_rationale=rationale,
         updated_at=utc_now_iso(),

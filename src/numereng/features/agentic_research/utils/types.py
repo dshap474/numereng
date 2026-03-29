@@ -172,6 +172,7 @@ class ResearchRoundState:
     decision_path_slug: str | None = None
     parent_run_id: str | None = None
     parent_config_filename: str | None = None
+    parent_selection_reason: str | None = None
     change_set: list[dict[str, object]] = field(default_factory=list)
     llm_rationale: str | None = None
     phase_id: str | None = None
