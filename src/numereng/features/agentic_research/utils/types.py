@@ -10,10 +10,110 @@ ResearchProgramStatus = Literal["initialized", "running", "interrupted", "stoppe
 ResearchPathStatus = Literal["active", "pivoted", "stopped"]
 ResearchRoundStatus = Literal["planning", "planned", "running", "scored", "completed", "failed"]
 ResearchDecisionAction = Literal["continue", "scale", "pivot", "stop"]
-ResearchStrategyId = Literal["numerai-experiment-loop", "kaggle-gm-loop"]
+ResearchProgramSource = Literal["builtin", "user", "legacy_builtin"]
 ResearchPhaseStatus = Literal["active", "completed"]
 ResearchPhaseAction = Literal["stay", "advance", "complete"]
 ResearchPlannerContract = Literal["config_mutation", "structured_json"]
+ResearchScoringStage = Literal["post_training_core", "post_training_full"]
+
+
+@dataclass(frozen=True)
+class ResearchProgramMetricPolicy:
+    """Metric selection policy for one research program."""
+
+    primary: str
+    tie_break: str
+    sanity_checks: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResearchProgramRoundPolicy:
+    """Round-to-round plateau and scaling policy for one research program."""
+
+    plateau_non_improving_rounds: int
+    require_scale_confirmation: bool
+    scale_confirmation_rounds: int
+
+
+@dataclass(frozen=True)
+class ResearchProgramConfigPolicy:
+    """Config generation policy for one research program."""
+
+    allowed_paths: tuple[str, ...]
+    max_candidate_configs: int
+    min_candidate_configs: int | None = None
+    min_changes: int | None = None
+    max_changes: int | None = None
+
+
+@dataclass(frozen=True)
+class ResearchProgramPhase:
+    """One configured phase inside one research program."""
+
+    phase_id: str
+    title: str
+    summary: str
+    gate: str
+
+
+@dataclass(frozen=True)
+class ResearchProgramDefinition:
+    """One resolved research program definition."""
+
+    program_id: str
+    title: str
+    description: str
+    source: ResearchProgramSource
+    planner_contract: ResearchPlannerContract
+    scoring_stage: ResearchScoringStage
+    metric_policy: ResearchProgramMetricPolicy
+    round_policy: ResearchProgramRoundPolicy
+    improvement_threshold_default: float
+    config_policy: ResearchProgramConfigPolicy
+    prompt_template: str
+    phases: tuple[ResearchProgramPhase, ...] = ()
+    source_path: str | None = None
+
+
+def _default_program_definition() -> ResearchProgramDefinition:
+    return ResearchProgramDefinition(
+        program_id="",
+        title="",
+        description="",
+        source="builtin",
+        planner_contract="config_mutation",
+        scoring_stage="post_training_full",
+        metric_policy=ResearchProgramMetricPolicy(primary="bmc_last_200_eras.mean", tie_break="bmc.mean"),
+        round_policy=ResearchProgramRoundPolicy(
+            plateau_non_improving_rounds=2,
+            require_scale_confirmation=True,
+            scale_confirmation_rounds=1,
+        ),
+        improvement_threshold_default=0.0002,
+        config_policy=ResearchProgramConfigPolicy(allowed_paths=(), max_candidate_configs=1),
+        prompt_template="",
+    )
+
+
+@dataclass(frozen=True)
+class ResearchProgramCatalogEntry:
+    """One listable program entry from the merged catalog."""
+
+    program_id: str
+    title: str
+    description: str
+    source: ResearchProgramSource
+    planner_contract: ResearchPlannerContract
+    phase_aware: bool
+    source_path: str | None = None
+
+
+@dataclass(frozen=True)
+class ResearchProgramDetails:
+    """Detailed program payload exposed via API/CLI."""
+
+    definition: ResearchProgramDefinition
+    raw_markdown: str
 
 
 @dataclass(frozen=True)
@@ -49,6 +149,7 @@ class ResearchPathState:
     best_run_id: str | None
     created_at: str
     updated_at: str
+    scale_confirmation_rounds_completed: int = 0
 
 
 @dataclass(frozen=True)
@@ -82,7 +183,7 @@ class ResearchRoundState:
 
 @dataclass(frozen=True)
 class ResearchPhaseState:
-    """Current strategy phase tracked for phase-aware strategies."""
+    """Current program phase tracked for phase-aware programs."""
 
     phase_id: str
     phase_title: str
@@ -99,8 +200,6 @@ class ResearchProgramState:
 
     root_experiment_id: str
     program_experiment_id: str
-    strategy: ResearchStrategyId
-    strategy_description: str
     status: ResearchProgramStatus
     active_path_id: str
     active_experiment_id: str
@@ -108,7 +207,7 @@ class ResearchProgramState:
     total_rounds_completed: int
     total_paths_created: int
     improvement_threshold: float
-    scoring_stage: Literal["post_training_core", "post_training_full"]
+    scoring_stage: ResearchScoringStage
     codex_command: list[str]
     last_checkpoint: str
     stop_reason: str | None
@@ -118,6 +217,11 @@ class ResearchProgramState:
     paths: list[ResearchPathState]
     created_at: str
     updated_at: str
+    program_id: str = ""
+    program_title: str = ""
+    program_source: ResearchProgramSource = "builtin"
+    program_sha256: str = ""
+    program_snapshot: ResearchProgramDefinition = field(default_factory=_default_program_definition)
 
 
 @dataclass(frozen=True)
@@ -145,7 +249,7 @@ class ResearchLineageState:
 
 @dataclass(frozen=True)
 class CodexConfigPayload:
-    """One planned config emitted by headless Codex."""
+    """One planned config emitted by the planner."""
 
     filename: str
     rationale: str
@@ -162,7 +266,7 @@ class MutationChange:
 
 @dataclass(frozen=True)
 class MutationProposal:
-    """Minimal config mutation response returned by the numerai planner."""
+    """Minimal config mutation response returned by one mutation program."""
 
     rationale: str
     changes: tuple[MutationChange, ...]
@@ -170,7 +274,7 @@ class MutationProposal:
 
 @dataclass(frozen=True)
 class CodexDecision:
-    """Structured planning response returned by headless Codex."""
+    """Structured planning response returned by the planner."""
 
     experiment_question: str
     winner_criteria: str
@@ -185,7 +289,7 @@ class CodexDecision:
 
 @dataclass(frozen=True)
 class CodexPlannerAttempt:
-    """Telemetry captured for one headless Codex planner attempt."""
+    """Telemetry captured for one planner attempt."""
 
     attempt_number: int
     elapsed_seconds: float
@@ -237,8 +341,6 @@ class ResearchInitResult:
     """Result payload for initializing one supervisor program."""
 
     root_experiment_id: str
-    strategy: ResearchStrategyId
-    strategy_description: str
     status: ResearchProgramStatus
     active_experiment_id: str
     active_path_id: str
@@ -247,6 +349,9 @@ class ResearchInitResult:
     agentic_research_dir: Path
     program_path: Path
     lineage_path: Path
+    session_program_path: Path = Path(".")
+    program_id: str = ""
+    program_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -254,8 +359,6 @@ class ResearchStatusResult:
     """Public status payload for the supervisor."""
 
     root_experiment_id: str
-    strategy: ResearchStrategyId
-    strategy_description: str
     status: ResearchProgramStatus
     active_experiment_id: str
     active_path_id: str
@@ -270,6 +373,9 @@ class ResearchStatusResult:
     current_phase: ResearchPhaseState | None
     program_path: Path
     lineage_path: Path
+    session_program_path: Path = Path(".")
+    program_id: str = ""
+    program_title: str = ""
 
 
 @dataclass(frozen=True)
@@ -277,8 +383,6 @@ class ResearchRunResult:
     """Result payload after one foreground research loop exits."""
 
     root_experiment_id: str
-    strategy: ResearchStrategyId
-    strategy_description: str
     status: ResearchProgramStatus
     active_experiment_id: str
     active_path_id: str
@@ -289,3 +393,5 @@ class ResearchRunResult:
     stop_reason: str | None
     current_phase: ResearchPhaseState | None
     interrupted: bool
+    program_id: str = ""
+    program_title: str = ""

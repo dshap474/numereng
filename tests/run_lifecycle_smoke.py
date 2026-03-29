@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -26,8 +27,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-import numereng.api as api
 
 POLL_INTERVAL_SECONDS = 1.0
 
@@ -101,7 +100,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--generated-root",
-        default=str(repo_root / ".tmp" / "lifecycle_smoke"),
+        default=str(repo_root / ".numereng" / "tmp" / "lifecycle_smoke"),
         help="Directory for generated per-run configs.",
     )
     parser.add_argument(
@@ -142,67 +141,72 @@ def main() -> int:
     print(f"[smoke] experiment_id={args.experiment_id}")
     print(f"[smoke] generated_dir={generated_dir}")
 
-    run_cli(
-        ["uv", "run", "numereng", "store", "init", "--store-root", str(store_root)],
-        cwd=repo_root,
-        expect_returncodes={0},
-        capture=True,
-    )
-
-    results: list[CaseResult] = []
-    for index, case_name in enumerate(selected_cases, start=1):
-        spec = CASE_SPECS[case_name]
-        generated_config = build_generated_config(
-            template_root=template_root,
-            template_name=spec.template_name,
-            generated_dir=generated_dir,
-            session_token=session_token,
-            seed=1000 + index,
-        )
-        print(f"[smoke] case={spec.name} config={generated_config}")
-        if spec.name == "complete":
-            result = run_complete_case(
-                repo_root=repo_root,
-                store_root=store_root,
-                experiment_id=args.experiment_id,
-                config_path=generated_config,
-                spec=spec,
-                timeout_seconds=args.case_timeout_seconds,
-                poll_seconds=args.poll_seconds,
-            )
-        elif spec.name == "cancel":
-            result = run_cancel_case(
-                repo_root=repo_root,
-                store_root=store_root,
-                experiment_id=args.experiment_id,
-                config_path=generated_config,
-                spec=spec,
-                timeout_seconds=args.case_timeout_seconds,
-                poll_seconds=args.poll_seconds,
-            )
-        else:
-            result = run_stale_case(
-                repo_root=repo_root,
-                store_root=store_root,
-                experiment_id=args.experiment_id,
-                config_path=generated_config,
-                spec=spec,
-                timeout_seconds=args.case_timeout_seconds,
-                poll_seconds=args.poll_seconds,
-            )
-        results.append(result)
-        print(
-            f"[smoke] case={result.name} run_id={result.run_id} status={result.status} "
-            f"manifest_status={result.manifest_status} terminal_reason={result.terminal_reason}"
+    cleanup_success = False
+    try:
+        run_cli(
+            ["uv", "run", "numereng", "store", "init", "--store-root", str(store_root)],
+            cwd=repo_root,
+            expect_returncodes={0},
+            capture=True,
         )
 
-    print("[smoke] summary")
-    for result in results:
-        print(
-            f"  - {result.name}: run_id={result.run_id} status={result.status} "
-            f"manifest={result.manifest_status} runtime={result.runtime_path}"
-        )
-    return 0
+        results: list[CaseResult] = []
+        for index, case_name in enumerate(selected_cases, start=1):
+            spec = CASE_SPECS[case_name]
+            generated_config = build_generated_config(
+                template_root=template_root,
+                template_name=spec.template_name,
+                generated_dir=generated_dir,
+                session_token=session_token,
+                seed=1000 + index,
+            )
+            print(f"[smoke] case={spec.name} config={generated_config}")
+            if spec.name == "complete":
+                result = run_complete_case(
+                    repo_root=repo_root,
+                    store_root=store_root,
+                    experiment_id=args.experiment_id,
+                    config_path=generated_config,
+                    spec=spec,
+                    timeout_seconds=args.case_timeout_seconds,
+                    poll_seconds=args.poll_seconds,
+                )
+            elif spec.name == "cancel":
+                result = run_cancel_case(
+                    repo_root=repo_root,
+                    store_root=store_root,
+                    experiment_id=args.experiment_id,
+                    config_path=generated_config,
+                    spec=spec,
+                    timeout_seconds=args.case_timeout_seconds,
+                    poll_seconds=args.poll_seconds,
+                )
+            else:
+                result = run_stale_case(
+                    repo_root=repo_root,
+                    store_root=store_root,
+                    experiment_id=args.experiment_id,
+                    config_path=generated_config,
+                    spec=spec,
+                    timeout_seconds=args.case_timeout_seconds,
+                    poll_seconds=args.poll_seconds,
+                )
+            results.append(result)
+            print(
+                f"[smoke] case={result.name} run_id={result.run_id} status={result.status} "
+                f"manifest_status={result.manifest_status} terminal_reason={result.terminal_reason}"
+            )
+
+        print("[smoke] summary")
+        for result in results:
+            print(
+                f"  - {result.name}: run_id={result.run_id} status={result.status} "
+                f"manifest={result.manifest_status} runtime={result.runtime_path}"
+            )
+        cleanup_success = True
+        return 0
+    finally:
+        finalize_generated_session_dir(generated_dir=generated_dir, success=cleanup_success)
 
 
 def run_complete_case(
@@ -443,6 +447,8 @@ def assert_runtime_snapshot_exists(*, store_root: Path, run_id: str) -> None:
 
 
 def assert_terminal_artifacts(*, store_root: Path, run_id: str, spec: CaseSpec) -> CaseResult:
+    import numereng.api as api
+
     lifecycle = api.get_run_lifecycle(api.RunLifecycleRequest(run_id=run_id, store_root=str(store_root)))
     if lifecycle.status != spec.expected_status:
         raise AssertionError(f"unexpected API lifecycle status for {run_id}: {lifecycle.status}")
@@ -577,6 +583,16 @@ def stop_process(process: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate(timeout=5.0)
+
+
+def finalize_generated_session_dir(*, generated_dir: Path, success: bool) -> None:
+    if not generated_dir.exists():
+        return
+    if success:
+        shutil.rmtree(generated_dir)
+        print(f"[smoke] cleaned generated_dir={generated_dir}")
+        return
+    print(f"[smoke] retained generated_dir={generated_dir}")
 
 
 def expect_mapping(value: object, *, key: str) -> dict[str, Any]:

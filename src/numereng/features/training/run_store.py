@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from numereng.platform.run_execution import merge_run_execution
+
 RunStatus = Literal["RUNNING", "FINISHED", "FAILED", "CANCELED", "STALE"]
 
 RUN_MANIFEST_SCHEMA_VERSION = "1"
@@ -72,6 +74,7 @@ def build_run_manifest(
     error: dict[str, str] | None = None,
     training_metadata: dict[str, object] | None = None,
     lifecycle_metadata: dict[str, Any] | None = None,
+    execution: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build minimal v1 training run manifest payload."""
     created = created_at or _utc_now_iso()
@@ -113,6 +116,8 @@ def build_run_manifest(
         manifest["error"] = error
     if lifecycle_metadata:
         manifest["lifecycle"] = lifecycle_metadata
+    if execution:
+        manifest["execution"] = merge_run_execution(None, execution)
     return manifest
 
 

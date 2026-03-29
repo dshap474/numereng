@@ -16,6 +16,7 @@ from numereng.features.cloud.modal.contracts import (
     ModalTrainingProfile,
 )
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
+from numereng.platform.run_execution import build_run_execution
 
 
 def _sanitize_payload_config_filename(raw_filename: str) -> str:
@@ -72,7 +73,17 @@ def run_training_payload(payload: ModalRuntimePayload | dict[str, Any]) -> dict[
         launch_scope = (
             nullcontext()
             if get_launch_metadata() is not None
-            else bind_launch_metadata(source="cloud.modal.runtime", operation_type="run", job_type="run")
+            else bind_launch_metadata(
+                source="cloud.modal.runtime",
+                operation_type="run",
+                job_type="run",
+                execution=build_run_execution(
+                    kind="cloud",
+                    provider="modal",
+                    backend="modal",
+                    metadata={"output_dir": runtime_payload.output_dir} if runtime_payload.output_dir else None,
+                ),
+            )
         )
         with launch_scope:
             run_kwargs: dict[str, Any] = {

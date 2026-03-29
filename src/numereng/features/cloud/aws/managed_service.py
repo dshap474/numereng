@@ -47,8 +47,21 @@ from numereng.features.cloud.aws.managed_contracts import (
 )
 from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
 from numereng.features.store import StoreCloudJobUpsert, StoreError, index_run, upsert_cloud_job
-from numereng.features.store.layout import ensure_allowed_store_target
+from numereng.features.store.layout import (
+    ensure_allowed_store_target,
+    resolve_cloud_op_state_path,
+    resolve_cloud_run_pull_dir,
+    resolve_cloud_run_state_path,
+    resolve_path,
+    validate_cloud_state_path,
+)
 from numereng.features.training.service import resolve_model_config
+from numereng.platform.run_execution import (
+    RUN_EXECUTION_ENV_VAR,
+    build_run_execution,
+    serialize_run_execution,
+    stamp_run_execution,
+)
 
 
 class CloudAwsError(Exception):
@@ -69,6 +82,7 @@ CUDA_SAGEMAKER_DOCKERFILE = "docker/Dockerfile.sagemaker-lgbm-cuda"
 _DEFAULT_JOB_NAME_PREFIX = "numereng"
 _SAFE_TOKEN = re.compile(r"[^a-zA-Z0-9-]+")
 _SAFE_RUN_ID = re.compile(r"^[\w\-.]+$")
+_CLOUD_PROVIDER = "aws"
 
 
 class CloudAwsManagedService:
@@ -93,24 +107,48 @@ class CloudAwsManagedService:
         self._docker = docker_adapter or SubprocessDockerAdapter()
         self._state_store = state_store or CloudAwsStateStore()
 
-    def _validated_state_path(self, request: CloudAwsRequestBase) -> Path | None:
+    def _resolved_state_path(
+        self,
+        request: CloudAwsRequestBase,
+        *,
+        state: CloudAwsState | None = None,
+    ) -> Path | None:
         state_path = request.state_file()
-        if state_path is None:
-            return None
-        resolved = state_path.expanduser().resolve()
-        root = Path(request.store_root).expanduser().resolve()
         try:
-            relative = resolved.relative_to(root)
+            if state_path is not None:
+                return validate_cloud_state_path(
+                    target_path=state_path,
+                    store_root=request.store_root,
+                    error_code="aws_state_path_noncanonical",
+                    allow_legacy_cloud=True,
+                )
         except ValueError as exc:
-            raise CloudAwsError(f"aws_state_path_noncanonical:{resolved}") from exc
-        if not relative.parts or relative.parts[0] != "cloud":
-            raise CloudAwsError(f"aws_state_path_noncanonical:{resolved}")
-        if resolved.suffix.lower() != ".json":
-            raise CloudAwsError(f"aws_state_path_extension_invalid:{resolved}")
-        return resolved
+            resolved = resolve_path(state_path) if state_path is not None else Path(request.store_root).resolve()
+            if resolved.suffix.lower() != ".json":
+                raise CloudAwsError(f"aws_state_path_extension_invalid:{resolved}") from exc
+            raise CloudAwsError(str(exc)) from exc
+        return self._default_state_path(request, state=state)
+
+    def _default_state_path(
+        self,
+        request: CloudAwsRequestBase,
+        *,
+        state: CloudAwsState | None = None,
+    ) -> Path | None:
+        run_id = getattr(request, "run_id", None) or (state.run_id if state is not None else None)
+        if isinstance(request, AwsImageBuildPushRequest):
+            op_id = run_id or f"image-{request.repository or DEFAULT_ECR_REPOSITORY}-{request.image_tag or 'latest'}"
+            return resolve_cloud_op_state_path(store_root=request.store_root, provider=_CLOUD_PROVIDER, op_id=op_id)
+        if isinstance(run_id, str) and run_id.strip():
+            return resolve_cloud_run_state_path(
+                store_root=request.store_root,
+                provider=_CLOUD_PROVIDER,
+                run_id=run_id,
+            )
+        return None
 
     def _load_state(self, request: CloudAwsRequestBase) -> CloudAwsState:
-        state_path = self._validated_state_path(request)
+        state_path = self._resolved_state_path(request)
         if state_path is None:
             return CloudAwsState()
         try:
@@ -123,7 +161,7 @@ class CloudAwsManagedService:
 
     def _persist_state(self, request: CloudAwsRequestBase, state: CloudAwsState) -> CloudAwsState:
         touched = state.touched()
-        state_path = self._validated_state_path(request)
+        state_path = self._resolved_state_path(request, state=touched)
         if state_path is not None:
             self._state_store.save(state_path, touched)
         return touched
@@ -339,16 +377,26 @@ class CloudAwsManagedService:
             role_arn = request.role_arn or DEFAULT_SAGEMAKER_ROLE_ARN
             role_arn = self._require(role_arn, "role_arn")
             training_job_name = self._job_name(run_id, prefix="neng-sm")
+            submitted_at = _utc_now_iso()
 
             max_wait_seconds = request.max_wait_seconds
             if max_wait_seconds is None and request.use_spot:
                 max_wait_seconds = request.max_runtime_seconds * 3
 
+            execution_env = self._serialize_cloud_execution_env(
+                backend="sagemaker",
+                provider_job_id=training_job_name,
+                region=region,
+                image_uri=image_uri,
+                output_uri=output_s3_uri,
+                runtime_profile=runtime_profile,
+            )
             env = {
                 "NUMERENG_RUN_ID": run_id,
                 "NUMERENG_CONFIG_S3_URI": config_uri,
                 "NUMERENG_OUTPUT_S3_URI": output_s3_uri,
                 **request.env,
+                RUN_EXECUTION_ENV_VAR: execution_env,
             }
 
             spec = SageMakerTrainingSpec(
@@ -376,7 +424,10 @@ class CloudAwsManagedService:
                 next_artifacts["checkpoint_s3_uri"] = checkpoint_s3_uri
 
             next_metadata = dict(state.metadata)
-            next_metadata.update(self._monitor_metadata_from_submit(request))
+            next_metadata.update(self._monitor_metadata_from_submit(request, run_id=run_id))
+            next_metadata["submitted_at"] = submitted_at
+            next_metadata["bucket"] = bucket
+            next_metadata["runtime_profile"] = runtime_profile
 
             next_state = state.model_copy(
                 update={
@@ -438,6 +489,7 @@ class CloudAwsManagedService:
                 raise CloudAwsError("missing required value: batch_job_definition")
 
             job_name = self._job_name(run_id, prefix="neng-batch")
+            submitted_at = _utc_now_iso()
             parameters = {
                 "run_id": run_id,
                 "config_s3_uri": config_uri,
@@ -455,7 +507,17 @@ class CloudAwsManagedService:
                     job_queue=batch_job_queue,
                     job_definition=batch_job_definition,
                     parameters=parameters,
-                    environment=request.env,
+                    environment={
+                        **request.env,
+                        RUN_EXECUTION_ENV_VAR: self._serialize_cloud_execution_env(
+                            backend="batch",
+                            provider_job_id=None,
+                            region=region,
+                            image_uri=image_uri,
+                            output_uri=output_s3_uri,
+                            runtime_profile=runtime_profile,
+                        ),
+                    },
                     tags={"Project": "numereng", "RunId": run_id},
                 )
             )
@@ -467,7 +529,10 @@ class CloudAwsManagedService:
                 next_artifacts["checkpoint_s3_uri"] = checkpoint_s3_uri
 
             next_metadata = dict(state.metadata)
-            next_metadata.update(self._monitor_metadata_from_submit(request))
+            next_metadata.update(self._monitor_metadata_from_submit(request, run_id=run_id))
+            next_metadata["submitted_at"] = submitted_at
+            next_metadata["bucket"] = bucket
+            next_metadata["runtime_profile"] = runtime_profile
 
             next_state = state.model_copy(
                 update={
@@ -920,6 +985,9 @@ class CloudAwsManagedService:
 
         next_artifacts = dict(state.artifacts)
         next_artifacts["output_s3_uri"] = output_s3_uri
+        pulled_at = _utc_now_iso()
+        next_metadata = dict(state.metadata)
+        next_metadata["pulled_at"] = pulled_at
 
         next_state = state.model_copy(
             update={
@@ -928,6 +996,7 @@ class CloudAwsManagedService:
                 "bucket": bucket,
                 "status": "artifacts_pulled",
                 "artifacts": next_artifacts,
+                "metadata": next_metadata,
             },
             deep=True,
         )
@@ -1001,7 +1070,40 @@ class CloudAwsManagedService:
         index_targets = extracted_run_ids
         indexed_run_ids: list[str] = []
         index_warnings: list[str] = []
+        extracted_at = _utc_now_iso()
         for index_target in index_targets:
+            manifest_path = store_root_path / "runs" / index_target / "run.json"
+            if manifest_path.is_file():
+                try:
+                    stamp_run_execution(
+                        manifest_path=manifest_path,
+                        execution=self._cloud_execution(
+                            request=request,
+                            run_id=index_target,
+                            backend=state.backend or "sagemaker",
+                            provider_job_id=state.batch_job_id or state.training_job_name,
+                            region=region,
+                            image_uri=state.image_uri,
+                            output_uri=state.artifacts.get("output_s3_uri"),
+                            state=state.model_copy(
+                                update={
+                                    "run_id": index_target,
+                                    "metadata": {
+                                        **state.metadata,
+                                        "extracted_at": extracted_at,
+                                    },
+                                },
+                                deep=True,
+                            ),
+                            metadata={
+                                **state.metadata,
+                                "bucket": bucket,
+                                "extracted_at": extracted_at,
+                            },
+                        ),
+                    )
+                except (OSError, ValueError) as exc:
+                    index_warnings.append(f"run_execution_stamp_failed:{index_target}:{exc}")
             try:
                 index_run(store_root=request.store_root, run_id=index_target)
                 indexed_run_ids.append(index_target)
@@ -1019,6 +1121,7 @@ class CloudAwsManagedService:
             next_metadata["extract_warning"] = "; ".join(archive_extract_warnings)
         else:
             next_metadata.pop("extract_warning", None)
+        next_metadata["extracted_at"] = extracted_at
 
         next_state = state.model_copy(
             update={
@@ -1078,13 +1181,13 @@ class CloudAwsManagedService:
         resolved = (
             Path(output_dir).expanduser().resolve()
             if output_dir is not None
-            else (store_root / "cloud" / run_id / "pull").resolve()
+            else resolve_cloud_run_pull_dir(store_root=store_root, provider=_CLOUD_PROVIDER, run_id=run_id)
         )
         try:
             ensure_allowed_store_target(
                 target_path=resolved,
                 store_root=store_root,
-                allowed_prefixes=("cloud",),
+                allowed_prefixes=("cache", "cloud"),
                 allow_store_root=False,
                 error_code="aws_train_pull_output_dir_noncanonical",
             )
@@ -1095,6 +1198,72 @@ class CloudAwsManagedService:
         elif not resolved.exists():
             raise CloudAwsError(f"pull output directory does not exist: {resolved}")
         return resolved
+
+    def _cloud_execution(
+        self,
+        *,
+        request: CloudAwsRequestBase,
+        run_id: str,
+        backend: str,
+        provider_job_id: str | None,
+        region: str | None,
+        image_uri: str | None,
+        output_uri: str | None,
+        state: CloudAwsState | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        state_path = self._resolved_state_path(request, state=state)
+        merged_metadata = dict(metadata or {})
+        return build_run_execution(
+            kind="cloud",
+            provider=_CLOUD_PROVIDER,
+            backend=backend,
+            provider_job_id=provider_job_id,
+            region=region,
+            image_uri=image_uri,
+            output_uri=output_uri,
+            state_path=str(state_path) if state_path is not None else None,
+            submitted_at=merged_metadata.get("submitted_at"),
+            pulled_at=merged_metadata.get("pulled_at"),
+            extracted_at=merged_metadata.get("extracted_at"),
+            metadata={
+                key: value
+                for key, value in merged_metadata.items()
+                if key
+                not in {
+                    "state_path",
+                    "submitted_at",
+                    "pulled_at",
+                    "extracted_at",
+                }
+                and value
+            }
+            or None,
+        )
+
+    def _serialize_cloud_execution_env(
+        self,
+        *,
+        backend: str,
+        provider_job_id: str | None,
+        region: str | None,
+        image_uri: str | None,
+        output_uri: str | None,
+        runtime_profile: CloudRuntimeProfile,
+    ) -> str:
+        metadata = {"runtime_profile": runtime_profile} if runtime_profile else None
+        return serialize_run_execution(
+            build_run_execution(
+                kind="cloud",
+                provider=_CLOUD_PROVIDER,
+                backend=backend,
+                provider_job_id=provider_job_id,
+                region=region,
+                image_uri=image_uri,
+                output_uri=output_uri,
+                metadata=metadata,
+            )
+        )
 
     def _resolve_config_uri(
         self,
@@ -1141,9 +1310,9 @@ class CloudAwsManagedService:
             "backend": backend,
             "status": status,
         }
-        state_path = request.state_file()
+        state_path = self._resolved_state_path(request, state=CloudAwsState(run_id=run_id))
         if state_path is not None:
-            metadata_payload["state_path"] = str(state_path.expanduser().resolve())
+            metadata_payload["state_path"] = str(state_path)
         if metadata:
             metadata_payload.update({key: value for key, value in metadata.items() if value})
         config_path = getattr(request, "config_path", None)
@@ -1175,11 +1344,11 @@ class CloudAwsManagedService:
         except StoreError:
             return
 
-    def _monitor_metadata_from_submit(self, request: AwsTrainSubmitRequest) -> dict[str, str]:
+    def _monitor_metadata_from_submit(self, request: AwsTrainSubmitRequest, *, run_id: str) -> dict[str, str]:
         metadata: dict[str, str] = {}
-        state_path = request.state_file()
+        state_path = self._resolved_state_path(request, state=CloudAwsState(run_id=run_id))
         if state_path is not None:
-            metadata["state_path"] = str(state_path.expanduser().resolve())
+            metadata["state_path"] = str(state_path)
         if request.config_path is None:
             return metadata
         metadata["config_path"] = request.config_path

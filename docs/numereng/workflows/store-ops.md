@@ -40,6 +40,7 @@ uv run numereng store doctor
 - required tables
 - artifact/index mismatches
 - stray top-level paths that do not belong under the canonical store layout
+- retention-managed tmp remote-config staging under `.numereng/tmp/remote-configs/*.json`
 
 ## Cleanup Strays
 
@@ -48,6 +49,13 @@ uv run numereng store doctor --fix-strays
 ```
 
 Use `--fix-strays` only when you explicitly want numereng to clean up detected stray store paths.
+
+With `--fix-strays`, numereng now performs two conservative cleanup passes:
+
+- deletes targeted stray top-level directories such as old logs/smoke roots
+- prunes `.numereng/tmp/remote-configs/*.json` only when the file is older than 30 days and not referenced by an active run lifecycle
+
+If the store DB is missing or unreadable, tmp remote-config cleanup is skipped rather than guessed.
 
 ## When To Use Each Command
 

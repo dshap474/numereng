@@ -1295,8 +1295,8 @@
 	</div>
 {/snippet}
 
-<div class="-mx-8 -mt-14 md:-mt-8 -mb-8 flex flex-col h-screen">
-	<div class="flex gap-0 border-b border-border flex-shrink-0 px-8">
+	<div class="experiment-detail-theme -mx-8 -mt-14 md:-mt-8 -mb-8 flex flex-col h-screen">
+		<div class="analysis-top-toolbar flex gap-0 border-b border-border flex-shrink-0 px-8">
 		{#each [['analysis', 'Analysis'], ['progress', 'Progress'], ['runops', 'Run Ops']] as [key, label] (key)}
 			<button
 				type="button"
@@ -1308,8 +1308,9 @@
 		{/each}
 	</div>
 
-	{#if pageTab === 'analysis'}
-		<div class="flex flex-1 min-h-0">
+		{#if pageTab === 'analysis'}
+			<div class="analysis-shell flex flex-1 min-h-0 min-w-0">
+				<div class="analysis-reader-pane flex-1 min-h-0 min-w-0 overflow-x-hidden">
 				<MarkdownDoc
 					borderless
 					label="Experiment"
@@ -1319,8 +1320,9 @@
 					readOnly={readOnly}
 					readOnlyMessage=""
 				/>
+			</div>
 
-			<div class="flex-1 min-h-0 p-4" aria-label="Charts wrapper">
+				<div class="flex-1 min-h-0 min-w-0 p-4" aria-label="Charts wrapper">
 			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
 					<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
 						<div class="flex gap-0">
@@ -2041,3 +2043,35 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.experiment-detail-theme {
+		background: #111111;
+		--color-background: #111111;
+		--color-card: #111111;
+		--color-popover: #111111;
+		--color-surface-100: #111111;
+		--color-secondary: #171717;
+		--color-muted: #171717;
+		--color-accent: #171717;
+	}
+
+	.analysis-reader-pane {
+		background: #070707;
+		--color-background: #070707;
+		--color-card: #070707;
+		--color-popover: #070707;
+		--color-surface-100: #070707;
+		--color-secondary: #101010;
+		--color-muted: #101010;
+		--color-accent: #101010;
+	}
+
+	.analysis-top-toolbar {
+		background: #070707;
+	}
+
+	.analysis-shell {
+		background: #070707;
+	}
+</style>

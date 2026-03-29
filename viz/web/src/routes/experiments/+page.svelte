@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AccentCard from '$lib/components/ui/AccentCard.svelte';
 	import type {
 		ExperimentOverviewItem,
 		ExperimentOverviewResponse,
@@ -14,16 +15,20 @@
 	}: {
 		data: {
 			overview: ExperimentOverviewResponse;
+			overviewPending: boolean;
 		};
 	} = $props();
 
 	type OverviewSource = NonNullable<ExperimentOverviewResponse['sources']>[number];
 
 	const routeOverview = () => data.overview;
+	const routeOverviewPending = () => data.overviewPending;
 	let overview = $state<ExperimentOverviewResponse>(routeOverview());
+	let overviewBootstrapPending = $state(routeOverviewPending());
 	let documentVisible = $state(true);
-	let overviewGeneration = 0;
-	let feedState = $state<'live' | 'holding'>('live');
+	let remoteSourcesViewOpen = $state(false);
+	let overviewRefreshInFlight = false;
+	let overviewPollSession = 0;
 
 	const timeFormatter = new Intl.DateTimeFormat(undefined, {
 		hour: 'numeric',
@@ -39,17 +44,15 @@
 	let recentActivity = $derived(overview.recent_activity ?? []);
 	let sources = $derived(overview.sources ?? []);
 	let remoteSources = $derived(sources.filter((source) => source.kind === 'ssh'));
+	let primaryRemoteSource = $derived(remoteSources[0] ?? null);
 	let summary = $derived(overview.summary);
-	let lastSurfacePulse = $derived(
-		liveExperiments[0]?.latest_activity_at ??
-			recentActivity[0]?.updated_at ??
-			recentActivity[0]?.finished_at ??
-			experiments[0]?.latest_activity_at ??
-			null
-	);
+	let liveOperationsLoading = $derived(overviewBootstrapPending && liveExperiments.length === 0);
+	let terminalFeedLoading = $derived(overviewBootstrapPending && recentActivity.length === 0);
+	let remoteSourcesLoading = $derived(overviewBootstrapPending && remoteSources.length === 0);
 
 	$effect(() => {
 		overview = routeOverview();
+		overviewBootstrapPending = routeOverviewPending();
 	});
 
 	$effect(() => {
@@ -65,23 +68,28 @@
 	$effect(() => {
 		if (!documentVisible) return;
 		if (typeof window === 'undefined') return;
-		void refreshOverview();
+		const session = ++overviewPollSession;
+		void refreshOverview(session);
 		const timer = window.setInterval(() => {
-			void refreshOverview();
+			void refreshOverview(session);
 		}, 3000);
 		return () => window.clearInterval(timer);
 	});
 
-	async function refreshOverview() {
-		const generation = ++overviewGeneration;
+	async function refreshOverview(session: number) {
+		if (overviewRefreshInFlight) return;
+		overviewRefreshInFlight = true;
 		try {
 			const next = await api.getExperimentsOverview();
-			if (generation !== overviewGeneration) return;
+			if (session !== overviewPollSession) return;
 			overview = next;
-			feedState = 'live';
 		} catch {
-			if (generation !== overviewGeneration) return;
-			feedState = 'holding';
+			if (session !== overviewPollSession) return;
+		} finally {
+			if (session === overviewPollSession) {
+				overviewBootstrapPending = false;
+			}
+			overviewRefreshInFlight = false;
 		}
 	}
 
@@ -172,51 +180,53 @@
 		}
 	}
 
-	function experimentRowClass(item: ExperimentOverviewItem): string {
+	function experimentRowToneClass(item: ExperimentOverviewItem): string {
 		if (item.has_live) {
-			return 'border-l-sky-400/70 bg-white/[0.02] hover:bg-white/[0.035]';
+			return 'bg-white/[0.02] hover:bg-white/[0.035]';
 		}
 		switch (item.attention_state) {
 			case 'failed':
-				return 'border-l-red-400/80 bg-red-500/[0.025] hover:bg-red-500/[0.045]';
+				return 'bg-red-500/[0.025] hover:bg-red-500/[0.045]';
 			case 'stale':
-				return 'border-l-amber-400/80 bg-amber-500/[0.025] hover:bg-amber-500/[0.045]';
+				return 'bg-amber-500/[0.025] hover:bg-amber-500/[0.045]';
 			case 'canceled':
-				return 'border-l-yellow-400/80 bg-yellow-500/[0.025] hover:bg-yellow-500/[0.045]';
+				return 'bg-yellow-500/[0.025] hover:bg-yellow-500/[0.045]';
 			default:
-				return 'border-l-transparent hover:bg-white/[0.04]';
+				return 'hover:bg-white/[0.04]';
 		}
 	}
 
-	function activityTone(item: RecentExperimentActivityItem): string {
-		switch ((item.status ?? '').toLowerCase()) {
+	function experimentAccentClass(item: ExperimentOverviewItem): string {
+		if (item.has_live) return 'border-l-sky-400/70';
+		switch ((item.attention_state ?? '').toLowerCase()) {
 			case 'failed':
-				return 'bg-card';
+				return 'border-l-red-400/80';
 			case 'stale':
-				return 'bg-card';
+				return 'border-l-amber-400/80';
 			case 'canceled':
-				return 'bg-card';
-			case 'completed':
-			case 'complete':
-				return 'bg-card';
+				return 'border-l-yellow-400/80';
 			default:
-				return 'bg-card';
+				return 'border-l-transparent';
 		}
+	}
+
+	function activityToneClass(_item: RecentExperimentActivityItem): string {
+		return 'hover:bg-white/[0.04]';
 	}
 
 	function activityBarClass(item: RecentExperimentActivityItem): string {
 		switch ((item.status ?? '').toLowerCase()) {
 			case 'failed':
-				return 'bg-red-400';
+				return 'border-l-red-400/80';
 			case 'stale':
-				return 'bg-amber-400';
+				return 'border-l-amber-400/80';
 			case 'canceled':
-				return 'bg-yellow-300';
+				return 'border-l-yellow-300/80';
 			case 'completed':
 			case 'complete':
-				return 'bg-emerald-400';
+				return 'border-l-emerald-400/80';
 			default:
-				return 'bg-sky-400';
+				return 'border-l-sky-400/70';
 		}
 	}
 
@@ -303,6 +313,29 @@
 		if ((source.state ?? '').toLowerCase() === 'unavailable') return 'snapshot unavailable';
 		if (source.last_bootstrap_at) return `bootstrapped ${formatSurfaceTime(source.last_bootstrap_at)}`;
 		return 'remote source ready';
+	}
+
+	function sourceStatusDotClass(source: OverviewSource | null): string {
+		return (source?.state ?? '').toLowerCase() === 'live' ? 'bg-emerald-400' : 'bg-red-400';
+	}
+
+	function experimentKey(item: ExperimentOverviewItem): string {
+		return `${item.source_kind ?? 'local'}:${item.source_id ?? 'local'}:${item.experiment_id}`;
+	}
+
+	function liveExperimentKey(item: LiveExperimentOverview): string {
+		return `${item.source_kind ?? 'local'}:${item.source_id ?? 'local'}:${item.experiment_id}`;
+	}
+
+	function recentActivityKey(item: RecentExperimentActivityItem, index: number): string {
+		return [
+			item.source_kind ?? 'local',
+			item.source_id ?? 'local',
+			item.job_id ?? 'job',
+			item.run_id ?? 'run',
+			item.experiment_id,
+			String(index)
+		].join(':');
 	}
 
 	function normalizedProgressMode(run: LiveRunOverview): 'exact' | 'estimated' | 'indeterminate' {
@@ -403,347 +436,427 @@
 	}
 </script>
 
-<div class="mission-shell space-y-6">
-	<section class="mission-header mission-panel rounded-[1.9rem] border border-white/8 px-5 py-6 shadow-[0_22px_70px_rgba(0,0,0,0.24)] sm:px-7">
-		<div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
-			<div class="max-w-3xl">
-				<p class="font-mono text-[11px] uppercase tracking-[0.36em] text-slate-400">Mission Control</p>
-				<h1 class="mt-3 text-[clamp(2.2rem,4.2vw,3.5rem)] font-semibold tracking-[-0.05em] text-white">
-					Workspace experiments
-				</h1>
-				<p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-					Live monitor for every experiment, active run, and terminal event in the workspace.
-				</p>
-			</div>
-
-			<div class="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.22em]">
-				<div class="signal-pill">
-					<span class="live-dot rounded-full bg-sky-400"></span>
-					<span>{feedState === 'live' ? 'Live feed' : 'Holding snapshot'}</span>
-				</div>
-				<div class="signal-pill signal-pill-muted">Last pulse {formatSurfaceTime(lastSurfacePulse)}</div>
-			</div>
-		</div>
-	</section>
-
-	<div class="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
-		<section class="mission-panel rail-panel rounded-[1.7rem] border border-white/8 px-0 py-0 shadow-[0_18px_54px_rgba(0,0,0,0.2)]">
-			<div class="border-b border-white/8 px-5 py-4">
-				<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Experiment Index</p>
-				<div class="mt-2 flex items-end justify-between gap-4">
-					<h2 class="text-base font-semibold text-white">All experiments</h2>
-					<p class="font-mono text-xs text-slate-300">{summary.total_experiments} tracked</p>
-				</div>
-			</div>
-
-			{#if experiments.length === 0}
-				<div class="px-5 py-10 text-center text-sm text-slate-400">No experiments indexed yet.</div>
-			{:else}
-				<div class="max-h-[calc(100vh-15rem)] overflow-y-auto px-3 py-3">
-					<div class="space-y-3">
-						{#each experiments as experiment (experiment.experiment_id)}
-							<svelte:element
-								this={experiment.detail_href ? 'a' : 'div'}
-								href={experiment.detail_href ?? undefined}
-								class="experiment-row block rounded-[1.2rem] border border-white/7 px-4 py-4 transition-all duration-200 {experimentRowClass(experiment)}"
-							>
-								<div class="flex items-start justify-between gap-4">
-									<div class="min-w-0">
-										<div class="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
-											<span>{formatSurfaceDate(experiment.created_at)}</span>
-											{#if experiment.has_live}
-												<span class="inline-flex items-center gap-1.5 text-slate-300">
-													<span class="live-dot rounded-full bg-sky-400"></span>
-													live
-												</span>
-											{/if}
-										</div>
-										<h3 class="mt-2 truncate text-sm font-semibold text-white">{experiment.name}</h3>
-									</div>
-									<span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {experimentStatusClass(experiment.status)}">
-										{formatStatusLabel(experiment.status)}
-									</span>
-								</div>
-
-								<div class="mt-3 flex items-center justify-between gap-3">
-									<p class="min-w-0 truncate font-mono text-[11px] text-slate-300/90">{experimentMeta(experiment)}</p>
-									<span class="rounded-full border px-2 py-0.5 text-[10px] uppercase {attentionClass(experiment.attention_state)}">
-										{formatAttentionLabel(experiment.attention_state)}
-									</span>
-								</div>
-
-								<div class="mt-2 font-mono text-[11px] text-slate-400">
-									Last activity {formatSurfaceTime(experiment.latest_activity_at)}
-								</div>
-								{#if sourceMeta(experiment.source_kind, experiment.source_label)}
-									<div class="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">
-										{sourceMeta(experiment.source_kind, experiment.source_label)}
-									</div>
-								{/if}
-							</svelte:element>
-						{/each}
-					</div>
-				</div>
-			{/if}
-		</section>
-
-		<div class="space-y-6">
-			<section class="mission-panel overflow-hidden rounded-[1.45rem] border border-white/8 shadow-[0_16px_44px_rgba(0,0,0,0.18)]">
-				<div class="grid gap-0 md:grid-cols-2 xl:grid-cols-5">
-					<div class="metric-cell border-b border-white/8 xl:border-r xl:border-b-0">
-						<p class="metric-label">Live Experiments</p>
-						<p class="metric-value text-white">{summary.live_experiments}</p>
-						<p class="metric-meta">active walls</p>
-					</div>
-					<div class="metric-cell border-b border-white/8 xl:border-r xl:border-b-0">
-						<p class="metric-label">Live Runs</p>
-						<p class="metric-value text-white">{summary.live_runs}</p>
-						<p class="metric-meta">training now</p>
-					</div>
-					<div class="metric-cell border-b border-white/8 xl:border-r xl:border-b-0">
-						<p class="metric-label">Queued</p>
-						<p class="metric-value text-slate-100">{summary.queued_runs}</p>
-						<p class="metric-meta">waiting slots</p>
-					</div>
-					<div class="metric-cell border-b border-white/8 md:border-b-0 xl:border-r">
-						<p class="metric-label">Attention</p>
-						<p class="metric-value text-amber-100">{summary.attention_count}</p>
-						<p class="metric-meta">failed stale canceled</p>
-					</div>
-					<div class="metric-cell">
-						<p class="metric-label">Total</p>
-						<p class="metric-value text-white">{summary.total_experiments}</p>
-						<p class="metric-meta">
-							{summary.active_experiments} active · {summary.completed_experiments} complete
+<div class="mission-shell -mx-8 -mt-14 -mb-8 flex h-screen min-h-0 flex-col overflow-x-hidden overflow-y-auto md:-mt-8 xl:overflow-hidden">
+		<section class="mission-panel mission-surface flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/8">
+			<header class="mission-toolbar px-5 py-4 sm:px-6">
+			<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+				<div class="min-w-0">
+					<p class="font-mono text-[11px] uppercase tracking-[0.32em] text-slate-400">Mission Control</p>
+					<div class="mt-2 flex flex-wrap items-end gap-x-4 gap-y-2">
+						<h1 class="text-[clamp(1.95rem,3.2vw,2.7rem)] font-semibold tracking-[-0.05em] text-white">
+							Workspace experiments
+						</h1>
+						<p class="pb-1 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
+							{summary.total_experiments} tracked
 						</p>
 					</div>
 				</div>
-			</section>
 
-			{#if remoteSources.length > 0}
-				<section class="mission-panel overflow-hidden rounded-[1.45rem] border border-white/8 shadow-[0_16px_44px_rgba(0,0,0,0.18)]">
-					<div class="border-b border-white/8 px-5 py-4">
-						<div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+				<div class="flex w-full flex-col items-end gap-1 xl:w-auto xl:min-w-[12rem]">
+					<p class="font-mono text-[11px] uppercase tracking-[0.24em] text-slate-400">Remote Sources</p>
+
+					{#if remoteSourcesLoading}
+						<div class="mission-loading-indicator text-left xl:justify-end" role="status" aria-live="polite">
+							<span class="mission-loading-spinner" aria-hidden="true"></span>
+							<span class="text-sm">Loading sources</span>
+						</div>
+					{:else if primaryRemoteSource}
+							<button
+								type="button"
+								class="remote-summary-link text-left xl:text-right"
+								onclick={() => (remoteSourcesViewOpen = true)}
+							>
+							<span class="remote-status-dot rounded-full {sourceStatusDotClass(primaryRemoteSource)}"></span>
+							<span class="truncate text-sm font-semibold text-white">{primaryRemoteSource.label}</span>
+						</button>
+					{:else}
+						<div class="remote-summary-empty text-sm text-slate-400">No remote sources</div>
+					{/if}
+				</div>
+			</div>
+		</header>
+
+		{#if remoteSourcesViewOpen}
+			<section class="flex min-h-0 flex-1 flex-col">
+				<div class="border-b border-white/8 px-5 py-4 sm:px-6">
+					<div class="flex items-start justify-between gap-4">
+						<div>
+							<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Remote Sources</p>
+							<h2 class="mt-2 text-lg font-semibold text-white">Federated monitors</h2>
+							<p class="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
+								{remoteSources.length} enabled
+							</p>
+						</div>
+						<button
+							type="button"
+							class="remote-close-button"
+							aria-label="Close remote sources"
+							onclick={() => (remoteSourcesViewOpen = false)}
+						>
+							<span aria-hidden="true">X</span>
+						</button>
+					</div>
+				</div>
+
+				{#if remoteSourcesLoading}
+					<div class="mission-loading-state flex-1 px-6 py-10 text-center" role="status" aria-live="polite">
+						<div>
+							<div class="mission-loading-indicator mx-auto justify-center">
+								<span class="mission-loading-spinner mission-loading-spinner-lg" aria-hidden="true"></span>
+							</div>
+							<p class="mt-4 text-sm font-medium text-white">Loading remote sources...</p>
+							<p class="mt-2 text-sm text-slate-400">Checking federated monitors and source health.</p>
+						</div>
+					</div>
+				{:else if remoteSources.length === 0}
+					<div class="flex flex-1 items-center justify-center px-6 py-10 text-center">
+						<div>
+							<p class="text-sm font-medium text-white">No remote sources configured.</p>
+							<p class="mt-2 text-sm text-slate-400">Add an SSH monitor to populate this view.</p>
+						</div>
+					</div>
+				{:else}
+					<div class="flex-1 min-h-0 overflow-y-auto px-5 py-5 sm:px-6">
+						<div class="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+							{#each remoteSources as source (source.id)}
+								<article class="remote-source-detail-card rounded-[1.1rem] border border-white/8 px-4 py-4">
+									<div class="flex items-start justify-between gap-3">
+										<div class="min-w-0">
+											<p class="truncate text-sm font-semibold text-white">{source.label}</p>
+											<p class="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
+												{source.id}{#if source.host} · {source.host}{/if}
+											</p>
+										</div>
+										<span class="rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {sourceAvailabilityClass(source)}">
+											{sourceAvailabilityLabel(source)}
+										</span>
+									</div>
+
+									<div class="mt-3 flex flex-wrap items-center gap-2">
+										<span class="rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase {sourceBootstrapClass(source)}">
+											{sourceBootstrapLabel(source)}
+										</span>
+										{#if source.store_root}
+											<span class="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-500">{source.store_root}</span>
+										{/if}
+									</div>
+
+									<p class="mt-3 text-xs leading-5 text-slate-400">{sourceDetail(source)}</p>
+								</article>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</section>
+		{:else}
+				<div class="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-2 md:grid-rows-[minmax(0,0.98fr)_minmax(0,1.02fr)] xl:grid-cols-[340px_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
+					<aside class="mission-pane flex min-h-0 flex-col border-b-[1.5px] border-white/12 md:border-r-[1.5px] xl:border-r-[1.5px] xl:border-b-0">
+						<div class="mission-pane-header border-y-[1.5px] border-white/12 px-5 py-4">
+						<div class="flex items-end justify-between gap-4">
 							<div>
-								<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Remote Sources</p>
-								<h2 class="mt-2 text-base font-semibold text-white">Federated monitors</h2>
+								<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Experiment Index</p>
+								<h2 class="mt-2 text-lg font-semibold text-white">All experiments</h2>
 							</div>
 							<p class="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-300/80">
-								{remoteSources.length} enabled
+								{summary.total_experiments} tracked
 							</p>
 						</div>
 					</div>
 
-					<div class="grid gap-3 px-4 py-4 md:grid-cols-2 2xl:grid-cols-3">
-						{#each remoteSources as source (source.id)}
-							<article class="rounded-[1.1rem] border border-white/8 bg-white/[0.018] px-4 py-4">
-								<div class="flex items-start justify-between gap-3">
-									<div class="min-w-0">
-										<p class="truncate text-sm font-semibold text-white">{source.label}</p>
-										<p class="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-slate-400">
-											{source.id}{#if source.host} · {source.host}{/if}
-										</p>
-									</div>
-									<span class="rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {sourceAvailabilityClass(source)}">
-										{sourceAvailabilityLabel(source)}
-									</span>
-								</div>
-
-								<div class="mt-3 flex flex-wrap items-center gap-2">
-									<span class="rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase {sourceBootstrapClass(source)}">
-										{sourceBootstrapLabel(source)}
-									</span>
-									{#if source.store_root}
-										<span class="truncate font-mono text-[10px] text-slate-500">{source.store_root}</span>
-									{/if}
-								</div>
-
-								<p class="mt-3 text-xs leading-5 text-slate-400">{sourceDetail(source)}</p>
-							</article>
-						{/each}
-					</div>
-				</section>
-			{/if}
-
-			<div class="grid gap-6 2xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
-				<section class="mission-panel overflow-hidden rounded-[1.6rem] border border-white/8 shadow-[0_18px_50px_rgba(0,0,0,0.18)] scroll-mt-20">
-					<div class="border-b border-white/8 px-5 py-4">
-						<div class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-							<div>
-								<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Live Operations</p>
-								<h2 class="mt-2 text-lg font-semibold text-white">Active systems</h2>
-							</div>
-							<div class="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-300/80">
-								3s cadence · workspace pulse
-							</div>
-						</div>
-					</div>
-
-					{#if liveExperiments.length === 0}
-						<div class="px-6 py-12 text-center">
-							<p class="text-sm font-medium text-white">No active experiments right now.</p>
-							<p class="mt-2 text-sm text-slate-400">The live surface will populate as soon as new runs enter the queue.</p>
+					{#if experiments.length === 0}
+						<div class="flex flex-1 items-center justify-center px-5 py-10 text-center text-sm text-slate-400">
+							No experiments indexed yet.
 						</div>
 					{:else}
-						<div class="divide-y divide-white/8">
-							{#each liveExperiments as item (item.experiment_id)}
-								{@const featuredRun = primaryRun(item)}
-								<article class="px-5 py-5">
-									<div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-										<div class="min-w-0">
-											<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-slate-300">
-												<span class="live-dot rounded-full bg-sky-400"></span>
-												{item.live_run_count} active
-											</div>
-											<h3 class="mt-2 truncate text-lg font-semibold text-white">
-												<svelte:element
-													this={item.detail_href ? 'a' : 'span'}
-													href={item.detail_href ?? undefined}
-													class={item.detail_href ? 'transition-colors hover:text-white' : undefined}
-												>
-													{item.name}
-												</svelte:element>
-											</h3>
-										</div>
-
-										<div class="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-300/85">
-											<span class="rounded-full border px-2.5 py-1 text-[10px] uppercase {attentionClass(item.attention_state)}">
-												{formatAttentionLabel(item.attention_state)}
-											</span>
-											<span class="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] text-slate-300">
-												{item.queued_run_count} queued
-											</span>
-										</div>
-									</div>
-
-									<div class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_170px]">
-										<div>
-											{#if featuredRun}
-												<div class="mission-primary-run rounded-[1.25rem] border border-white/8 bg-white/[0.015] px-4 py-4">
-													<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-														<div class="min-w-0">
-															<p class="truncate text-base font-semibold text-white">{featuredRun.config_label}</p>
-															<p class="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-300/82">
-																{primaryRunMeta(item, featuredRun)}
-															</p>
-														</div>
-
-														<span
-															class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {statusChipClass(featuredRun.status)}"
-														>
-															{formatStatusLabel(featuredRun.status)}
+						<div class="flex-1 min-h-0 overflow-y-auto px-3 py-3">
+							<div class="space-y-3">
+								{#each experiments as experiment (experimentKey(experiment))}
+									<AccentCard
+										href={experiment.detail_href ?? null}
+										class={`experiment-row transition-all duration-200 ${experimentRowToneClass(experiment)}`}
+										paddingClass="px-4 py-3.5"
+										roundedClass="rounded-[1.15rem]"
+										accentClass={experimentAccentClass(experiment)}
+									>
+										<div class="flex items-start justify-between gap-4">
+											<div class="min-w-0">
+												<div class="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">
+													<span>{formatSurfaceDate(experiment.created_at)}</span>
+													{#if experiment.has_live}
+														<span class="inline-flex items-center gap-1.5 text-slate-300">
+															<span class="live-dot rounded-full bg-sky-400"></span>
+															live
 														</span>
-													</div>
-
-													<div class="mission-progress-layout mt-4">
-														<div class="min-w-0">
-															<div
-																class="mission-progress-rail"
-																role="progressbar"
-																aria-label={progressAriaLabel(item, featuredRun)}
-																aria-valuemin="0"
-																aria-valuemax="100"
-																aria-valuenow={normalizedProgressMode(featuredRun) === 'indeterminate'
-																	? undefined
-																	: Math.round(featuredRun.progress_percent ?? 0)}
-																aria-valuetext={progressAriaValueText(featuredRun)}
-															>
-																{#if normalizedProgressMode(featuredRun) === 'indeterminate'}
-																	<span class="mission-progress-indeterminate"></span>
-																{:else}
-																	<span
-																		class={progressFillClass(featuredRun)}
-																		style={`width: ${progressWidth(featuredRun.progress_percent)}`}
-																	></span>
-																{/if}
-															</div>
-															<p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-400">
-																{primaryRunDetail(featuredRun)}
-															</p>
-														</div>
-
-														<div class="mission-progress-value-wrap">
-															<p class="mission-progress-value">{progressValueLabel(featuredRun)}</p>
-															{#if normalizedProgressMode(featuredRun) === 'estimated'}
-																<span class="mission-estimate-pill">EST</span>
-															{/if}
-														</div>
-													</div>
+													{/if}
 												</div>
-											{/if}
-										</div>
-
-										<div class="grid gap-3 border-t border-white/8 pt-4 lg:border-t-0 lg:border-l lg:border-white/8 lg:pt-0 lg:pl-4">
-											<div>
-												<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Live runs</p>
-												<p class="mt-1 text-lg font-semibold text-white">{item.live_run_count}</p>
+												<h3 class="mt-2 truncate text-sm font-semibold text-white">{experiment.name}</h3>
 											</div>
-											<div>
-												<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Queue</p>
-												<p class="mt-1 text-lg font-semibold text-white">{item.queued_run_count}</p>
-											</div>
-											<div>
-												<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Last pulse</p>
-												<p class="mt-1 font-mono text-sm text-slate-100">{formatSurfaceTime(item.latest_activity_at)}</p>
-											</div>
-										</div>
-									</div>
-								</article>
-							{/each}
-						</div>
-					{/if}
-				</section>
-
-				<aside class="mission-panel rounded-[1.6rem] border border-white/8 shadow-[0_18px_50px_rgba(0,0,0,0.18)] scroll-mt-20">
-					<div class="border-b border-white/8 px-5 py-4">
-						<div class="flex items-end justify-between gap-4">
-							<div>
-								<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Terminal Feed</p>
-								<h2 class="mt-2 text-lg font-semibold text-white">Recent activity</h2>
-							</div>
-							<p class="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-300/80">Newest 8</p>
-						</div>
-					</div>
-
-					{#if recentActivity.length === 0}
-						<div class="px-5 py-10 text-center">
-							<p class="text-sm font-medium text-white">No terminal activity yet.</p>
-							<p class="mt-2 text-sm text-slate-400">Completed, canceled, stale, and failed runs will appear here.</p>
-						</div>
-					{:else}
-						<div class="space-y-3 px-3 py-3">
-							{#each recentActivity as item, index (item.job_id ?? `${item.experiment_id}-${index}`)}
-								<div class="recent-activity-card relative rounded-[1.15rem] border border-white/7 px-4 py-4 {activityTone(item)}">
-									<span class="absolute left-0 top-4 bottom-4 w-[2px] rounded-full {activityBarClass(item)}"></span>
-
-									<div class="flex items-start justify-between gap-4">
-										<div class="min-w-0">
-											<p class="truncate text-sm font-medium text-white">{item.experiment_name}</p>
-											<p class="mt-1 truncate font-mono text-[11px] text-slate-300/88">{item.config_label}</p>
-										</div>
-
-										<div class="text-right">
-											<span class="rounded-full px-2 py-0.5 text-[10px] font-medium uppercase {statusChipClass(item.status)}">
-												{formatStatusLabel(item.status)}
+											<span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {experimentStatusClass(experiment.status)}">
+												{formatStatusLabel(experiment.status)}
 											</span>
-											<p class="mt-2 font-mono text-[11px] text-slate-300/80">
-												{formatSurfaceTime(item.updated_at ?? item.finished_at)}
-											</p>
 										</div>
-									</div>
 
-									<div class="mt-3 flex items-center justify-between gap-3 font-mono text-[11px] text-slate-300/88">
-										<span class="truncate">{recentActivityHint(item)}</span>
-										<span class="shrink-0">{fmtPercent(item.progress_percent)}</span>
-									</div>
-								</div>
-							{/each}
+										<div class="mt-3 flex items-center justify-between gap-3">
+											<p class="min-w-0 truncate font-mono text-[11px] text-slate-300/90">{experimentMeta(experiment)}</p>
+											<span class="rounded-full border px-2 py-0.5 text-[10px] uppercase {attentionClass(experiment.attention_state)}">
+												{formatAttentionLabel(experiment.attention_state)}
+											</span>
+										</div>
+
+										<div class="mt-2 font-mono text-[11px] text-slate-400">
+											Last activity {formatSurfaceTime(experiment.latest_activity_at)}
+										</div>
+										{#if sourceMeta(experiment.source_kind, experiment.source_label)}
+											<div class="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">
+												{sourceMeta(experiment.source_kind, experiment.source_label)}
+											</div>
+										{/if}
+									</AccentCard>
+								{/each}
+							</div>
 						</div>
 					{/if}
 				</aside>
+
+				<div class="flex min-h-0 flex-1 flex-col md:contents xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
+					<div class="flex min-h-0 flex-1 flex-col md:contents xl:grid xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.95fr)] xl:grid-rows-[minmax(0,1fr)]">
+							<section class="mission-pane flex min-h-0 flex-col border-b-[1.5px] border-white/12 md:col-start-1 md:row-start-2 md:col-span-2 md:border-b-0 xl:col-auto xl:row-auto xl:col-span-1 xl:border-r-[1.5px] xl:border-b-0">
+								<div class="mission-pane-header border-y-[1.5px] border-white/12 px-5 py-4">
+								<div class="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+									<div>
+										<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Live Operations</p>
+										<h2 class="mt-2 text-lg font-semibold text-white">Active systems</h2>
+									</div>
+									{#if liveOperationsLoading}
+										<div
+											class="mission-loading-indicator font-mono text-[11px] uppercase tracking-[0.22em] text-slate-300/80"
+											role="status"
+											aria-live="polite"
+										>
+											<span class="mission-loading-spinner" aria-hidden="true"></span>
+											<span>Loading live state</span>
+										</div>
+									{:else}
+										<div class="font-mono text-[11px] uppercase tracking-[0.22em] text-slate-300/80">
+											3s cadence · workspace pulse
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							{#if liveOperationsLoading}
+								<div class="mission-loading-state flex-1 px-6 py-10 text-center" role="status" aria-live="polite">
+									<div>
+										<div class="mission-loading-indicator mx-auto justify-center">
+											<span class="mission-loading-spinner mission-loading-spinner-lg" aria-hidden="true"></span>
+										</div>
+										<p class="mt-4 text-sm font-medium text-white">Loading live operations...</p>
+										<p class="mt-2 text-sm text-slate-400">Pulling active runs, queue state, and workspace pulse.</p>
+									</div>
+								</div>
+							{:else if liveExperiments.length === 0}
+								<div class="flex flex-1 items-center justify-center px-6 py-10 text-center">
+									<div>
+										<p class="text-sm font-medium text-white">No active experiments right now.</p>
+										<p class="mt-2 text-sm text-slate-400">
+											The live surface will populate as soon as new runs enter the queue.
+										</p>
+									</div>
+								</div>
+							{:else}
+								<div class="flex-1 min-h-0 overflow-y-auto">
+									<div class="divide-y divide-white/8">
+										{#each liveExperiments as item (liveExperimentKey(item))}
+											{@const featuredRun = primaryRun(item)}
+											<article class="px-5 py-4">
+												<div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+													<div class="min-w-0">
+														<div class="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-slate-300">
+															<span class="live-dot rounded-full bg-sky-400"></span>
+															{item.live_run_count} active
+														</div>
+														<h3 class="mt-2 truncate text-lg font-semibold text-white">
+															<svelte:element
+																this={item.detail_href ? 'a' : 'span'}
+																href={item.detail_href ?? undefined}
+																class={item.detail_href ? 'transition-colors hover:text-white' : undefined}
+															>
+																{item.name}
+															</svelte:element>
+														</h3>
+													</div>
+
+													<div class="flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-slate-300/85">
+														<span class="rounded-full border px-2.5 py-1 text-[10px] uppercase {attentionClass(item.attention_state)}">
+															{formatAttentionLabel(item.attention_state)}
+														</span>
+														<span class="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] text-slate-300">
+															{item.queued_run_count} queued
+														</span>
+													</div>
+												</div>
+
+												<div class="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_170px]">
+													<div>
+														{#if featuredRun}
+															<div class="mission-primary-run rounded-[1.15rem] border border-white/8 bg-white/[0.015] px-4 py-4">
+																<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+																	<div class="min-w-0">
+																		<p class="truncate text-base font-semibold text-white">{featuredRun.config_label}</p>
+																		<p class="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-300/82">
+																			{primaryRunMeta(item, featuredRun)}
+																		</p>
+																	</div>
+
+																	<span
+																		class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[10px] font-medium uppercase {statusChipClass(featuredRun.status)}"
+																	>
+																		{formatStatusLabel(featuredRun.status)}
+																	</span>
+																</div>
+
+																<div class="mission-progress-layout mt-4">
+																	<div class="min-w-0">
+																		<div
+																			class="mission-progress-rail"
+																			role="progressbar"
+																			aria-label={progressAriaLabel(item, featuredRun)}
+																			aria-valuemin="0"
+																			aria-valuemax="100"
+																			aria-valuenow={normalizedProgressMode(featuredRun) === 'indeterminate'
+																				? undefined
+																				: Math.round(featuredRun.progress_percent ?? 0)}
+																			aria-valuetext={progressAriaValueText(featuredRun)}
+																		>
+																			{#if normalizedProgressMode(featuredRun) === 'indeterminate'}
+																				<span class="mission-progress-indeterminate"></span>
+																			{:else}
+																				<span
+																					class={progressFillClass(featuredRun)}
+																					style={`width: ${progressWidth(featuredRun.progress_percent)}`}
+																				></span>
+																			{/if}
+																		</div>
+																		<p class="mt-2 font-mono text-[11px] uppercase tracking-[0.14em] text-slate-400">
+																			{primaryRunDetail(featuredRun)}
+																		</p>
+																	</div>
+
+																	<div class="mission-progress-value-wrap">
+																		<p class="mission-progress-value">{progressValueLabel(featuredRun)}</p>
+																		{#if normalizedProgressMode(featuredRun) === 'estimated'}
+																			<span class="mission-estimate-pill">EST</span>
+																		{/if}
+																	</div>
+																</div>
+															</div>
+														{/if}
+													</div>
+
+													<div class="grid gap-3 border-t border-white/8 pt-4 lg:border-t-0 lg:border-l lg:border-white/8 lg:pt-0 lg:pl-4">
+														<div>
+															<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Live runs</p>
+															<p class="mt-1 text-lg font-semibold text-white">{item.live_run_count}</p>
+														</div>
+														<div>
+															<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Queue</p>
+															<p class="mt-1 text-lg font-semibold text-white">{item.queued_run_count}</p>
+														</div>
+														<div>
+															<p class="font-mono text-[10px] uppercase tracking-[0.18em] text-slate-400">Last pulse</p>
+															<p class="mt-1 font-mono text-sm text-slate-100">{formatSurfaceTime(item.latest_activity_at)}</p>
+														</div>
+													</div>
+												</div>
+											</article>
+										{/each}
+									</div>
+								</div>
+							{/if}
+						</section>
+
+							<aside class="mission-pane flex min-h-0 flex-col md:col-start-2 md:row-start-1 md:border-b-[1.5px] md:border-white/12 xl:col-auto xl:row-auto xl:border-b-0">
+								<div class="mission-pane-header border-y-[1.5px] border-white/12 px-5 py-4">
+								<div class="flex items-end justify-between gap-4">
+									<div>
+										<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-slate-400">Terminal Feed</p>
+										<h2 class="mt-2 text-lg font-semibold text-white">Recent activity</h2>
+									</div>
+									{#if terminalFeedLoading}
+										<div
+											class="mission-loading-indicator font-mono text-[11px] uppercase tracking-[0.18em] text-slate-300/80"
+											role="status"
+											aria-live="polite"
+										>
+											<span class="mission-loading-spinner" aria-hidden="true"></span>
+											<span>Loading events</span>
+										</div>
+									{:else}
+										<p class="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-300/80">Newest 8</p>
+									{/if}
+								</div>
+							</div>
+
+							{#if terminalFeedLoading}
+								<div class="mission-loading-state flex-1 px-5 py-10 text-center" role="status" aria-live="polite">
+									<div>
+										<div class="mission-loading-indicator mx-auto justify-center">
+											<span class="mission-loading-spinner mission-loading-spinner-lg" aria-hidden="true"></span>
+										</div>
+										<p class="mt-4 text-sm font-medium text-white">Loading recent activity...</p>
+										<p class="mt-2 text-sm text-slate-400">Collecting recent terminal events and run completions.</p>
+									</div>
+								</div>
+							{:else if recentActivity.length === 0}
+								<div class="flex flex-1 items-center justify-center px-5 py-10 text-center">
+									<div>
+										<p class="text-sm font-medium text-white">No terminal activity yet.</p>
+										<p class="mt-2 text-sm text-slate-400">
+											Completed, canceled, stale, and failed runs will appear here.
+										</p>
+									</div>
+								</div>
+							{:else}
+								<div class="flex-1 min-h-0 overflow-y-auto px-3 py-3">
+									<div class="space-y-3">
+										{#each recentActivity as item, index (recentActivityKey(item, index))}
+											<AccentCard
+												class={`recent-activity-card ${activityToneClass(item)}`}
+												paddingClass="px-4 py-4"
+												roundedClass="rounded-[1.05rem]"
+												accentClass={activityBarClass(item)}
+											>
+												<div class="flex items-start justify-between gap-4">
+													<div class="min-w-0">
+														<p class="truncate text-sm font-medium text-white">{item.experiment_name}</p>
+														<p class="mt-1 truncate font-mono text-[11px] text-slate-300/88">{item.config_label}</p>
+													</div>
+
+													<div class="text-right">
+														<span class="rounded-full px-2 py-0.5 text-[10px] font-medium uppercase {statusChipClass(item.status)}">
+															{formatStatusLabel(item.status)}
+														</span>
+														<p class="mt-2 font-mono text-[11px] text-slate-300/80">
+															{formatSurfaceTime(item.updated_at ?? item.finished_at)}
+														</p>
+													</div>
+												</div>
+
+												<div class="mt-3 flex items-center justify-between gap-3 font-mono text-[11px] text-slate-300/88">
+													<span class="truncate">{recentActivityHint(item)}</span>
+													<span class="shrink-0">{fmtPercent(item.progress_percent)}</span>
+												</div>
+											</AccentCard>
+										{/each}
+									</div>
+								</div>
+							{/if}
+						</aside>
+					</div>
+				</div>
 			</div>
-		</div>
-	</div>
+		{/if}
+	</section>
 </div>
 
 <style>
@@ -752,54 +865,88 @@
 	}
 
 	.mission-panel {
-		background: oklch(0.18 0 0);
+		background: #070707;
 		backdrop-filter: blur(18px);
 	}
 
-	.mission-header {
-		background: oklch(0.18 0 0);
+	.mission-surface {
+		background: #070707;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 	}
 
-	.signal-pill {
+	.mission-toolbar {
+		background: #070707;
+	}
+
+	.mission-pane {
+		background: #070707;
+	}
+
+	.mission-pane-header {
+		background: #151515;
+	}
+
+	.mission-loading-indicator {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.55rem;
+		color: rgba(203, 213, 225, 0.84);
+	}
+
+	.mission-loading-spinner {
+		display: inline-flex;
+		width: 0.8rem;
+		height: 0.8rem;
 		border-radius: 9999px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: rgba(255, 255, 255, 0.035);
-		padding: 0.5rem 0.9rem;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-		color: rgb(226 232 240 / 0.92);
+		border: 1.5px solid rgba(148, 163, 184, 0.22);
+		border-top-color: rgba(248, 250, 252, 0.92);
+		animation: mission-spinner 0.82s linear infinite;
 	}
 
-	.signal-pill-muted {
-		color: rgb(148 163 184 / 0.88);
-		background: oklch(0.22 0 0);
+	.mission-loading-spinner-lg {
+		width: 1.1rem;
+		height: 1.1rem;
+		border-width: 2px;
 	}
 
-	.metric-label {
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-		font-size: 0.7rem;
-		letter-spacing: 0.24em;
-		text-transform: uppercase;
-		color: rgba(203, 213, 225, 0.82);
+	.mission-loading-state {
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.metric-value {
-		margin-top: 0.5rem;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-		font-size: clamp(1.65rem, 2vw, 2.25rem);
-		line-height: 1;
-		font-weight: 600;
+	.remote-summary-link {
+		display: inline-flex;
+		align-items: center;
+		align-self: flex-end;
+		gap: 0.55rem;
+		width: fit-content;
+		max-width: min(100%, 17rem);
+		margin-left: auto;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 0.95rem;
+		background: #151515;
+		cursor: pointer;
+		opacity: 0.96;
+		padding: 0.75rem 0.95rem;
+		color: rgba(226, 232, 240, 0.9);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+		transition:
+			background-color 160ms ease,
+			border-color 160ms ease,
+			opacity 160ms ease,
+			color 160ms ease;
 	}
 
-	.metric-meta {
-		margin-top: 0.45rem;
-		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-		font-size: 0.72rem;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: rgba(203, 213, 225, 0.7);
+	.remote-summary-link:hover {
+		background: rgba(255, 255, 255, 0.04);
+		border-color: rgba(255, 255, 255, 0.14);
+		color: rgba(248, 250, 252, 0.96);
+		opacity: 1;
+	}
+
+	.remote-summary-empty {
+		color: rgba(148, 163, 184, 0.82);
 	}
 
 	.live-dot {
@@ -810,25 +957,56 @@
 		animation: telemetry-pulse 1.8s ease-in-out infinite;
 	}
 
-	.metric-cell {
-		padding: 1rem 1.25rem;
-		background: transparent;
+	.remote-status-dot {
+		display: inline-flex;
+		width: 0.5rem;
+		height: 0.5rem;
+		box-shadow: 0 0 0 0.2rem rgba(255, 255, 255, 0.02);
 	}
 
-	.rail-panel {
-		background: oklch(0.18 0 0);
+	.remote-close-button {
+		display: inline-flex;
+		height: 2.25rem;
+		width: 2.25rem;
+		align-items: center;
+		justify-content: center;
+		border-radius: 9999px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.03);
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+		font-size: 0.8rem;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: rgba(226, 232, 240, 0.9);
+		transition:
+			background-color 160ms ease,
+			border-color 160ms ease,
+			color 160ms ease;
+	}
+
+	.remote-close-button:hover {
+		border-color: rgba(255, 255, 255, 0.16);
+		background: rgba(255, 255, 255, 0.06);
+		color: rgba(248, 250, 252, 0.98);
+	}
+
+	.remote-source-detail-card {
+		background: #151515;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.experiment-row {
-		background: oklch(0.18 0 0);
+		background: #151515;
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.recent-activity-card {
+		background: #151515;
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.mission-primary-run {
+		background: #151515;
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
@@ -930,6 +1108,12 @@
 		}
 	}
 
+	@keyframes mission-spinner {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
 	@keyframes mission-progress-sheen {
 		to {
 			transform: translateX(460%) skewX(-18deg);
@@ -962,6 +1146,10 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.live-dot {
+			animation: none !important;
+		}
+
+		.mission-loading-spinner {
 			animation: none !important;
 		}
 

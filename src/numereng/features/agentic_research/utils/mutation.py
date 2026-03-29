@@ -1,4 +1,4 @@
-"""Config-centric mutation helpers for numerai agentic research."""
+"""Mutation-program helpers for agentic research."""
 
 from __future__ import annotations
 
@@ -7,20 +7,27 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
 
 from numereng.config.training import TrainingConfig
-from numereng.features.agentic_research.contracts import MutationChange, MutationProposal
-from numereng.features.agentic_research.prompting import (
+from numereng.features.agentic_research.utils.programs import (
     render_prompt_template,
     render_validation_feedback_block,
 )
-from numereng.features.experiments import ExperimentRecord, ExperimentReport, ExperimentReportRow
+from numereng.features.agentic_research.utils.types import (
+    MutationChange,
+    MutationProposal,
+    ResearchProgramDefinition,
+)
+from numereng.features.experiments import (
+    ExperimentRecord,
+    ExperimentReport,
+    ExperimentReportRow,
+)
 from numereng.features.training.run_store import compute_config_hash
 
 _FILENAME_SLUG_RE = re.compile(r"[^a-z0-9]+")
 _CODE_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$", re.MULTILINE)
-_ALLOWED_MUTATION_PATHS: Final[tuple[str, ...]] = (
+_DEFAULT_MUTATION_ALLOWED_PATHS = (
     "data.feature_set",
     "data.target_col",
     "data.scoring_targets",
@@ -45,7 +52,6 @@ _ALLOWED_MUTATION_PATHS: Final[tuple[str, ...]] = (
 class ParentConfigSelection:
     """The currently selected parent config and the metrics tied to it."""
 
-    config_path: Path
     config_filename: str
     config_payload: dict[str, object]
     run_id: str | None
@@ -62,32 +68,57 @@ class MaterializedMutationConfig:
     filename: str
     payload: dict[str, object]
     change_set: list[dict[str, object]]
-    identity_hash: str
-
-
-def allowed_mutation_paths() -> tuple[str, ...]:
-    """Return the dotted config paths the numerai mutation planner may edit."""
-    return _ALLOWED_MUTATION_PATHS
 
 
 def render_mutation_prompt(
     *,
-    prompt_path: Path,
+    definition: ResearchProgramDefinition,
     parent: ParentConfigSelection,
     recent_round_summaries: list[dict[str, object]],
     validation_feedback: str | None,
 ) -> str:
     """Render the compact numerai config-mutation prompt."""
     return render_prompt_template(
-        prompt_path,
+        definition.prompt_template,
         {
-            "PARENT_CONFIG_FILENAME": parent.config_filename,
-            "PARENT_CONFIG_JSON": json.dumps(parent.config_payload, indent=2, sort_keys=True),
-            "RECENT_LINEAGE_SUMMARY": render_recent_lineage_summary(recent_round_summaries),
-            "CORE_METRIC_SUMMARY": render_metric_summary(parent),
-            "ALLOWED_PATHS": "\n".join(f"- `{item}`" for item in allowed_mutation_paths()),
+            "CONTEXT_JSON": json.dumps(
+                {
+                    "program": {
+                        "id": definition.program_id,
+                        "title": definition.title,
+                        "description": definition.description,
+                        "planner_contract": definition.planner_contract,
+                    },
+                    "metric_policy": {
+                        "primary": definition.metric_policy.primary,
+                        "tie_break": definition.metric_policy.tie_break,
+                        "sanity_checks": list(definition.metric_policy.sanity_checks),
+                    },
+                    "config_policy": {
+                        "allowed_paths": list(definition.config_policy.allowed_paths),
+                        "min_changes": definition.config_policy.min_changes,
+                        "max_changes": definition.config_policy.max_changes,
+                        "max_candidate_configs": definition.config_policy.max_candidate_configs,
+                    },
+                    "parent_config": {
+                        "filename": parent.config_filename,
+                        "source": parent.source,
+                        "run_id": parent.run_id,
+                        "metrics": {
+                            "bmc_last_200_eras_mean": parent.bmc_last_200_eras_mean,
+                            "bmc_mean": parent.bmc_mean,
+                            "corr_mean": parent.corr_mean,
+                        },
+                        "payload": parent.config_payload,
+                    },
+                    "recent_round_summaries": recent_round_summaries[-3:],
+                },
+                indent=2,
+                sort_keys=True,
+            ),
             "VALIDATION_FEEDBACK_BLOCK": render_validation_feedback_block(validation_feedback),
         },
+        source=definition.source_path or definition.program_id,
     )
 
 
@@ -111,12 +142,19 @@ def select_parent_config(
     raise ValueError(f"agentic_research_parent_config_missing:{experiment.experiment_id}")
 
 
-def parse_mutation_response(response_text: str) -> MutationProposal:
+def parse_mutation_response(
+    response_text: str,
+    *,
+    definition: ResearchProgramDefinition | None = None,
+) -> MutationProposal:
     """Parse the mutation planner text response into a validated proposal."""
     stripped = _strip_code_fence(response_text).strip()
     if not stripped:
         raise ValueError("agentic_research_mutation_response_empty")
     rationale, change_lines = _split_sections(stripped)
+    allowed_paths = (
+        definition.config_policy.allowed_paths if definition is not None else _DEFAULT_MUTATION_ALLOWED_PATHS
+    )
     changes: list[MutationChange] = []
     seen_paths: set[str] = set()
     for raw_line in change_lines:
@@ -134,7 +172,7 @@ def parse_mutation_response(response_text: str) -> MutationProposal:
         config_path = path.removeprefix("config.").strip()
         if not config_path:
             raise ValueError("agentic_research_mutation_path_missing")
-        if not _path_allowed(config_path):
+        if not _mutation_path_allowed(config_path, allowed_paths=allowed_paths):
             raise ValueError(f"agentic_research_mutation_path_not_allowed:{config_path}")
         if config_path in seen_paths:
             raise ValueError(f"agentic_research_mutation_path_duplicate:{config_path}")
@@ -146,6 +184,13 @@ def parse_mutation_response(response_text: str) -> MutationProposal:
         changes.append(MutationChange(path=config_path, value=value))
     if not changes:
         raise ValueError("agentic_research_mutation_changes_missing")
+    if definition is not None:
+        min_changes = definition.config_policy.min_changes
+        max_changes = definition.config_policy.max_changes
+        if min_changes is not None and len(changes) < min_changes:
+            raise ValueError("agentic_research_mutation_changes_too_few")
+        if max_changes is not None and len(changes) > max_changes:
+            raise ValueError("agentic_research_mutation_changes_too_many")
     return MutationProposal(rationale=rationale, changes=tuple(changes))
 
 
@@ -175,8 +220,7 @@ def materialize_mutation_config(
     return MaterializedMutationConfig(
         filename=filename,
         payload=validated,
-        change_set=change_set_from_proposal(proposal),
-        identity_hash=identity_hash,
+        change_set=[{"path": item.path, "value": deepcopy(item.value)} for item in proposal.changes],
     )
 
 
@@ -186,48 +230,6 @@ def write_materialized_config(*, config_dir: Path, candidate: MaterializedMutati
     path = config_dir / candidate.filename
     path.write_text(json.dumps(candidate.payload, indent=2, sort_keys=True), encoding="utf-8")
     return path
-
-
-def change_set_from_proposal(proposal: MutationProposal) -> list[dict[str, object]]:
-    """Convert one proposal into a JSON-safe change-set payload."""
-    return [{"path": item.path, "value": deepcopy(item.value)} for item in proposal.changes]
-
-
-def render_recent_lineage_summary(recent_round_summaries: list[dict[str, object]]) -> str:
-    """Render a compact recent-lineage text summary for the mutation prompt."""
-    if not recent_round_summaries:
-        return "- No prior autonomous mutation rounds recorded."
-    lines: list[str] = []
-    for summary in recent_round_summaries[-3:]:
-        round_label = _coerce_text(summary.get("round_label")) or "unknown"
-        parent_config = _coerce_text(summary.get("parent_config_filename")) or "n/a"
-        best_row = summary.get("best_row")
-        metrics_text = "metrics unavailable"
-        if isinstance(best_row, dict):
-            metrics_text = (
-                "bmc_last_200_eras_mean="
-                f"{_format_metric(best_row.get('bmc_last_200_eras_mean'))}, "
-                f"bmc_mean={_format_metric(best_row.get('bmc_mean'))}, "
-                f"corr_mean={_format_metric(best_row.get('corr_mean'))}"
-            )
-        change_set = summary.get("change_set")
-        if isinstance(change_set, list) and change_set:
-            rendered_changes = ", ".join(_render_change_summary(item) for item in change_set if isinstance(item, dict))
-        else:
-            rendered_changes = "no recorded change set"
-        lines.append(f"- {round_label} | parent={parent_config} | changes={rendered_changes} | {metrics_text}")
-    return "\n".join(lines)
-
-
-def render_metric_summary(parent: ParentConfigSelection) -> str:
-    """Render the three core metrics for the selected parent run."""
-    return "\n".join(
-        [
-            f"- `bmc_last_200_eras_mean`: {_format_metric(parent.bmc_last_200_eras_mean)}",
-            f"- `bmc_mean`: {_format_metric(parent.bmc_mean)}",
-            f"- `corr_mean`: {_format_metric(parent.corr_mean)}",
-        ]
-    )
 
 
 def build_candidate_filename(
@@ -256,15 +258,8 @@ def existing_identity_hashes(*, config_dirs: list[Path]) -> set[str]:
         if not config_dir.is_dir():
             continue
         for config_path in sorted(config_dir.glob("*.json")):
-            try:
-                payload = json.loads(config_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            try:
-                validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
-            except Exception:
+            validated = _load_validated_config(config_path)
+            if validated is None:
                 continue
             hashes.add(compute_config_hash(_identity_payload(validated)))
     return hashes
@@ -292,17 +287,8 @@ def _selection_from_run(
     config_path = Path(config_path_value).expanduser().resolve()
     if not config_path.is_file():
         return None
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
-    return ParentConfigSelection(
+    return _selection_from_config_path(
         config_path=config_path,
-        config_filename=config_path.name,
-        config_payload=validated,
         run_id=row.run_id,
         bmc_last_200_eras_mean=row.bmc_last_200_eras_mean,
         bmc_mean=row.bmc_mean,
@@ -316,53 +302,56 @@ def _selection_from_config_dirs(config_dirs: list[Path]) -> ParentConfigSelectio
         if not config_dir.is_dir():
             continue
         for config_path in sorted(config_dir.glob("*.json"), key=lambda item: item.name, reverse=True):
-            try:
-                payload = json.loads(config_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            try:
-                validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
-            except Exception:
-                continue
-            return ParentConfigSelection(
+            selection = _selection_from_config_path(
                 config_path=config_path,
-                config_filename=config_path.name,
-                config_payload=validated,
                 run_id=None,
                 bmc_last_200_eras_mean=None,
                 bmc_mean=None,
                 corr_mean=None,
                 source=f"seed_config:{config_path}",
             )
+            if selection is not None:
+                return selection
     return None
+
+
+def _selection_from_config_path(
+    *,
+    config_path: Path,
+    run_id: str | None,
+    bmc_last_200_eras_mean: float | None,
+    bmc_mean: float | None,
+    corr_mean: float | None,
+    source: str,
+) -> ParentConfigSelection | None:
+    validated = _load_validated_config(config_path)
+    if validated is None:
+        return None
+    return ParentConfigSelection(
+        config_filename=config_path.name,
+        config_payload=validated,
+        run_id=run_id,
+        bmc_last_200_eras_mean=bmc_last_200_eras_mean,
+        bmc_mean=bmc_mean,
+        corr_mean=corr_mean,
+        source=source,
+    )
 
 
 def _best_row(rows: tuple[ExperimentReportRow, ...]) -> ExperimentReportRow | None:
     best: ExperimentReportRow | None = None
+    best_metrics: tuple[float, float, float] | None = None
     for row in rows:
         if row.bmc_last_200_eras_mean is None:
             continue
-        if best is None:
+        row_metrics = (
+            row.bmc_last_200_eras_mean,
+            row.bmc_mean or float("-inf"),
+            row.corr_mean or float("-inf"),
+        )
+        if best_metrics is None or row_metrics > best_metrics:
             best = row
-            continue
-        best_primary = best.bmc_last_200_eras_mean or float("-inf")
-        row_primary = row.bmc_last_200_eras_mean
-        if row_primary > best_primary:
-            best = row
-            continue
-        if row_primary < best_primary:
-            continue
-        best_secondary = best.bmc_mean or float("-inf")
-        row_secondary = row.bmc_mean or float("-inf")
-        if row_secondary > best_secondary:
-            best = row
-            continue
-        if row_secondary < best_secondary:
-            continue
-        if (row.corr_mean or float("-inf")) > (best.corr_mean or float("-inf")):
-            best = row
+            best_metrics = row_metrics
     return best
 
 
@@ -422,9 +411,9 @@ def _identity_payload(payload: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
-def _path_allowed(path: str) -> bool:
+def _mutation_path_allowed(path: str, *, allowed_paths: tuple[str, ...]) -> bool:
     tokens = tuple(path.split("."))
-    for allowed in _ALLOWED_MUTATION_PATHS:
+    for allowed in allowed_paths:
         allowed_tokens = tuple(allowed.split("."))
         if len(tokens) != len(allowed_tokens):
             continue
@@ -433,17 +422,6 @@ def _path_allowed(path: str) -> bool:
         ):
             return True
     return False
-
-
-def _format_metric(value: object) -> str:
-    if isinstance(value, (int, float)):
-        return f"{float(value):.12f}".rstrip("0").rstrip(".")
-    return "n/a"
-
-
-def _render_change_summary(item: dict[str, object]) -> str:
-    path = _coerce_text(item.get("path")) or "unknown"
-    return f"{path}={json.dumps(item.get('value'), sort_keys=True)}"
 
 
 def _change_slug(change: MutationChange) -> str:
@@ -472,8 +450,15 @@ def _strip_code_fence(value: str) -> str:
     return _CODE_FENCE_RE.sub("", value).strip()
 
 
-def _coerce_text(value: object) -> str | None:
-    if not isinstance(value, str):
+def _load_validated_config(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return None
-    stripped = value.strip()
-    return stripped or None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        validated = TrainingConfig.model_validate(payload)
+    except Exception:
+        return None
+    return validated.model_dump(mode="python", exclude_none=True)

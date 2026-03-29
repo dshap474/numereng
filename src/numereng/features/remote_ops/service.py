@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import shlex
 import subprocess
@@ -34,6 +35,7 @@ from numereng.features.remote_ops.sync import (
 from numereng.features.store import resolve_store_root
 from numereng.features.training import PostTrainingScoringPolicy, TrainingProfile
 from numereng.platform import load_remote_targets
+from numereng.platform.run_execution import build_run_execution, serialize_run_execution
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 from numereng.platform.remotes.ssh import (
     build_monitor_snapshot_command,
@@ -45,6 +47,8 @@ from numereng.platform.remotes.ssh import (
 _SYNC_TIMEOUT_SECONDS = 180
 _REMOTE_BOOTSTRAP_DIR = ("remote_ops", "bootstrap")
 _REMOTE_VIZ_BOOTSTRAP_FILE = "viz.json"
+_REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS = 10.0
+_REMOTE_WINDOWS_STARTUP_POLL_SECONDS = 0.25
 
 
 class RemoteOpsError(Exception):
@@ -328,7 +332,7 @@ def push_remote_config(
     if not resolved_config_path.is_file():
         raise RemoteValidationError(f"remote_config_not_found:{resolved_config_path}")
     remote_file_name = f"{_timestamp_token()}_{resolved_config_path.name}"
-    remote_relpath = "/".join([".tmp", "numereng-remote-configs", remote_file_name])
+    remote_relpath = "/".join([".numereng", "tmp", "remote-configs", remote_file_name])
     remote_abs_path = remote_config_destination(target, file_name=remote_file_name)
     outcome = sync_entries_to_remote(
         target=target,
@@ -393,16 +397,25 @@ def remote_run_train(
             store_root=resolved_store_root,
         ).remote_config_path
 
-    launch_id = f"{_timestamp_token()}-{_safe_name(resolved_config_path.stem)}"
+    launch_id = _launch_id_for_config(resolved_config_path)
     remote_log_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.log")
     remote_metadata_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.json")
-    command = [*shlex.split(target.runner_cmd), "run", "train", "--config", remote_config_path]
+    command = [*_split_target_command(target.runner_cmd, shell=target.shell), "run", "train", "--config", remote_config_path]
     if inferred_experiment_id is not None:
         command.extend(["--experiment-id", inferred_experiment_id])
     if profile is not None:
         command.extend(["--profile", profile])
     if post_training_scoring is not None:
         command.extend(["--post-training-scoring", post_training_scoring])
+    execution_payload = serialize_run_execution(
+        build_run_execution(
+            kind="remote_host",
+            provider="ssh",
+            backend="remote_pc",
+            target_id=target.id,
+            host=target.label,
+        )
+    )
 
     launch_payload = _run_remote_python(
         target,
@@ -413,10 +426,13 @@ def remote_run_train(
             remote_log_path,
             remote_metadata_path,
             launch_id,
+            base64.b64encode(execution_payload.encode("utf-8")).decode("ascii"),
         ],
     )
     if launch_payload is None:
         raise RemoteExecutionError("remote_train_launch_failed")
+    if not bool(launch_payload.get("ok", True)):
+        raise RemoteExecutionError(_remote_launch_error_message(launch_payload))
 
     return RemoteTrainLaunchResult(
         target_id=target.id,
@@ -663,6 +679,23 @@ def _safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
 
 
+def _split_target_command(command: str, *, shell: str) -> list[str]:
+    return shlex.split(command, posix=shell != "powershell")
+
+
+def _launch_id_for_config(config_path: Path) -> str:
+    digest = hashlib.sha256(str(config_path).encode("utf-8")).hexdigest()[:8]
+    return f"{_timestamp_token()}-{digest}"
+
+
+def _remote_launch_error_message(payload: dict[str, Any]) -> str:
+    error = str(payload.get("error") or "remote_train_launch_failed")
+    exit_code = payload.get("exit_code")
+    if isinstance(exit_code, int):
+        return f"{error}:exit_code={exit_code}"
+    return error
+
+
 def _write_viz_bootstrap_state(result: RemoteVizBootstrapResult) -> None:
     result.state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -736,40 +769,122 @@ def _launch_python_script() -> str:
     return """
 import json
 import base64
+import os
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 
+STARTUP_TIMEOUT_SECONDS = __STARTUP_TIMEOUT_SECONDS__
+STARTUP_POLL_SECONDS = __STARTUP_POLL_SECONDS__
+
+
+
+def _terminate_process(process) -> int | None:
+    try:
+        process.terminate()
+        process.wait(timeout=1.0)
+    except Exception:
+        try:
+            process.kill()
+            process.wait(timeout=1.0)
+        except Exception:
+            return process.poll()
+    return process.poll()
+
+
 def main() -> None:
-    if len(sys.argv) != 6:
+    if len(sys.argv) != 7:
         raise SystemExit("remote_launch_arguments_invalid")
     command = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
     cwd = Path(sys.argv[2]).expanduser().resolve()
     log_path = Path(sys.argv[3]).expanduser().resolve()
     metadata_path = Path(sys.argv[4]).expanduser().resolve()
     launch_id = sys.argv[5]
+    execution_json = base64.b64decode(sys.argv[6]).decode("utf-8")
     cwd.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    child_env = dict(os.environ)
+    child_env["NUMERENG_RUN_EXECUTION_JSON"] = execution_json
 
     with log_path.open("ab") as log_handle:
         if sys.platform == "win32":
-            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            creationflags = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+                | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
+            )
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
+                env=child_env,
                 stdin=subprocess.DEVNULL,
                 stdout=log_handle,
                 stderr=log_handle,
                 creationflags=creationflags,
                 close_fds=True,
             )
+            confirmed = False
+            error = None
+            deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    error = "remote_train_launch_child_exited_early"
+                    break
+                try:
+                    if log_path.exists() and log_path.stat().st_size > 0:
+                        confirmed = True
+                        break
+                except OSError:
+                    pass
+                time.sleep(STARTUP_POLL_SECONDS)
+            if not confirmed:
+                exit_code = process.poll()
+                if error is not None:
+                    payload = {
+                        "ok": False,
+                        "launch_id": launch_id,
+                        "pid": process.pid,
+                        "command": command,
+                        "cwd": str(cwd),
+                        "log_path": str(log_path),
+                        "metadata_path": str(metadata_path),
+                        "launched_at": datetime.now(UTC).isoformat(),
+                        "execution": json.loads(execution_json),
+                        "error": error,
+                        "exit_code": exit_code,
+                        "log_size_bytes": log_path.stat().st_size if log_path.exists() else 0,
+                    }
+                    metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+                    print(json.dumps(payload, sort_keys=True))
+                    return
+            startup_confirmed = confirmed
+            launch_warning = None
+            if not startup_confirmed:
+                launch_warning = "remote_train_launch_log_unconfirmed"
+                exit_code = process.poll()
+                payload = {
+                    "ok": True,
+                    "launch_id": launch_id,
+                    "pid": process.pid,
+                    "command": command,
+                    "cwd": str(cwd),
+                    "log_path": str(log_path),
+                    "metadata_path": str(metadata_path),
+                    "launched_at": datetime.now(UTC).isoformat(),
+                    "execution": json.loads(execution_json),
+                    "startup_confirmed": startup_confirmed,
+                    "launch_warning": launch_warning,
+                    "log_size_bytes": log_path.stat().st_size if log_path.exists() else 0,
+                }
         else:
             process = subprocess.Popen(
                 command,
                 cwd=str(cwd),
+                env=child_env,
                 stdin=subprocess.DEVNULL,
                 stdout=log_handle,
                 stderr=log_handle,
@@ -778,6 +893,7 @@ def main() -> None:
             )
 
     payload = {
+        "ok": True,
         "launch_id": launch_id,
         "pid": process.pid,
         "command": command,
@@ -785,6 +901,9 @@ def main() -> None:
         "log_path": str(log_path),
         "metadata_path": str(metadata_path),
         "launched_at": datetime.now(UTC).isoformat(),
+        "execution": json.loads(execution_json),
+        "startup_confirmed": True,
+        "launch_warning": None,
     }
     metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
     print(json.dumps(payload, sort_keys=True))
@@ -792,7 +911,13 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-""".strip()
+""".replace(
+        "__STARTUP_TIMEOUT_SECONDS__",
+        repr(_REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS),
+    ).replace(
+        "__STARTUP_POLL_SECONDS__",
+        repr(_REMOTE_WINDOWS_STARTUP_POLL_SECONDS),
+    ).strip()
 
 
 __all__ = [

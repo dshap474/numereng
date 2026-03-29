@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import shlex
 import tempfile
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from numereng.features.cloud.aws.adapters import (
@@ -48,7 +50,19 @@ from numereng.features.cloud.aws.contracts import (
 )
 from numereng.features.cloud.aws.managed_contracts import CloudRuntimeProfile
 from numereng.features.cloud.aws.state_store import CloudEc2StateStore
-from numereng.features.store.layout import ensure_allowed_store_target
+from numereng.features.store import StoreError, index_run
+from numereng.features.store.layout import (
+    ensure_allowed_store_target,
+    resolve_cloud_run_state_path,
+    resolve_path,
+    validate_cloud_state_path,
+)
+from numereng.platform.run_execution import (
+    RUN_EXECUTION_ENV_B64_VAR,
+    build_run_execution,
+    serialize_run_execution,
+    stamp_run_execution,
+)
 
 
 class CloudEc2Error(Exception):
@@ -65,6 +79,7 @@ DEFAULT_CPU_AMI = os.getenv("NUMERENG_EC2_AMI_CPU", "ami-0b97b64b68a731354") or 
 DEFAULT_GPU_AMI = os.getenv("NUMERENG_EC2_AMI_GPU", "ami-06aed396fdc6ea5f3") or "ami-06aed396fdc6ea5f3"
 DEFAULT_RUNTIME_PROFILE: CloudRuntimeProfile = "standard"
 CUDA_RUNTIME_PROFILE: CloudRuntimeProfile = "lgbm-cuda"
+_CLOUD_PROVIDER = "aws"
 
 CPU_INSTANCE_TYPES: dict[str, str] = {
     "m7i.xlarge": "m7i.xlarge",
@@ -163,19 +178,33 @@ class CloudEc2Service:
         self._wheel_builder = wheel_builder or UvWheelBuilder()
         self._state_store = state_store or CloudEc2StateStore()
 
-    def _validated_state_path(self, request: CloudEc2RequestBase) -> Path | None:
+    def _resolved_state_path(
+        self,
+        request: CloudEc2RequestBase,
+        *,
+        state: CloudEc2State | None = None,
+    ) -> Path | None:
         state_path = request.state_file()
-        if state_path is None:
+        if state_path is not None:
+            try:
+                return validate_cloud_state_path(
+                    target_path=state_path,
+                    store_root=request.store_root,
+                    error_code="cloud_ec2_state_path_noncanonical",
+                    allow_legacy_cloud=True,
+                )
+            except ValueError as exc:
+                resolved = resolve_path(state_path)
+                if resolved.suffix.lower() != ".json":
+                    raise CloudEc2Error(f"cloud_ec2_state_path_extension_invalid:{resolved}") from exc
+                raise CloudEc2Error(str(exc)) from exc
+        run_id = getattr(request, "run_id", None) or (state.run_id if state is not None else None)
+        if run_id is None or not run_id.strip():
             return None
-        resolved = state_path.expanduser().resolve()
-        if resolved.suffix.lower() != ".json":
-            raise CloudEc2Error(f"cloud_ec2_state_path_extension_invalid:{resolved}")
-        if not _is_canonical_cloud_state_path(resolved):
-            raise CloudEc2Error(f"cloud_ec2_state_path_noncanonical:{resolved}")
-        return resolved
+        return resolve_cloud_run_state_path(store_root=request.store_root, provider=_CLOUD_PROVIDER, run_id=run_id)
 
     def _load_state(self, request: CloudEc2RequestBase) -> CloudEc2State:
-        state_path = self._validated_state_path(request)
+        state_path = self._resolved_state_path(request)
         if state_path is None:
             return CloudEc2State()
         loaded = self._state_store.load(state_path)
@@ -185,10 +214,37 @@ class CloudEc2Service:
 
     def _persist_state(self, request: CloudEc2RequestBase, state: CloudEc2State) -> CloudEc2State:
         touched = state.touched()
-        state_path = self._validated_state_path(request)
+        state_path = self._resolved_state_path(request, state=touched)
         if state_path is not None:
             self._state_store.save(state_path, touched)
         return touched
+
+    def _cloud_execution(
+        self,
+        *,
+        request: CloudEc2RequestBase,
+        state: CloudEc2State,
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        state_path = self._resolved_state_path(request, state=state)
+        merged_metadata = dict(metadata or {})
+        return build_run_execution(
+            kind="cloud",
+            provider=_CLOUD_PROVIDER,
+            backend="ec2",
+            target_id=state.run_id,
+            instance_id=state.instance_id,
+            region=state.region,
+            state_path=str(state_path) if state_path is not None else None,
+            submitted_at=merged_metadata.get("submitted_at"),
+            pulled_at=merged_metadata.get("pulled_at"),
+            metadata={
+                key: value
+                for key, value in merged_metadata.items()
+                if key not in {"submitted_at", "pulled_at"} and value
+            }
+            or None,
+        )
 
     def _resolve_region(self, explicit: str | None, state: CloudEc2State | None = None) -> str:
         if explicit is not None and explicit:
@@ -631,12 +687,34 @@ class CloudEc2Service:
         run_id = self._require(request.run_id or state.run_id, "run_id")
         instance_id = self._require(request.instance_id or state.instance_id, "instance_id")
         region = self._resolve_region(request.region, state)
+        submitted_at = _utc_now_iso()
+        execution_payload = serialize_run_execution(
+            self._cloud_execution(
+                request=request,
+                state=state.model_copy(
+                    update={
+                        "run_id": run_id,
+                        "instance_id": instance_id,
+                        "region": region,
+                    },
+                    deep=True,
+                ),
+                metadata={
+                    **state.metadata,
+                    "submitted_at": submitted_at,
+                    "bucket": state.bucket or "",
+                    "runtime_profile": state.runtime_profile,
+                },
+            )
+        )
+        encoded_execution = base64.urlsafe_b64encode(execution_payload.encode("utf-8")).decode("ascii")
 
         ssm = self._ssm(region)
         command = (
             "cd /opt/numereng && "
             ". .venv/bin/activate && "
             "PYTHONUNBUFFERED=1 nohup bash -c '"
+            f"{RUN_EXECUTION_ENV_B64_VAR}={encoded_execution} "
             "numereng run train "
             "--config /opt/numereng/.numereng/configs/run_config.json "
             "--output-dir /opt/numereng/.numereng "
@@ -661,6 +739,10 @@ class CloudEc2Service:
                 "region": region,
                 "training_pid": pid,
                 "status": "training_running",
+                "metadata": {
+                    **state.metadata,
+                    "submitted_at": submitted_at,
+                },
             },
             deep=True,
         )
@@ -776,11 +858,11 @@ class CloudEc2Service:
         instance_id = self._require(request.instance_id or state.instance_id, "instance_id")
         region = self._resolve_region(request.region, state)
         bucket = self._resolve_bucket(request.bucket, state)
-        output_root = Path(request.output_dir or ".numereng").expanduser().resolve()
+        output_root = Path(request.output_dir or request.store_root).expanduser().resolve()
         try:
             ensure_allowed_store_target(
                 target_path=output_root,
-                store_root=".numereng",
+                store_root=request.store_root,
                 allowed_prefixes=("runs",),
                 allow_store_root=True,
                 error_code="cloud_ec2_pull_output_dir_noncanonical",
@@ -836,10 +918,53 @@ class CloudEc2Service:
                 "region": region,
                 "bucket": bucket,
                 "status": "results_pulled",
+                "metadata": {
+                    **state.metadata,
+                    "pulled_at": _utc_now_iso(),
+                },
             },
             deep=True,
         )
         next_state = self._persist_state(request, next_state)
+
+        manifest_candidates = (
+            output_root / "run.json",
+            output_root / "runs" / run_id / "run.json",
+        )
+        manifest_path = next((candidate for candidate in manifest_candidates if candidate.is_file()), None)
+        if manifest_path is not None:
+            try:
+                stamp_run_execution(
+                    manifest_path=manifest_path,
+                    execution=self._cloud_execution(
+                        request=request,
+                        state=next_state,
+                        metadata={
+                            **next_state.metadata,
+                            "bucket": bucket,
+                            "runtime_profile": next_state.runtime_profile,
+                        },
+                    ),
+                )
+            except (OSError, ValueError) as exc:
+                next_state = self._persist_state(
+                    request,
+                    next_state.model_copy(
+                        update={
+                            "metadata": {
+                                **next_state.metadata,
+                                "execution_stamp_error": str(exc),
+                            }
+                        },
+                        deep=True,
+                    ),
+                )
+        canonical_manifest = (Path(request.store_root).expanduser().resolve() / "runs" / run_id / "run.json").resolve()
+        if canonical_manifest.is_file():
+            try:
+                index_run(store_root=request.store_root, run_id=run_id)
+            except StoreError:
+                pass
 
         return CloudEc2Response(
             action="cloud.ec2.pull",
@@ -1064,6 +1189,10 @@ def _resolve_safe_relative_path(*, base_dir: Path, relative: str) -> Path | None
     except ValueError:
         return None
     return destination
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _is_canonical_cloud_state_path(path: Path) -> bool:

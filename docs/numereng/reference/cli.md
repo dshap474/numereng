@@ -76,6 +76,8 @@ Notes:
 
 Notes:
 
+- `store doctor --fix-strays` also runs conservative tmp cleanup for `.numereng/tmp/remote-configs/*.json`; it only deletes files older than 30 days that are not referenced by active run lifecycles
+- if the store DB is missing or unreadable, tmp remote-config cleanup is skipped rather than guessed
 - `materialize-viz-artifacts` backfills persisted viz artifacts for historical runs without retraining
 - `--kind scoring-artifacts` is the canonical hard-refactor path and rescoring persists the full `artifacts/scoring/` bundle plus `manifest.json`
 - `--kind per-era-corr` is accepted as a compatibility label for the same rescoring/backfill path, but the canonical outputs are the new `artifacts/scoring/*` parquet artifacts

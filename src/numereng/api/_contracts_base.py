@@ -16,7 +16,8 @@ NeutralizationMode = Literal["era", "global"]
 ScoringStage = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
 ExperimentScoreRoundStage = Literal["post_training_core", "post_training_full"]
 ResearchSupervisorStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
-ResearchStrategy = Literal["numerai-experiment-loop", "kaggle-gm-loop"]
+ResearchProgramSource = Literal["builtin", "user", "legacy_builtin"]
+ResearchPlannerContract = Literal["config_mutation", "structured_json"]
 
 
 class HealthResponse(BaseModel):
@@ -386,10 +387,75 @@ class ExperimentPackResponse(BaseModel):
     packed_at: str
 
 
+class ResearchProgramMetricPolicyResponse(BaseModel):
+    primary: str
+    tie_break: str
+    sanity_checks: list[str] = Field(default_factory=list)
+
+
+class ResearchProgramRoundPolicyResponse(BaseModel):
+    plateau_non_improving_rounds: int
+    require_scale_confirmation: bool
+    scale_confirmation_rounds: int
+
+
+class ResearchProgramConfigPolicyResponse(BaseModel):
+    allowed_paths: list[str] = Field(default_factory=list)
+    min_candidate_configs: int | None = None
+    max_candidate_configs: int
+    min_changes: int | None = None
+    max_changes: int | None = None
+
+
+class ResearchProgramPhaseResponse(BaseModel):
+    phase_id: str
+    title: str
+    summary: str
+    gate: str
+
+
+class ResearchProgramCatalogEntryResponse(BaseModel):
+    program_id: str
+    title: str
+    description: str
+    source: ResearchProgramSource
+    planner_contract: ResearchPlannerContract
+    phase_aware: bool
+    source_path: str | None = None
+
+
+class ResearchProgramListRequest(BaseModel):
+    pass
+
+
+class ResearchProgramListResponse(BaseModel):
+    programs: list[ResearchProgramCatalogEntryResponse]
+
+
+class ResearchProgramShowRequest(BaseModel):
+    program_id: str = Field(min_length=1)
+
+
+class ResearchProgramShowResponse(BaseModel):
+    program_id: str
+    title: str
+    description: str
+    source: ResearchProgramSource
+    planner_contract: ResearchPlannerContract
+    scoring_stage: ExperimentScoreRoundStage
+    metric_policy: ResearchProgramMetricPolicyResponse
+    round_policy: ResearchProgramRoundPolicyResponse
+    improvement_threshold_default: float
+    config_policy: ResearchProgramConfigPolicyResponse
+    phases: list[ResearchProgramPhaseResponse] = Field(default_factory=list)
+    source_path: str | None = None
+    raw_markdown: str
+
+
 class ResearchInitRequest(BaseModel):
     experiment_id: str
-    strategy: ResearchStrategy
-    improvement_threshold: float = Field(default=0.0002, gt=0.0)
+    program_id: str = Field(min_length=1)
+    improvement_threshold: float | None = Field(default=None, gt=0.0)
     store_root: str = ".numereng"
 
 
@@ -438,8 +504,8 @@ class ResearchPhaseResponse(BaseModel):
 
 class ResearchInitResponse(BaseModel):
     root_experiment_id: str
-    strategy: ResearchStrategy
-    strategy_description: str
+    program_id: str = ""
+    program_title: str = ""
     status: ResearchSupervisorStatus
     active_experiment_id: str
     active_path_id: str
@@ -448,6 +514,7 @@ class ResearchInitResponse(BaseModel):
     agentic_research_dir: str
     program_path: str
     lineage_path: str
+    session_program_path: str = ""
 
 
 class ResearchStatusRequest(BaseModel):
@@ -457,8 +524,8 @@ class ResearchStatusRequest(BaseModel):
 
 class ResearchStatusResponse(BaseModel):
     root_experiment_id: str
-    strategy: ResearchStrategy
-    strategy_description: str
+    program_id: str = ""
+    program_title: str = ""
     status: ResearchSupervisorStatus
     active_experiment_id: str
     active_path_id: str
@@ -473,6 +540,7 @@ class ResearchStatusResponse(BaseModel):
     current_phase: ResearchPhaseResponse | None = None
     program_path: str
     lineage_path: str
+    session_program_path: str = ""
 
 
 class ResearchRunRequest(BaseModel):
@@ -484,8 +552,8 @@ class ResearchRunRequest(BaseModel):
 
 class ResearchRunResponse(BaseModel):
     root_experiment_id: str
-    strategy: ResearchStrategy
-    strategy_description: str
+    program_id: str = ""
+    program_title: str = ""
     status: ResearchSupervisorStatus
     active_experiment_id: str
     active_path_id: str
@@ -515,15 +583,25 @@ __all__ = [
     "ExperimentReportResponse",
     "ExperimentReportRowResponse",
     "ResearchBestRunResponse",
+    "ResearchPlannerContract",
     "ResearchInitRequest",
     "ResearchInitResponse",
     "ResearchPhaseResponse",
+    "ResearchProgramCatalogEntryResponse",
+    "ResearchProgramConfigPolicyResponse",
+    "ResearchProgramListRequest",
+    "ResearchProgramListResponse",
+    "ResearchProgramMetricPolicyResponse",
+    "ResearchProgramPhaseResponse",
+    "ResearchProgramRoundPolicyResponse",
+    "ResearchProgramShowRequest",
+    "ResearchProgramShowResponse",
+    "ResearchProgramSource",
     "ResearchRoundResponse",
     "ResearchRunRequest",
     "ResearchRunResponse",
     "ResearchStatusRequest",
     "ResearchStatusResponse",
-    "ResearchStrategy",
     "ResearchSupervisorStatus",
     "ExperimentResponse",
     "ExperimentStatus",

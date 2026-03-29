@@ -77,7 +77,13 @@ Common artifacts under `.numereng/`:
   cloud/
   notes/
   cache/
+  tmp/
+    remote-configs/
+    lifecycle_smoke/
+  remote_ops/
 ```
+
+`store doctor --fix-strays` cleans targeted stray store paths and conservatively prunes old `.numereng/tmp/remote-configs/*.json` staging files that are no longer referenced by active runs.
 
 Forum scraping writes outside the store by default:
 

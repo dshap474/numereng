@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -16,6 +17,7 @@ from numereng.features.store import (
     StoreError,
     StoreHpoStudyUpsert,
     StoreHpoTrialUpsert,
+    backfill_run_execution,
     doctor_store,
     get_ensemble,
     get_experiment,
@@ -59,6 +61,71 @@ def _write_run_manifest(run_dir: Path, *, status: str = "FINISHED") -> None:
     (run_dir / "run.json").write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
+def _write_tmp_remote_config(store_root: Path, *, name: str) -> Path:
+    config_path = store_root / "tmp" / "remote-configs" / name
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+    return config_path.resolve()
+
+
+def _set_path_age_days(path: Path, *, days_old: int) -> None:
+    stale_timestamp = store_service.datetime.now(store_service.UTC).timestamp() - (days_old * 24 * 60 * 60)
+    os.utime(path, (stale_timestamp, stale_timestamp))
+
+
+def _insert_run_lifecycle(store_root: Path, *, run_id: str, config_path: Path, status: str) -> None:
+    now = "2026-03-28T00:00:00+00:00"
+    with sqlite3.connect(store_root / "numereng.db") as conn:
+        conn.execute(
+            """
+            INSERT INTO run_lifecycles (
+                run_id,
+                run_hash,
+                job_id,
+                logical_run_id,
+                attempt_id,
+                attempt_no,
+                source,
+                operation_type,
+                job_type,
+                status,
+                config_id,
+                config_source,
+                config_path,
+                config_sha256,
+                run_dir,
+                runtime_path,
+                completed_stages_json,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                f"hash-{run_id}",
+                f"job-{run_id}",
+                f"logical-{run_id}",
+                f"attempt-{run_id}",
+                1,
+                "cli.experiment.train",
+                "train",
+                "local_train",
+                status,
+                f"config-{run_id}",
+                "explicit_path",
+                str(config_path),
+                f"sha-{run_id}",
+                str(store_root / "runs" / run_id),
+                str(store_root / "runs" / run_id / "runtime.json"),
+                "[]",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+
 def test_init_store_db_creates_required_tables(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
 
@@ -66,6 +133,7 @@ def test_init_store_db_creates_required_tables(tmp_path: Path) -> None:
 
     assert result.created is True
     assert result.db_path.exists()
+    assert (store_root / "tmp").is_dir()
 
     with sqlite3.connect(result.db_path) as conn:
         tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
@@ -335,6 +403,95 @@ def test_doctor_fix_strays_deletes_targeted_dirs(tmp_path: Path) -> None:
     assert not (store_root / "logs").exists()
     assert not (store_root / "modal_smoke_data").exists()
     assert not (store_root / "smoke_live_check").exists()
+
+
+def test_doctor_fix_strays_deletes_old_unreferenced_tmp_remote_config(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    config_path = _write_tmp_remote_config(store_root, name="stale.json")
+    _set_path_age_days(config_path, days_old=31)
+
+    report = doctor_store(store_root=store_root, fix_strays=True)
+
+    assert report.stray_cleanup_applied is True
+    assert str(config_path) in report.deleted_paths
+    assert not config_path.exists()
+    assert report.stats["tmp_remote_configs_scanned"] == 1
+    assert report.stats["tmp_remote_configs_deleted"] == 1
+    assert report.stats["tmp_remote_configs_kept_recent"] == 0
+    assert report.stats["tmp_remote_configs_skipped_active"] == 0
+    assert report.stats["tmp_remote_configs_cleanup_skipped"] == 0
+
+
+def test_doctor_fix_strays_keeps_recent_tmp_remote_config(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    config_path = _write_tmp_remote_config(store_root, name="recent.json")
+
+    report = doctor_store(store_root=store_root, fix_strays=True)
+
+    assert str(config_path) not in report.deleted_paths
+    assert config_path.exists()
+    assert report.stats["tmp_remote_configs_scanned"] == 1
+    assert report.stats["tmp_remote_configs_deleted"] == 0
+    assert report.stats["tmp_remote_configs_kept_recent"] == 1
+    assert report.stats["tmp_remote_configs_skipped_active"] == 0
+    assert report.stats["tmp_remote_configs_cleanup_skipped"] == 0
+
+
+def test_doctor_fix_strays_keeps_old_active_tmp_remote_config(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    config_path = _write_tmp_remote_config(store_root, name="active.json")
+    _set_path_age_days(config_path, days_old=31)
+    _insert_run_lifecycle(store_root, run_id="run-active", config_path=config_path, status="running")
+
+    report = doctor_store(store_root=store_root, fix_strays=True)
+
+    assert str(config_path) not in report.deleted_paths
+    assert config_path.exists()
+    assert report.stats["tmp_remote_configs_scanned"] == 1
+    assert report.stats["tmp_remote_configs_deleted"] == 0
+    assert report.stats["tmp_remote_configs_kept_recent"] == 0
+    assert report.stats["tmp_remote_configs_skipped_active"] == 1
+    assert report.stats["tmp_remote_configs_cleanup_skipped"] == 0
+
+
+def test_doctor_fix_strays_skips_tmp_remote_config_cleanup_when_db_missing(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    config_path = _write_tmp_remote_config(store_root, name="missing-db.json")
+    _set_path_age_days(config_path, days_old=31)
+
+    report = doctor_store(store_root=store_root, fix_strays=True)
+
+    assert "store_db_missing" in report.issues
+    assert config_path.exists()
+    assert report.stats["tmp_remote_configs_scanned"] == 0
+    assert report.stats["tmp_remote_configs_deleted"] == 0
+    assert report.stats["tmp_remote_configs_kept_recent"] == 0
+    assert report.stats["tmp_remote_configs_skipped_active"] == 0
+    assert report.stats["tmp_remote_configs_cleanup_skipped"] == 1
+
+
+def test_doctor_fix_strays_skips_tmp_remote_config_cleanup_when_db_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    config_path = _write_tmp_remote_config(store_root, name="unreadable-db.json")
+    _set_path_age_days(config_path, days_old=31)
+    monkeypatch.setattr(store_service, "_connect_read_only", lambda _db_path: (_ for _ in ()).throw(StoreError("boom")))
+
+    report = doctor_store(store_root=store_root, fix_strays=True)
+
+    assert "store_db_unreadable" in report.issues
+    assert config_path.exists()
+    assert report.stats["tmp_remote_configs_scanned"] == 0
+    assert report.stats["tmp_remote_configs_deleted"] == 0
+    assert report.stats["tmp_remote_configs_kept_recent"] == 0
+    assert report.stats["tmp_remote_configs_skipped_active"] == 0
+    assert report.stats["tmp_remote_configs_cleanup_skipped"] == 1
 
 
 def test_materialize_viz_artifacts_creates_scoring_manifest_and_is_idempotent(
@@ -791,3 +948,51 @@ def test_upsert_and_list_experiments(tmp_path: Path) -> None:
     rows = list_experiments(store_root=store_root, status="active")
     assert len(rows) == 1
     assert rows[0].experiment_id == "2026-02-22_test-exp"
+
+
+def test_backfill_run_execution_and_doctor_report_missing_and_legacy_cloud(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (store_root / "cloud").mkdir(parents=True, exist_ok=True)
+    _write_run_manifest(run_dir)
+    (run_dir / "resolved.json").write_text("{}", encoding="utf-8")
+    (run_dir / "results.json").write_text("{}", encoding="utf-8")
+    (run_dir / "metrics.json").write_text("{}", encoding="utf-8")
+    legacy_state_path = store_root / "cloud" / "run-1.json"
+    legacy_state_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-1",
+                "backend": "sagemaker",
+                "training_job_name": "job-1",
+                "region": "us-east-2",
+                "image_uri": "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng:v1",
+                "artifacts": {"output_s3_uri": "s3://bucket/runs/run-1/managed-output/"},
+                "metadata": {"submitted_at": "2026-03-28T00:00:00+00:00"},
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    doctor_before = doctor_store(store_root=store_root)
+    assert "run_execution_missing:1" in doctor_before.issues
+    assert "legacy_cloud_state_present:1" in doctor_before.issues
+
+    result = backfill_run_execution(store_root=store_root, all_runs=True)
+    assert result.updated_runs == 1
+    assert result.updated_run_ids == ("run-1",)
+
+    manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert manifest["execution"]["kind"] == "cloud"
+    assert manifest["execution"]["provider"] == "aws"
+    assert manifest["execution"]["backend"] == "sagemaker"
+    assert manifest["execution"]["provider_job_id"] == "job-1"
+    assert manifest["execution"]["metadata"]["inferred"] is True
+    assert "legacy_cloud_state" in manifest["execution"]["metadata"]["inferred_from"]
+
+    doctor_after = doctor_store(store_root=store_root)
+    assert "run_execution_missing:1" not in doctor_after.issues
+    assert "legacy_cloud_state_present:1" in doctor_after.issues

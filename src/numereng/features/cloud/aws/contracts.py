@@ -52,6 +52,7 @@ class CloudEc2RequestBase(BaseModel):
     """Common request fields shared by step commands."""
 
     state_path: str | None = None
+    store_root: str = ".numereng"
 
     def state_file(self) -> Path | None:
         if self.state_path is None:

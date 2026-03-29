@@ -19,6 +19,7 @@ from typing import Any
 from numereng.features.cloud.aws import AwsTrainStatusRequest, CloudAwsManagedService
 from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
 from numereng.features.remote_ops import load_viz_bootstrap_state
+from numereng.features.store.layout import resolve_cloud_run_state_path
 from numereng.features.telemetry import reconcile_run_lifecycles
 from numereng.platform import load_remote_targets
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
@@ -57,7 +58,7 @@ def build_monitor_snapshot(
     adapter = VizStoreAdapter(VizStoreConfig.from_env(store_root=store_root))
     overview = adapter.get_experiments_overview()
     source = _local_source(adapter.store_root)
-    backend_by_run_id = _backend_by_run_id(adapter)
+    execution_by_run_id = _execution_summary_by_run_id(adapter)
 
     experiments = [
         _decorate_experiment(dict(item), source=source, detail_href=True) for item in overview["experiments"]
@@ -73,12 +74,12 @@ def build_monitor_snapshot(
                 dict(item),
                 source=source,
                 detail_href=str(item.get("experiment_id")) in experiment_ids,
-                backend_by_run_id=backend_by_run_id,
+                execution_by_run_id=execution_by_run_id,
             )
         )
 
     recent_activity = [
-        _decorate_recent_activity(dict(item), source=source, backend_by_run_id=backend_by_run_id)
+        _decorate_recent_activity(dict(item), source=source, execution_by_run_id=execution_by_run_id)
         for item in overview["recent_activity"]
     ]
 
@@ -142,6 +143,7 @@ def merge_monitor_snapshots(local_snapshot: dict[str, Any], remote_snapshots: li
     summary["completed_experiments"] = completed_experiments
 
     return {
+        "generated_at": _utc_now_iso(),
         "summary": summary,
         "experiments": experiments,
         "live_experiments": live_experiments,
@@ -242,17 +244,43 @@ def _local_source(store_root: Path) -> dict[str, Any]:
     }
 
 
-def _backend_by_run_id(adapter: VizStoreAdapter) -> dict[str, str | None]:
-    if not adapter._table_exists("run_lifecycles"):
-        return {}
-    rows = adapter._query("SELECT run_id, backend FROM run_lifecycles ORDER BY updated_at DESC")
-    payload: dict[str, str | None] = {}
-    for row in rows:
-        run_id = _to_non_empty_str(row["run_id"])
-        if run_id is None or run_id in payload:
-            continue
-        payload[run_id] = _to_non_empty_str(row["backend"])
+def _execution_summary_by_run_id(adapter: VizStoreAdapter) -> dict[str, dict[str, str | None]]:
+    payload: dict[str, dict[str, str | None]] = {}
+    if adapter._table_exists("runs"):
+        rows = adapter._query("SELECT run_id, manifest_json FROM runs")
+        for row in rows:
+            run_id = _to_non_empty_str(row["run_id"])
+            if run_id is None or run_id in payload:
+                continue
+            manifest = _parse_json_object(row["manifest_json"])
+            execution = _execution_summary_from_manifest(manifest)
+            if execution is not None:
+                payload[run_id] = execution
+    if adapter._table_exists("run_lifecycles"):
+        rows = adapter._query("SELECT run_id, backend FROM run_lifecycles ORDER BY updated_at DESC")
+        for row in rows:
+            run_id = _to_non_empty_str(row["run_id"])
+            if run_id is None or run_id in payload:
+                continue
+            payload[run_id] = {
+                "backend": _to_non_empty_str(row["backend"]) or "local",
+                "provider_run_id": None,
+            }
     return payload
+
+
+def _execution_summary_from_manifest(manifest: dict[str, Any]) -> dict[str, str | None] | None:
+    execution_raw = manifest.get("execution")
+    if not isinstance(execution_raw, dict):
+        return None
+    backend = _to_non_empty_str(execution_raw.get("backend"))
+    provider_run_id = _to_non_empty_str(execution_raw.get("provider_job_id"))
+    if backend is None and provider_run_id is None:
+        return None
+    return {
+        "backend": backend or "local",
+        "provider_run_id": provider_run_id,
+    }
 
 
 def _decorate_experiment(item: dict[str, Any], *, source: dict[str, Any], detail_href: bool) -> dict[str, Any]:
@@ -268,7 +296,7 @@ def _decorate_live_experiment(
     *,
     source: dict[str, Any],
     detail_href: bool,
-    backend_by_run_id: dict[str, str | None],
+    execution_by_run_id: dict[str, dict[str, str | None]],
 ) -> dict[str, Any]:
     item["source_kind"] = source["kind"]
     item["source_id"] = source["id"]
@@ -278,11 +306,12 @@ def _decorate_live_experiment(
     for run in item.get("runs", []):
         run_item = dict(run)
         run_id = _to_non_empty_str(run_item.get("run_id"))
+        execution = execution_by_run_id.get(run_id or "", {})
         run_item["source_kind"] = source["kind"]
         run_item["source_id"] = source["id"]
         run_item["source_label"] = source["label"]
-        run_item["backend"] = backend_by_run_id.get(run_id or "") or "local"
-        run_item["provider_run_id"] = None
+        run_item["backend"] = execution.get("backend") or "local"
+        run_item["provider_run_id"] = execution.get("provider_run_id")
         run_item["progress_mode"] = _local_progress_mode(run_item.get("progress_percent"))
         run_item["detail_href"] = item["detail_href"]
         runs.append(run_item)
@@ -294,14 +323,15 @@ def _decorate_recent_activity(
     item: dict[str, Any],
     *,
     source: dict[str, Any],
-    backend_by_run_id: dict[str, str | None],
+    execution_by_run_id: dict[str, dict[str, str | None]],
 ) -> dict[str, Any]:
     run_id = _to_non_empty_str(item.get("run_id"))
+    execution = execution_by_run_id.get(run_id or "", {})
     item["source_kind"] = source["kind"]
     item["source_id"] = source["id"]
     item["source_label"] = source["label"]
-    item["backend"] = backend_by_run_id.get(run_id or "") or "local"
-    item["provider_run_id"] = None
+    item["backend"] = execution.get("backend") or "local"
+    item["provider_run_id"] = execution.get("provider_run_id")
     item["progress_mode"] = _local_progress_mode(item.get("progress_percent"))
     return item
 
@@ -315,6 +345,9 @@ def _cloud_monitor_payload(adapter: VizStoreAdapter, *, refresh_cloud: bool) -> 
     live_runs: dict[str, list[dict[str, Any]]] = defaultdict(list)
     recent_activity: list[dict[str, Any]] = []
     for row in rows:
+        run_id = _to_non_empty_str(row.get("run_id"))
+        if run_id is not None and _run_is_materialized(adapter, run_id):
+            continue
         normalized = _normalize_cloud_job_row(adapter, row, service=service, refresh_cloud=refresh_cloud)
         if normalized is None:
             continue
@@ -651,10 +684,21 @@ def _resolve_cloud_state_path(*, store_root: Path, run_id: str, metadata: dict[s
     explicit = _to_non_empty_str(metadata.get("state_path"))
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
-    canonical = (store_root / "cloud" / f"{run_id}.json").resolve()
+    canonical = resolve_cloud_run_state_path(store_root=store_root, provider="aws", run_id=run_id)
     if canonical.is_file():
         return canonical
+    legacy = (store_root / "cloud" / f"{run_id}.json").resolve()
+    if legacy.is_file():
+        return legacy
     return None
+
+
+def _run_is_materialized(adapter: VizStoreAdapter, run_id: str) -> bool:
+    if adapter._table_exists("runs"):
+        row = adapter._query_one("SELECT 1 FROM runs WHERE run_id = ? LIMIT 1", (run_id,))
+        if row is not None:
+            return True
+    return (adapter.store_root / "runs" / run_id / "run.json").is_file()
 
 
 def _load_cloud_state_metadata(state_path: Path | None) -> dict[str, Any]:

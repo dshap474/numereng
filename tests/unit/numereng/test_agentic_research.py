@@ -7,19 +7,41 @@ from pathlib import Path
 
 import pytest
 
-from numereng.features.agentic_research.codex_exec import (
+from numereng.features.agentic_research.run import init_research, run_research
+from numereng.features.agentic_research.utils.llm import (
     default_codex_command,
-    ensure_learner_codex_home,
-    learner_codex_home,
     run_codex_planner,
 )
-from numereng.features.agentic_research.config_evolution import (
+from numereng.features.agentic_research.utils.mutation import (
     build_candidate_filename,
     materialize_mutation_config,
     parse_mutation_response,
     select_parent_config,
 )
-from numereng.features.agentic_research.contracts import (
+from numereng.features.agentic_research.utils.planning import (
+    force_action_for_path,
+    materialize_config_payload,
+    planner_reference_config_dirs,
+    select_reference_configs,
+    should_pivot_path,
+    update_path_after_round,
+    validate_decision,
+)
+from numereng.features.agentic_research.utils.programs import (
+    list_program_catalog,
+    load_program_definition,
+    load_program_details,
+    render_prompt_template,
+    render_validation_feedback_block,
+)
+from numereng.features.agentic_research.utils.store import (
+    load_lineage_state,
+    load_program_state,
+    save_lineage_state,
+    save_program_state,
+    session_program_path,
+)
+from numereng.features.agentic_research.utils.types import (
     CodexConfigPayload,
     CodexDecision,
     CodexPlannerExecution,
@@ -31,27 +53,6 @@ from numereng.features.agentic_research.contracts import (
     ResearchPhaseState,
     ResearchProgramState,
 )
-from numereng.features.agentic_research.planner import (
-    force_action_for_path,
-    materialize_config_payload,
-    select_reference_configs,
-    should_pivot_path,
-    update_path_after_round,
-    validate_decision,
-)
-from numereng.features.agentic_research.prompting import render_prompt_template
-from numereng.features.agentic_research.service import (
-    _planner_reference_config_dirs,
-    init_research,
-    run_research,
-)
-from numereng.features.agentic_research.state import (
-    load_lineage_state,
-    load_program_state,
-    save_lineage_state,
-    save_program_state,
-)
-from numereng.features.agentic_research.strategy import get_strategy_definition
 from numereng.features.experiments import (
     ExperimentReport,
     ExperimentReportRow,
@@ -216,12 +217,53 @@ def _seed_config(store_root: Path, experiment_id: str, filename: str = "base.jso
     return config_path
 
 
+def _write_phase_aware_program(directory: Path, program_id: str = "kaggle-gm-loop") -> Path:
+    path = directory / f"{program_id}.md"
+    path.write_text(
+        "---\n"
+        f"id: {program_id}\n"
+        "title: Kaggle GM Loop\n"
+        "description: Phase-aware structured custom program.\n"
+        "planner_contract: structured_json\n"
+        "scoring_stage: post_training_full\n"
+        "metric_policy:\n"
+        "  primary: bmc_last_200_eras.mean\n"
+        "  tie_break: bmc.mean\n"
+        "round_policy:\n"
+        "  plateau_non_improving_rounds: 2\n"
+        "  require_scale_confirmation: true\n"
+        "  scale_confirmation_rounds: 1\n"
+        "improvement_threshold_default: 0.0002\n"
+        "config_policy:\n"
+        "  allowed_paths:\n"
+        "    - data.feature_set\n"
+        "    - model.params.*\n"
+        "  min_candidate_configs: 4\n"
+        "  max_candidate_configs: 5\n"
+        "phases:\n"
+        "  - phase_id: phase1_eda_baseline\n"
+        "    title: Phase 1 - EDA & Baseline\n"
+        "    summary: Establish the baseline.\n"
+        "    gate: Stable baseline.\n"
+        "  - phase_id: phase2_diversity_campaign\n"
+        "    title: Phase 2 - Diversity\n"
+        "    summary: Explore diverse candidates.\n"
+        "    gate: Diverse candidate set.\n"
+        "---\n"
+        "Context:\n"
+        "$CONTEXT_JSON\n\n"
+        "$VALIDATION_FEEDBACK_BLOCK\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_state_roundtrip(tmp_path: Path) -> None:
     program = ResearchProgramState(
         root_experiment_id="2026-03-20_root-exp",
         program_experiment_id="2026-03-20_root-exp",
-        strategy="numerai-experiment-loop",
-        strategy_description="Numerai Experiment Loop",
+        program_id="numerai-experiment-loop",
+        program_title="Numerai Experiment Loop",
         status="initialized",
         active_path_id="p00",
         active_experiment_id="2026-03-20_root-exp",
@@ -284,24 +326,112 @@ def test_state_roundtrip(tmp_path: Path) -> None:
     loaded_lineage = load_lineage_state(lineage_state_path)
 
     assert loaded_program.root_experiment_id == "2026-03-20_root-exp"
-    assert loaded_program.strategy == "numerai-experiment-loop"
+    assert loaded_program.program_id == "numerai-experiment-loop"
     assert loaded_program.paths[0].path_id == "p00"
     assert loaded_program.codex_command == default_codex_command()
     assert loaded_lineage.links[0].experiment_id == "2026-03-20_root-exp"
 
 
-def test_strategy_registry_loads_both_profiles() -> None:
-    numerai = get_strategy_definition("numerai-experiment-loop")
-    kaggle = get_strategy_definition("kaggle-gm-loop")
+def test_program_catalog_loads_default_builtin_program() -> None:
+    entries = {item.program_id: item for item in list_program_catalog()}
+    numerai = entries["numerai-experiment-loop"]
 
     assert numerai.planner_contract == "config_mutation"
     assert numerai.phase_aware is False
-    assert numerai.prompt_path.name == "mutation_prompt.md"
-    assert numerai.schema_path is None
-    assert kaggle.phase_aware is True
-    assert kaggle.phases[0].phase_id == "phase1_eda_baseline"
-    assert kaggle.schema_path is not None
-    assert kaggle.schema_path.name == "planner_output.schema.json"
+    assert numerai.source == "builtin"
+    assert "kaggle-gm-loop" not in entries
+
+
+def test_program_catalog_loads_user_program_and_env_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    custom_program = user_dir / "custom-loop.md"
+    custom_program.write_text(
+        "---\n"
+        "id: custom-loop\n"
+        "title: Custom Loop\n"
+        "description: Test program.\n"
+        "planner_contract: config_mutation\n"
+        "scoring_stage: post_training_core\n"
+        "metric_policy:\n"
+        "  primary: bmc_last_200_eras.mean\n"
+        "  tie_break: bmc.mean\n"
+        "round_policy:\n"
+        "  plateau_non_improving_rounds: 3\n"
+        "  require_scale_confirmation: false\n"
+        "  scale_confirmation_rounds: 0\n"
+        "improvement_threshold_default: 0.001\n"
+        "config_policy:\n"
+        "  allowed_paths:\n"
+        "    - model.params.learning_rate\n"
+        "  max_candidate_configs: 1\n"
+        "  min_changes: 1\n"
+        "  max_changes: 1\n"
+        "---\n"
+        "Context:\n"
+        "$CONTEXT_JSON\n\n"
+        "$VALIDATION_FEEDBACK_BLOCK\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
+
+    entries = {item.program_id: item for item in list_program_catalog()}
+    details = load_program_details("custom-loop")
+
+    assert entries["custom-loop"].source == "user"
+    assert details.definition.source == "user"
+    assert details.definition.scoring_stage == "post_training_core"
+    assert details.definition.config_policy.allowed_paths == ("model.params.learning_rate",)
+
+
+def test_program_catalog_rejects_id_filename_mismatch(tmp_path: Path) -> None:
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    (user_dir / "alt-numerai.md").write_text(
+        load_program_details("numerai-experiment-loop").raw_markdown,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agentic_research_program_id_filename_mismatch"):
+        list_program_catalog(user_dir=user_dir)
+
+
+def test_load_program_details_requires_common_placeholders(tmp_path: Path) -> None:
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    broken = user_dir / "broken-loop.md"
+    broken.write_text(
+        "---\n"
+        "id: broken-loop\n"
+        "title: Broken\n"
+        "description: Broken.\n"
+        "planner_contract: config_mutation\n"
+        "scoring_stage: post_training_full\n"
+        "metric_policy:\n"
+        "  primary: bmc_last_200_eras.mean\n"
+        "  tie_break: bmc.mean\n"
+        "round_policy:\n"
+        "  plateau_non_improving_rounds: 2\n"
+        "  require_scale_confirmation: true\n"
+        "  scale_confirmation_rounds: 1\n"
+        "improvement_threshold_default: 0.0002\n"
+        "config_policy:\n"
+        "  allowed_paths:\n"
+        "    - model.params.learning_rate\n"
+        "  max_candidate_configs: 1\n"
+        "  min_changes: 1\n"
+        "  max_changes: 1\n"
+        "---\n"
+        "Only one placeholder.\n"
+        "$CONTEXT_JSON\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="agentic_research_program_placeholder_missing"):
+        load_program_details("broken-loop", user_dir=user_dir)
 
 
 def test_load_program_state_requires_strategy(tmp_path: Path) -> None:
@@ -317,38 +447,55 @@ def test_load_program_state_requires_strategy(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="agentic_research_program_strategy_missing"):
+    with pytest.raises(ValueError, match="agentic_research_program_selector_missing"):
         load_program_state(path)
 
 
-def test_ensure_learner_codex_home_writes_minimal_profile(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source_home = tmp_path / "source_codex"
-    source_home.mkdir(parents=True)
-    (source_home / "auth.json").write_text('{"token":"abc"}', encoding="utf-8")
-    learner_home = tmp_path / "learner_codex"
+def test_load_program_state_legacy_strategy_auto_snapshots(tmp_path: Path) -> None:
+    path = tmp_path / "program.json"
+    path.write_text(
+        json.dumps(
+            {
+                "root_experiment_id": "2026-03-20_root-exp",
+                "program_experiment_id": "2026-03-20_root-exp",
+                "strategy": "numerai-experiment-loop",
+                "status": "initialized",
+                "active_path_id": "p00",
+                "active_experiment_id": "2026-03-20_root-exp",
+                "next_round_number": 1,
+                "total_rounds_completed": 0,
+                "total_paths_created": 1,
+                "improvement_threshold": 0.0002,
+                "scoring_stage": "post_training_full",
+                "codex_command": default_codex_command(),
+                "last_checkpoint": "initialized",
+                "best_overall": {},
+                "paths": [],
+                "created_at": "2026-03-20T00:00:00+00:00",
+                "updated_at": "2026-03-20T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    monkeypatch.setattr("numereng.features.agentic_research.codex_exec._USER_CODEX_HOME", source_home)
-    monkeypatch.setattr("numereng.features.agentic_research.codex_exec._LEARNER_CODEX_HOME", learner_home)
+    state = load_program_state(path)
 
-    ensured = ensure_learner_codex_home()
-
-    assert ensured == learner_home
-    config_text = (learner_home / "config.toml").read_text(encoding="utf-8")
-    assert 'model = "gpt-5.4"' in config_text
-    assert 'model_reasoning_effort = "low"' in config_text
-    assert "shell_tool = false" in config_text
-    assert (learner_home / "auth.json").read_text(encoding="utf-8") == '{"token":"abc"}'
+    assert state.program_id == "numerai-experiment-loop"
+    assert state.program_source == "legacy_builtin"
+    assert state.program_snapshot.program_id == "numerai-experiment-loop"
+    assert state.program_sha256
 
 
 def test_run_codex_planner_parses_jsonl_and_last_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    seen_env: dict[str, str] | None = None
+
     def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal seen_env
         command = list(args[0]) if args else []
+        seen_env = kwargs.get("env")
         output_index = command.index("-o")
         output_path = Path(command[output_index + 1])
         output_path.write_text(
@@ -417,15 +564,14 @@ def test_run_codex_planner_parses_jsonl_and_last_message(
         return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.codex_exec.ensure_learner_codex_home",
-        lambda: learner_codex_home(),
-    )
+    monkeypatch.setenv("CODEX_HOME", "/tmp/test-normal-codex-home")
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text('{"type":"object","properties":{},"additionalProperties":true}', encoding="utf-8")
 
     execution = run_codex_planner(
         prompt="hello",
         command=default_codex_command(),
-        schema_path=get_strategy_definition("kaggle-gm-loop").schema_path,
+        schema_path=schema_path,
         artifact_dir=tmp_path,
     )
 
@@ -437,6 +583,8 @@ def test_run_codex_planner_parses_jsonl_and_last_message(
     assert execution.attempts[-1].cached_input_tokens == 45
     assert execution.attempts[-1].output_tokens == 67
     assert "thread.started" in execution.raw_response_text
+    assert seen_env is not None
+    assert seen_env.get("CODEX_HOME") == "/tmp/test-normal-codex-home"
 
 
 def test_render_prompt_template_requires_explicit_placeholder_replacement(tmp_path: Path) -> None:
@@ -449,6 +597,16 @@ def test_render_prompt_template_requires_explicit_placeholder_replacement(tmp_pa
 
     with pytest.raises(ValueError, match="agentic_research_prompt_placeholders_unresolved"):
         render_prompt_template(template_path, {"NAME": "alpha"})
+
+
+def test_render_validation_feedback_block_is_inline_and_trimmed() -> None:
+    assert render_validation_feedback_block(None) == ""
+    assert render_validation_feedback_block("   ") == ""
+    assert render_validation_feedback_block("  bad path  ") == (
+        "Validation feedback from the last attempt:\n"
+        "bad path\n"
+        "Fix the issue and return a valid response."
+    )
 
 
 def test_parse_mutation_response_accepts_path_equals_json_literal() -> None:
@@ -477,7 +635,10 @@ def test_parse_mutation_response_rejects_invalid_or_disallowed_paths() -> None:
         parse_mutation_response('RATIONALE:\nTest.\n\nCHANGES:\nconfig.output.output_dir = "/tmp/out"')
 
 
-def test_validate_decision_requires_4_to_5_configs() -> None:
+def test_validate_decision_requires_4_to_5_configs(tmp_path: Path) -> None:
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    _write_phase_aware_program(user_dir)
     with pytest.raises(ValueError, match="agentic_research_codex_config_count_invalid"):
         validate_decision(
             CodexDecision(
@@ -489,12 +650,15 @@ def test_validate_decision_requires_4_to_5_configs() -> None:
                 path_slug="slug",
                 configs=[],
             ),
-            strategy=get_strategy_definition("numerai-experiment-loop"),
+            definition=replace(load_program_definition("kaggle-gm-loop", user_dir=user_dir), phases=()),
             current_phase=None,
         )
 
 
-def test_validate_decision_requires_phase_action_for_phase_aware_strategy() -> None:
+def test_validate_decision_requires_phase_action_for_phase_aware_strategy(tmp_path: Path) -> None:
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    _write_phase_aware_program(user_dir)
     with pytest.raises(ValueError, match="agentic_research_codex_phase_action_invalid"):
         validate_decision(
             CodexDecision(
@@ -506,7 +670,7 @@ def test_validate_decision_requires_phase_action_for_phase_aware_strategy() -> N
                 path_slug="slug",
                 configs=_decision().configs,
             ),
-            strategy=get_strategy_definition("kaggle-gm-loop"),
+            definition=load_program_definition("kaggle-gm-loop", user_dir=user_dir),
             current_phase=ResearchPhaseState(
                 phase_id="phase1_eda_baseline",
                 phase_title="Phase 1 - EDA & Baseline",
@@ -583,8 +747,8 @@ def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> N
     state = ResearchProgramState(
         root_experiment_id=root_exp.experiment_id,
         program_experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
-        strategy_description="Numerai Experiment Loop",
+        program_id="numerai-experiment-loop",
+        program_title="Numerai Experiment Loop",
         status="running",
         active_path_id="p02",
         active_experiment_id=grandchild_exp.experiment_id,
@@ -656,7 +820,7 @@ def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> N
         updated_at=now,
     )
 
-    config_dirs = _planner_reference_config_dirs(
+    config_dirs = planner_reference_config_dirs(
         root=store_root,
         state=state,
         active_path=state.paths[-1],
@@ -698,6 +862,23 @@ def test_plateau_logic_requires_scale_confirmation_before_pivot() -> None:
     assert should_pivot_path(after_scale) is True
 
 
+def test_init_research_persists_session_program_markdown(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
+
+    result = init_research(
+        store_root=store_root,
+        experiment_id=experiment.experiment_id,
+        program_id="numerai-experiment-loop",
+    )
+
+    assert result.program_id == "numerai-experiment-loop"
+    assert result.session_program_path == session_program_path(result.agentic_research_dir)
+    assert result.session_program_path.read_text(encoding="utf-8") == load_program_details(
+        "numerai-experiment-loop"
+    ).raw_markdown
+
+
 def test_run_research_executes_one_full_round(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -708,13 +889,13 @@ def test_run_research_executes_one_full_round(
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     run_ids: list[str] = []
 
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
         lambda **_: _raw_planner_execution(
             "RATIONALE:\n"
             "Lower learning rate slightly while keeping the rest of the config stable.\n\n"
@@ -779,9 +960,9 @@ def test_run_research_executes_one_full_round(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
@@ -792,7 +973,7 @@ def test_run_research_executes_one_full_round(
     assert state.total_rounds_completed == 1
     assert state.next_round_number == 2
     assert state.best_overall.run_id == "run-1"
-    assert state.strategy == "numerai-experiment-loop"
+    assert state.program_id == "numerai-experiment-loop"
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     assert (round_dir / "round.json").is_file()
     assert (round_dir / "round.md").is_file()
@@ -833,7 +1014,7 @@ def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
@@ -868,7 +1049,7 @@ def test_run_research_trace_prefers_raw_response_text(
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     run_ids: list[str] = []
@@ -881,7 +1062,7 @@ def test_run_research_trace_prefers_raw_response_text(
     transport_stream = '{"type":"thread.delta","delta":"transport"}\n'
 
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
         lambda **_: _raw_planner_execution(raw_response, stdout_jsonl=transport_stream),
     )
 
@@ -941,9 +1122,9 @@ def test_run_research_trace_prefers_raw_response_text(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
@@ -973,7 +1154,7 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     run_ids: list[str] = []
@@ -1048,10 +1229,10 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.run_codex_raw_planner", fake_raw_planner)
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.run_codex_raw_planner", fake_raw_planner)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
@@ -1073,14 +1254,14 @@ def test_run_research_resumes_after_interrupt(
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     run_ids: list[str] = []
     score_calls = {"count": 0}
 
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_raw_planner",
+        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
         lambda **_: _raw_planner_execution(
             "RATIONALE:\nNudge learning rate down.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005"
         ),
@@ -1145,9 +1326,9 @@ def test_run_research_resumes_after_interrupt(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     first = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
     assert first.interrupted is True
@@ -1165,17 +1346,24 @@ def test_run_research_resumes_after_interrupt(
     assert resumed_state.total_rounds_completed == 1
 
 
-def test_init_research_sets_phase_for_kaggle_strategy(tmp_path: Path) -> None:
+def test_init_research_sets_phase_for_kaggle_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     store_root = tmp_path / ".numereng"
     root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_kaggle-exp")
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    _write_phase_aware_program(user_dir)
+    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
 
     result = init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="kaggle-gm-loop",
+        program_id="kaggle-gm-loop",
     )
 
-    assert result.strategy == "kaggle-gm-loop"
+    assert result.program_id == "kaggle-gm-loop"
     assert result.current_phase is not None
     assert result.current_phase.phase_id == "phase1_eda_baseline"
 
@@ -1186,10 +1374,14 @@ def test_run_research_advances_kaggle_phase_when_planner_requests_it(
 ) -> None:
     store_root = tmp_path / ".numereng"
     root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_kaggle-loop-exp")
+    user_dir = tmp_path / "programs"
+    user_dir.mkdir(parents=True)
+    _write_phase_aware_program(user_dir)
+    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="kaggle-gm-loop",
+        program_id="kaggle-gm-loop",
     )
 
     run_ids: list[str] = []
@@ -1199,7 +1391,7 @@ def test_run_research_advances_kaggle_phase_when_planner_requests_it(
         phase_transition_rationale="The baseline is established; move into the diversity campaign.",
     )
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_codex_planner",
+        "numereng.features.agentic_research.utils.planning.run_codex_planner",
         lambda **_: _planner_execution(decision),
     )
 
@@ -1259,9 +1451,9 @@ def test_run_research_advances_kaggle_phase_when_planner_requests_it(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
@@ -1281,13 +1473,13 @@ def test_run_research_uses_openrouter_planner_when_configured(
     init_research(
         store_root=store_root,
         experiment_id=root_exp.experiment_id,
-        strategy="numerai-experiment-loop",
+        program_id="numerai-experiment-loop",
     )
 
     run_ids: list[str] = []
     planner_calls = {"openrouter": 0}
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.active_model_source", lambda: "openrouter")
+    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.active_model_source", lambda: "openrouter")
 
     def fake_openrouter_planner(**_: object) -> RawPlannerExecution:
         planner_calls["openrouter"] += 1
@@ -1299,10 +1491,10 @@ def test_run_research_uses_openrouter_planner_when_configured(
         raise AssertionError("codex planner should not run when openrouter is selected")
 
     monkeypatch.setattr(
-        "numereng.features.agentic_research.service.run_openrouter_raw_planner",
+        "numereng.features.agentic_research.utils.planning.run_openrouter_raw_planner",
         fake_openrouter_planner,
     )
-    monkeypatch.setattr("numereng.features.agentic_research.service.run_codex_raw_planner", fail_codex_planner)
+    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.run_codex_raw_planner", fail_codex_planner)
 
     def fake_train_experiment(
         *,
@@ -1360,9 +1552,9 @@ def test_run_research_uses_openrouter_planner_when_configured(
             rows=rows,
         )
 
-    monkeypatch.setattr("numereng.features.agentic_research.service.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.service.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.service.report_experiment", fake_report)
+    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
+    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
+    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
 
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 

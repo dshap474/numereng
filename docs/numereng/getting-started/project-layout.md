@@ -60,6 +60,10 @@ Default store root: `.numereng`
   cache/
     derived_datasets/
     tabpfn/
+  tmp/
+    remote-configs/
+    lifecycle_smoke/
+  remote_ops/
 ```
 
 ## Run Artifacts
@@ -93,11 +97,12 @@ uv run numereng store rebuild
 uv run numereng store doctor
 ```
 
-Use `store doctor --fix-strays` only when you explicitly want cleanup of detected stray store paths.
+Use `store doctor --fix-strays` only when you explicitly want cleanup of detected stray store paths and aged tmp remote-config staging files.
 
 ## Path Rules
 
 - Training and HPO configs are JSON-only.
 - Runtime defaults target `.numereng` unless `--store-root` overrides it.
 - Managed cloud state paths should live under `.numereng/cloud/*.json`.
+- Store-owned scratch space lives under `.numereng/tmp/`; ad hoc remote config staging uses `.numereng/tmp/remote-configs/`.
 - Custom model discovery defaults to `src/numereng/features/models/custom_models/`.

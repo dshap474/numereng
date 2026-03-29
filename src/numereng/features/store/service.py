@@ -9,14 +9,23 @@ import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from numereng.features.store.layout import (
     CANONICAL_STORE_TOP_LEVEL_DIRS,
     CANONICAL_STORE_TOP_LEVEL_FILES,
+    is_cloud_cache_path,
+    is_legacy_cloud_path,
+    resolve_tmp_remote_configs_root,
     targeted_stray_paths,
+)
+from numereng.platform.run_execution import (
+    build_local_run_execution,
+    build_run_execution,
+    merge_run_execution,
+    stamp_run_execution,
 )
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
@@ -67,6 +76,8 @@ _SQLITE_CORRUPTION_TOKENS = (
     "file is not a database",
     "database corrupted",
 )
+_TMP_REMOTE_CONFIG_TTL_DAYS = 30
+_ACTIVE_RUN_LIFECYCLE_STATUSES = frozenset({"queued", "starting", "running"})
 
 _SCHEMA_STATEMENTS = (
     """
@@ -489,6 +500,29 @@ class StoreDoctorResult:
 
 
 @dataclass(frozen=True)
+class _TmpRemoteConfigCleanupResult:
+    scanned: int = 0
+    deleted_paths: tuple[str, ...] = ()
+    kept_recent: int = 0
+    skipped_active: int = 0
+    cleanup_skipped: bool = False
+    issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StoreRunExecutionBackfillResult:
+    """Result payload for durable run execution backfills."""
+
+    store_root: Path
+    scanned_runs: int
+    updated_runs: int
+    skipped_runs: int
+    ambiguous_runs: tuple[str, ...] = ()
+    updated_run_ids: tuple[str, ...] = ()
+    skipped_run_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class StoreMaterializeVizArtifactsFailure:
     """One run-level viz artifact materialization failure."""
 
@@ -698,6 +732,9 @@ def init_store_db(*, store_root: str | Path = ".numereng") -> StoreInitResult:
     resolved_store_root = resolve_store_root(store_root)
     resolved_store_root.mkdir(parents=True, exist_ok=True)
     (resolved_store_root / "runs").mkdir(parents=True, exist_ok=True)
+    (resolved_store_root / "cache").mkdir(parents=True, exist_ok=True)
+    (resolved_store_root / "tmp").mkdir(parents=True, exist_ok=True)
+    (resolved_store_root / "remote_ops").mkdir(parents=True, exist_ok=True)
 
     db_path = resolved_store_root / "numereng.db"
     created = not db_path.exists()
@@ -805,9 +842,15 @@ def doctor_store(
     stats: dict[str, int] = {}
     deleted_paths: list[str] = []
     missing_paths: list[str] = []
+    targeted_deleted_count = 0
 
     stats["canonical_top_level_dirs"] = len(CANONICAL_STORE_TOP_LEVEL_DIRS)
     stats["canonical_top_level_files"] = len(CANONICAL_STORE_TOP_LEVEL_FILES)
+    stats["tmp_remote_configs_scanned"] = 0
+    stats["tmp_remote_configs_deleted"] = 0
+    stats["tmp_remote_configs_kept_recent"] = 0
+    stats["tmp_remote_configs_skipped_active"] = 0
+    stats["tmp_remote_configs_cleanup_skipped"] = 0
 
     if fix_strays:
         for stray_path in targeted_stray_paths(store_root=resolved_store_root):
@@ -823,8 +866,9 @@ def doctor_store(
                 issues.append(f"targeted_stray_delete_failed:{stray_path}:{exc}")
                 continue
             deleted_paths.append(str(stray_path))
+            targeted_deleted_count += 1
 
-    stats["targeted_strays_deleted"] = len(deleted_paths)
+    stats["targeted_strays_deleted"] = targeted_deleted_count
     stats["targeted_strays_missing"] = len(missing_paths)
 
     filesystem_runs = 0
@@ -834,7 +878,16 @@ def doctor_store(
         filesystem_runs = len(run_dirs)
     stats["filesystem_runs"] = filesystem_runs
 
+    execution_health = _run_execution_health(
+        resolved_store_root=resolved_store_root,
+        run_dirs=run_dirs,
+        db_path=db_path,
+    )
+    _apply_run_execution_health(stats=stats, issues=issues, execution_health=execution_health)
+
     if not db_path.exists():
+        if fix_strays:
+            stats["tmp_remote_configs_cleanup_skipped"] = 1
         issues.append("store_db_missing")
         return StoreDoctorResult(
             store_root=resolved_store_root,
@@ -850,6 +903,8 @@ def doctor_store(
     try:
         conn = _connect_read_only(db_path)
     except (StoreError, sqlite3.Error):
+        if fix_strays:
+            stats["tmp_remote_configs_cleanup_skipped"] = 1
         issues.append("store_db_unreadable")
         return StoreDoctorResult(
             store_root=resolved_store_root,
@@ -866,6 +921,16 @@ def doctor_store(
         missing_tables = [name for name in _REQUIRED_TABLES if not _table_exists(conn, name)]
         if missing_tables:
             issues.append("store_db_missing_tables:" + ",".join(missing_tables))
+
+        if fix_strays:
+            tmp_cleanup = _cleanup_tmp_remote_configs(conn=conn, store_root=resolved_store_root)
+            stats["tmp_remote_configs_scanned"] = tmp_cleanup.scanned
+            stats["tmp_remote_configs_deleted"] = len(tmp_cleanup.deleted_paths)
+            stats["tmp_remote_configs_kept_recent"] = tmp_cleanup.kept_recent
+            stats["tmp_remote_configs_skipped_active"] = tmp_cleanup.skipped_active
+            stats["tmp_remote_configs_cleanup_skipped"] = int(tmp_cleanup.cleanup_skipped)
+            deleted_paths.extend(tmp_cleanup.deleted_paths)
+            issues.extend(tmp_cleanup.issues)
 
         if _table_exists(conn, "runs"):
             indexed_runs = _count_query(conn, "SELECT COUNT(*) FROM runs")
@@ -931,6 +996,171 @@ def doctor_store(
         stray_cleanup_applied=fix_strays,
         deleted_paths=tuple(deleted_paths),
         missing_paths=tuple(missing_paths),
+    )
+
+
+def _cleanup_tmp_remote_configs(
+    *,
+    conn: sqlite3.Connection,
+    store_root: Path,
+) -> _TmpRemoteConfigCleanupResult:
+    remote_configs_root = resolve_tmp_remote_configs_root(store_root=store_root)
+    if not remote_configs_root.is_dir():
+        return _TmpRemoteConfigCleanupResult()
+    if not _table_exists(conn, "run_lifecycles"):
+        return _TmpRemoteConfigCleanupResult(cleanup_skipped=True)
+
+    try:
+        protected_paths = _load_active_tmp_remote_config_paths(conn=conn, store_root=store_root)
+    except sqlite3.Error as exc:
+        return _TmpRemoteConfigCleanupResult(
+            cleanup_skipped=True,
+            issues=(f"tmp_remote_configs_query_failed:{exc}",),
+        )
+
+    cutoff = datetime.now(UTC) - timedelta(days=_TMP_REMOTE_CONFIG_TTL_DAYS)
+    scanned = 0
+    kept_recent = 0
+    skipped_active = 0
+    deleted_paths: list[str] = []
+    issues: list[str] = []
+
+    for candidate_path in sorted(remote_configs_root.glob("*.json"), key=lambda item: item.name):
+        if not candidate_path.is_file():
+            continue
+        scanned += 1
+        try:
+            modified_at = datetime.fromtimestamp(candidate_path.stat().st_mtime, tz=UTC)
+        except OSError as exc:
+            issues.append(f"tmp_remote_config_stat_failed:{candidate_path}:{exc}")
+            continue
+
+        resolved_candidate = candidate_path.resolve()
+        if modified_at >= cutoff:
+            kept_recent += 1
+            continue
+        if resolved_candidate in protected_paths:
+            skipped_active += 1
+            continue
+        try:
+            candidate_path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            issues.append(f"tmp_remote_config_delete_failed:{candidate_path}:{exc}")
+            continue
+        deleted_paths.append(str(resolved_candidate))
+
+    return _TmpRemoteConfigCleanupResult(
+        scanned=scanned,
+        deleted_paths=tuple(deleted_paths),
+        kept_recent=kept_recent,
+        skipped_active=skipped_active,
+        issues=tuple(issues),
+    )
+
+
+def _load_active_tmp_remote_config_paths(
+    *,
+    conn: sqlite3.Connection,
+    store_root: Path,
+) -> set[Path]:
+    remote_configs_root = resolve_tmp_remote_configs_root(store_root=store_root).resolve()
+    placeholders = ",".join("?" for _ in _ACTIVE_RUN_LIFECYCLE_STATUSES)
+    rows = conn.execute(
+        f"SELECT config_path FROM run_lifecycles WHERE status IN ({placeholders})",
+        tuple(sorted(_ACTIVE_RUN_LIFECYCLE_STATUSES)),
+    ).fetchall()
+
+    protected_paths: set[Path] = set()
+    for row in rows:
+        config_path = _as_nonempty_str(row["config_path"])
+        if config_path is None:
+            continue
+        resolved_path = Path(config_path).expanduser().resolve()
+        try:
+            resolved_path.relative_to(remote_configs_root)
+        except ValueError:
+            continue
+        protected_paths.add(resolved_path)
+    return protected_paths
+
+
+def backfill_run_execution(
+    *,
+    store_root: str | Path = ".numereng",
+    run_id: str | None = None,
+    all_runs: bool = False,
+) -> StoreRunExecutionBackfillResult:
+    """Backfill missing durable execution provenance into run manifests."""
+
+    scope_flags = int(run_id is not None) + int(all_runs)
+    if scope_flags != 1:
+        raise StoreError("store_run_execution_backfill_scope_invalid")
+
+    resolved_store_root = resolve_store_root(store_root)
+    runs_dir = resolved_store_root / "runs"
+    if not runs_dir.is_dir():
+        if run_id is not None:
+            raise StoreError(f"store_run_not_found:{_ensure_safe_run_id(run_id)}")
+        return StoreRunExecutionBackfillResult(
+            store_root=resolved_store_root,
+            scanned_runs=0,
+            updated_runs=0,
+            skipped_runs=0,
+        )
+
+    target_run_id = _ensure_safe_run_id(run_id) if run_id is not None else None
+    run_dirs = [path for path in sorted(runs_dir.iterdir(), key=lambda item: item.name) if path.is_dir()]
+    if target_run_id is not None:
+        run_dirs = [path for path in run_dirs if path.name == target_run_id]
+        if not run_dirs:
+            raise StoreError(f"store_run_not_found:{target_run_id}")
+
+    init_result = init_store_db(store_root=resolved_store_root)
+    cloud_signals_by_run_id = _collect_cloud_execution_signals(resolved_store_root, db_path=init_result.db_path)
+    remote_signals_by_config = _collect_remote_execution_signals(resolved_store_root)
+
+    updated_run_ids: list[str] = []
+    skipped_run_ids: list[str] = []
+    ambiguous_runs: list[str] = []
+
+    for candidate_dir in run_dirs:
+        manifest_path = candidate_dir / "run.json"
+        if not manifest_path.is_file():
+            skipped_run_ids.append(candidate_dir.name)
+            continue
+        manifest = _load_manifest(manifest_path=manifest_path, run_id=candidate_dir.name)
+        if isinstance(manifest.get("execution"), dict):
+            skipped_run_ids.append(candidate_dir.name)
+            continue
+        inferred_execution, ambiguous = _infer_execution_for_run(
+            manifest=manifest,
+            run_dir=candidate_dir,
+            cloud_signals_by_run_id=cloud_signals_by_run_id,
+            remote_signals_by_config=remote_signals_by_config,
+        )
+        if ambiguous:
+            ambiguous_runs.append(candidate_dir.name)
+            continue
+        if inferred_execution is None:
+            skipped_run_ids.append(candidate_dir.name)
+            continue
+        try:
+            stamp_run_execution(manifest_path=manifest_path, execution=inferred_execution)
+            index_run(store_root=resolved_store_root, run_id=candidate_dir.name)
+        except (OSError, ValueError, StoreError) as exc:
+            raise StoreError(f"store_run_execution_backfill_failed:{candidate_dir.name}:{exc}") from exc
+        updated_run_ids.append(candidate_dir.name)
+
+    return StoreRunExecutionBackfillResult(
+        store_root=resolved_store_root,
+        scanned_runs=len(run_dirs),
+        updated_runs=len(updated_run_ids),
+        skipped_runs=len(run_dirs) - len(updated_run_ids),
+        ambiguous_runs=tuple(ambiguous_runs),
+        updated_run_ids=tuple(updated_run_ids),
+        skipped_run_ids=tuple(skipped_run_ids),
     )
 
 
@@ -2248,6 +2478,371 @@ def _extract_experiment_id(manifest: dict[str, Any]) -> str | None:
     return None
 
 
+def _run_execution_health(
+    *,
+    resolved_store_root: Path,
+    run_dirs: list[Path],
+    db_path: Path,
+) -> dict[str, Any]:
+    cloud_signals_by_run_id = _collect_cloud_execution_signals(resolved_store_root, db_path=db_path)
+    remote_signals_by_config = _collect_remote_execution_signals(resolved_store_root)
+
+    missing_count = 0
+    ambiguous_run_ids: list[str] = []
+    for run_dir in run_dirs:
+        manifest_path = run_dir / "run.json"
+        if not manifest_path.is_file():
+            continue
+        try:
+            manifest = _load_manifest(manifest_path=manifest_path, run_id=run_dir.name)
+        except StoreRunManifestInvalidError:
+            continue
+        if isinstance(manifest.get("execution"), dict):
+            continue
+        missing_count += 1
+        _, ambiguous = _infer_execution_for_run(
+            manifest=manifest,
+            run_dir=run_dir,
+            cloud_signals_by_run_id=cloud_signals_by_run_id,
+            remote_signals_by_config=remote_signals_by_config,
+        )
+        if ambiguous:
+            ambiguous_run_ids.append(run_dir.name)
+
+    legacy_cloud_root = resolved_store_root / "cloud"
+    legacy_cloud_state_files = (
+        len([path for path in legacy_cloud_root.rglob("*.json") if path.is_file()]) if legacy_cloud_root.is_dir() else 0
+    )
+    legacy_cloud_pull_trees = (
+        len([path for path in legacy_cloud_root.rglob("pull") if path.is_dir()]) if legacy_cloud_root.is_dir() else 0
+    )
+
+    orphaned_cache_cloud_pull_trees = 0
+    cache_cloud_root = resolved_store_root / "cache" / "cloud"
+    if cache_cloud_root.is_dir():
+        for pull_dir in cache_cloud_root.rglob("pull"):
+            if not pull_dir.is_dir():
+                continue
+            if pull_dir.parent.parent.name != "runs":
+                continue
+            run_id = pull_dir.parent.name
+            if not (resolved_store_root / "runs" / run_id / "run.json").is_file():
+                orphaned_cache_cloud_pull_trees += 1
+
+    return {
+        "missing_count": missing_count,
+        "ambiguous_run_ids": tuple(sorted(set(ambiguous_run_ids))),
+        "legacy_cloud_state_files": legacy_cloud_state_files,
+        "legacy_cloud_pull_trees": legacy_cloud_pull_trees,
+        "orphaned_cache_cloud_pull_trees": orphaned_cache_cloud_pull_trees,
+    }
+
+
+def _apply_run_execution_health(
+    *,
+    stats: dict[str, int],
+    issues: list[str],
+    execution_health: dict[str, Any],
+) -> None:
+    stats["runs_missing_execution"] = int(execution_health["missing_count"])
+    stats["ambiguous_run_executions"] = len(execution_health["ambiguous_run_ids"])
+    stats["legacy_cloud_state_files"] = int(execution_health["legacy_cloud_state_files"])
+    stats["legacy_cloud_pull_trees"] = int(execution_health["legacy_cloud_pull_trees"])
+    stats["orphaned_cache_cloud_pull_trees"] = int(execution_health["orphaned_cache_cloud_pull_trees"])
+    if execution_health["missing_count"]:
+        issues.append(f"run_execution_missing:{execution_health['missing_count']}")
+    for ambiguous_run_id in execution_health["ambiguous_run_ids"]:
+        issues.append(f"run_execution_ambiguous:{ambiguous_run_id}")
+    if execution_health["legacy_cloud_state_files"]:
+        issues.append(f"legacy_cloud_state_present:{execution_health['legacy_cloud_state_files']}")
+    if execution_health["legacy_cloud_pull_trees"]:
+        issues.append(f"legacy_cloud_pull_present:{execution_health['legacy_cloud_pull_trees']}")
+    if execution_health["orphaned_cache_cloud_pull_trees"]:
+        issues.append(f"orphaned_cache_cloud_pull:{execution_health['orphaned_cache_cloud_pull_trees']}")
+
+
+def _collect_cloud_execution_signals(
+    resolved_store_root: Path,
+    *,
+    db_path: Path,
+) -> dict[str, list[tuple[str, dict[str, object]]]]:
+    signals_by_run_id: dict[str, list[tuple[str, dict[str, object]]]] = {}
+
+    if db_path.exists():
+        try:
+            with _connect_read_only(db_path) as conn:
+                if _table_exists(conn, "cloud_jobs"):
+                    rows = conn.execute(
+                        """
+                        SELECT
+                            run_id,
+                            provider,
+                            backend,
+                            provider_job_id,
+                            region,
+                            image_uri,
+                            output_s3_uri,
+                            metadata_json,
+                            started_at,
+                            finished_at
+                        FROM cloud_jobs
+                        """
+                    ).fetchall()
+                else:
+                    rows = ()
+        except StoreError:
+            rows = ()
+        for row in rows:
+            run_id = _to_nonempty_str(row["run_id"])
+            backend = _to_nonempty_str(row["backend"])
+            provider_job_id = _to_nonempty_str(row["provider_job_id"])
+            provider = _normalize_cloud_provider(_to_nonempty_str(row["provider"]), backend)
+            if run_id is None or backend is None or provider is None:
+                continue
+            metadata = _parse_json_object(row["metadata_json"])
+            execution = build_run_execution(
+                kind="cloud",
+                provider=provider,
+                backend=backend,
+                provider_job_id=provider_job_id,
+                region=_to_nonempty_str(row["region"]),
+                image_uri=_to_nonempty_str(row["image_uri"]),
+                output_uri=_to_nonempty_str(row["output_s3_uri"]),
+                state_path=_to_nonempty_str(metadata.get("state_path")),
+                submitted_at=_to_nonempty_str(row["started_at"]),
+                extracted_at=_to_nonempty_str(row["finished_at"]),
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if key in {"bucket", "runtime_profile", "pulled_at", "extracted_at"} and value
+                }
+                or None,
+            )
+            signals_by_run_id.setdefault(run_id, []).append(("cloud_jobs", execution))
+
+    for root in (resolved_store_root / "cloud", resolved_store_root / "cache" / "cloud"):
+        if not root.is_dir():
+            continue
+        for state_path in root.rglob("*.json"):
+            execution = _execution_from_cloud_state_file(resolved_store_root=resolved_store_root, state_path=state_path)
+            if execution is None:
+                continue
+            run_id = _to_nonempty_str(execution.get("target_id")) or _run_id_from_execution_state_path(
+                execution, state_path
+            )
+            if run_id is None:
+                continue
+            source = (
+                "legacy_cloud_state"
+                if is_legacy_cloud_path(path=state_path, store_root=resolved_store_root)
+                else "cloud_state"
+            )
+            signals_by_run_id.setdefault(run_id, []).append((source, execution))
+
+    return signals_by_run_id
+
+
+def _execution_from_cloud_state_file(
+    *,
+    resolved_store_root: Path,
+    state_path: Path,
+) -> dict[str, object] | None:
+    try:
+        payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    run_id = _to_nonempty_str(payload.get("run_id"))
+    if run_id is None:
+        return None
+    backend = _infer_cloud_backend_from_state(payload)
+    provider = _normalize_cloud_provider(_provider_from_state_path(resolved_store_root, state_path), backend)
+    if backend is None or provider is None:
+        return None
+    metadata = payload.get("metadata")
+    metadata_payload = metadata if isinstance(metadata, dict) else {}
+    artifacts = payload.get("artifacts")
+    artifacts_payload = artifacts if isinstance(artifacts, dict) else {}
+    return build_run_execution(
+        kind="cloud",
+        provider=provider,
+        backend=backend,
+        provider_job_id=(
+            _to_nonempty_str(payload.get("training_job_name"))
+            or _to_nonempty_str(payload.get("batch_job_id"))
+            or _to_nonempty_str(payload.get("call_id"))
+        ),
+        instance_id=_to_nonempty_str(payload.get("instance_id")),
+        region=_to_nonempty_str(payload.get("region")),
+        image_uri=_to_nonempty_str(payload.get("image_uri")) or _to_nonempty_str(payload.get("ecr_image_uri")),
+        output_uri=_to_nonempty_str(artifacts_payload.get("output_s3_uri")),
+        state_path=str(state_path.resolve()),
+        submitted_at=_to_nonempty_str(metadata_payload.get("submitted_at")),
+        pulled_at=_to_nonempty_str(metadata_payload.get("pulled_at")),
+        extracted_at=_to_nonempty_str(metadata_payload.get("extracted_at")),
+        metadata={
+            key: value for key, value in metadata_payload.items() if key in {"bucket", "runtime_profile"} and value
+        }
+        or None,
+    ) | {"target_id": run_id}
+
+
+def _provider_from_state_path(resolved_store_root: Path, state_path: Path) -> str | None:
+    if not is_cloud_cache_path(path=state_path, store_root=resolved_store_root):
+        return None
+    try:
+        relative = state_path.resolve().relative_to((resolved_store_root / "cache" / "cloud").resolve())
+    except ValueError:
+        return None
+    if not relative.parts:
+        return None
+    return relative.parts[0]
+
+
+def _infer_cloud_backend_from_state(payload: dict[str, Any]) -> str | None:
+    backend = _to_nonempty_str(payload.get("backend"))
+    if backend is not None:
+        return backend
+    if _to_nonempty_str(payload.get("training_job_name")) is not None:
+        return "sagemaker"
+    if _to_nonempty_str(payload.get("batch_job_id")) is not None:
+        return "batch"
+    if _to_nonempty_str(payload.get("instance_id")) is not None or payload.get("training_pid") is not None:
+        return "ec2"
+    if (
+        _to_nonempty_str(payload.get("call_id")) is not None
+        or _to_nonempty_str(payload.get("deployment_id")) is not None
+    ):
+        return "modal"
+    return None
+
+
+def _normalize_cloud_provider(provider: str | None, backend: str | None) -> str | None:
+    if backend in {"sagemaker", "batch", "ec2"}:
+        return "aws"
+    normalized = _to_nonempty_str(provider)
+    if normalized in {"sagemaker", "batch"}:
+        return "aws"
+    return normalized
+
+
+def _collect_remote_execution_signals(
+    resolved_store_root: Path,
+) -> dict[str, list[tuple[str, dict[str, object]]]]:
+    payload: dict[str, list[tuple[str, dict[str, object]]]] = {}
+    launches_dir = resolved_store_root / "remote_ops" / "launches"
+    if not launches_dir.is_dir():
+        return payload
+    for metadata_path in launches_dir.glob("*.json"):
+        try:
+            launch_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(launch_payload, dict):
+            continue
+        command = launch_payload.get("command")
+        if not isinstance(command, list):
+            continue
+        config_path = _extract_remote_command_config_path(command)
+        if config_path is None:
+            continue
+        execution_raw = launch_payload.get("execution")
+        execution = (
+            merge_run_execution(None, execution_raw)
+            if isinstance(execution_raw, dict)
+            else build_run_execution(kind="remote_host", provider="ssh", backend="remote_pc")
+        )
+        payload.setdefault(config_path, []).append(("remote_launch", execution))
+    return payload
+
+
+def _extract_remote_command_config_path(command: list[Any]) -> str | None:
+    for index, token in enumerate(command):
+        if token == "--config" and index + 1 < len(command):
+            value = command[index + 1]
+            return _to_nonempty_str(value)
+    return None
+
+
+def _infer_execution_for_run(
+    *,
+    manifest: dict[str, Any],
+    run_dir: Path,
+    cloud_signals_by_run_id: dict[str, list[tuple[str, dict[str, object]]]],
+    remote_signals_by_config: dict[str, list[tuple[str, dict[str, object]]]],
+) -> tuple[dict[str, object] | None, bool]:
+    run_id = _to_nonempty_str(manifest.get("run_id")) or run_dir.name
+    config_path = _extract_manifest_config_path(manifest)
+    candidate_signals: list[tuple[str, dict[str, object]]] = list(cloud_signals_by_run_id.get(run_id, ()))
+    if config_path is not None:
+        candidate_signals.extend(remote_signals_by_config.get(config_path, ()))
+
+    if not candidate_signals:
+        return _mark_inferred_execution(build_local_run_execution(), inferred_from="default_local"), False
+
+    signatures = {
+        _execution_signature(execution)
+        for _, execution in candidate_signals
+        if _execution_signature(execution) is not None
+    }
+    if len(signatures) > 1:
+        return None, True
+
+    merged: dict[str, object] = {}
+    inferred_from: list[str] = []
+    for source, execution in candidate_signals:
+        merged = merge_run_execution(merged, execution)
+        inferred_from.append(source)
+    if not merged:
+        return None, False
+    return _mark_inferred_execution(merged, inferred_from=",".join(sorted(set(inferred_from)))), False
+
+
+def _extract_manifest_config_path(manifest: dict[str, Any]) -> str | None:
+    config_payload = manifest.get("config")
+    if not isinstance(config_payload, dict):
+        return None
+    return _to_nonempty_str(config_payload.get("path"))
+
+
+def _execution_signature(execution: dict[str, object]) -> tuple[str, str, str] | None:
+    kind = _to_nonempty_str(execution.get("kind"))
+    provider = _to_nonempty_str(execution.get("provider"))
+    backend = _to_nonempty_str(execution.get("backend"))
+    if kind is None or provider is None or backend is None:
+        return None
+    return kind, provider, backend
+
+
+def _mark_inferred_execution(execution: dict[str, object], *, inferred_from: str) -> dict[str, object]:
+    return merge_run_execution(
+        execution,
+        {
+            "metadata": {
+                "inferred": True,
+                "inferred_from": inferred_from,
+            }
+        },
+    )
+
+
+def _run_id_from_execution_state_path(execution: dict[str, object], state_path: Path) -> str | None:
+    target_id = _to_nonempty_str(execution.get("target_id"))
+    if target_id is not None:
+        return target_id
+    if state_path.parent.parent.name == "runs":
+        return _to_nonempty_str(state_path.parent.name)
+    return None
+
+
+def _to_nonempty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def _connect_rw(db_path: Path) -> sqlite3.Connection:
     return _connect_sqlite(
         db_path=db_path,
@@ -2660,9 +3255,11 @@ __all__ = [
     "StoreMaterializeVizArtifactsResult",
     "StoreRebuildFailure",
     "StoreRebuildResult",
+    "StoreRunExecutionBackfillResult",
     "StoreRunManifestInvalidError",
     "StoreRunManifestNotFoundError",
     "StoreRunNotFoundError",
+    "backfill_run_execution",
     "doctor_store",
     "get_ensemble",
     "get_experiment",
