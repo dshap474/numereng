@@ -29,6 +29,7 @@ Boundary contracts:
 Source map:
 - `src/numereng/config/training/*`: strict JSON training contracts + loader.
 - `src/numereng/config/hpo/*`: strict JSON HPO contracts + loader.
+- `src/numereng/config/cloud/*`: checked-in cloud runtime defaults such as the SageMaker image catalog.
 - `src/numereng/platform/*`: boundary errors + Numerai adapter + forum scraper tooling.
 - `src/numereng/features/training/*`: deterministic run orchestration + artifacts.
 - `src/numereng/features/models/custom_models/*`: plugin model adapters; numereng routes `TabPFNRegressor` cache traffic into `<effective_store_root>/cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
@@ -38,7 +39,7 @@ Source map:
 - `src/numereng/features/baseline/*`: shared benchmark baseline construction from persisted run predictions; canonical outputs live under `.numereng/datasets/baselines/<name>/` and can promote the active benchmark artifact.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + train linkage + promote/report + deferred round scoring.
-- `src/numereng/features/agentic_research/*`: foreground supervisor that persists program state under one root experiment, pivots into child experiments when a path plateaus, and selects one persisted research program at `research init`. The default tracked program is `numerai-experiment-loop`, stored under `src/numereng/features/agentic_research/programs/`; that same folder is the default local catalog for custom programs and includes a README plus `.gitignore` so extra `.md` files stay untracked by default. The runtime is localized into `run.py` plus `utils/planning.py`, `utils/mutation.py`, `utils/programs.py`, `utils/store.py`, `utils/llm.py`, and `utils/types.py`. `program.json` stores the resolved `program_snapshot`; `session_program.md` stores the exact selected markdown for the session; runtime resume always uses the persisted snapshot, not the live catalog. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the user’s normal Codex configuration and environment, while `openrouter` uses the configured `ACTIVE_MODEL`. Numerai rounds remain config-centric: Python chooses one parent config, the LLM proposes a small mutation, Python clones/validates/names the child config, then training runs exactly one child config per autonomous iteration.
+- `src/numereng/features/agentic_research/*`: foreground supervisor that persists program state under one root experiment, pivots into child experiments when a path plateaus, and selects one persisted research program at `research init`. The default tracked program is `numerai-experiment-loop`, stored under `src/numereng/features/agentic_research/programs/`; that same folder is the default local catalog for custom programs and includes a README plus `.gitignore` so extra `.md` files stay untracked by default. The runtime is localized into `run.py` plus `utils/planning.py`, `utils/mutation.py`, `utils/programs.py`, `utils/store.py`, `utils/llm.py`, and `utils/types.py`. `program.json` stores the resolved `program_snapshot`; `session_program.md` stores the exact selected markdown for the session; runtime resume always uses the persisted snapshot, not the live catalog. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`. `codex-exec` uses the user’s normal Codex configuration and environment, while `openrouter` uses the configured `ACTIVE_MODEL`. Numerai rounds remain config-centric: Python chooses one parent config, builds a compact mutation prompt from only allowed mutable fields plus the effective scoring stage, the LLM proposes a small mutation, Python clones/validates/names the child config, then training runs exactly one child config per autonomous iteration.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build + diagnostics + persistence.
 - `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
@@ -88,11 +89,9 @@ Key artifacts:
 - `experiments/<experiment_id>/agentic_research/program.json`
 - `experiments/<experiment_id>/agentic_research/session_program.md`
 - `experiments/<experiment_id>/agentic_research/lineage.json`
-- `experiments/<experiment_id>/agentic_research/llm_trace.jsonl`
-- `experiments/<experiment_id>/agentic_research/llm_trace.md`
 - `experiments/<experiment_id>/agentic_research/rounds/rN/*`
-  - canonical round artifacts are `round.json` and `round.md`
-  - round bundles persist the current decision, planner prompt/response, lineage fields like `parent_run_id`, `parent_config_filename`, `change_set`, and `llm_rationale`, plus any scored results
+  - canonical round artifacts are `round.json`, `round.md`, `llm_trace.jsonl`, and `llm_trace.md`
+  - round bundles persist the current decision, compact planner metadata plus links back to `llm_trace.*`, lineage fields like `parent_run_id`, `parent_config_filename`, `parent_selection_reason`, `change_set`, and `llm_rationale`, plus any scored results
   - legacy per-round planner transport files are cleaned up when a round bundle is written
 - `experiments/_archive/<experiment_id>/...`
 
@@ -127,13 +126,13 @@ Wiring map:
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime uses the user’s ambient Codex config and environment; agentic research does not create a separate learner `CODEX_HOME`
   - the default tracked program lives under `src/numereng/features/agentic_research/programs/numerai-experiment-loop.md`; extra local custom programs can live in that same folder and remain untracked by default
   - `numerai-experiment-loop` now uses a compact mutation contract instead of a dense schema-valid planner JSON object
-  - the numerai planner sees one parent config, a short lineage summary, and only the three core metrics: `bmc_last_200_eras_mean`, `bmc_mean`, and `corr_mean`
+  - the numerai planner sees one parent mutable-config snapshot, the effective scoring stage, a short lineage summary, and only the three core metrics: `bmc_last_200_eras_mean`, `bmc_mean`, and `corr_mean`
   - the numerai planner returns a plain-text `RATIONALE:` + `CHANGES:` block with dotted `config.path = <json-literal>` edits; Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, retries once with validation feedback, and writes one child config
   - phase-aware custom programs still use the structured planner JSON/schema contract, and the schema is generated from the persisted program definition
-  - planner trace logs are append-only under `agentic_research/llm_trace.jsonl` with a human-readable companion at `agentic_research/llm_trace.md`
-  - per-round readability now lives in `rounds/rN/round.md`, which embeds the exact prompt sent to the planner, the raw planner response, the parsed final response, and the round outcome in one document
+  - planner trace logs are persisted per round under `rounds/rN/llm_trace.jsonl` with a human-readable companion at `rounds/rN/llm_trace.md`
+  - per-round readability now lives in `rounds/rN/round.md`, which is a compact operational summary with parent selection, mutation lineage, scored outcome, and links back to that round's full planner trace
   - round bundles and planner traces now also record `program_id`, `program_sha256`, and `session_program_path` for auditability
-  - the root markdown trace remains intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
+  - each round markdown trace remains intentionally literal and chronological: timestamp, exact prompt sent to the planner, raw planner response stream/body, and the parsed final response
 - Experiment archive:
   `cli experiment archive|unarchive -> api.experiment_archive|experiment_unarchive -> features.experiments.archive_experiment|unarchive_experiment -> move experiment dir + update manifest + reindex experiment row`
 - Submit:
@@ -312,12 +311,14 @@ Critical invariants:
 - `cloud aws train extract` only promotes `runs/<run_id>/*` members from archives; non-`runs/*` members are skipped with warnings.
 - Managed archive extraction hard-fails on unsafe tar members (absolute/traversal paths, links, invalid run ids) and on run-dir hash conflicts.
 - Managed extraction indexes only extracted run IDs (no fallback indexing of outer cloud run id).
+- If managed extraction sees an existing `runs/<run_id>` with the same deterministic run hash, it skips moving files but still refreshes that run's durable `execution` provenance from managed state before re-indexing it.
 - SageMaker managed entrypoint deletes `numereng.db`, `numereng.db-shm`, and `numereng.db-wal` from output artifacts before packaging.
 - Materialized cloud and remote-host runs persist durable provenance in `runs/<run_id>/run.json -> execution`; transient cloud state/pull staging under `cache/cloud` is disposable after extraction.
 - `.numereng/tmp/*` is store-owned scratch space; `store doctor --fix-strays` may prune `tmp/remote-configs/*.json` files older than 30 days when they are not referenced by active run lifecycles.
 - Managed AWS `--state-path` defaults under `<store_root>/cache/cloud/aws/...`; explicit overrides must resolve under `<store_root>/cache/cloud/**/*.json` or legacy `<store_root>/cloud/*.json` during migration.
 - Managed AWS submit trims `NUMERENG_RUN_EXECUTION_JSON` to the provider/runtime fields needed inside the container so long descriptive run IDs and canonical state paths stay under SageMaker's env-value limit; full provenance is still recovered from managed state during pull/extract.
 - Managed AWS/EC2 cloud `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
+- SageMaker submit may omit `--image-uri`; numereng resolves the checked-in default alias for the selected `runtime_profile` and persists both the resolved `image_uri` and tag digest into managed state/cloud metadata.
 - SageMaker CUDA runs require all three: config resolves to `model.device=cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`).
 - EC2 CUDA runtime install requires a GPU instance state and `cloud ec2 install --runtime-profile lgbm-cuda`.
 - CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.

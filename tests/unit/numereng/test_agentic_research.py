@@ -16,6 +16,7 @@ from numereng.features.agentic_research.utils.mutation import (
     build_candidate_filename,
     materialize_mutation_config,
     parse_mutation_response,
+    render_mutation_prompt,
     select_parent_config,
 )
 from numereng.features.agentic_research.utils.planning import (
@@ -712,6 +713,7 @@ def test_materialize_mutation_config_retries_duplicate_fingerprint(tmp_path: Pat
         report=None,
         config_dirs=[config_dir],
     )
+    assert parent.selection_reason == "latest_valid_config_fallback"
 
     with pytest.raises(ValueError, match="agentic_research_candidate_duplicate"):
         materialize_mutation_config(
@@ -736,6 +738,76 @@ def test_build_candidate_filename_is_deterministic() -> None:
     )
 
     assert filename == "r7_base__model-params-learning-rate-0p005.json"
+
+
+def test_render_mutation_prompt_uses_mutable_snapshot_and_effective_scoring_stage(tmp_path: Path) -> None:
+    definition = load_program_definition("numerai-experiment-loop")
+    experiment = create_experiment(store_root=tmp_path, experiment_id="2026-03-20_prompt-exp")
+    config_path = _seed_config(tmp_path, experiment.experiment_id)
+    payload = _valid_training_config()
+    payload["training"]["post_training_scoring"] = "none"
+    parent = select_parent_config(
+        root=tmp_path,
+        experiment=experiment,
+        report=None,
+        config_dirs=[config_path.parent],
+    )
+    parent = replace(parent, config_payload=payload)
+
+    prompt = render_mutation_prompt(
+        definition=definition,
+        parent=parent,
+        recent_round_summaries=[],
+        validation_feedback=None,
+    )
+
+    assert '"effective_scoring_stage": "post_training_full"' in prompt
+    assert '"mutable_config"' in prompt
+    assert '"n_estimators": 10' in prompt
+    assert '"post_training_scoring"' not in prompt
+    assert '"benchmark_source"' not in prompt
+
+
+def test_select_parent_config_prefers_best_scored_run_reason(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id="2026-03-20_best-parent-exp")
+    config_path = _seed_config(store_root, experiment.experiment_id)
+    run_dir = store_root / "runs" / "run-1"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(
+        json.dumps({"config": {"path": str(config_path)}}, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    report = ExperimentReport(
+        experiment_id=experiment.experiment_id,
+        metric="bmc_last_200_eras.mean",
+        total_runs=1,
+        champion_run_id=None,
+        rows=(
+            ExperimentReportRow(
+                run_id="run-1",
+                status="FINISHED",
+                created_at="2026-03-20T00:00:00+00:00",
+                metric_value=0.12,
+                corr_mean=0.03,
+                mmc_mean=0.01,
+                cwmm_mean=0.02,
+                bmc_mean=0.11,
+                bmc_last_200_eras_mean=0.12,
+                is_champion=False,
+            ),
+        ),
+    )
+
+    parent = select_parent_config(
+        root=store_root,
+        experiment=experiment,
+        report=report,
+        config_dirs=[config_path.parent],
+    )
+
+    assert parent.run_id == "run-1"
+    assert parent.selection_reason == "best_scored_run_in_report"
 
 
 def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> None:
@@ -977,14 +1049,18 @@ def test_run_research_executes_one_full_round(
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     assert (round_dir / "round.json").is_file()
     assert (round_dir / "round.md").is_file()
+    assert (round_dir / "llm_trace.jsonl").is_file()
+    assert (round_dir / "llm_trace.md").is_file()
     assert not (round_dir / "codex_prompt.txt").exists()
     assert not (round_dir / "codex_usage.json").exists()
-    assert not (round_dir / "llm_trace.md").exists()
     round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
     assert "attempts" in round_payload["planner"]["usage"]
-    trace_markdown = (
-        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.md"
-    ).read_text(encoding="utf-8")
+    assert "prompt_text" not in round_payload["planner"]
+    assert "raw_response_text" not in round_payload["planner"]
+    assert "parsed_response" not in round_payload["planner"]
+    assert round_payload["planner"]["llm_trace_markdown_path"].endswith("rounds/r1/llm_trace.md")
+    assert round_payload["lineage"]["parent_selection_reason"] == "latest_valid_config_fallback"
+    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
     assert "### Sent To LLM" in trace_markdown
     assert "### Raw LLM Response" in trace_markdown
     assert "### Parsed Final Response" in trace_markdown
@@ -993,9 +1069,7 @@ def test_run_research_executes_one_full_round(
     assert "config.model.params.learning_rate = 0.005" in trace_markdown
     trace_lines = [
         json.loads(line)
-        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     assert len(trace_lines) == 1
@@ -1003,9 +1077,17 @@ def test_run_research_executes_one_full_round(
     assert trace_lines[0]["planner_source"] == "codex-exec"
     assert trace_lines[0]["round_label"] == "r1"
     assert trace_lines[0]["parsed_response"]["changes"][0]["path"] == "model.params.learning_rate"
+    assert '"effective_scoring_stage": "post_training_full"' in trace_lines[0]["prompt_text"]
+    assert '"post_training_scoring"' not in trace_lines[0]["prompt_text"]
     assert round_payload["lineage"]["parent_config_filename"] == "base.json"
     assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
     assert round_payload["results"]["best_row"]["run_id"] == "run-1"
+    round_markdown = (round_dir / "round.md").read_text(encoding="utf-8")
+    assert "## Sent To LLM" not in round_markdown
+    assert "## Raw LLM Response" not in round_markdown
+    assert "## Parsed Final Response" not in round_markdown
+    assert "## Trace" in round_markdown
+    assert "latest_valid_config_fallback" in round_markdown
 
 
 def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -> None:
@@ -1026,9 +1108,7 @@ def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -
     assert round_payload["planner"]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
     trace_lines = [
         json.loads(line)
-        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     assert len(trace_lines) == 1
@@ -1037,6 +1117,7 @@ def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -
     assert trace_lines[0]["attempts"] == []
     assert trace_lines[0]["prompt_text"] == ""
     assert trace_lines[0]["raw_response_text"] == ""
+    assert "prompt_text" not in round_payload["planner"]
 
 
 def test_run_research_trace_prefers_raw_response_text(
@@ -1132,15 +1213,16 @@ def test_run_research_trace_prefers_raw_response_text(
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     trace_lines = [
         json.loads(line)
-        for line in (store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "llm_trace.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     assert trace_lines[0]["raw_response_text"] == raw_response
     assert trace_lines[0]["raw_response_text"] != transport_stream
+    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
+    assert raw_response in trace_markdown
+    assert transport_stream not in trace_markdown
     round_markdown = (round_dir / "round.md").read_text(encoding="utf-8")
-    assert raw_response in round_markdown
+    assert raw_response not in round_markdown
     assert transport_stream not in round_markdown
 
 
@@ -1240,7 +1322,12 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
     assert planner_calls["count"] == 2
     round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
-    assert "agentic_research_candidate_duplicate" in round_payload["planner"]["prompt_text"]
+    trace_lines = [
+        json.loads(line)
+        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "agentic_research_candidate_duplicate" in trace_lines[0]["prompt_text"]
     assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
 
 

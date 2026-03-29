@@ -59,6 +59,7 @@ class ParentConfigSelection:
     bmc_mean: float | None
     corr_mean: float | None
     source: str
+    selection_reason: str
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,7 @@ def render_mutation_prompt(
                         "max_changes": definition.config_policy.max_changes,
                         "max_candidate_configs": definition.config_policy.max_candidate_configs,
                     },
+                    "effective_scoring_stage": definition.scoring_stage,
                     "parent_config": {
                         "filename": parent.config_filename,
                         "source": parent.source,
@@ -109,7 +111,10 @@ def render_mutation_prompt(
                             "bmc_mean": parent.bmc_mean,
                             "corr_mean": parent.corr_mean,
                         },
-                        "payload": parent.config_payload,
+                        "mutable_config": _mutable_config_snapshot(
+                            config_payload=parent.config_payload,
+                            allowed_paths=definition.config_policy.allowed_paths,
+                        ),
                     },
                     "recent_round_summaries": recent_round_summaries[-3:],
                 },
@@ -335,6 +340,7 @@ def _selection_from_config_path(
         bmc_mean=bmc_mean,
         corr_mean=corr_mean,
         source=source,
+        selection_reason="best_scored_run_in_report" if run_id is not None else "latest_valid_config_fallback",
     )
 
 
@@ -409,6 +415,69 @@ def _identity_payload(payload: dict[str, object]) -> dict[str, object]:
         output.pop("results_name", None)
         output.pop("output_dir", None)
     return normalized
+
+
+def _mutable_config_snapshot(
+    *,
+    config_payload: dict[str, object],
+    allowed_paths: tuple[str, ...],
+) -> dict[str, object]:
+    snapshot: dict[str, object] = {}
+    for allowed_path in allowed_paths:
+        tokens = tuple(allowed_path.split("."))
+        if not tokens:
+            continue
+        if tokens[-1] == "*":
+            value = _lookup_path(config_payload, tokens[:-1])
+            if isinstance(value, dict):
+                _assign_snapshot_path(snapshot, tokens[:-1], deepcopy(value))
+            continue
+        value = _lookup_path(config_payload, tokens)
+        if value is _MISSING:
+            continue
+        _assign_snapshot_path(snapshot, tokens, deepcopy(value))
+    return snapshot
+
+
+_MISSING = object()
+
+
+def _lookup_path(payload: object, tokens: tuple[str, ...]) -> object:
+    current = payload
+    for token in tokens:
+        if not isinstance(current, dict) or token not in current:
+            return _MISSING
+        current = current[token]
+    return current
+
+
+def _assign_snapshot_path(target: dict[str, object], tokens: tuple[str, ...], value: object) -> None:
+    if not tokens:
+        if isinstance(value, dict):
+            _merge_mapping(target, value)
+        return
+    current = target
+    for token in tokens[:-1]:
+        existing = current.get(token)
+        if not isinstance(existing, dict):
+            existing = {}
+            current[token] = existing
+        current = existing
+    leaf = tokens[-1]
+    existing_leaf = current.get(leaf)
+    if isinstance(existing_leaf, dict) and isinstance(value, dict):
+        _merge_mapping(existing_leaf, value)
+        return
+    current[leaf] = value
+
+
+def _merge_mapping(target: dict[str, object], source: dict[str, object]) -> None:
+    for key, value in source.items():
+        existing = target.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _merge_mapping(existing, value)
+            continue
+        target[key] = deepcopy(value)
 
 
 def _mutation_path_allowed(path: str, *, allowed_paths: tuple[str, ...]) -> bool:

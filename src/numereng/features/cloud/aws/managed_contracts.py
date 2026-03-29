@@ -23,6 +23,7 @@ class CloudAwsState(BaseModel):
     repository: str | None = None
     image_tag: str | None = None
     image_uri: str | None = None
+    image_digest: str | None = None
     runtime_profile: CloudRuntimeProfile = "standard"
     training_job_name: str | None = None
     training_job_arn: str | None = None

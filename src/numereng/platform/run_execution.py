@@ -98,6 +98,8 @@ def build_local_run_execution(*, source: str | None = None, host: str | None = N
 def merge_run_execution(
     existing: object,
     incoming: Mapping[str, object] | None,
+    *,
+    prefer_incoming: bool = False,
 ) -> dict[str, object]:
     """Merge execution payloads without clobbering existing populated fields."""
 
@@ -108,13 +110,13 @@ def merge_run_execution(
         candidate = _normalize_scalar(incoming.get(key))
         if candidate is None:
             continue
-        if key not in merged or _normalize_scalar(merged.get(key)) is None:
+        if prefer_incoming or key not in merged or _normalize_scalar(merged.get(key)) is None:
             merged[key] = candidate
     incoming_metadata = _normalize_metadata(incoming.get("metadata"))
     if incoming_metadata:
         existing_metadata = _normalize_metadata(merged.get("metadata"))
         for key, value in incoming_metadata.items():
-            if key not in existing_metadata:
+            if prefer_incoming or key not in existing_metadata:
                 existing_metadata[key] = value
         if existing_metadata:
             merged["metadata"] = existing_metadata
@@ -149,6 +151,7 @@ def stamp_run_execution(
     *,
     manifest_path: str | Path,
     execution: Mapping[str, object],
+    prefer_incoming: bool = False,
 ) -> dict[str, object]:
     """Merge execution provenance into one persisted `run.json` manifest."""
 
@@ -156,7 +159,11 @@ def stamp_run_execution(
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"run_manifest_not_object:{path}")
-    payload["execution"] = merge_run_execution(payload.get("execution"), execution)
+    payload["execution"] = merge_run_execution(
+        payload.get("execution"),
+        execution,
+        prefer_incoming=prefer_incoming,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
         handle.write(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))

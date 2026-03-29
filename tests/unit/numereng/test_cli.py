@@ -1904,6 +1904,7 @@ def test_cli_cloud_aws_train_submit_success(
         assert request.run_id == "run-2"
         assert request.backend == "sagemaker"
         assert request.runtime_profile == "lgbm-cuda"
+        assert request.image_uri is None
         assert request.use_spot is False
         return api_module.CloudAwsResponse(
             action="cloud.aws.train.submit",
@@ -1923,13 +1924,47 @@ def test_cli_cloud_aws_train_submit_success(
             "run-2",
             "--config",
             "configs/train.json",
-            "--image-uri",
-            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
             "--runtime-profile",
             "lgbm-cuda",
             "--role-arn",
             "arn:aws:iam::123456789012:role/numereng-sagemaker",
             "--on-demand",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["action"] == "cloud.aws.train.submit"
+
+
+def test_cli_cloud_aws_train_submit_accepts_explicit_image_uri(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_cloud_aws_train_submit(request: api_module.AwsTrainSubmitRequest) -> api_module.CloudAwsResponse:
+        assert request.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1"
+        return api_module.CloudAwsResponse(
+            action="cloud.aws.train.submit",
+            message="submitted",
+            result={"training_job_name": "neng-sm-run-explicit"},
+        )
+
+    monkeypatch.setattr(api_module, "cloud_aws_train_submit", fake_cloud_aws_train_submit)
+
+    exit_code = cli.main(
+        [
+            "cloud",
+            "aws",
+            "train",
+            "submit",
+            "--run-id",
+            "run-explicit",
+            "--config",
+            "configs/train.json",
+            "--image-uri",
+            "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
+            "--role-arn",
+            "arn:aws:iam::123456789012:role/numereng-sagemaker",
         ]
     )
     payload = _parse_stdout_json(capsys.readouterr().out)

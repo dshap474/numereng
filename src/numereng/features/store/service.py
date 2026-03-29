@@ -2614,7 +2614,7 @@ def _collect_cloud_execution_signals(
                 metadata={
                     key: value
                     for key, value in metadata.items()
-                    if key in {"bucket", "runtime_profile", "pulled_at", "extracted_at"} and value
+                    if key in {"bucket", "runtime_profile", "pulled_at", "extracted_at", "image_digest"} and value
                 }
                 or None,
             )
@@ -2682,7 +2682,9 @@ def _execution_from_cloud_state_file(
         pulled_at=_to_nonempty_str(metadata_payload.get("pulled_at")),
         extracted_at=_to_nonempty_str(metadata_payload.get("extracted_at")),
         metadata={
-            key: value for key, value in metadata_payload.items() if key in {"bucket", "runtime_profile"} and value
+            key: value
+            for key, value in metadata_payload.items()
+            if key in {"bucket", "runtime_profile", "image_digest"} and value
         }
         or None,
     ) | {"target_id": run_id}

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, cast
 
+from numereng.config.cloud import get_sagemaker_runtime_image
 from numereng.config.training import TrainingConfigLoaderError, load_training_config_json
 from numereng.features.cloud.aws.adapters import (
     BatchAdapter,
@@ -191,6 +192,10 @@ class CloudAwsManagedService:
             return state.runtime_profile
         return DEFAULT_RUNTIME_PROFILE
 
+    def _default_sagemaker_runtime_image(self, runtime_profile: CloudRuntimeProfile) -> tuple[str, str]:
+        image = get_sagemaker_runtime_image(runtime_profile)
+        return image.repository, image.tag
+
     def _default_dockerfile_for_profile(self, context_dir: Path, runtime_profile: CloudRuntimeProfile) -> Path | None:
         dockerfile_name = (
             CUDA_SAGEMAKER_DOCKERFILE if runtime_profile == CUDA_RUNTIME_PROFILE else STANDARD_SAGEMAKER_DOCKERFILE
@@ -241,6 +246,32 @@ class CloudAwsManagedService:
             raise CloudAwsError(f"missing required value: {field_name}")
         return value
 
+    def _resolve_submit_image(
+        self,
+        *,
+        request: AwsTrainSubmitRequest,
+        state: CloudAwsState,
+        backend: Literal["sagemaker", "batch"],
+        region: str,
+        runtime_profile: CloudRuntimeProfile,
+    ) -> tuple[str, str | None]:
+        if request.image_uri:
+            return request.image_uri, None
+        if state.image_uri:
+            return state.image_uri, state.image_digest
+        if backend != "sagemaker":
+            raise CloudAwsError("missing required value: image_uri")
+        repository, image_tag = self._default_sagemaker_runtime_image(runtime_profile)
+        digest = self._ecr(region).get_image_digest(repository, image_tag)
+        image_uri = self._ecr(region).image_uri(repository, image_tag)
+        if digest is None:
+            raise CloudAwsError(
+                "aws_sagemaker_default_image_missing:"
+                f"{image_uri}:run `uv run numereng cloud aws image build-push --runtime-profile {runtime_profile}` "
+                "or pass --image-uri"
+            )
+        return image_uri, digest
+
     def _ecr(self, region: str) -> EcrAdapter:
         return self._ecr_factory(region)
 
@@ -261,9 +292,10 @@ class CloudAwsManagedService:
         region = self._resolve_region(request.region, state)
         bucket = self._resolve_bucket(request.bucket, state)
         run_id = request.run_id or state.run_id or self._generated_run_id()
-        repository = request.repository or state.repository or DEFAULT_ECR_REPOSITORY
-        image_tag = request.image_tag or state.image_tag or _slug_token(run_id)
         runtime_profile = self._resolve_runtime_profile(request.runtime_profile, state)
+        default_repository, default_image_tag = self._default_sagemaker_runtime_image(runtime_profile)
+        repository = request.repository or state.repository or default_repository or DEFAULT_ECR_REPOSITORY
+        image_tag = request.image_tag or state.image_tag or default_image_tag
 
         context_dir = Path(request.context_dir).expanduser().resolve()
         if not context_dir.is_dir():
@@ -306,6 +338,7 @@ class CloudAwsManagedService:
                 "repository": repository,
                 "image_tag": image_tag,
                 "image_uri": image_uri,
+                "image_digest": digest,
                 "runtime_profile": runtime_profile,
                 "status": "image_pushed",
                 "artifacts": next_artifacts,
@@ -325,6 +358,7 @@ class CloudAwsManagedService:
             image_uri=image_uri,
             output_s3_uri=None,
             error_message=None,
+            image_digest=digest,
         )
 
         return CloudAwsResponse(
@@ -361,8 +395,13 @@ class CloudAwsManagedService:
         )
 
         config_uri = self._resolve_config_uri(request=request, run_id=run_id, region=region, bucket=bucket)
-        image_uri = request.image_uri or state.image_uri
-        image_uri = self._require(image_uri, "image_uri")
+        image_uri, image_digest = self._resolve_submit_image(
+            request=request,
+            state=state,
+            backend=backend,
+            region=region,
+            runtime_profile=runtime_profile,
+        )
 
         output_s3_uri = (
             request.output_s3_uri
@@ -428,6 +467,8 @@ class CloudAwsManagedService:
             next_metadata["submitted_at"] = submitted_at
             next_metadata["bucket"] = bucket
             next_metadata["runtime_profile"] = runtime_profile
+            if image_digest:
+                next_metadata["image_digest"] = image_digest
 
             next_state = state.model_copy(
                 update={
@@ -436,6 +477,7 @@ class CloudAwsManagedService:
                     "region": region,
                     "bucket": bucket,
                     "image_uri": image_uri,
+                    "image_digest": image_digest,
                     "runtime_profile": runtime_profile,
                     "training_job_name": training_status.job_name,
                     "training_job_arn": training_status.job_arn,
@@ -460,6 +502,7 @@ class CloudAwsManagedService:
                 error_message=training_status.failure_reason,
                 started_at=_utc_now_iso(),
                 metadata=next_state.metadata,
+                image_digest=image_digest,
             )
 
             return CloudAwsResponse(
@@ -476,6 +519,7 @@ class CloudAwsManagedService:
                     "output_s3_uri": output_s3_uri,
                     "checkpoint_s3_uri": checkpoint_s3_uri,
                     "image_uri": image_uri,
+                    "image_digest": image_digest,
                     "runtime_profile": runtime_profile,
                 },
             )
@@ -533,6 +577,8 @@ class CloudAwsManagedService:
             next_metadata["submitted_at"] = submitted_at
             next_metadata["bucket"] = bucket
             next_metadata["runtime_profile"] = runtime_profile
+            if image_digest:
+                next_metadata["image_digest"] = image_digest
 
             next_state = state.model_copy(
                 update={
@@ -541,6 +587,7 @@ class CloudAwsManagedService:
                     "region": region,
                     "bucket": bucket,
                     "image_uri": image_uri,
+                    "image_digest": image_digest,
                     "runtime_profile": runtime_profile,
                     "batch_job_id": batch_job_id,
                     "status": "SUBMITTED",
@@ -564,6 +611,7 @@ class CloudAwsManagedService:
                 error_message=None,
                 started_at=_utc_now_iso(),
                 metadata=next_state.metadata,
+                image_digest=image_digest,
             )
 
             return CloudAwsResponse(
@@ -579,6 +627,7 @@ class CloudAwsManagedService:
                     "output_s3_uri": output_s3_uri,
                     "checkpoint_s3_uri": checkpoint_s3_uri,
                     "image_uri": image_uri,
+                    "image_digest": image_digest,
                     "runtime_profile": runtime_profile,
                 },
             )
@@ -644,6 +693,7 @@ class CloudAwsManagedService:
                 error_message=training_status.failure_reason,
                 finished_at=_finished_timestamp(training_status.status),
                 metadata=next_state.metadata,
+                image_digest=state.image_digest,
             )
 
             return CloudAwsResponse(
@@ -707,6 +757,7 @@ class CloudAwsManagedService:
                 error_message=batch_status.status_reason,
                 finished_at=_finished_timestamp(batch_status.status),
                 metadata=next_state.metadata,
+                image_digest=state.image_digest,
             )
 
             return CloudAwsResponse(
@@ -852,6 +903,7 @@ class CloudAwsManagedService:
                 output_s3_uri=state.artifacts.get("output_s3_uri"),
                 error_message=None,
                 metadata=state.metadata,
+                image_digest=state.image_digest,
             )
 
             return CloudAwsResponse(
@@ -911,6 +963,7 @@ class CloudAwsManagedService:
                     else ("terminated" if requested_action == "terminate" else batch_status.status_reason)
                 ),
                 metadata=state.metadata,
+                image_digest=state.image_digest,
             )
 
             return CloudAwsResponse(
@@ -1017,6 +1070,7 @@ class CloudAwsManagedService:
                 output_s3_uri=output_s3_uri,
                 error_message=None,
                 metadata=state.metadata,
+                image_digest=state.image_digest,
             )
 
         return CloudAwsResponse(
@@ -1051,10 +1105,11 @@ class CloudAwsManagedService:
         downloaded_files = [path.resolve() for path in output_root.rglob("*") if path.is_file()]
 
         extracted_run_ids: list[str] = []
+        provenance_refreshed_run_ids: list[str] = []
         archive_extract_warnings: list[str] = []
         for downloaded_path in downloaded_files:
             try:
-                run_ids, warnings = _extract_run_tarball(
+                run_ids, refreshed_run_ids, warnings = _extract_run_tarball(
                     archive_path=downloaded_path,
                     store_root=store_root_path,
                 )
@@ -1064,10 +1119,12 @@ class CloudAwsManagedService:
                 archive_extract_warnings.append(f"tar_extract_failed:{downloaded_path}:{exc}")
                 continue
             extracted_run_ids.extend(run_ids)
+            provenance_refreshed_run_ids.extend(refreshed_run_ids)
             archive_extract_warnings.extend(warnings)
 
         extracted_run_ids = _dedupe_preserve_order(extracted_run_ids)
-        index_targets = extracted_run_ids
+        provenance_refreshed_run_ids = _dedupe_preserve_order(provenance_refreshed_run_ids)
+        index_targets = _dedupe_preserve_order(extracted_run_ids + provenance_refreshed_run_ids)
         indexed_run_ids: list[str] = []
         index_warnings: list[str] = []
         extracted_at = _utc_now_iso()
@@ -1099,8 +1156,10 @@ class CloudAwsManagedService:
                                 **state.metadata,
                                 "bucket": bucket,
                                 "extracted_at": extracted_at,
+                                **({"image_digest": state.image_digest} if state.image_digest else {}),
                             },
                         ),
+                        prefer_incoming=True,
                     )
                 except (OSError, ValueError) as exc:
                     index_warnings.append(f"run_execution_stamp_failed:{index_target}:{exc}")
@@ -1151,6 +1210,7 @@ class CloudAwsManagedService:
                 output_s3_uri=output_s3_uri,
                 error_message=index_warning,
                 metadata=next_state.metadata,
+                image_digest=state.image_digest,
             )
 
         return CloudAwsResponse(
@@ -1163,6 +1223,7 @@ class CloudAwsManagedService:
                 "downloaded_count": len(downloaded_files),
                 "downloaded_files": [str(path) for path in downloaded_files],
                 "extracted_run_ids": extracted_run_ids,
+                "provenance_refreshed_run_ids": provenance_refreshed_run_ids,
                 "archive_extract_warnings": archive_extract_warnings,
                 "indexed": indexed,
                 "indexed_run_ids": indexed_run_ids,
@@ -1214,6 +1275,8 @@ class CloudAwsManagedService:
     ) -> dict[str, object]:
         state_path = self._resolved_state_path(request, state=state)
         merged_metadata = dict(metadata or {})
+        if state is not None and state.image_digest and "image_digest" not in merged_metadata:
+            merged_metadata["image_digest"] = state.image_digest
         return build_run_execution(
             kind="cloud",
             provider=_CLOUD_PROVIDER,
@@ -1299,6 +1362,7 @@ class CloudAwsManagedService:
         status: str,
         region: str | None,
         image_uri: str | None,
+        image_digest: str | None,
         output_s3_uri: str | None,
         error_message: str | None,
         started_at: str | None = None,
@@ -1315,6 +1379,8 @@ class CloudAwsManagedService:
             metadata_payload["state_path"] = str(state_path)
         if metadata:
             metadata_payload.update({key: value for key, value in metadata.items() if value})
+        if image_digest:
+            metadata_payload.setdefault("image_digest", image_digest)
         config_path = getattr(request, "config_path", None)
         if isinstance(config_path, str) and config_path.strip():
             metadata_payload.setdefault("config_path", config_path)
@@ -1488,11 +1554,12 @@ def _parse_progress_percent(value: str | None) -> float | None:
         return None
 
 
-def _extract_run_tarball(*, archive_path: Path, store_root: Path) -> tuple[list[str], list[str]]:
+def _extract_run_tarball(*, archive_path: Path, store_root: Path) -> tuple[list[str], list[str], list[str]]:
     if not _is_tarball_path(archive_path):
-        return [], []
+        return [], [], []
 
     extracted_run_ids: list[str] = []
+    same_hash_existing_run_ids: list[str] = []
     warnings: list[str] = []
     seen_run_ids: set[str] = set()
     root = store_root.resolve()
@@ -1564,6 +1631,7 @@ def _extract_run_tarball(*, archive_path: Path, store_root: Path) -> tuple[list[
                 existing_manifest = _load_run_manifest(run_dir=destination_run_dir, run_id=run_id)
                 existing_run_hash = _optional_run_hash(existing_manifest)
                 if existing_run_hash is not None and existing_run_hash == staged_run_hash:
+                    same_hash_existing_run_ids.append(run_id)
                     warnings.append(f"run_dir_exists_same_hash_skipped:{run_id}")
                     continue
                 raise CloudAwsError(f"run_dir_conflict:{run_id}")
@@ -1572,7 +1640,7 @@ def _extract_run_tarball(*, archive_path: Path, store_root: Path) -> tuple[list[
             shutil.move(str(staged_run_dir), str(destination_run_dir))
             promoted_run_ids.append(run_id)
 
-        return promoted_run_ids, warnings
+        return promoted_run_ids, same_hash_existing_run_ids, warnings
 
 
 def _is_tarball_path(path: Path) -> bool:

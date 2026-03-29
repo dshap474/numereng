@@ -79,6 +79,7 @@ Persistence root (default): `.numereng/`
 ```text
 src/numereng/
   config/
+    cloud/                     # checked-in runtime-image catalogs for cloud defaults
     training/{contracts.py,loader.py,schema/*}
     hpo/{contracts.py,loader.py,schema/*}
 
@@ -218,11 +219,11 @@ Dynamic top-level dirs may also appear:
       agentic_research/
         program.json
         lineage.json
-        llm_trace.jsonl
-        llm_trace.md
         rounds/rN/
           round.json
           round.md
+          llm_trace.jsonl
+          llm_trace.md
     _archive/
       <experiment_id>/
         experiment.json
@@ -460,17 +461,17 @@ cli research init|status|run
       - programs define policy and prompt surface only; Python still validates configs, writes files, trains, scores, persists lineage, and resumes sessions
       - `numerai-experiment-loop` is config-centric:
         - Python selects one parent config from the active-path lineage using the program metric policy
-        - the planner sees one parent config JSON, one compact lineage summary, and only the current program context
+        - the planner sees one parent mutable-config snapshot built only from allowed mutation paths, the effective scoring stage, one compact lineage summary, and only the current program context
         - the planner returns a minimal `RATIONALE:` + `CHANGES:` text block instead of a dense planner JSON object
         - Python parses dotted `config.path = <json-literal>` edits, clones the parent config, validates the child `TrainingConfig`, names it deterministically, and retries once on invalid or duplicate mutations
         - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
       - phase-aware custom programs can still use the structured planner JSON contract
         - the JSON schema is generated from the persisted program definition instead of loaded from strategy assets
-      - append planner trace entries to `.numereng/experiments/<root>/agentic_research/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/llm_trace.md`
+      - persist planner trace entries per round at `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
       - persist one canonical round bundle per round at `rounds/rN/round.json` and `rounds/rN/round.md`
       - round bundles and planner traces record `program_id`, `program_sha256`, and `session_program_path`
-      - the round markdown is deliberately literal: exact prompt sent to the planner, raw planner response, parsed final response, lineage context, and scored outcome
-      - numerai rounds persist mutation lineage in the round bundle (`parent_run_id`, `parent_config_filename`, `change_set`, `llm_rationale`)
+      - the round markdown is deliberately compact: round status, parent selection, mutation lineage, scored outcome, and links back to the full planner trace for that round
+      - numerai rounds persist mutation lineage in the round bundle (`parent_run_id`, `parent_config_filename`, `parent_selection_reason`, `change_set`, `llm_rationale`)
       - numerai mutation rounds now write one child config into the active experiment, train it, deferred-score the round, and persist one bundled round record instead of many transport-specific files
       - legacy per-round `codex_*`, `planned_configs.json`, `report.json`, `round_summary.json`, and per-round trace copies are removed when the bundle is written
       - track plateau streak on the program primary metric using the configured tie-break metric
@@ -692,6 +693,7 @@ Store/remote monitor contract:
 - Sync metadata is stored under each machine's `.numereng/remote_ops/sync/<target_id>/*.json`, and detached remote launch metadata/logs live under `.numereng/remote_ops/launches/*` on the remote machine.
 - Windows detached targets should use direct remote-venv executables (`python.exe`, `python.exe -m numereng.cli`) instead of `uv run ...`; detached launch performs short startup verification and uses Windows job breakaway so the child survives the SSH parent/session boundary.
 - Snapshot normalization prefers `runs/<run_id>/run.json -> execution` for any materialized run; `cloud_jobs` is only the live control plane for cloud work that has not yet materialized into `runs/<run_id>`.
+- Managed SageMaker/Batch `pull/extract` is authoritative for cloud provenance: if extracted artifacts match an already-materialized deterministic run hash, numereng skips moving files but still refreshes that run's `execution` block from managed state.
 - SageMaker/Batch monitoring is store-local: snapshot refresh reads tracked `cloud_jobs` and asks AWS for current job truth before normalization.
 - Live run payloads carry `progress_mode`:
   - `exact` for lifecycle-backed local percentages
@@ -820,12 +822,13 @@ success/help
 36. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
 37. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
 38. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
-39. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
-40. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
-41. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
-42. EC2 and Modal `--state-path` follow the same cache-first rule: default under `<store_root>/cache/cloud/...`, explicit override under `<store_root>/cache/cloud/**/*.json`, legacy `<store_root>/cloud/*.json` accepted for compatibility only, and all state paths must use `.json`.
-43. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
-44. `baseline build --promote-active` refreshes the shared active benchmark artifacts consumed by payout-target scoring fallback paths.
+39. SageMaker submit may omit `--image-uri`; when omitted, numereng resolves the checked-in default alias for the selected `runtime_profile`, persists the resolved `image_uri`, and records the tag digest in managed state/cloud metadata for reproducibility.
+40. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.
+41. EC2 CUDA runtime install requires persisted/requested GPU instance state plus `runtime_profile=lgbm-cuda`; mismatches fail before remote install.
+42. CUDA training is fail-fast; numereng does not silently fall back from `cuda` to CPU.
+43. EC2 and Modal `--state-path` follow the same cache-first rule: default under `<store_root>/cache/cloud/...`, explicit override under `<store_root>/cache/cloud/**/*.json`, legacy `<store_root>/cloud/*.json` accepted for compatibility only, and all state paths must use `.json`.
+44. EC2 pull and S3-prefix copy reject traversal keys by skipping unsafe paths and reporting them in `skipped_unsafe_keys`.
+45. `baseline build --promote-active` refreshes the shared active benchmark artifacts consumed by payout-target scoring fallback paths.
 
 ## 12. Testing + Verification
 Primary checks:
