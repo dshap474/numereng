@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+import numereng_viz.remote_detail as remote_detail_module
 import pandas as pd
 import pytest
 from fastapi import FastAPI
@@ -2167,6 +2169,91 @@ def test_remote_experiment_detail_route_returns_404_for_unknown_source(
     assert response.json()["detail"] == "Unknown remote source_id: missing"
 
 
+def test_remote_experiment_detail_route_preserves_remote_file_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+
+    monkeypatch.setattr(
+        remote_detail_module,
+        "load_remote_targets",
+        lambda strict=True: [
+            SshRemoteTargetProfile(
+                id="pc",
+                label="PC",
+                ssh_config_host="pc",
+                repo_root="C:\\repo",
+                store_root="C:\\repo\\.numereng",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        remote_detail_module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "ok": False,
+                    "error_type": "FileNotFoundError",
+                    "error_message": "Experiment remote-exp not found",
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/remote-exp?source_kind=ssh&source_id=pc")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Experiment remote-exp not found"
+
+
+def test_remote_experiment_detail_route_returns_controlled_timeout_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+
+    monkeypatch.setattr(
+        remote_detail_module,
+        "load_remote_targets",
+        lambda strict=True: [
+            SshRemoteTargetProfile(
+                id="pc",
+                label="PC",
+                ssh_config_host="pc",
+                repo_root="C:\\repo",
+                store_root="C:\\repo\\.numereng",
+            )
+        ],
+    )
+
+    def _raise_timeout(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=["ssh", "pc"], timeout=15)
+
+    monkeypatch.setattr(remote_detail_module.subprocess, "run", _raise_timeout)
+
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/remote-exp?source_kind=ssh&source_id=pc")
+
+    assert response.status_code == 400
+    assert "timed out" in response.json()["detail"]
+
+
 def test_experiments_overview_route_returns_mission_control_payload(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2899,6 +2986,107 @@ def test_run_job_stream_stops_when_job_disappears() -> None:
     client = TestClient(app, raise_server_exceptions=False)
 
     response = client.get("/api/run-jobs/job-1/stream")
+    assert response.status_code == 200
+    assert response.text == ""
+
+
+def test_run_job_events_route_returns_400_when_second_stage_fetch_fails() -> None:
+    class _StubService:
+        def get_run_job(
+            self,
+            job_id: str,
+            *,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> dict[str, object] | None:
+            _ = (source_kind, source_id)
+            return {"job_id": job_id, "status": "running"}
+
+        def list_run_job_events(
+            self,
+            job_id: str,
+            *,
+            after_id: int | None,
+            limit: int,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (job_id, after_id, limit, source_kind, source_id)
+            raise ValueError("remote events unavailable")
+
+    service = cast(VizService, _StubService())
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/api/run-jobs/job-1/events?source_kind=ssh&source_id=pc")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "remote events unavailable"
+
+
+def test_run_job_stream_stops_when_second_stage_fetch_fails() -> None:
+    class _StubService:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def get_run_job(
+            self,
+            job_id: str,
+            *,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> dict[str, object] | None:
+            _ = (source_kind, source_id)
+            self._calls += 1
+            if self._calls == 1:
+                return {"job_id": job_id, "status": "running"}
+            return {"job_id": job_id, "status": "running"}
+
+        def list_run_job_events(
+            self,
+            job_id: str,
+            *,
+            after_id: int | None,
+            limit: int,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (job_id, after_id, limit, source_kind, source_id)
+            raise ValueError("remote events unavailable")
+
+        def list_run_job_logs(
+            self,
+            job_id: str,
+            *,
+            after_id: int | None,
+            limit: int,
+            stream: str,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (job_id, after_id, limit, stream, source_kind, source_id)
+            return []
+
+        def list_run_job_samples(
+            self,
+            job_id: str,
+            *,
+            after_id: int | None,
+            limit: int,
+            source_kind: str | None = None,
+            source_id: str | None = None,
+        ) -> list[dict[str, object]]:
+            _ = (job_id, after_id, limit, source_kind, source_id)
+            return []
+
+    service = cast(VizService, _StubService())
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get("/api/run-jobs/job-1/stream?source_kind=ssh&source_id=pc")
+
     assert response.status_code == 200
     assert response.text == ""
 
