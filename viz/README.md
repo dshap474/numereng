@@ -11,6 +11,7 @@ The key design choice is federated monitoring:
 - the local viz backend reads the local store directly
 - enabled SSH remotes are queried through `numereng monitor snapshot --json`
 - the frontend renders one merged overview
+- remote experiment and run detail pages stay on the local viz server, but route through source-aware API calls with `source_kind` + `source_id` query params so the backend can fetch read-only detail payloads over SSH on demand
 
 This avoids syncing SQLite stores between machines while still giving one dashboard for local and remote runs.
 
@@ -18,6 +19,7 @@ This avoids syncing SQLite stores between machines while still giving one dashbo
 
 - `/api/experiments/overview` is the only source of truth for the experiments page
 - experiment ids are not globally unique across sources
+- experiment and run detail routes keep the existing local URL shape and add optional `source_kind` / `source_id` query params for remote identity
 - remote snapshots can be slower than local snapshots
 - short runs may move from live to terminal within a single manual observation window
 

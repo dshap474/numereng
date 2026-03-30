@@ -82,6 +82,23 @@ def _validate_note_path(path: str) -> str:
     return normalized
 
 
+def _raise_service_http_error(exc: Exception) -> None:
+    if isinstance(exc, (FileNotFoundError, LookupError)):
+        raise HTTPException(404, str(exc)) from exc
+    raise HTTPException(400, str(exc)) from exc
+
+
+def _source_kwargs(source_kind: str | None, source_id: str | None) -> dict[str, str]:
+    if source_kind is None and source_id is None:
+        return {}
+    payload: dict[str, str] = {}
+    if source_kind is not None:
+        payload["source_kind"] = source_kind
+    if source_id is not None:
+        payload["source_id"] = source_id
+    return payload
+
+
 def _sse_message(event: str, data: dict[str, Any], *, event_id: int | None = None) -> str:
     payload = json.dumps(data, default=str, separators=(",", ":"))
     parts = []
@@ -110,8 +127,15 @@ def create_router(service: VizService) -> APIRouter:
         return _nocache_response(service.get_experiments_overview())
 
     @router.get("/experiments/{experiment_id}")
-    def get_experiment(experiment_id: str) -> JSONResponse:
-        item = service.get_experiment(experiment_id)
+    def get_experiment(
+        experiment_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
+        try:
+            item = service.get_experiment(experiment_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if item is None:
             raise HTTPException(404, f"Experiment {experiment_id} not found")
         return _cached_response(item, max_age=30)
@@ -123,6 +147,8 @@ def create_router(service: VizService) -> APIRouter:
         include_incompatible: bool = False,
         limit: int = 100,
         offset: int = 0,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> JSONResponse:
         try:
             payload = service.list_experiment_configs(
@@ -131,9 +157,11 @@ def create_router(service: VizService) -> APIRouter:
                 include_incompatible=include_incompatible,
                 limit=_bounded_limit(limit, default=100, max_value=1000),
                 offset=max(0, offset),
+                source_kind=source_kind,
+                source_id=source_id,
             )
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/configs")
@@ -170,19 +198,31 @@ def create_router(service: VizService) -> APIRouter:
         return _nocache_response(payload)
 
     @router.get("/experiments/{experiment_id}/runs")
-    def get_experiment_runs(experiment_id: str) -> JSONResponse:
+    def get_experiment_runs(
+        experiment_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.list_experiment_runs(experiment_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.list_experiment_runs(experiment_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _cached_response(payload, max_age=30)
 
     @router.get("/experiments/{experiment_id}/round-results")
-    def get_experiment_round_results(experiment_id: str) -> JSONResponse:
+    def get_experiment_round_results(
+        experiment_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.list_experiment_round_results(experiment_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.list_experiment_round_results(
+                experiment_id,
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/run-jobs")
@@ -192,14 +232,21 @@ def create_router(service: VizService) -> APIRouter:
         limit: int = 50,
         offset: int = 0,
         include_attempts: bool = False,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> JSONResponse:
-        payload = service.list_run_jobs(
-            experiment_id=experiment_id,
-            status=status,
-            limit=_bounded_limit(limit, default=50, max_value=1000),
-            offset=max(0, offset),
-            include_attempts=include_attempts,
-        )
+        try:
+            payload = service.list_run_jobs(
+                experiment_id=experiment_id,
+                status=status,
+                limit=_bounded_limit(limit, default=50, max_value=1000),
+                offset=max(0, offset),
+                include_attempts=include_attempts,
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/experiments/{experiment_id}/operations")
@@ -251,27 +298,38 @@ def create_router(service: VizService) -> APIRouter:
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}")
-    def get_run_job(job_id: str) -> JSONResponse:
+    def get_run_job(
+        job_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.get_run_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_job(job_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Job {job_id} not found")
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}/events")
-    def get_run_job_events(job_id: str, after_id: int | None = None, limit: int = 200) -> JSONResponse:
+    def get_run_job_events(
+        job_id: str,
+        after_id: int | None = None,
+        limit: int = 200,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            job = service.get_run_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            job = service.get_run_job(job_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
         payload = service.list_run_job_events(
             job_id,
             after_id=after_id,
             limit=_bounded_limit(limit, default=200, max_value=5000),
+            **_source_kwargs(source_kind, source_id),
         )
         return _nocache_response(payload)
 
@@ -281,11 +339,13 @@ def create_router(service: VizService) -> APIRouter:
         after_id: int | None = None,
         limit: int = 200,
         stream: str = "all",
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> JSONResponse:
         try:
-            job = service.get_run_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            job = service.get_run_job(job_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
         payload = service.list_run_job_logs(
@@ -293,21 +353,29 @@ def create_router(service: VizService) -> APIRouter:
             after_id=after_id,
             limit=_bounded_limit(limit, default=200, max_value=5000),
             stream=stream,
+            **_source_kwargs(source_kind, source_id),
         )
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}/samples")
-    def get_run_job_samples(job_id: str, after_id: int | None = None, limit: int = 200) -> JSONResponse:
+    def get_run_job_samples(
+        job_id: str,
+        after_id: int | None = None,
+        limit: int = 200,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            job = service.get_run_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            job = service.get_run_job(job_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
         payload = service.list_run_job_samples(
             job_id,
             after_id=after_id,
             limit=_bounded_limit(limit, default=200, max_value=5000),
+            **_source_kwargs(source_kind, source_id),
         )
         return _nocache_response(payload)
 
@@ -319,11 +387,13 @@ def create_router(service: VizService) -> APIRouter:
         after_log_id: int = 0,
         after_sample_id: int = 0,
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> StreamingResponse:
         try:
-            job = service.get_run_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            job = service.get_run_job(job_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
 
@@ -346,6 +416,7 @@ def create_router(service: VizService) -> APIRouter:
                     job_id,
                     after_id=event_cursor,
                     limit=500,
+                    **_source_kwargs(source_kind, source_id),
                 )
                 for item in events:
                     event_cursor = int(item["id"])
@@ -358,6 +429,7 @@ def create_router(service: VizService) -> APIRouter:
                     after_id=log_cursor,
                     limit=500,
                     stream="all",
+                    **_source_kwargs(source_kind, source_id),
                 )
                 for item in logs:
                     log_cursor = int(item["id"])
@@ -369,6 +441,7 @@ def create_router(service: VizService) -> APIRouter:
                     job_id,
                     after_id=sample_cursor,
                     limit=500,
+                    **_source_kwargs(source_kind, source_id),
                 )
                 for item in samples:
                     sample_cursor = int(item["id"])
@@ -382,8 +455,12 @@ def create_router(service: VizService) -> APIRouter:
                         yield _sse_message("heartbeat", {"job_id": job_id})
 
                 try:
-                    job = await asyncio.to_thread(service.get_run_job, job_id)
-                except ValueError:
+                    job = await asyncio.to_thread(
+                        service.get_run_job,
+                        job_id,
+                        **_source_kwargs(source_kind, source_id),
+                    )
+                except (ValueError, LookupError, FileNotFoundError):
                     break
                 if job is None:
                     break
@@ -403,12 +480,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/manifest")
-    def get_run_manifest(run_id: str) -> JSONResponse:
+    def get_run_manifest(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_run_manifest(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_manifest(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Manifest for run {run_id} not found")
         return _cached_response(
@@ -419,22 +500,30 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/lifecycle")
-    def get_run_lifecycle(run_id: str) -> JSONResponse:
+    def get_run_lifecycle(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.get_run_lifecycle(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_lifecycle(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Lifecycle for run {run_id} not found")
         return _nocache_response(payload)
 
     @router.get("/runs/{run_id}/metrics")
-    def get_run_metrics(run_id: str) -> JSONResponse:
+    def get_run_metrics(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_run_metrics(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_metrics(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Metrics for run {run_id} not found")
         return _cached_response(
@@ -445,12 +534,22 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/events")
-    def get_run_events(run_id: str, limit: int = 50) -> JSONResponse:
+    def get_run_events(
+        run_id: str,
+        limit: int = 50,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_run_events(run_id, limit=_bounded_limit(limit, default=50, max_value=5000))
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_events(
+                run_id,
+                limit=_bounded_limit(limit, default=50, max_value=5000),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _cached_response(
             payload,
             extra_headers={
@@ -459,12 +558,22 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/resources")
-    def get_run_resources(run_id: str, limit: int = 50) -> JSONResponse:
+    def get_run_resources(
+        run_id: str,
+        limit: int = 50,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_run_resources(run_id, limit=_bounded_limit(limit, default=50, max_value=5000))
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_run_resources(
+                run_id,
+                limit=_bounded_limit(limit, default=50, max_value=5000),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _cached_response(
             payload,
             extra_headers={
@@ -473,12 +582,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/per-era-corr")
-    def get_per_era_corr(run_id: str) -> JSONResponse:
+    def get_per_era_corr(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            result = service.get_per_era_corr_result(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            result = service.get_per_era_corr_result(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         payload = result.payload
         if payload is None:
             raise HTTPException(404, f"Per-era correlation data for run {run_id} not found")
@@ -496,12 +609,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/scoring-dashboard")
-    def get_scoring_dashboard(run_id: str) -> JSONResponse:
+    def get_scoring_dashboard(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_scoring_dashboard(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_scoring_dashboard(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Scoring dashboard for run {run_id} not found")
         return _cached_response(
@@ -514,12 +631,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/trials")
-    def get_trials(run_id: str) -> JSONResponse:
+    def get_trials(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_trials(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_trials(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Trials data for run {run_id} not found")
         return _cached_response(
@@ -530,12 +651,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/best-params")
-    def get_best_params(run_id: str) -> JSONResponse:
+    def get_best_params(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_best_params(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_best_params(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Best params for run {run_id} not found")
         return _cached_response(
@@ -546,12 +671,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/config")
-    def get_resolved_config(run_id: str) -> JSONResponse:
+    def get_resolved_config(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_resolved_config(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_resolved_config(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Resolved config for run {run_id} not found")
         return _cached_response(
@@ -562,12 +691,16 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/diagnostics-sources")
-    def get_diagnostics_sources(run_id: str) -> JSONResponse:
+    def get_diagnostics_sources(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         started_at = time.perf_counter()
         try:
-            payload = service.get_diagnostics_sources(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_diagnostics_sources(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Diagnostics sources for run {run_id} not found")
         return _cached_response(
@@ -580,11 +713,15 @@ def create_router(service: VizService) -> APIRouter:
         )
 
     @router.get("/runs/{run_id}/bundle")
-    async def get_run_bundle(run_id: str) -> JSONResponse:
+    async def get_run_bundle(
+        run_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = await service.get_run_bundle(run_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = await service.get_run_bundle(run_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _cached_response(payload)
 
     @router.get("/studies")
@@ -603,28 +740,46 @@ def create_router(service: VizService) -> APIRouter:
         return _nocache_response(payload)
 
     @router.get("/studies/{study_id}")
-    def get_study(study_id: str) -> JSONResponse:
-        payload = service.get_study(study_id)
+    def get_study(
+        study_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
+        try:
+            payload = service.get_study(study_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Study {study_id} not found")
         return _nocache_response(payload)
 
     @router.get("/studies/{study_id}/trials")
-    def get_study_trials(study_id: str) -> JSONResponse:
-        study = service.get_study(study_id)
+    def get_study_trials(
+        study_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
+        try:
+            study = service.get_study(study_id, source_kind=source_kind, source_id=source_id)
+            payload = service.get_study_trials(study_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if study is None:
             raise HTTPException(404, f"Study {study_id} not found")
-        payload = service.get_study_trials(study_id)
         if payload is None:
             raise HTTPException(404, "Study trials not found")
         return _nocache_response(payload)
 
     @router.get("/experiments/{experiment_id}/studies")
-    def get_experiment_studies(experiment_id: str) -> JSONResponse:
+    def get_experiment_studies(
+        experiment_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.get_experiment_studies(experiment_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_experiment_studies(experiment_id, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/ensembles")
@@ -637,65 +792,106 @@ def create_router(service: VizService) -> APIRouter:
         return _nocache_response(payload)
 
     @router.get("/ensembles/{ensemble_id}")
-    def get_ensemble(ensemble_id: str) -> JSONResponse:
+    def get_ensemble(
+        ensemble_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.get_ensemble(ensemble_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_ensemble(ensemble_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, f"Ensemble {ensemble_id} not found")
         return _nocache_response(payload)
 
     @router.get("/ensembles/{ensemble_id}/correlations")
-    def get_ensemble_correlations(ensemble_id: str) -> JSONResponse:
+    def get_ensemble_correlations(
+        ensemble_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            ensemble = service.get_ensemble(ensemble_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            ensemble = service.get_ensemble(ensemble_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if ensemble is None:
             raise HTTPException(404, f"Ensemble {ensemble_id} not found")
         try:
-            payload = service.get_ensemble_correlations(ensemble_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_ensemble_correlations(ensemble_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, "correlation_matrix.parquet not found")
         return _nocache_response(payload)
 
     @router.get("/ensembles/{ensemble_id}/artifacts")
-    def get_ensemble_artifacts(ensemble_id: str) -> JSONResponse:
+    def get_ensemble_artifacts(
+        ensemble_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            ensemble = service.get_ensemble(ensemble_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            ensemble = service.get_ensemble(ensemble_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if ensemble is None:
             raise HTTPException(404, f"Ensemble {ensemble_id} not found")
         try:
-            payload = service.get_ensemble_artifacts(ensemble_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_ensemble_artifacts(ensemble_id, **_source_kwargs(source_kind, source_id))
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         if payload is None:
             raise HTTPException(404, "ensemble artifacts not found")
         return _nocache_response(payload)
 
     @router.get("/experiments/{experiment_id}/ensembles")
-    def get_experiment_ensembles(experiment_id: str) -> JSONResponse:
+    def get_experiment_ensembles(
+        experiment_id: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         try:
-            payload = service.get_experiment_ensembles(experiment_id)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
+            payload = service.get_experiment_ensembles(
+                experiment_id,
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/experiments/{experiment_id}/docs/{filename}")
-    def get_experiment_doc(experiment_id: str, filename: str) -> JSONResponse:
+    def get_experiment_doc(
+        experiment_id: str,
+        filename: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         _validate_doc_filename(filename, valid=_VALID_EXPERIMENT_DOCS)
-        payload = service.get_experiment_doc(experiment_id, filename)
+        try:
+            payload = service.get_experiment_doc(
+                experiment_id,
+                filename,
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/runs/{run_id}/docs/{filename}")
-    def get_run_doc(run_id: str, filename: str) -> JSONResponse:
+    def get_run_doc(
+        run_id: str,
+        filename: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> JSONResponse:
         _validate_doc_filename(filename, valid=_VALID_RUN_DOCS)
-        payload = service.get_run_doc(run_id, filename)
+        try:
+            payload = service.get_run_doc(run_id, filename, source_kind=source_kind, source_id=source_id)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/docs/numerai/tree")

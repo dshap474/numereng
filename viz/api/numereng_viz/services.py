@@ -13,6 +13,7 @@ from numereng.features.telemetry import (
     reconcile_run_lifecycles,
 )
 from numereng_viz.monitor_snapshot import RemoteSnapshotCoordinator, build_monitor_snapshot, merge_monitor_snapshots
+from numereng_viz.remote_detail import RemoteDetailCoordinator
 from numereng_viz.store_adapter import PerEraCorrLoadResult, VizStoreAdapter
 
 TOP_METRIC_NAMES = [
@@ -30,6 +31,7 @@ class VizService:
     def __init__(self, adapter: VizStoreAdapter) -> None:
         self.adapter = adapter
         self.remote_snapshots = RemoteSnapshotCoordinator(store_root=self.adapter.store_root)
+        self.remote_details = RemoteDetailCoordinator(store_root=self.adapter.store_root)
 
     def list_experiments(self) -> list[dict[str, Any]]:
         return self.adapter.list_experiments()
@@ -39,7 +41,20 @@ class VizService:
         remote_snapshots = self.remote_snapshots.fetch_snapshots()
         return merge_monitor_snapshots(local_snapshot, remote_snapshots)
 
-    def get_experiment(self, experiment_id: str) -> dict[str, Any] | None:
+    def get_experiment(
+        self,
+        experiment_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_experiment",
+                args=(experiment_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_experiment(experiment_id)
 
     def list_experiment_configs(
@@ -50,7 +65,24 @@ class VizService:
         include_incompatible: bool,
         limit: int,
         offset: int,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> dict[str, Any]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_experiment_configs",
+                args=(experiment_id,),
+                kwargs={
+                    "q": q,
+                    "include_incompatible": include_incompatible,
+                    "limit": limit,
+                    "offset": offset,
+                },
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, dict)
+            return payload
         payload = self.adapter.list_experiment_configs(
             experiment_id,
             q=q,
@@ -104,10 +136,40 @@ class VizService:
             )
         return {"configs": payload}
 
-    def list_experiment_runs(self, experiment_id: str) -> list[dict[str, Any]]:
+    def list_experiment_runs(
+        self,
+        experiment_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_experiment_runs",
+                args=(experiment_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_experiment_runs(experiment_id)
 
-    def list_experiment_round_results(self, experiment_id: str) -> list[dict[str, Any]]:
+    def list_experiment_round_results(
+        self,
+        experiment_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_experiment_round_results",
+                args=(experiment_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_experiment_round_results(experiment_id)
 
     def list_run_jobs(
@@ -118,7 +180,24 @@ class VizService:
         limit: int,
         offset: int,
         include_attempts: bool,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> dict[str, Any]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_run_jobs",
+                kwargs={
+                    "experiment_id": experiment_id,
+                    "status": status,
+                    "limit": limit,
+                    "offset": offset,
+                    "include_attempts": include_attempts,
+                },
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, dict)
+            return payload
         repair = reconcile_run_lifecycles(store_root=self.adapter.store_root, active_only=True)
         items = self.adapter.list_run_jobs(
             experiment_id=experiment_id,
@@ -147,11 +226,37 @@ class VizService:
             "total": len(items),
         }
 
-    def get_run_job(self, job_id: str) -> dict[str, Any] | None:
+    def get_run_job(
+        self,
+        job_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_run_job",
+                args=(job_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         reconcile_run_lifecycles(store_root=self.adapter.store_root, active_only=True)
         return self.adapter.get_run_job(job_id)
 
-    def get_run_lifecycle(self, run_id: str) -> dict[str, Any] | None:
+    def get_run_lifecycle(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_run_lifecycle",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         reconcile_run_lifecycles(store_root=self.adapter.store_root, run_id=run_id, active_only=True)
         record = get_run_lifecycle_record(store_root=self.adapter.store_root, run_id=run_id)
         if record is None:
@@ -200,7 +305,25 @@ class VizService:
             "reconciled": record.reconciled,
         }
 
-    def list_run_job_events(self, job_id: str, *, after_id: int | None, limit: int) -> list[dict[str, Any]]:
+    def list_run_job_events(
+        self,
+        job_id: str,
+        *,
+        after_id: int | None,
+        limit: int,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_run_job_events",
+                args=(job_id,),
+                kwargs={"after_id": after_id, "limit": limit},
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_run_job_events(job_id, after_id=after_id, limit=limit)
 
     def list_run_job_logs(
@@ -210,7 +333,19 @@ class VizService:
         after_id: int | None,
         limit: int,
         stream: str,
+        source_kind: str | None = None,
+        source_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_run_job_logs",
+                args=(job_id,),
+                kwargs={"after_id": after_id, "limit": limit, "stream": stream},
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_run_job_logs(
             job_id,
             after_id=after_id,
@@ -218,7 +353,25 @@ class VizService:
             stream=stream,
         )
 
-    def list_run_job_samples(self, job_id: str, *, after_id: int | None, limit: int) -> list[dict[str, Any]]:
+    def list_run_job_samples(
+        self,
+        job_id: str,
+        *,
+        after_id: int | None,
+        limit: int,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "list_run_job_samples",
+                args=(job_id,),
+                kwargs={"after_id": after_id, "limit": limit},
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_run_job_samples(job_id, after_id=after_id, limit=limit)
 
     def list_experiment_operations(
@@ -259,41 +412,204 @@ class VizService:
     def get_runpod_pods(self) -> dict[str, Any]:
         return self.adapter.get_runpod_pods()
 
-    def get_run_manifest(self, run_id: str) -> dict[str, Any] | None:
+    def get_run_manifest(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_run_manifest",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_run_manifest(run_id)
 
-    def get_run_metrics(self, run_id: str) -> dict[str, Any] | None:
+    def get_run_metrics(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_run_metrics",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_run_metrics(run_id)
 
-    def get_run_events(self, run_id: str, *, limit: int) -> list[dict[str, Any]]:
+    def get_run_events(
+        self,
+        run_id: str,
+        *,
+        limit: int,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_run_events",
+                args=(run_id,),
+                kwargs={"limit": limit},
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_run_events(run_id, limit=limit)
 
-    def get_run_resources(self, run_id: str, *, limit: int) -> list[dict[str, Any]]:
+    def get_run_resources(
+        self,
+        run_id: str,
+        *,
+        limit: int,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_run_resources",
+                args=(run_id,),
+                kwargs={"limit": limit},
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.list_run_resources(run_id, limit=limit)
 
-    def get_per_era_corr(self, run_id: str) -> list[dict[str, Any]] | None:
+    def get_per_era_corr(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_per_era_corr",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_per_era_corr(run_id)
 
-    def get_per_era_corr_result(self, run_id: str) -> PerEraCorrLoadResult:
+    def get_per_era_corr_result(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> PerEraCorrLoadResult:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self.get_per_era_corr(run_id, source_kind=source_kind, source_id=source_id)
+            return PerEraCorrLoadResult(payload=payload, persisted_read_ms=0.0, materialize_ms=0.0)
         return self.adapter.get_per_era_corr_result(run_id)
 
-    def get_scoring_dashboard(self, run_id: str) -> dict[str, Any] | None:
+    def get_scoring_dashboard(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_scoring_dashboard",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_scoring_dashboard(run_id)
 
-    def get_trials(self, run_id: str) -> list[dict[str, Any]] | None:
+    def get_trials(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_trials",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_trials(run_id)
 
-    def get_best_params(self, run_id: str) -> dict[str, Any] | None:
+    def get_best_params(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_best_params",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_best_params(run_id)
 
-    def get_resolved_config(self, run_id: str) -> dict[str, Any] | None:
+    def get_resolved_config(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_resolved_config",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_resolved_config(run_id)
 
-    def get_diagnostics_sources(self, run_id: str) -> dict[str, Any] | None:
+    def get_diagnostics_sources(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_diagnostics_sources",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_diagnostics_sources(run_id)
 
-    async def get_run_bundle(self, run_id: str) -> dict[str, Any]:
+    async def get_run_bundle(
+        self,
+        run_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch bundle parts concurrently to reduce endpoint latency."""
+
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_run_bundle",
+                args=(run_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, dict)
+            return payload
 
         metrics_task = asyncio.to_thread(self.adapter.get_run_metrics, run_id)
         manifest_task = asyncio.to_thread(self.adapter.get_run_manifest, run_id)
@@ -356,13 +672,54 @@ class VizService:
         total = self.adapter.count_studies(experiment_id=experiment_id)
         return {"items": items, "total": total}
 
-    def get_study(self, study_id: str) -> dict[str, Any] | None:
+    def get_study(
+        self,
+        study_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_study",
+                args=(study_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_study(study_id)
 
-    def get_study_trials(self, study_id: str) -> list[dict[str, Any]] | None:
+    def get_study_trials(
+        self,
+        study_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_study_trials",
+                args=(study_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_study_trials(study_id)
 
-    def get_experiment_studies(self, experiment_id: str) -> list[dict[str, Any]]:
+    def get_experiment_studies(
+        self,
+        experiment_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_experiment_studies",
+                args=(experiment_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.get_experiment_studies(experiment_id)
 
     def list_ensembles(self, *, experiment_id: str | None, limit: int, offset: int) -> dict[str, Any]:
@@ -370,16 +727,70 @@ class VizService:
         total = self.adapter.count_ensembles(experiment_id=experiment_id)
         return {"items": items, "total": total}
 
-    def get_ensemble(self, ensemble_id: str) -> dict[str, Any] | None:
+    def get_ensemble(
+        self,
+        ensemble_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_ensemble",
+                args=(ensemble_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_ensemble(ensemble_id)
 
-    def get_ensemble_correlations(self, ensemble_id: str) -> dict[str, Any] | None:
+    def get_ensemble_correlations(
+        self,
+        ensemble_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_ensemble_correlations",
+                args=(ensemble_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_ensemble_correlations(ensemble_id)
 
-    def get_ensemble_artifacts(self, ensemble_id: str) -> dict[str, Any] | None:
+    def get_ensemble_artifacts(
+        self,
+        ensemble_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            return self._remote_call(
+                "get_ensemble_artifacts",
+                args=(ensemble_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         return self.adapter.get_ensemble_artifacts(ensemble_id)
 
-    def get_experiment_ensembles(self, experiment_id: str) -> list[dict[str, Any]]:
+    def get_experiment_ensembles(
+        self,
+        experiment_id: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_experiment_ensembles",
+                args=(experiment_id,),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, list)
+            return payload
         return self.adapter.get_experiment_ensembles(experiment_id)
 
     def get_doc_tree(self, domain: str) -> dict[str, Any]:
@@ -391,10 +802,42 @@ class VizService:
     def get_doc_asset_path(self, domain: str, path: str) -> Path:
         return self.adapter.get_doc_asset_path(domain, path)
 
-    def get_experiment_doc(self, experiment_id: str, filename: str) -> dict[str, Any]:
+    def get_experiment_doc(
+        self,
+        experiment_id: str,
+        filename: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_experiment_doc",
+                args=(experiment_id, filename),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, dict)
+            return payload
         return self.adapter.get_experiment_doc(experiment_id, filename)
 
-    def get_run_doc(self, run_id: str, filename: str) -> dict[str, Any]:
+    def get_run_doc(
+        self,
+        run_id: str,
+        filename: str,
+        *,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._is_remote_source(source_kind=source_kind, source_id=source_id):
+            payload = self._remote_call(
+                "get_run_doc",
+                args=(run_id, filename),
+                source_kind=source_kind,
+                source_id=source_id,
+            )
+            assert isinstance(payload, dict)
+            return payload
         return self.adapter.get_run_doc(run_id, filename)
 
     def get_notes_tree(self) -> dict[str, Any]:
@@ -409,3 +852,29 @@ class VizService:
 
             return datetime.fromtimestamp(float(value), tz=UTC).isoformat()
         return value
+
+    def _remote_call(
+        self,
+        method: str,
+        *,
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
+        source_kind: str | None,
+        source_id: str | None,
+    ) -> Any:
+        return self.remote_details.call(
+            method,
+            args=args,
+            kwargs=kwargs,
+            source_kind=str(source_kind or ""),
+            source_id=str(source_id or ""),
+        )
+
+    def _is_remote_source(self, *, source_kind: str | None, source_id: str | None) -> bool:
+        normalized_kind = (source_kind or "").strip()
+        normalized_id = (source_id or "").strip()
+        if not normalized_kind and not normalized_id:
+            return False
+        if normalized_kind in {"", "local"} and normalized_id in {"", "local"}:
+            return False
+        return True

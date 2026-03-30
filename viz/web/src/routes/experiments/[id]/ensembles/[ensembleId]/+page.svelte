@@ -7,6 +7,7 @@
 	} from '$lib/api/client';
 	import EnsembleWeightsChart from '$lib/components/charts/EnsembleWeightsChart.svelte';
 	import CorrelationHeatmap from '$lib/components/charts/CorrelationHeatmap.svelte';
+	import { withSourceHref, type SourceContext } from '$lib/source';
 	import { fmt } from '$lib/utils';
 
 	let {
@@ -17,6 +18,7 @@
 			ensemble: Ensemble;
 			correlations: CorrelationMatrix;
 			artifacts: EnsembleArtifacts | null;
+			source: SourceContext;
 		};
 	} = $props();
 
@@ -60,7 +62,7 @@
 <div class="space-y-6">
 	<div class="flex items-center gap-3">
 		<a
-			href="/experiments/{data.experimentId}"
+			href={withSourceHref(`/experiments/${data.experimentId}`, data.source)}
 			class="text-sm text-muted-foreground hover:text-foreground transition-colors"
 		>&larr; Experiment</a>
 		<h1 class="text-xl font-semibold">{data.ensemble.name || data.ensemble.ensemble_id}</h1>
@@ -134,7 +136,7 @@
 								<td class="px-3 py-1.5 tabular-nums">{comp.rank ?? '-'}</td>
 								<td class="px-3 py-1.5">
 									<a
-										href="/experiments/{data.experimentId}/runs/{comp.run_id}"
+										href={withSourceHref(`/experiments/${data.experimentId}/runs/${comp.run_id}`, data.source)}
 										class="text-primary underline underline-offset-2 font-mono text-[11px]"
 									>{comp.run_id}</a>
 								</td>

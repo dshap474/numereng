@@ -377,7 +377,7 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 manifest={},
             ),
             requested_stage="post_training_core",
-            refreshed_stages=("post_training_core",),
+            refreshed_stages=("run_metric_series", "post_training_core"),
         ),
     )
     monkeypatch.setattr(
@@ -443,8 +443,8 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     assert scoring_block["policy"] == "core"
     assert scoring_block["status"] == "succeeded"
     assert scoring_block["requested_stage"] == "post_training_core"
-    assert scoring_block["refreshed_stages"] == ["post_training_core"]
-    assert scoring_block["emitted_stage_files"] == ["post_training_core_summary"]
+    assert scoring_block["refreshed_stages"] == ["run_metric_series", "post_training_core"]
+    assert scoring_block["emitted_stage_files"] == ["run_metric_series", "post_training_core_summary"]
     assert scoring_block["omissions"] == {"post_training_full": "not_requested"}
     resources_block = cast(dict[str, object], training_block["resources"])
     assert resources_block["parallel_backend"] == "joblib"

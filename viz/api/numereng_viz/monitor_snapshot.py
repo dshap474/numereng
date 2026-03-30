@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from numereng.features.cloud.aws import AwsTrainStatusRequest, CloudAwsManagedService
 from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
@@ -287,7 +288,15 @@ def _decorate_experiment(item: dict[str, Any], *, source: dict[str, Any], detail
     item["source_kind"] = source["kind"]
     item["source_id"] = source["id"]
     item["source_label"] = source["label"]
-    item["detail_href"] = f"/experiments/{item['experiment_id']}" if detail_href else None
+    item["detail_href"] = (
+        _detail_href(
+            experiment_id=str(item["experiment_id"]),
+            source_kind=str(source["kind"]),
+            source_id=str(source["id"]),
+        )
+        if detail_href
+        else None
+    )
     return item
 
 
@@ -885,17 +894,27 @@ def _retag_remote_snapshot(
         item["source_kind"] = "ssh"
         item["source_id"] = target.id
         item["source_label"] = target.label
-        item["detail_href"] = None
+        experiment_id = _to_non_empty_str(item.get("experiment_id"))
+        item["detail_href"] = (
+            _detail_href(experiment_id=experiment_id, source_kind="ssh", source_id=target.id)
+            if experiment_id is not None
+            else None
+        )
     for item in result.get("live_experiments", []):
         item["source_kind"] = "ssh"
         item["source_id"] = target.id
         item["source_label"] = target.label
-        item["detail_href"] = None
+        experiment_id = _to_non_empty_str(item.get("experiment_id"))
+        item["detail_href"] = (
+            _detail_href(experiment_id=experiment_id, source_kind="ssh", source_id=target.id)
+            if experiment_id is not None
+            else None
+        )
         for run in item.get("runs", []):
             run["source_kind"] = "ssh"
             run["source_id"] = target.id
             run["source_label"] = target.label
-            run["detail_href"] = None
+            run["detail_href"] = item["detail_href"]
     for item in result.get("recent_activity", []):
         item["source_kind"] = "ssh"
         item["source_id"] = target.id
@@ -918,6 +937,13 @@ def _remote_source(*, target: SshRemoteTargetProfile, state: str, bootstrap: Any
     source["last_bootstrap_at"] = getattr(bootstrap, "last_bootstrap_at", None)
     source["last_bootstrap_error"] = getattr(bootstrap, "last_bootstrap_error", None)
     return source
+
+
+def _detail_href(*, experiment_id: str, source_kind: str, source_id: str) -> str:
+    if source_kind == "local" and source_id == "local":
+        return f"/experiments/{experiment_id}"
+    params = urlencode({"source_kind": source_kind, "source_id": source_id})
+    return f"/experiments/{experiment_id}?{params}"
 
 
 def _empty_remote_snapshot(*, target: SshRemoteTargetProfile, state: str, bootstrap: Any) -> dict[str, Any]:

@@ -1,3 +1,5 @@
+import { normalizedSource, sourceQueryParams, type SourceContext } from '$lib/source';
+
 const BASE = '/api';
 
 type FetchFn = typeof globalThis.fetch;
@@ -584,8 +586,9 @@ export interface SystemCapabilities {
 const bundleCache = new Map<string, RunBundle>();
 const immutableRunSectionCache = new Map<string, unknown>();
 
-function cachedKey(section: string, runId: string): string {
-	return `${section}:${runId}`;
+function cachedKey(section: string, runId: string, source?: SourceContext): string {
+	const normalized = normalizedSource(source);
+	return `${section}:${normalized.source_kind}:${normalized.source_id}:${runId}`;
 }
 
 function cachedGet<T>(
@@ -593,9 +596,10 @@ function cachedGet<T>(
 	runId: string,
 	path: string,
 	fetchFn: FetchFn,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	source?: SourceContext
 ): Promise<T> {
-	const key = cachedKey(section, runId);
+	const key = cachedKey(section, runId, source);
 	const cached = immutableRunSectionCache.get(key) as T | undefined;
 	if (cached !== undefined) {
 		return Promise.resolve(cached);
@@ -640,117 +644,185 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 			),
 		listExperiments: () => get<Experiment[]>('/experiments', fetchFn),
 		getExperimentsOverview: () => get<ExperimentOverviewResponse>('/experiments/overview', fetchFn),
-		getExperiment: (id: string) => get<Experiment>(`/experiments/${id}`, fetchFn),
+		getExperiment: (id: string, source?: SourceContext) =>
+			get<Experiment>(`/experiments/${id}${query(sourceQueryParams(source))}`, fetchFn),
 		getExperimentConfigs: (
 			id: string,
-			params?: { q?: string; limit?: number; offset?: number }
+			params?: { q?: string; limit?: number; offset?: number } & SourceContext
 		) =>
 			get<ConfigListResponse>(
 				`/experiments/${id}/configs${query({
 					q: params?.q,
 					limit: params?.limit,
-					offset: params?.offset
+					offset: params?.offset,
+					...sourceQueryParams(params)
 				})}`,
 				fetchFn
 			),
-		getExperimentRuns: (id: string) => get<ExperimentRun[]>(`/experiments/${id}/runs`, fetchFn),
-		getExperimentRoundResults: (id: string) =>
-			get<ExperimentRoundResult[]>(`/experiments/${id}/round-results`, fetchFn),
-		getRunManifest: (runId: string, signal?: AbortSignal) =>
-			cachedGet<RunManifest>('manifest', runId, `/runs/${runId}/manifest`, fetchFn, signal),
-		getRunMetrics: (runId: string, signal?: AbortSignal) =>
-			cachedGet<Record<string, number>>('metrics', runId, `/runs/${runId}/metrics`, fetchFn, signal),
-		getRunScoringDashboard: (runId: string, signal?: AbortSignal) =>
+		getExperimentRuns: (id: string, source?: SourceContext) =>
+			get<ExperimentRun[]>(`/experiments/${id}/runs${query(sourceQueryParams(source))}`, fetchFn),
+		getExperimentRoundResults: (id: string, source?: SourceContext) =>
+			get<ExperimentRoundResult[]>(
+				`/experiments/${id}/round-results${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
+		getRunManifest: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
+			cachedGet<RunManifest>(
+				'manifest',
+				runId,
+				`/runs/${runId}/manifest${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getRunMetrics: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
+			cachedGet<Record<string, number>>(
+				'metrics',
+				runId,
+				`/runs/${runId}/metrics${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getRunScoringDashboard: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
 			cachedGet<ScoringDashboard>(
 				'scoring-dashboard',
 				runId,
-				`/runs/${runId}/scoring-dashboard`,
+				`/runs/${runId}/scoring-dashboard${query(sourceQueryParams(source))}`,
 				fetchFn,
-				signal
+				signal,
+				source
 			),
-		getTrials: (runId: string, signal?: AbortSignal) =>
-			cachedGet<Record<string, unknown>[]>('trials', runId, `/runs/${runId}/trials`, fetchFn, signal),
-		getBestParams: (runId: string, signal?: AbortSignal) =>
-			cachedGet<Record<string, unknown>>('best-params', runId, `/runs/${runId}/best-params`, fetchFn, signal),
-		getResolvedConfig: (runId: string, signal?: AbortSignal) =>
-			cachedGet<{ yaml: string }>('config', runId, `/runs/${runId}/config`, fetchFn, signal),
-		getRunDiagnosticsSources: (runId: string, signal?: AbortSignal) =>
+		getTrials: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
+			cachedGet<Record<string, unknown>[]>(
+				'trials',
+				runId,
+				`/runs/${runId}/trials${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getBestParams: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
+			cachedGet<Record<string, unknown>>(
+				'best-params',
+				runId,
+				`/runs/${runId}/best-params${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getResolvedConfig: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
+			cachedGet<{ yaml: string }>(
+				'config',
+				runId,
+				`/runs/${runId}/config${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getRunDiagnosticsSources: (runId: string, signal?: AbortSignal, source?: SourceContext) =>
 			cachedGet<DiagnosticsSources>(
 				'diagnostics-sources',
 				runId,
-				`/runs/${runId}/diagnostics-sources`,
+				`/runs/${runId}/diagnostics-sources${query(sourceQueryParams(source))}`,
+				fetchFn,
+				signal,
+				source
+			),
+		getRunEvents: (runId: string, limit = 50, signal?: AbortSignal, source?: SourceContext) =>
+			get<RunEvent[]>(
+				`/runs/${runId}/events${query({ limit, ...sourceQueryParams(source) })}`,
 				fetchFn,
 				signal
 			),
-		getRunEvents: (runId: string, limit = 50, signal?: AbortSignal) =>
-			get<RunEvent[]>(`/runs/${runId}/events?limit=${limit}`, fetchFn, signal),
-		getRunResources: (runId: string, limit = 50, signal?: AbortSignal) =>
-			get<ResourceSample[]>(`/runs/${runId}/resources?limit=${limit}`, fetchFn, signal),
+		getRunResources: (runId: string, limit = 50, signal?: AbortSignal, source?: SourceContext) =>
+			get<ResourceSample[]>(
+				`/runs/${runId}/resources${query({ limit, ...sourceQueryParams(source) })}`,
+				fetchFn,
+				signal
+			),
 		listRunJobs: (params?: {
 			experiment_id?: string;
 			status?: string;
 			limit?: number;
 			offset?: number;
 			include_attempts?: boolean;
-		}) =>
+		} & SourceContext) =>
 			get<RunJobListResponse>(
 				`/run-jobs${query({
 					experiment_id: params?.experiment_id,
 					status: params?.status,
 					limit: params?.limit,
 					offset: params?.offset,
-					include_attempts: params?.include_attempts
+					include_attempts: params?.include_attempts,
+					...sourceQueryParams(params)
 				})}`,
 				fetchFn
 			),
-		getRunLifecycle: (runId: string) => get<RunLifecycle>(`/runs/${runId}/lifecycle`, fetchFn),
+		getRunLifecycle: (runId: string, source?: SourceContext) =>
+			get<RunLifecycle>(`/runs/${runId}/lifecycle${query(sourceQueryParams(source))}`, fetchFn),
 		listRunpodPods: () => get<RunpodPodListResponse>('/runpod/pods', fetchFn),
-		getRunJob: (jobId: string) => get<RunJob>(`/run-jobs/${jobId}`, fetchFn),
+		getRunJob: (jobId: string, source?: SourceContext) =>
+			get<RunJob>(`/run-jobs/${jobId}${query(sourceQueryParams(source))}`, fetchFn),
 		getRunJobBatch: (batchId: string) => get<RunJobBatchResponse>(`/run-jobs/batches/${batchId}`, fetchFn),
-		getRunJobEvents: (jobId: string, params?: { after_id?: number; limit?: number }) =>
+		getRunJobEvents: (jobId: string, params?: { after_id?: number; limit?: number } & SourceContext) =>
 			get<RunJobEvent[]>(
-				`/run-jobs/${jobId}/events${query({ after_id: params?.after_id, limit: params?.limit })}`,
+				`/run-jobs/${jobId}/events${query({
+					after_id: params?.after_id,
+					limit: params?.limit,
+					...sourceQueryParams(params)
+				})}`,
 				fetchFn
 			),
 		getRunJobLogs: (
 			jobId: string,
-			params?: { after_id?: number; limit?: number; stream?: 'all' | 'stdout' | 'stderr' }
+			params?: { after_id?: number; limit?: number; stream?: 'all' | 'stdout' | 'stderr' } & SourceContext
 		) =>
 			get<RunJobLog[]>(
 				`/run-jobs/${jobId}/logs${query({
 					after_id: params?.after_id,
 					limit: params?.limit,
-					stream: params?.stream
+					stream: params?.stream,
+					...sourceQueryParams(params)
 				})}`,
 				fetchFn
 			),
-		getRunJobSamples: (jobId: string, params?: { after_id?: number; limit?: number }) =>
+		getRunJobSamples: (jobId: string, params?: { after_id?: number; limit?: number } & SourceContext) =>
 			get<RunJobSample[]>(
-				`/run-jobs/${jobId}/samples${query({ after_id: params?.after_id, limit: params?.limit })}`,
+				`/run-jobs/${jobId}/samples${query({
+					after_id: params?.after_id,
+					limit: params?.limit,
+					...sourceQueryParams(params)
+				})}`,
 				fetchFn
 			),
 		runJobStreamUrl: (
 			jobId: string,
-			params?: { after_event_id?: number; after_log_id?: number; after_sample_id?: number }
+			params?: { after_event_id?: number; after_log_id?: number; after_sample_id?: number } & SourceContext
 		) =>
 			`${BASE}/run-jobs/${jobId}/stream${query({
 				after_event_id: params?.after_event_id,
 				after_log_id: params?.after_log_id,
-				after_sample_id: params?.after_sample_id
+				after_sample_id: params?.after_sample_id,
+				...sourceQueryParams(params)
 			})}`,
-		getRunBundle: (runId: string): Promise<RunBundle> => {
-			const cached = bundleCache.get(runId);
+		getRunBundle: (runId: string, source?: SourceContext): Promise<RunBundle> => {
+			const key = cachedKey('bundle', runId, source);
+			const cached = bundleCache.get(key);
 			if (cached) return Promise.resolve(cached);
-			return get<RunBundle>(`/runs/${runId}/bundle`, fetchFn).then((data) => {
-				bundleCache.set(runId, data);
+			return get<RunBundle>(`/runs/${runId}/bundle${query(sourceQueryParams(source))}`, fetchFn).then((data) => {
+				bundleCache.set(key, data);
 				return data;
 			});
 		},
 		getSystemCapabilities: () => get<SystemCapabilities>('/system/capabilities', fetchFn),
-		getExperimentDoc: (id: string, filename: string) =>
-			get<DocResponse>(`/experiments/${id}/docs/${filename}`, fetchFn),
-		getRunDoc: (runId: string, filename: string) =>
-			get<DocResponse>(`/runs/${runId}/docs/${filename}`, fetchFn),
+		getExperimentDoc: (id: string, filename: string, source?: SourceContext) =>
+			get<DocResponse>(
+				`/experiments/${id}/docs/${filename}${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
+		getRunDoc: (runId: string, filename: string, source?: SourceContext) =>
+			get<DocResponse>(`/runs/${runId}/docs/${filename}${query(sourceQueryParams(source))}`, fetchFn),
 
 		// ── HPO Studies ────────────────────────────────────────────────
 		listStudies: (params?: { experiment_id?: string; status?: string; limit?: number; offset?: number }) =>
@@ -758,10 +830,15 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				`/studies${query({ experiment_id: params?.experiment_id, status: params?.status, limit: params?.limit, offset: params?.offset })}`,
 				fetchFn
 			),
-		getStudy: (studyId: string) => get<HpoStudy>(`/studies/${studyId}`, fetchFn),
-		getStudyTrials: (studyId: string) => get<HpoTrial[]>(`/studies/${studyId}/trials`, fetchFn),
-		getExperimentStudies: (experimentId: string) =>
-			get<HpoStudy[]>(`/experiments/${experimentId}/studies`, fetchFn),
+		getStudy: (studyId: string, source?: SourceContext) =>
+			get<HpoStudy>(`/studies/${studyId}${query(sourceQueryParams(source))}`, fetchFn),
+		getStudyTrials: (studyId: string, source?: SourceContext) =>
+			get<HpoTrial[]>(`/studies/${studyId}/trials${query(sourceQueryParams(source))}`, fetchFn),
+		getExperimentStudies: (experimentId: string, source?: SourceContext) =>
+			get<HpoStudy[]>(
+				`/experiments/${experimentId}/studies${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
 
 		// ── Ensembles ──────────────────────────────────────────────────
 		listEnsembles: (params?: { experiment_id?: string; limit?: number; offset?: number }) =>
@@ -769,13 +846,23 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				`/ensembles${query({ experiment_id: params?.experiment_id, limit: params?.limit, offset: params?.offset })}`,
 				fetchFn
 			),
-		getEnsemble: (ensembleId: string) => get<Ensemble>(`/ensembles/${ensembleId}`, fetchFn),
-		getEnsembleCorrelations: (ensembleId: string) =>
-			get<CorrelationMatrix>(`/ensembles/${ensembleId}/correlations`, fetchFn),
-		getEnsembleArtifacts: (ensembleId: string) =>
-			get<EnsembleArtifacts>(`/ensembles/${ensembleId}/artifacts`, fetchFn),
-		getExperimentEnsembles: (experimentId: string) =>
-			get<Ensemble[]>(`/experiments/${experimentId}/ensembles`, fetchFn),
+		getEnsemble: (ensembleId: string, source?: SourceContext) =>
+			get<Ensemble>(`/ensembles/${ensembleId}${query(sourceQueryParams(source))}`, fetchFn),
+		getEnsembleCorrelations: (ensembleId: string, source?: SourceContext) =>
+			get<CorrelationMatrix>(
+				`/ensembles/${ensembleId}/correlations${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
+		getEnsembleArtifacts: (ensembleId: string, source?: SourceContext) =>
+			get<EnsembleArtifacts>(
+				`/ensembles/${ensembleId}/artifacts${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
+		getExperimentEnsembles: (experimentId: string, source?: SourceContext) =>
+			get<Ensemble[]>(
+				`/experiments/${experimentId}/ensembles${query(sourceQueryParams(source))}`,
+				fetchFn
+			),
 
 		// ── Numerai docs ──────────────────────────────────────────────
 		getNumeraiDocTree: () => get<NumeraiDocTree>('/docs/numerai/tree', fetchFn),

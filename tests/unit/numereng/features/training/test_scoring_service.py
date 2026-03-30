@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import numereng.features.scoring.service as scoring_service_module
+from numereng.features.scoring.artifacts import refreshed_canonical_stages, resolve_selected_stage_file_keys
 from numereng.features.scoring.models import BenchmarkSource, PostTrainingScoringRequest, ScoringArtifactBundle
 
 
@@ -129,3 +130,32 @@ def test_run_post_training_scoring_uses_stage_driven_core_metrics(monkeypatch: p
     assert result.policy.benchmark_min_overlap_ratio == pytest.approx(0.0)
     assert result.policy.fnc_target_policy == "scoring_target"
     assert result.artifacts.stage_frames["post_training_core_summary"].iloc[0]["value"] == pytest.approx(0.2)
+
+
+def test_stage_limited_core_and_full_persist_chart_series() -> None:
+    assert resolve_selected_stage_file_keys("post_training_core") == {
+        "run_metric_series",
+        "post_training_core_summary",
+    }
+    assert resolve_selected_stage_file_keys("post_training_full") == {
+        "run_metric_series",
+        "post_training_core_summary",
+        "post_training_full_summary",
+    }
+
+
+def test_stage_limited_core_and_full_report_chart_series_refresh() -> None:
+    stage_frames = {
+        "run_metric_series": pd.DataFrame([{"run_id": "run-123"}]),
+        "post_training_core_summary": pd.DataFrame([{"run_id": "run-123"}]),
+        "post_training_full_summary": pd.DataFrame([{"run_id": "run-123"}]),
+    }
+
+    assert refreshed_canonical_stages(
+        "post_training_core",
+        available_stage_frames=stage_frames,
+    ) == ["run_metric_series", "post_training_core"]
+    assert refreshed_canonical_stages(
+        "post_training_full",
+        available_stage_frames=stage_frames,
+    ) == ["run_metric_series", "post_training_core", "post_training_full"]

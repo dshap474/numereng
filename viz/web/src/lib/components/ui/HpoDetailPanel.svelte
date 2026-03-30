@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { api, type HpoStudy, type HpoTrial } from '$lib/api/client';
 	import TrialConvergenceChart from '$lib/components/charts/TrialConvergenceChart.svelte';
+	import { withSourceHref, type SourceContext } from '$lib/source';
 	import { fmt } from '$lib/utils';
 
 	let {
 		studyId,
 		experimentId,
+		source,
 		onClose
 	}: {
 		studyId: string;
 		experimentId: string;
+		source?: SourceContext;
 		onClose: () => void;
 	} = $props();
 
@@ -24,7 +27,7 @@
 		error = null;
 		study = null;
 		trials = [];
-		Promise.all([api.getStudy(id), api.getStudyTrials(id)]).then(
+		Promise.all([api.getStudy(id, source), api.getStudyTrials(id, source)]).then(
 			([s, t]) => {
 				if (studyId !== id) return;
 				study = s;
@@ -136,7 +139,7 @@
 				<div class="mt-1 font-medium">
 					{#if study.best_run_id}
 						<a
-							href="/experiments/{experimentId}/runs/{study.best_run_id}"
+							href={withSourceHref(`/experiments/${experimentId}/runs/${study.best_run_id}`, source)}
 							class="text-primary underline underline-offset-2"
 						>{study.best_run_id.slice(0, 12)}</a>
 					{:else}

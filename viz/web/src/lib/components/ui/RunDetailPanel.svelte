@@ -13,6 +13,7 @@
 	import CumulativeCorrChart from '$lib/components/charts/CumulativeCorrChart.svelte';
 	import PerEraLineChart from '$lib/components/charts/PerEraLineChart.svelte';
 	import MarkdownDoc from '$lib/components/ui/MarkdownDoc.svelte';
+	import { isLocalSource, type SourceContext } from '$lib/source';
 	import { fmt, fmtGb, fmtPercent } from '$lib/utils';
 
 	let {
@@ -20,6 +21,7 @@
 		experimentId,
 		experimentName = null,
 		runs,
+		source,
 		readOnly = false,
 		onClose = undefined
 	}: {
@@ -27,6 +29,7 @@
 		experimentId: string;
 		experimentName?: string | null;
 		runs: ExperimentRun[];
+		source?: SourceContext;
 		readOnly?: boolean;
 		onClose?: (() => void) | undefined;
 	} = $props();
@@ -122,6 +125,10 @@
 	let headerStatus = $derived(manifest?.status ?? currentRun?.status ?? null);
 	let headerCreatedAt = $derived(manifest?.created_at ?? currentRun?.created_at ?? null);
 	let experimentLabel = $derived(experimentName ?? experimentId);
+	let sourceLabel = $derived.by(() => {
+		if (isLocalSource(source)) return 'Local store';
+		return source?.source_label ?? source?.source_id ?? source?.source_kind ?? 'Remote source';
+	});
 
 	let resourceStats = $derived.by(() => {
 		if (resources.length === 0) return null;
@@ -389,7 +396,7 @@
 		manifestState.loading = true;
 		manifestState.error = null;
 		try {
-			const payload = await api.getRunManifest(id, controller.signal);
+			const payload = await api.getRunManifest(id, controller.signal, source);
 			if (controller.signal.aborted || runId !== id) return;
 			manifestState.runId = id;
 			manifestState.value = payload;
@@ -415,7 +422,7 @@
 		metricsState.loading = true;
 		metricsState.error = null;
 		try {
-			const payload = await api.getRunMetrics(id, controller.signal);
+			const payload = await api.getRunMetrics(id, controller.signal, source);
 			if (controller.signal.aborted || runId !== id) return;
 			metricsState.runId = id;
 			metricsState.value = payload;
@@ -442,7 +449,7 @@
 		performanceState.error = null;
 		markTabFetchStart(id, 'performance');
 		try {
-			const dashboard = await api.getRunScoringDashboard(id, controller.signal).catch(() => null);
+			const dashboard = await api.getRunScoringDashboard(id, controller.signal, source).catch(() => null);
 			if (controller.signal.aborted || runId !== id) return;
 			performanceState.runId = id;
 			performanceState.value = {
@@ -473,8 +480,8 @@
 		markTabFetchStart(id, 'diagnostics');
 		try {
 			const [resourcePayload, diagnosticsPayload] = await Promise.all([
-				api.getRunResources(id, 50, controller.signal).catch(() => []),
-				api.getRunDiagnosticsSources(id, controller.signal).catch(() => null)
+				api.getRunResources(id, 50, controller.signal, source).catch(() => []),
+				api.getRunDiagnosticsSources(id, controller.signal, source).catch(() => null)
 			]);
 			if (controller.signal.aborted || runId !== id) return;
 			diagnosticsState.runId = id;
@@ -507,9 +514,9 @@
 		markTabFetchStart(id, 'artifacts');
 		try {
 			const [configPayload, trialsPayload, bestParamsPayload] = await Promise.all([
-				api.getResolvedConfig(id, controller.signal).catch(() => null),
-				api.getTrials(id, controller.signal).catch(() => null),
-				api.getBestParams(id, controller.signal).catch(() => null)
+				api.getResolvedConfig(id, controller.signal, source).catch(() => null),
+				api.getTrials(id, controller.signal, source).catch(() => null),
+				api.getBestParams(id, controller.signal, source).catch(() => null)
 			]);
 			if (controller.signal.aborted || runId !== id) return;
 			artifactsState.runId = id;
@@ -542,7 +549,7 @@
 		timelineState.error = null;
 		markTabFetchStart(id, 'timeline');
 		try {
-			const payload = await api.getRunEvents(id, 50, controller.signal);
+			const payload = await api.getRunEvents(id, 50, controller.signal, source);
 			if (controller.signal.aborted || runId !== id) return;
 			timelineState.runId = id;
 			timelineState.value = payload;
@@ -638,6 +645,10 @@
 					<span class="font-mono">{runId}</span>
 					<span>•</span>
 					<span>{experimentLabel}</span>
+					<span>•</span>
+					<span class="rounded border border-border/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em]">
+						{sourceLabel}
+					</span>
 					{#if headerCreatedAt}
 						<span>•</span>
 						<span>{formatTime(headerCreatedAt)}</span>
@@ -957,7 +968,7 @@
 				{:else if artifactTab === 'notes'}
 					<MarkdownDoc
 						label="RUN.md"
-						load={() => api.getRunDoc(runId, 'RUN.md')}
+						load={() => api.getRunDoc(runId, 'RUN.md', source)}
 						readOnly={readOnly}
 						readOnlyMessage="Read-only mode: run notes editing is disabled."
 					/>

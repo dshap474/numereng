@@ -42,6 +42,7 @@
 	import RunDetailPanel from '$lib/components/ui/RunDetailPanel.svelte';
 	import HpoDetailPanel from '$lib/components/ui/HpoDetailPanel.svelte';
 	import EnsembleDetailPanel from '$lib/components/ui/EnsembleDetailPanel.svelte';
+	import { isLocalSource, withSourceHref, type SourceContext } from '$lib/source';
 
 	let {
 		data
@@ -55,6 +56,7 @@
 				studies: HpoStudy[];
 				ensembles: Ensemble[];
 				capabilities: SystemCapabilities;
+				source: SourceContext;
 			};
 		} = $props();
 
@@ -104,6 +106,10 @@
 	type OpType = 'run' | 'hpo' | 'ensemble';
 	let selectedOp = $state<{ id: string; type: OpType } | null>(null);
 	let readOnly = $derived(Boolean(data.capabilities?.read_only));
+	let sourceLabel = $derived.by(() => {
+		if (isLocalSource(data.source)) return 'Local store';
+		return data.source.source_label ?? data.source.source_id ?? data.source.source_kind ?? 'Remote source';
+	});
 	const COMPLETED_RUN_STATUSES = new Set(['FINISHED', 'COMPLETED', 'COMPLETE']);
 	let experimentDocContext = $derived.by<ExperimentDocContext>(() => {
 		const roundIndexes = new Set<number>();
@@ -884,7 +890,8 @@
 		try {
 			const result = await api.getExperimentConfigs(data.experiment.experiment_id, {
 				limit: 500,
-				offset: 0
+				offset: 0,
+				...data.source
 			});
 			if (generation !== configsRefreshGeneration) return;
 			configItems = result.items;
@@ -903,7 +910,8 @@
 			const result = await api.listRunJobs({
 				experiment_id: data.experiment.experiment_id,
 				limit: 200,
-				offset: 0
+				offset: 0,
+				...data.source
 			});
 			if (generation !== jobsRefreshGeneration) return;
 			runJobs = sortedJobs(result.items);
@@ -946,7 +954,7 @@
 
 		const results = await Promise.allSettled(
 			[...runIds].map(async (runId) => {
-				const lifecycle = await api.getRunLifecycle(runId);
+				const lifecycle = await api.getRunLifecycle(runId, data.source);
 				return [runId, lifecycle] as const;
 			})
 		);
@@ -1017,7 +1025,8 @@
 		const url = api.runJobStreamUrl(jobId, {
 			after_event_id: eventCursor,
 			after_log_id: logCursor,
-			after_sample_id: sampleCursor
+			after_sample_id: sampleCursor,
+			...data.source
 		});
 		const stream = new EventSource(url);
 		currentStream = stream;
@@ -1098,10 +1107,10 @@
 		monitorLoading = true;
 		try {
 			const [job, events, logs, samples] = await Promise.all([
-				api.getRunJob(jobId),
-				api.getRunJobEvents(jobId, { limit: 400 }),
-				api.getRunJobLogs(jobId, { limit: 1200, stream: 'all' }),
-				api.getRunJobSamples(jobId, { limit: 600 })
+				api.getRunJob(jobId, data.source),
+				api.getRunJobEvents(jobId, { limit: 400, ...data.source }),
+				api.getRunJobLogs(jobId, { limit: 1200, stream: 'all', ...data.source }),
+				api.getRunJobSamples(jobId, { limit: 600, ...data.source })
 			]);
 			if (generation !== monitorGeneration || selectedJobId !== jobId) return;
 
@@ -1296,7 +1305,15 @@
 {/snippet}
 
 	<div class="experiment-detail-theme -mx-8 -mt-14 md:-mt-8 -mb-8 flex flex-col h-screen">
-		<div class="analysis-top-toolbar flex gap-0 border-b border-border flex-shrink-0 px-8">
+		<div class="analysis-top-toolbar flex items-center justify-between gap-4 border-b border-border flex-shrink-0 px-8">
+		<div class="min-w-0 py-2">
+			<div class="truncate text-sm font-semibold text-foreground">{data.experiment.name}</div>
+			<div class="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+				<span>{data.experiment.experiment_id}</span>
+				<span class="rounded border border-border/70 px-1.5 py-0.5 tracking-[0.18em]">{sourceLabel}</span>
+			</div>
+		</div>
+		<div class="flex gap-0">
 		{#each [['analysis', 'Analysis'], ['progress', 'Progress'], ['runops', 'Run Ops']] as [key, label] (key)}
 			<button
 				type="button"
@@ -1306,6 +1323,7 @@
 				onclick={() => (pageTab = key as 'analysis' | 'progress' | 'runops')}
 			>{label}</button>
 		{/each}
+		</div>
 	</div>
 
 		{#if pageTab === 'analysis'}
@@ -1314,7 +1332,7 @@
 				<MarkdownDoc
 					borderless
 					label="Experiment"
-					load={() => api.getExperimentDoc(data.experiment.experiment_id, 'EXPERIMENT.md')}
+					load={() => api.getExperimentDoc(data.experiment.experiment_id, 'EXPERIMENT.md', data.source)}
 					variant="experiment"
 					experimentContext={experimentDocContext}
 					readOnly={readOnly}
@@ -1580,7 +1598,7 @@
 										<td class="px-4 py-2.5">
 											{#if row.run_id}
 												<a
-													href="/experiments/{data.experiment.experiment_id}/runs/{row.run_id}"
+													href={withSourceHref(`/experiments/${data.experiment.experiment_id}/runs/${row.run_id}`, data.source)}
 													class="font-mono text-primary underline underline-offset-2"
 												>
 													{shortId(row.run_id, 12)}
@@ -1717,7 +1735,7 @@
 													</div>
 													{#if job.canonical_run_id}
 														<a
-															href="/experiments/{data.experiment.experiment_id}/runs/{job.canonical_run_id}"
+															href={withSourceHref(`/experiments/${data.experiment.experiment_id}/runs/${job.canonical_run_id}`, data.source)}
 															class="text-primary underline underline-offset-2 text-[10px]"
 															onclick={(event) => event.stopPropagation()}
 															>run {shortId(job.canonical_run_id, 10)}</a>
@@ -1771,7 +1789,7 @@
 															</div>
 															{#if job.canonical_run_id}
 																<a
-																	href="/experiments/{data.experiment.experiment_id}/runs/{job.canonical_run_id}"
+																	href={withSourceHref(`/experiments/${data.experiment.experiment_id}/runs/${job.canonical_run_id}`, data.source)}
 																	class="text-primary underline underline-offset-2 text-[10px]"
 																	onclick={(event) => event.stopPropagation()}
 																	>run {shortId(job.canonical_run_id, 10)}</a>
@@ -2009,6 +2027,7 @@
 								experimentId={data.experiment.experiment_id}
 								experimentName={data.experiment.name}
 								runs={data.runs}
+								source={data.source}
 								readOnly={readOnly}
 								onClose={() => (selectedOp = null)}
 							/>
@@ -2018,6 +2037,7 @@
 						<HpoDetailPanel
 							studyId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
+							source={data.source}
 							onClose={() => (selectedOp = null)}
 						/>
 						</div>
@@ -2026,6 +2046,7 @@
 						<EnsembleDetailPanel
 							ensembleId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
+							source={data.source}
 							onClose={() => (selectedOp = null)}
 						/>
 						</div>
