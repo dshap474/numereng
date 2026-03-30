@@ -6,9 +6,9 @@ Read order:
 
 ## Fast Commands
 - `uv sync --extra dev`
-- `make test`
-- `make test-all`
-- `uv build`
+- `just test`
+- `just test-all`
+- `just build`
 
 ## Environment Rules
 - Python baseline is `3.12+`.
@@ -54,7 +54,7 @@ Read order:
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
 - If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
 - `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
-- `research init` requires `--strategy`; initialized programs persist that strategy in `agentic_research/program.json`.
+- `research init` requires `--program`; initialized sessions persist the selected program in `agentic_research/program.json` and `session_program.md`.
 - Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
 - `numerai-experiment-loop` is now config-centric: each autonomous round selects one parent config, applies a small LLM mutation, validates one child config, and trains that single child.
 - Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
@@ -66,8 +66,8 @@ Read order:
 - `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.
 
 ## Verification Anchors
-- Fast gate: `make test`
-- Full gate: `make test-all`
+- Fast gate: `just test`
+- Full gate: `just test-all`
 - Smoke surface contract: `tests/integration/test_smoke_structure.py`
 
 ## User Notes (Do Not Edit)

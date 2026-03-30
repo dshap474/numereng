@@ -351,9 +351,9 @@ Verification anchors:
 - Format: `uv run ruff format --check .`
 - Lint: `uv run ruff check .`
 - Types: `uv run ty check`
-- Fast: `make test`
-- Full: `make test-all`
-- Build: `uv build`
+- Fast: `just test`
+- Full: `just test-all`
+- Build: `just build`
 - Surface smoke: `tests/integration/test_smoke_structure.py`
 
 Tooling notes:

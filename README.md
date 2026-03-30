@@ -16,11 +16,11 @@ Requires Python `3.12+`.
 
 ```bash
 uv sync --extra dev
-make fmt
+just fmt
 uv run numereng --help
 make oss-preflight
-make test
-uv build
+just test
+just build
 ```
 
 Optional extras:
@@ -36,9 +36,9 @@ The canonical local toolchain is `uv` for environment management, Ruff for linti
 `ty` for the repo's enforced type gate, and `pytest` for tests.
 
 ```bash
-make fmt
-make test
-make test-all
+just fmt
+just test
+just test-all
 ```
 
 `ty` adoption is intentionally staged in `pyproject.toml` through a scoped
