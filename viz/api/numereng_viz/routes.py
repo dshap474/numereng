@@ -325,12 +325,15 @@ def create_router(service: VizService) -> APIRouter:
             _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
-        payload = service.list_run_job_events(
-            job_id,
-            after_id=after_id,
-            limit=_bounded_limit(limit, default=200, max_value=5000),
-            **_source_kwargs(source_kind, source_id),
-        )
+        try:
+            payload = service.list_run_job_events(
+                job_id,
+                after_id=after_id,
+                limit=_bounded_limit(limit, default=200, max_value=5000),
+                **_source_kwargs(source_kind, source_id),
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}/logs")
@@ -348,13 +351,16 @@ def create_router(service: VizService) -> APIRouter:
             _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
-        payload = service.list_run_job_logs(
-            job_id,
-            after_id=after_id,
-            limit=_bounded_limit(limit, default=200, max_value=5000),
-            stream=stream,
-            **_source_kwargs(source_kind, source_id),
-        )
+        try:
+            payload = service.list_run_job_logs(
+                job_id,
+                after_id=after_id,
+                limit=_bounded_limit(limit, default=200, max_value=5000),
+                stream=stream,
+                **_source_kwargs(source_kind, source_id),
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}/samples")
@@ -371,12 +377,15 @@ def create_router(service: VizService) -> APIRouter:
             _raise_service_http_error(exc)
         if job is None:
             raise HTTPException(404, f"Job {job_id} not found")
-        payload = service.list_run_job_samples(
-            job_id,
-            after_id=after_id,
-            limit=_bounded_limit(limit, default=200, max_value=5000),
-            **_source_kwargs(source_kind, source_id),
-        )
+        try:
+            payload = service.list_run_job_samples(
+                job_id,
+                after_id=after_id,
+                limit=_bounded_limit(limit, default=200, max_value=5000),
+                **_source_kwargs(source_kind, source_id),
+            )
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
         return _nocache_response(payload)
 
     @router.get("/run-jobs/{job_id}/stream")
@@ -411,38 +420,47 @@ def create_router(service: VizService) -> APIRouter:
 
                 emitted = False
 
-                events = await asyncio.to_thread(
-                    service.list_run_job_events,
-                    job_id,
-                    after_id=event_cursor,
-                    limit=500,
-                    **_source_kwargs(source_kind, source_id),
-                )
+                try:
+                    events = await asyncio.to_thread(
+                        service.list_run_job_events,
+                        job_id,
+                        after_id=event_cursor,
+                        limit=500,
+                        **_source_kwargs(source_kind, source_id),
+                    )
+                except (ValueError, LookupError, FileNotFoundError):
+                    break
                 for item in events:
                     event_cursor = int(item["id"])
                     emitted = True
                     yield _sse_message("job_event", item, event_id=event_cursor)
 
-                logs = await asyncio.to_thread(
-                    service.list_run_job_logs,
-                    job_id,
-                    after_id=log_cursor,
-                    limit=500,
-                    stream="all",
-                    **_source_kwargs(source_kind, source_id),
-                )
+                try:
+                    logs = await asyncio.to_thread(
+                        service.list_run_job_logs,
+                        job_id,
+                        after_id=log_cursor,
+                        limit=500,
+                        stream="all",
+                        **_source_kwargs(source_kind, source_id),
+                    )
+                except (ValueError, LookupError, FileNotFoundError):
+                    break
                 for item in logs:
                     log_cursor = int(item["id"])
                     emitted = True
                     yield _sse_message("log_line", item)
 
-                samples = await asyncio.to_thread(
-                    service.list_run_job_samples,
-                    job_id,
-                    after_id=sample_cursor,
-                    limit=500,
-                    **_source_kwargs(source_kind, source_id),
-                )
+                try:
+                    samples = await asyncio.to_thread(
+                        service.list_run_job_samples,
+                        job_id,
+                        after_id=sample_cursor,
+                        limit=500,
+                        **_source_kwargs(source_kind, source_id),
+                    )
+                except (ValueError, LookupError, FileNotFoundError):
+                    break
                 for item in samples:
                     sample_cursor = int(item["id"])
                     emitted = True

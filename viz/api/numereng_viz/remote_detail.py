@@ -58,23 +58,35 @@ from numereng_viz.services import VizService
 from numereng_viz.store_adapter import VizStoreAdapter, VizStoreConfig
 
 ALLOWED_METHODS = {list(_REMOTE_DETAIL_METHODS)!r}
+try:
+    request = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
+    method_name = request["method"]
+    if method_name not in ALLOWED_METHODS:
+        raise ValueError(f"unsupported remote viz detail method: {{method_name}}")
 
-request = json.loads(base64.b64decode(sys.argv[1]).decode("utf-8"))
-method_name = request["method"]
-if method_name not in ALLOWED_METHODS:
-    raise ValueError(f"unsupported remote viz detail method: {{method_name}}")
-
-adapter = VizStoreAdapter(
-    VizStoreConfig(
-        store_root=Path(request["store_root"]),
-        repo_root=Path(request["repo_root"]),
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=Path(request["store_root"]),
+            repo_root=Path(request["repo_root"]),
+        )
     )
-)
-service = VizService(adapter)
-method = getattr(service, method_name)
-payload = method(*request.get("args", []), **request.get("kwargs", {{}}))
-if asyncio.iscoroutine(payload):
-    payload = asyncio.run(payload)
+    service = VizService(adapter)
+    method = getattr(service, method_name)
+    payload = method(*request.get("args", []), **request.get("kwargs", {{}}))
+    if asyncio.iscoroutine(payload):
+        payload = asyncio.run(payload)
+except Exception as exc:
+    print(
+        json.dumps(
+            {{
+                "ok": False,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+            }},
+            default=str,
+        )
+    )
+    sys.exit(0)
 print(json.dumps({{"ok": True, "payload": payload}}, default=str))
 """.strip()
 
@@ -115,27 +127,39 @@ class RemoteDetailCoordinator:
                 cwd=target.repo_root,
             ),
         )
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=target.command_timeout_seconds,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=target.command_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"remote viz detail command timed out for source {source_id}") from exc
         if result.returncode != 0:
+            stdout = (result.stdout or "").strip()
+            if stdout:
+                payload = _extract_remote_json(stdout)
+                if not payload.get("ok"):
+                    _raise_remote_error(
+                        error_type=str(payload.get("error_type") or "ValueError"),
+                        message=str(payload.get("error_message") or "remote viz detail command failed"),
+                    )
             stderr = (result.stderr or "").strip()
             detail = stderr or f"remote viz detail command failed for source {source_id}"
+            if "FileNotFoundError" in detail:
+                raise FileNotFoundError(detail)
+            if "LookupError" in detail or "KeyError" in detail:
+                raise LookupError(detail)
             raise ValueError(detail)
 
         payload = _extract_remote_json(result.stdout)
         if not payload.get("ok"):
-            error_type = str(payload.get("error_type") or "ValueError")
-            message = str(payload.get("error_message") or "remote viz detail command failed")
-            if error_type in {"LookupError", "KeyError"}:
-                raise LookupError(message)
-            if error_type in {"FileNotFoundError"}:
-                raise FileNotFoundError(message)
-            raise ValueError(message)
+            _raise_remote_error(
+                error_type=str(payload.get("error_type") or "ValueError"),
+                message=str(payload.get("error_message") or "remote viz detail command failed"),
+            )
         return payload.get("payload")
 
     def _resolve_target(self, *, source_kind: str, source_id: str) -> SshRemoteTargetProfile:
@@ -168,6 +192,14 @@ def _extract_remote_json(raw: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("remote viz detail command returned non-object JSON")
     return payload
+
+
+def _raise_remote_error(*, error_type: str, message: str) -> None:
+    if error_type in {"LookupError", "KeyError"}:
+        raise LookupError(message)
+    if error_type == "FileNotFoundError":
+        raise FileNotFoundError(message)
+    raise ValueError(message)
 
 
 __all__ = ["RemoteDetailCoordinator"]
