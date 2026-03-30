@@ -348,6 +348,7 @@ Experiment scaffolding:
 - Scripted sweeps should treat the generated launchers as the canonical entrypoint and keep per-run training at `--post-training-scoring none`, then batch-score rounds with `experiment score-round`.
 
 Verification anchors:
+- Install `just` if you want to use the wrapper commands below.
 - Format: `uv run ruff format --check .`
 - Lint: `uv run ruff check .`
 - Types: `uv run ty check`

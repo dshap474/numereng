@@ -14,6 +14,8 @@ Stable public interfaces:
 
 Requires Python `3.12+`.
 
+Install [`just`](https://github.com/casey/just) if you want to use the repo wrapper commands shown below.
+
 ```bash
 uv sync --extra dev
 just fmt
@@ -144,10 +146,13 @@ The default store root is `.numereng/`. Common artifacts include:
     configs/*.json
     agentic_research/
       program.json
+      session_program.md
       lineage.json
-      llm_trace.jsonl
-      llm_trace.md
-      rounds/rN/*
+      rounds/rN/
+        round.json
+        round.md
+        llm_trace.jsonl
+        llm_trace.md
   cache/
   datasets/
   cloud/
