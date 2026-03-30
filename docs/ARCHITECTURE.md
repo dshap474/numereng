@@ -832,10 +832,10 @@ success/help
 
 ## 12. Testing + Verification
 Primary checks:
-- `make fmt`
-- `make test` (fast gate)
-- `make test-all` (full gate)
-- `uv build`
+- `just fmt`
+- `just test` (fast gate)
+- `just test-all` (full gate)
+- `just build`
 
 Tooling contract:
 - `uv` is the project manager and command runner.
