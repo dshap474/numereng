@@ -8,15 +8,18 @@
 	} from '$lib/api/client';
 	import EnsembleWeightsChart from '$lib/components/charts/EnsembleWeightsChart.svelte';
 	import CorrelationHeatmap from '$lib/components/charts/CorrelationHeatmap.svelte';
+	import { withSourceHref, type SourceContext } from '$lib/source';
 	import { fmt } from '$lib/utils';
 
 	let {
 		ensembleId,
 		experimentId,
+		source,
 		onClose
 	}: {
 		ensembleId: string;
 		experimentId: string;
+		source?: SourceContext;
 		onClose: () => void;
 	} = $props();
 
@@ -34,9 +37,9 @@
 		correlations = { labels: [], matrix: [] };
 		artifacts = null;
 		Promise.all([
-			api.getEnsemble(id),
-			api.getEnsembleCorrelations(id).catch(() => ({ labels: [], matrix: [] }) as CorrelationMatrix),
-			api.getEnsembleArtifacts(id).catch(() => null)
+			api.getEnsemble(id, source),
+			api.getEnsembleCorrelations(id, source).catch(() => ({ labels: [], matrix: [] }) as CorrelationMatrix),
+			api.getEnsembleArtifacts(id, source).catch(() => null)
 		]).then(
 			([e, c, a]) => {
 				if (ensembleId !== id) return;
@@ -197,7 +200,7 @@
 									<td class="px-3 py-1.5 tabular-nums">{comp.rank ?? '-'}</td>
 									<td class="px-3 py-1.5">
 										<a
-											href="/experiments/{experimentId}/runs/{comp.run_id}"
+											href={withSourceHref(`/experiments/${experimentId}/runs/${comp.run_id}`, source)}
 											class="text-primary underline underline-offset-2 font-mono text-[11px]"
 										>{comp.run_id}</a>
 									</td>

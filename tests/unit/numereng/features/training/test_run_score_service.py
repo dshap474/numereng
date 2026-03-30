@@ -427,7 +427,7 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
                 },
             ),
             requested_stage="post_training_core",
-            refreshed_stages=("post_training_core",),
+            refreshed_stages=("run_metric_series", "post_training_core"),
         ),
     )
     monkeypatch.setattr(run_score_module, "index_run", lambda **kwargs: None)
@@ -436,10 +436,16 @@ def test_score_run_stage_limited_provenance_matches_persisted_artifacts(
 
     saved_provenance = json.loads((run_dir / "score_provenance.json").read_text(encoding="utf-8"))
     artifacts_block = cast(dict[str, object], saved_provenance["artifacts"])
-    assert artifacts_block["charts"] == []
+    assert artifacts_block["charts"] == ["run_metric_series"]
     assert artifacts_block["stage_files"] == ["post_training_core_summary"]
     assert artifacts_block["requested_stage"] == "post_training_core"
-    assert artifacts_block["refreshed_canonical_stages"] == ["post_training_core"]
+    assert artifacts_block["refreshed_canonical_stages"] == ["run_metric_series", "post_training_core"]
     saved_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
-    assert saved_results["training"]["scoring"]["emitted_stage_files"] == ["post_training_core_summary"]
+    assert saved_results["training"]["scoring"]["emitted_stage_files"] == [
+        "run_metric_series",
+        "post_training_core_summary",
+    ]
     assert saved_results["training"]["scoring"]["omissions"] == {"post_training_full": "not_requested"}
+    assert (run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
+    scoring_manifest = json.loads((run_dir / "artifacts" / "scoring" / "manifest.json").read_text(encoding="utf-8"))
+    assert scoring_manifest["current_canonical_stages"] == ["run_metric_series", "post_training_core"]

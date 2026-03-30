@@ -159,9 +159,16 @@ def _refreshed_canonical_stages(stage: str, stage_frames: Mapping[str, object]) 
     if stage == "post_fold":
         return ["post_fold"] if "post_fold_per_era" in stage_frames or "post_fold_snapshots" in stage_frames else []
     if stage == "post_training_core":
-        return ["post_training_core"] if "post_training_core_summary" in stage_frames else []
+        refreshed: list[str] = []
+        if "run_metric_series" in stage_frames:
+            refreshed.append("run_metric_series")
+        if "post_training_core_summary" in stage_frames:
+            refreshed.append("post_training_core")
+        return refreshed
     if stage == "post_training_full":
         refreshed: list[str] = []
+        if "run_metric_series" in stage_frames:
+            refreshed.append("run_metric_series")
         if "post_training_core_summary" in stage_frames:
             refreshed.append("post_training_core")
         if "post_training_full_summary" in stage_frames:

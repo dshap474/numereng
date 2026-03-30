@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 import pytest
@@ -2020,7 +2021,7 @@ def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.
                     "source_kind": "ssh",
                     "source_id": "remote-pc",
                     "source_label": "Remote PC",
-                    "detail_href": None,
+                    "detail_href": "/experiments/remote-exp?source_kind=ssh&source_id=remote-pc",
                 }
             ],
             "live_experiments": [
@@ -2037,7 +2038,7 @@ def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.
                     "source_kind": "ssh",
                     "source_id": "remote-pc",
                     "source_label": "Remote PC",
-                    "detail_href": None,
+                    "detail_href": "/experiments/remote-exp?source_kind=ssh&source_id=remote-pc",
                     "runs": [
                         {
                             "run_id": "remote-run-1",
@@ -2053,7 +2054,7 @@ def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.
                             "source_label": "Remote PC",
                             "backend": "local",
                             "provider_run_id": None,
-                            "detail_href": None,
+                            "detail_href": "/experiments/remote-exp?source_kind=ssh&source_id=remote-pc",
                         }
                     ],
                 }
@@ -2073,7 +2074,97 @@ def test_experiments_overview_route_merges_remote_snapshots(monkeypatch: pytest.
     assert any(item["experiment_id"] == "remote-exp" for item in payload["experiments"])
     remote_live = next(item for item in payload["live_experiments"] if item["experiment_id"] == "remote-exp")
     assert remote_live["source_kind"] == "ssh"
-    assert remote_live["runs"][0]["detail_href"] is None
+    assert remote_live["detail_href"] == "/experiments/remote-exp?source_kind=ssh&source_id=remote-pc"
+    assert remote_live["runs"][0]["detail_href"] == "/experiments/remote-exp?source_kind=ssh&source_id=remote-pc"
+
+
+def test_remote_experiment_detail_route_dispatches_to_source_aware_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+    calls: list[dict[str, Any]] = []
+
+    def fake_remote_call(
+        method: str,
+        *,
+        source_kind: str,
+        source_id: str,
+        args: Sequence[Any] = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        calls.append(
+            {
+                "method": method,
+                "source_kind": source_kind,
+                "source_id": source_id,
+                "args": list(args),
+                "kwargs": dict(kwargs or {}),
+            }
+        )
+        if method == "get_experiment":
+            return {
+                "experiment_id": "remote-exp",
+                "name": "Remote Experiment",
+                "status": "active",
+                "preset": None,
+                "hypothesis": None,
+                "created_at": "2026-03-29T00:00:00+00:00",
+                "updated_at": "2026-03-29T00:00:00+00:00",
+                "champion_run_id": None,
+                "tags": ["remote"],
+            }
+        raise AssertionError(f"unexpected method: {method}")
+
+    monkeypatch.setattr(service.remote_details, "call", fake_remote_call)
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/remote-exp?source_kind=ssh&source_id=pc")
+
+    assert response.status_code == 200
+    assert response.json()["experiment_id"] == "remote-exp"
+    assert calls == [
+        {
+            "method": "get_experiment",
+            "source_kind": "ssh",
+            "source_id": "pc",
+            "args": ["remote-exp"],
+            "kwargs": {},
+        }
+    ]
+
+
+def test_remote_experiment_detail_route_returns_404_for_unknown_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+
+    def fake_remote_call(
+        method: str,
+        *,
+        source_kind: str,
+        source_id: str,
+        args: Sequence[Any] = (),
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any:
+        raise LookupError(f"Unknown remote source_id: {source_id}")
+
+    monkeypatch.setattr(service.remote_details, "call", fake_remote_call)
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/remote-exp?source_kind=ssh&source_id=missing")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Unknown remote source_id: missing"
 
 
 def test_experiments_overview_route_returns_mission_control_payload(

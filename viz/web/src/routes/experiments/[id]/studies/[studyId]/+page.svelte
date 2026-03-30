@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { HpoStudy, HpoTrial } from '$lib/api/client';
 	import TrialConvergenceChart from '$lib/components/charts/TrialConvergenceChart.svelte';
+	import { withSourceHref, type SourceContext } from '$lib/source';
 	import { fmt } from '$lib/utils';
 
 	let {
@@ -10,6 +11,7 @@
 			experimentId: string;
 			study: HpoStudy;
 			trials: HpoTrial[];
+			source: SourceContext;
 		};
 	} = $props();
 
@@ -57,7 +59,7 @@
 <div class="space-y-6">
 	<div class="flex items-center gap-3">
 		<a
-			href="/experiments/{data.experimentId}"
+			href={withSourceHref(`/experiments/${data.experimentId}`, data.source)}
 			class="text-sm text-muted-foreground hover:text-foreground transition-colors"
 		>&larr; Experiment</a>
 		<h1 class="text-xl font-semibold">{data.study.name || data.study.study_id}</h1>
@@ -85,7 +87,7 @@
 			<div class="mt-1 font-medium">
 				{#if data.study.best_run_id}
 					<a
-						href="/experiments/{data.experimentId}/runs/{data.study.best_run_id}"
+						href={withSourceHref(`/experiments/${data.experimentId}/runs/${data.study.best_run_id}`, data.source)}
 						class="text-primary underline underline-offset-2"
 					>{data.study.best_run_id.slice(0, 12)}</a>
 				{:else}

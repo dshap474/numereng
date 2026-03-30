@@ -10,6 +10,7 @@
 		experimentId={data.experimentId}
 		experimentName={data.experiment?.name ?? null}
 		runs={Array.isArray(data.runs) ? data.runs : []}
+		source={data.source}
 		readOnly={Boolean(data.capabilities?.read_only)}
 	/>
 </div>

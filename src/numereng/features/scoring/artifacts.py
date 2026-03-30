@@ -28,8 +28,8 @@ SCORING_MANIFEST_FILENAME = "manifest.json"
 CANONICAL_SCORING_STAGE_FILES: dict[str, tuple[str, ...]] = {
     "run_metric_series": ("run_metric_series",),
     "post_fold": ("post_fold_per_era", "post_fold_snapshots"),
-    "post_training_core": ("post_training_core_summary",),
-    "post_training_full": ("post_training_core_summary", "post_training_full_summary"),
+    "post_training_core": ("run_metric_series", "post_training_core_summary"),
+    "post_training_full": ("run_metric_series", "post_training_core_summary", "post_training_full_summary"),
 }
 
 _STAGE_REQUIRED_COLUMNS: dict[str, list[str]] = {
@@ -205,8 +205,10 @@ def refreshed_canonical_stages(
 
     if selected_stage == "all":
         selected_stages = tuple(CANONICAL_SCORING_STAGE_FILES.keys())
+    elif selected_stage == "post_training_core":
+        selected_stages = ("run_metric_series", "post_training_core")
     elif selected_stage == "post_training_full":
-        selected_stages = ("post_training_core", "post_training_full")
+        selected_stages = ("run_metric_series", "post_training_core", "post_training_full")
     else:
         selected_stages = (selected_stage,)
     refreshed: list[str] = []

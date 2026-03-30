@@ -60,7 +60,7 @@ Read order:
 - `numerai-experiment-loop` is now config-centric: each autonomous round selects one parent config, applies a small LLM mutation, validates one child config, and trains that single child.
 - Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
-- Legacy runs may be backfilled with persisted per-era CORR artifacts via `numereng store materialize-viz-artifacts --kind per-era-corr ...`; viz otherwise uses a bounded write-through fallback on first miss.
+- Legacy runs may be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` remains as a deprecated alias. Viz otherwise uses a bounded read-only fallback on first miss.
 - Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.

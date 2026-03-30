@@ -184,7 +184,7 @@ make viz
 - Stop servers: `make kill-viz`
 
 The dashboard is monitor-only. Launch and control operations still happen through the CLI or Python API.
-Training and `run score` persist the primary per-era CORR artifact used by run-detail charts, and older runs can be backfilled with `uv run numereng store materialize-viz-artifacts --kind per-era-corr ...`.
+Training and `run score` persist the canonical scoring-artifact bundle used by run-detail charts, including the per-era and cumulative metric series. Older runs can be backfilled with `uv run numereng store materialize-viz-artifacts --kind scoring-artifacts ...` (`per-era-corr` remains as a deprecated alias).
 
 ## Docs
 

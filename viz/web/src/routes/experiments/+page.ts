@@ -1,7 +1,7 @@
-import type { Experiment, ExperimentOverviewResponse } from '$lib/api/client';
+import type { ExperimentOverviewItem, ExperimentOverviewResponse } from '$lib/api/client';
 import type { PageLoad } from './$types';
 
-function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse {
+function fallbackOverview(experiments: ExperimentOverviewItem[]): ExperimentOverviewResponse {
 	return {
 		generated_at: null,
 		summary: {
@@ -13,23 +13,7 @@ function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse
 			queued_runs: 0,
 			attention_count: 0
 		},
-		experiments: experiments.map((item) => ({
-			experiment_id: item.experiment_id,
-			name: item.name,
-			status: item.status,
-			created_at: item.created_at,
-			updated_at: item.updated_at,
-			run_count: item.run_count ?? (Array.isArray(item.runs) ? item.runs.length : 0),
-			tags: item.tags ?? [],
-			has_live: false,
-			live_run_count: 0,
-			attention_state: 'none',
-			latest_activity_at: item.updated_at ?? item.created_at ?? null,
-			source_kind: 'local',
-			source_id: 'local',
-			source_label: 'Local store',
-			detail_href: `/experiments/${item.experiment_id}`
-		})),
+		experiments,
 		live_experiments: [],
 		recent_activity: [],
 		sources: []
@@ -39,10 +23,14 @@ function fallbackOverview(experiments: Experiment[]): ExperimentOverviewResponse
 export const load: PageLoad = async ({ parent }) => {
 	const parentData = await parent();
 	const experiments = Array.isArray(parentData.experiments)
-		? (parentData.experiments as Experiment[])
+		? (parentData.experiments as ExperimentOverviewItem[])
 		: [];
+	const overview =
+		parentData.experimentsOverview && typeof parentData.experimentsOverview === 'object'
+			? (parentData.experimentsOverview as ExperimentOverviewResponse)
+			: fallbackOverview(experiments);
 	return {
-		overview: fallbackOverview(experiments),
-		overviewPending: true
+		overview,
+		overviewPending: !parentData.experimentsOverview
 	};
 };
