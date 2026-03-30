@@ -5,6 +5,7 @@ Read order:
 2. `docs/ARCHITECTURE.md` (deep system map)
 
 ## Fast Commands
+- Install `just` if you want to use the wrapper commands below.
 - `uv sync --extra dev`
 - `just test`
 - `just test-all`

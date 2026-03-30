@@ -36,12 +36,6 @@ readiness: deps-lint arch-lint
 	@test -f .python-version
 	@test -f justfile
 	@test -f .devcontainer/devcontainer.json
-	@test -f .factory/memories.md
-	@test -f .factory/rules/architecture.md
-	@test -f .factory/rules/python.md
-	@test -f .factory/rules/testing.md
-	@test -f .factory/rules/security.md
-	@test -f .factory/rules/observability.md
 	@find runbooks -maxdepth 1 -type f | grep -q .
 
 security: oss-preflight

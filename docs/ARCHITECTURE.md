@@ -218,6 +218,7 @@ Dynamic top-level dirs may also appear:
       configs/*.json
       agentic_research/
         program.json
+        session_program.md
         lineage.json
         rounds/rN/
           round.json
@@ -832,6 +833,7 @@ success/help
 
 ## 12. Testing + Verification
 Primary checks:
+- Install `just` if you want to use the wrapper commands below.
 - `just fmt`
 - `just test` (fast gate)
 - `just test-all` (full gate)
