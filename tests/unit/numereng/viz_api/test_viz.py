@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from numereng_viz.contracts import capabilities_payload
-from numereng_viz.monitor_snapshot import RemoteSnapshotCoordinator, build_monitor_snapshot
+from numereng_viz.monitor_snapshot import RemoteSnapshotCoordinator, build_monitor_snapshot, merge_monitor_snapshots
 from numereng_viz.routes import create_router
 from numereng_viz.services import VizService
 from numereng_viz.store_adapter import (
@@ -3230,3 +3230,190 @@ def test_adapter_rejects_ensemble_artifacts_path_outside_store(tmp_path: Path) -
     adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
     assert adapter.get_ensemble_artifacts("ens-1") is None
+
+
+def test_adapter_reads_run_artifacts_from_remote_pull_cache(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_dir = store_root / "experiments" / "exp-pulled"
+    experiment_dir.mkdir(parents=True)
+    (experiment_dir / "experiment.json").write_text(
+        json.dumps(
+            {
+                "experiment_id": "exp-pulled",
+                "name": "Pulled Experiment",
+                "status": "active",
+                "runs": ["run-pulled"],
+                "metadata": {"tags": ["gpu"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_dir = store_root / "cache" / "remote_ops" / "pulls" / "pc" / "runs" / "run-pulled"
+    scoring_dir = run_dir / "artifacts" / "scoring"
+    scoring_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-pulled",
+                "experiment_id": "exp-pulled",
+                "status": "FINISHED",
+                "created_at": "2026-03-31T00:00:00+00:00",
+                "model": {"type": "XGBRegressor"},
+                "data": {"target_col": "target_ender_20", "feature_set": "medium"},
+                "execution": {"backend": "remote_pc"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "resolved.json").write_text(json.dumps({"seed": 5}), encoding="utf-8")
+    (run_dir / "metrics.json").write_text(
+        json.dumps({"bmc_last_200_eras": {"mean": 0.09}, "bmc": {"mean": 0.04}}),
+        encoding="utf-8",
+    )
+    (run_dir / "score_provenance.json").write_text(json.dumps({"joins": {"predictions_rows": 8}}), encoding="utf-8")
+    (scoring_dir / "manifest.json").write_text(json.dumps({"stages": {"omissions": {}}}), encoding="utf-8")
+    pd.DataFrame([{"era": "0001", "corr": 0.11}]).to_parquet(scoring_dir / "corr_per_era.parquet", index=False)
+    pd.DataFrame(
+        [
+            {
+                "run_id": "run-pulled",
+                "metric_key": "bmc",
+                "series_type": "per_era",
+                "era": "0001",
+                "value": 0.11,
+            }
+        ]
+    ).to_parquet(scoring_dir / "run_metric_series.parquet", index=False)
+    pd.DataFrame([{"bmc_mean": 0.11, "target_col": "target_ender_20"}]).to_parquet(
+        scoring_dir / "post_training_core_summary.parquet",
+        index=False,
+    )
+
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    runs = adapter.list_experiment_runs("exp-pulled")
+    assert [item["run_id"] for item in runs] == ["run-pulled"]
+    assert adapter.get_run_manifest("run-pulled") is not None
+    assert adapter.get_run_metrics("run-pulled")["bmc_last_200_eras_mean"] == 0.09
+    assert adapter.get_per_era_corr("run-pulled") == [{"era": "0001", "corr": 0.11}]
+    dashboard = adapter.get_scoring_dashboard("run-pulled")
+    assert dashboard is not None
+    assert dashboard["summary"]["bmc_mean"] == 0.11
+
+
+def test_merge_monitor_snapshots_canonicalizes_duplicate_local_and_remote_experiment() -> None:
+    local_snapshot = {
+        "source": {"kind": "local", "id": "local", "label": "Local store", "state": "live"},
+        "summary": {"total_experiments": 1, "active_experiments": 1, "completed_experiments": 0},
+        "experiments": [
+            {
+                "experiment_id": "exp-1",
+                "name": "Local exp",
+                "status": "active",
+                "created_at": "2026-03-31T00:00:00+00:00",
+                "updated_at": "2026-03-31T00:00:00+00:00",
+                "run_count": 1,
+                "latest_activity_at": "2026-03-31T00:00:00+00:00",
+            }
+        ],
+        "live_experiments": [],
+        "recent_activity": [],
+    }
+    remote_snapshots = [
+        {
+            "source": {"kind": "ssh", "id": "pc", "label": "PC", "state": "live"},
+            "summary": {"total_experiments": 1, "active_experiments": 1, "completed_experiments": 0},
+            "experiments": [
+                {
+                    "experiment_id": "exp-1",
+                    "name": "Remote exp",
+                    "status": "active",
+                    "updated_at": "2026-03-31T01:00:00+00:00",
+                    "detail_href": "/experiments/exp-1?source_kind=ssh&source_id=pc",
+                }
+            ],
+            "live_experiments": [
+                {
+                    "experiment_id": "exp-1",
+                    "name": "Remote exp",
+                    "status": "active",
+                    "live_run_count": 1,
+                    "queued_run_count": 0,
+                    "latest_activity_at": "2026-03-31T01:00:00+00:00",
+                    "aggregate_progress_percent": 50.0,
+                    "detail_href": "/experiments/exp-1?source_kind=ssh&source_id=pc",
+                    "runs": [
+                        {
+                            "run_id": "run-remote",
+                            "status": "running",
+                            "source_kind": "ssh",
+                            "source_id": "pc",
+                            "detail_href": "/experiments/exp-1?source_kind=ssh&source_id=pc",
+                        }
+                    ],
+                }
+            ],
+            "recent_activity": [],
+        }
+    ]
+
+    payload = merge_monitor_snapshots(local_snapshot, remote_snapshots)
+
+    assert len(payload["experiments"]) == 1
+    assert payload["experiments"][0]["experiment_id"] == "exp-1"
+    assert payload["experiments"][0]["has_remote_overlay"] is True
+    assert payload["live_experiments"][0]["source_kind"] == "local"
+    assert payload["live_experiments"][0]["detail_href"] == "/experiments/exp-1"
+    assert payload["live_experiments"][0]["runs"][0]["source_kind"] == "ssh"
+    assert payload["summary"]["total_experiments"] == 1
+
+
+def test_service_list_experiment_runs_merges_remote_overlay_for_local_experiment(tmp_path: Path) -> None:
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
+    service = VizService(adapter)
+    service.adapter.list_experiment_runs = lambda experiment_id: [  # type: ignore[method-assign]
+        {"run_id": "run-local", "created_at": "2026-03-31T00:00:00+00:00", "status": "FINISHED"}
+    ]
+    service.remote_snapshots.fetch_snapshots = lambda: [  # type: ignore[method-assign]
+        {
+            "source": {"kind": "ssh", "id": "pc", "label": "PC", "state": "live"},
+            "experiments": [{"experiment_id": "exp-1"}],
+            "live_experiments": [],
+            "recent_activity": [],
+        }
+    ]
+    service.remote_details.call = lambda method, **kwargs: [  # type: ignore[method-assign]
+        {"run_id": "run-local", "created_at": "2026-03-31T00:00:00+00:00", "status": "FINISHED"},
+        {"run_id": "run-remote", "created_at": "2026-03-31T01:00:00+00:00", "status": "RUNNING"},
+    ]
+
+    payload = service.list_experiment_runs("exp-1")
+
+    assert [item["run_id"] for item in payload] == ["run-remote", "run-local"]
+    remote_item = next(item for item in payload if item["run_id"] == "run-remote")
+    assert remote_item["source_kind"] == "ssh"
+    assert remote_item["source_id"] == "pc"
+
+
+def test_service_run_manifest_falls_back_to_unique_remote_source(tmp_path: Path) -> None:
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
+    service = VizService(adapter)
+    service.adapter.get_run_manifest = lambda run_id: None  # type: ignore[method-assign]
+    service.remote_snapshots.fetch_snapshots = lambda: [  # type: ignore[method-assign]
+        {
+            "source": {"kind": "ssh", "id": "pc", "label": "PC", "state": "live"},
+            "experiments": [],
+            "live_experiments": [
+                {
+                    "experiment_id": "exp-1",
+                    "runs": [{"run_id": "run-remote"}],
+                }
+            ],
+            "recent_activity": [],
+        }
+    ]
+    service.remote_details.call = lambda method, **kwargs: {"run_id": "run-remote", "status": "RUNNING"}  # type: ignore[method-assign]
+
+    payload = service.get_run_manifest("run-remote")
+
+    assert payload == {"run_id": "run-remote", "status": "RUNNING"}

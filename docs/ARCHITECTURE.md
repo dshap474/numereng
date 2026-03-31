@@ -243,10 +243,21 @@ Dynamic top-level dirs may also appear:
         runs/<run_id>/state.json
         runs/<run_id>/pull/
         ops/<op_id>/state.json
+    remote_ops/
+      pulls/
+        <target_id>/
+          experiments/<experiment_id>/{experiment.json,pull.json}
+          runs/<run_id>/*
   tmp/
     remote-configs/*.json            # retention-managed staging for detached remote launches
     lifecycle_smoke/<session>/*.json # generated smoke-test configs
   notes/
+    __RESEARCH_MEMORY__/
+      CURRENT.md
+      experiments/<experiment_id>.md
+      topics/*.md
+      decisions/*.md
+      legacy-progression/...
   remote_ops/
   cloud/                              # legacy compatibility-only cloud state during migration
 ```
@@ -256,6 +267,7 @@ Data model split:
 - sqlite indexes query surfaces for runs/metrics/experiments/HPO/ensembles/telemetry.
 - `cloud_jobs` is the active/in-flight cloud job control plane for jobs that do not yet have a materialized run directory.
 - `cache/cloud/*` holds transient cloud state and pull staging; it is not the durable run store.
+- `cache/remote_ops/pulls/*` holds disposable viz-facing remote pullbacks; it is not canonical run storage and does not replace the remote machine's full `runs/<run_id>` directories.
 - `tmp/*` is store-owned scratch space; `store doctor --fix-strays` prunes old `tmp/remote-configs/*.json` files only when they are older than 30 days and not referenced by active run lifecycles.
 - `remote_ops/*` is canonical operational state for SSH bootstrap/sync/detached launch workflows.
 - `store rebuild` re-derives index state from filesystem artifacts.
@@ -679,17 +691,18 @@ Backend packaging/layout:
 
 Store/remote monitor contract:
 - `numereng.api.build_monitor_snapshot(request)` and `numereng monitor snapshot --store-root <path> --json` build one normalized read-only monitor snapshot for a single numereng store.
-- `numereng.api.remote_*` and `numereng remote ...` provide SSH-backed repo sync, experiment authoring sync, ad hoc config push, and detached remote launch.
+- `numereng.api.remote_*` and `numereng remote ...` provide SSH-backed repo sync, experiment authoring sync, experiment artifact pullback, ad hoc config push, and detached remote launch.
 - Mission control overview merges:
   - the local store snapshot
   - zero or more SSH remote store snapshots loaded from `src/numereng/platform/remotes/profiles/*.yaml` or `NUMERENG_REMOTE_PROFILES_DIR`
 - SSH monitoring is numereng-owned and read-only: the local viz backend runs `numereng monitor snapshot --json` on the remote machine over SSH and merges the returned snapshot.
-- Remote detail reads stay local-server-owned too: experiment/run/study/ensemble detail routes keep the same frontend paths and add optional `source_kind` + `source_id` query params, while the local viz backend dispatches those reads over SSH with remote Python helpers instead of starting a remote viz API.
+- Remote detail reads stay local-server-owned too: experiment/run/study/ensemble detail routes keep the same frontend paths and add optional `source_kind` + `source_id` query params, while the local viz backend resolves local canonical artifacts first, then the pulled remote artifact cache under `.numereng/cache/remote_ops/pulls`, and only then dispatches remaining misses over SSH with remote Python helpers instead of starting a remote viz API.
 - SSH remote profiles declare `shell: posix|powershell`; `posix` keeps the existing `cd ... && ...` command path, while `powershell` wraps the snapshot command in `powershell -NoProfile -Command "Set-Location ...; ..."` for Windows SSH targets.
 - Remote ops use the same target profiles plus `python_cmd` for helper scripts and optional `runner_cmd` for detached CLI launches. Sync is local-driven and archive-based over SSH:
   - repo sync includes tracked files plus untracked nonignored files from the local working tree
   - repo sync excludes `.git`, `.numereng`, gitignored machine profiles, envs, caches, and build outputs
   - experiment sync includes only `.numereng/experiments/<id>/experiment.json|EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
+  - experiment pull includes only viz-facing run manifests and scoring artifacts, writes them under `.numereng/cache/remote_ops/pulls/<target_id>/...`, reconciles the local experiment manifest, and never materializes remote runs under `.numereng/runs/<run_id>`
   - ad hoc remote launch configs are staged under `.numereng/tmp/remote-configs/*` on the remote repo
   - no command mirrors the full `.numereng` store
 - Sync metadata is stored under each machine's `.numereng/remote_ops/sync/<target_id>/*.json`, and detached remote launch metadata/logs live under `.numereng/remote_ops/launches/*` on the remote machine.
@@ -732,7 +745,8 @@ Important UI contract:
 - There are no standalone `/run-ops` or `/configs` frontend pages.
 - `/experiments` is a mission-control dashboard, not a launch surface. It route-loads `/api/experiments/overview`, polls that endpoint every 3 seconds while visible, preserves the last successful snapshot on transient failures, and renders a left-rail experiment navigator with a right-pane live/attention/recent-activity dashboard.
 - The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
-- The left-rail experiment navigator uses the same federated overview payload as mission control, so remote SSH experiments appear in the sidebar with source-aware detail links.
+- The mission-control overview is canonicalized by `experiment_id`: when an experiment exists locally and on one remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate local/remote rows.
+- The left-rail experiment navigator uses that same canonicalized overview payload, so local experiments stay on the default `/experiments/<id>` route while remote-only experiments still preserve source-aware detail links.
 - `make viz` runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before local API/frontend startup. That bootstrap step repo-syncs each enabled remote in `auto` mode, runs `remote doctor`, persists `ready|degraded` source state under `.numereng/remote_ops/bootstrap/viz.json`, and never starts a remote viz server on the target host.
 - Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
@@ -740,7 +754,7 @@ Important UI contract:
 - `experiment pack` writes `EXPERIMENT.pack.md` into the experiment directory and includes `EXPERIMENT.md` plus a dashboard-aligned scalar run summary table only.
 - Experiment ranking defaults to `bmc_last_200_eras_mean`.
 - Run detail loading is progressive: the shell renders immediately from the selected run list row, and tab sections fetch lazily with localized loading states.
-- Remote experiment, run, study, and ensemble detail pages are read-only parity surfaces. The frontend preserves source context through query params and forwards it on every follow-on API call, including docs, run-job monitoring, and lazy run-detail section fetches.
+- Remote experiment, run, study, and ensemble detail pages are read-only parity surfaces. Explicit source context is still preserved through query params for remote-only and ambiguous cases, but the default local route now uses local-first artifact resolution: local store -> pulled remote cache -> unique-source SSH fallback.
 - Run Ops and the dedicated run page no longer block on `/api/runs/{run_id}/bundle`; they share the same section-based loader and request cache/abort behavior.
 - Run detail/chart reads are artifact-backed first; older runs that only have legacy scoring files are adapted in memory to the canonical dashboard payload, and rescoring remains the canonical backfill path.
 - Normal experiment/config catalogs exclude archived experiments by default.
@@ -771,6 +785,10 @@ CLI/API training launch
 
 ### 9.4 Notes copy behavior
 - Notes copy buttons copy file contents (fetched from `/api/notes/content`), not file path labels.
+- `notes/__RESEARCH_MEMORY__/CURRENT.md` is the canonical rolling research-memory surface.
+- `notes/__RESEARCH_MEMORY__/experiments/*.md` stores one durable review per completed experiment.
+- `notes/__RESEARCH_MEMORY__/topics/*.md` stores hybrid topic ledgers.
+- `notes/__RESEARCH_MEMORY__/legacy-progression/` preserves the prior `__PROGRESSION__` monthly summaries as historical inputs only.
 
 ## 10. Boundary Error Model
 ```text

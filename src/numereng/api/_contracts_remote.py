@@ -105,6 +105,30 @@ class RemoteExperimentSyncResponse(BaseModel):
     remote_marker_path: str
 
 
+class RemoteExperimentPullRequest(BaseModel):
+    target_id: str
+    experiment_id: str
+    store_root: str = ".numereng"
+
+
+class RemoteExperimentPullFailureResponse(BaseModel):
+    run_id: str
+    missing_files: list[str] = Field(default_factory=list)
+
+
+class RemoteExperimentPullResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    local_experiment_manifest_path: str
+    cache_experiment_dir: str
+    cache_runs_root: str
+    pulled_at: str
+    pulled_run_count: int
+    cached_artifact_count: int
+    skipped_artifact_count: int
+    failures: list[RemoteExperimentPullFailureResponse] = Field(default_factory=list)
+
+
 class RemoteConfigPushRequest(BaseModel):
     target_id: str
     config_path: str
@@ -146,6 +170,9 @@ __all__ = [
     "RemoteConfigPushResponse",
     "RemoteDoctorRequest",
     "RemoteDoctorResponse",
+    "RemoteExperimentPullFailureResponse",
+    "RemoteExperimentPullRequest",
+    "RemoteExperimentPullResponse",
     "RemoteExperimentSyncRequest",
     "RemoteExperimentSyncResponse",
     "RemoteRepoSyncRequest",

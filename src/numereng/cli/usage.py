@@ -35,6 +35,7 @@ USAGE = (
     "  numereng remote doctor --target <id>\n"
     "  numereng remote repo sync --target <id> [--store-root <path>]\n"
     "  numereng remote experiment sync --target <id> --experiment-id <id> [--store-root <path>]\n"
+    "  numereng remote experiment pull --target <id> --experiment-id <id> [--store-root <path>]\n"
     "  numereng remote config push --target <id> --config <path.json> [--store-root <path>]\n"
     "  numereng remote run train --target <id> --config <path.json> [--experiment-id <id>] [--sync-repo <auto|always|never>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--store-root <path>]\n"  # noqa: E501
     "  numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]\n"  # noqa: E501

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from importlib import import_module
 
-import numereng.api._remote as _remote
 from numereng.api._baseline import baseline_build
 from numereng.api._dataset_tools import dataset_tools_build_downsampled_full
 from numereng.api._ensemble import ensemble_build, ensemble_get, ensemble_list
@@ -43,6 +42,7 @@ from numereng.api._remote import (
     remote_bootstrap_viz,
     remote_config_push,
     remote_doctor,
+    remote_experiment_pull,
     remote_experiment_sync,
     remote_list_targets,
     remote_repo_sync,
@@ -155,6 +155,9 @@ from numereng.api.contracts import (
     RemoteConfigPushResponse,
     RemoteDoctorRequest,
     RemoteDoctorResponse,
+    RemoteExperimentPullFailureResponse,
+    RemoteExperimentPullRequest,
+    RemoteExperimentPullResponse,
     RemoteExperimentSyncRequest,
     RemoteExperimentSyncResponse,
     RemoteRepoSyncRequest,
@@ -203,11 +206,11 @@ from numereng.api.contracts import (
     StoreMaterializeVizArtifactsFailureResponse,
     StoreMaterializeVizArtifactsRequest,
     StoreMaterializeVizArtifactsResponse,
-    StoreRunExecutionBackfillRequest,
-    StoreRunExecutionBackfillResponse,
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunExecutionBackfillRequest,
+    StoreRunExecutionBackfillResponse,
     StoreRunLifecycleRepairRequest,
     StoreRunLifecycleRepairResponse,
     SubmissionRequest,
@@ -464,6 +467,9 @@ __all__ = [
     "RemoteConfigPushResponse",
     "RemoteDoctorRequest",
     "RemoteDoctorResponse",
+    "RemoteExperimentPullFailureResponse",
+    "RemoteExperimentPullRequest",
+    "RemoteExperimentPullResponse",
     "RemoteExperimentSyncRequest",
     "RemoteExperimentSyncResponse",
     "RemoteRepoSyncRequest",
@@ -595,6 +601,7 @@ __all__ = [
     "remote_config_push",
     "remote_bootstrap_viz",
     "remote_doctor",
+    "remote_experiment_pull",
     "remote_experiment_sync",
     "remote_list_targets",
     "remote_repo_sync",

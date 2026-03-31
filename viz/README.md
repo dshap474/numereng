@@ -10,23 +10,25 @@ The key design choice is federated monitoring:
 - every machine keeps its own `.numereng` store
 - the local viz backend reads the local store directly
 - enabled SSH remotes are queried through `numereng monitor snapshot --json`
-- the frontend renders one merged overview
-- remote experiment and run detail pages stay on the local viz server, but route through source-aware API calls with `source_kind` + `source_id` query params so the backend can fetch read-only detail payloads over SSH on demand
+- completed remote experiments can be pulled back as lightweight viz caches under `.numereng/cache/remote_ops/pulls/<target_id>/...`
+- the frontend renders one merged overview with local-primary canonical rows when experiment ids overlap
+- remote experiment and run detail pages stay on the local viz server, but default resolution is now local store first, then pulled cache, then source-aware SSH fallback when needed
 
-This avoids syncing SQLite stores between machines while still giving one dashboard for local and remote runs.
+This avoids syncing SQLite stores or full remote run directories between machines while still giving one dashboard for local and remote runs.
 
 ## What Mission Control Assumes
 
 - `/api/experiments/overview` is the only source of truth for the experiments page
-- experiment ids are not globally unique across sources
-- experiment and run detail routes keep the existing local URL shape and add optional `source_kind` / `source_id` query params for remote identity
+- experiment ids may exist on both local and remote stores
+- the overview should collapse local+remote duplicates into one canonical local row when the experiment id matches
+- experiment and run detail routes keep the existing local URL shape and add optional `source_kind` / `source_id` query params only when explicit remote identity is required
 - remote snapshots can be slower than local snapshots
 - short runs may move from live to terminal within a single manual observation window
 
 ## Common Failure Modes
 
 - Duplicate experiment ids across local and remote stores:
-  the frontend must key lists by source plus experiment id, not experiment id alone.
+  the backend canonicalizes these into one local-primary row, but remote-only rows still need source-aware frontend keys.
 - Stale header pulse:
   use overview `generated_at`, not just experiment timestamps.
 - Missing live rows during remote monitoring:

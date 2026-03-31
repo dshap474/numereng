@@ -7,6 +7,9 @@ from numereng.api.contracts import (
     RemoteConfigPushResponse,
     RemoteDoctorRequest,
     RemoteDoctorResponse,
+    RemoteExperimentPullFailureResponse,
+    RemoteExperimentPullRequest,
+    RemoteExperimentPullResponse,
     RemoteExperimentSyncRequest,
     RemoteExperimentSyncResponse,
     RemoteRepoSyncRequest,
@@ -28,6 +31,9 @@ from numereng.features.remote_ops import (
 )
 from numereng.features.remote_ops import (
     list_remote_targets as list_remote_targets_record,
+)
+from numereng.features.remote_ops import (
+    pull_remote_experiment as pull_remote_experiment_record,
 )
 from numereng.features.remote_ops import (
     push_remote_config as push_remote_config_record,
@@ -174,6 +180,35 @@ def remote_experiment_sync(request: RemoteExperimentSyncRequest) -> RemoteExperi
     )
 
 
+def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperimentPullResponse:
+    try:
+        result = pull_remote_experiment_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentPullResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        local_experiment_manifest_path=str(result.local_experiment_manifest_path),
+        cache_experiment_dir=str(result.cache_experiment_dir),
+        cache_runs_root=str(result.cache_runs_root),
+        pulled_at=result.pulled_at,
+        pulled_run_count=result.pulled_run_count,
+        cached_artifact_count=result.cached_artifact_count,
+        skipped_artifact_count=result.skipped_artifact_count,
+        failures=[
+            RemoteExperimentPullFailureResponse(
+                run_id=item.run_id,
+                missing_files=list(item.missing_files),
+            )
+            for item in result.failures
+        ],
+    )
+
+
 def remote_config_push(request: RemoteConfigPushRequest) -> RemoteConfigPushResponse:
     try:
         result = push_remote_config_record(
@@ -222,6 +257,7 @@ __all__ = [
     "remote_config_push",
     "remote_bootstrap_viz",
     "remote_doctor",
+    "remote_experiment_pull",
     "remote_experiment_sync",
     "remote_list_targets",
     "remote_repo_sync",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -379,3 +381,126 @@ def test_bootstrap_viz_remotes_persists_ready_and_degraded_targets(
     degraded = next(item for item in reloaded.targets if item.target.id == "offline")
     assert degraded.bootstrap_status == "degraded"
     assert degraded.last_bootstrap_error == "remote_sync_command_failed:ssh failed"
+
+
+def test_pull_remote_experiment_caches_viz_artifacts_and_reconciles_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    local_experiment_dir = store_root / "experiments" / "exp-1"
+    local_experiment_dir.mkdir(parents=True)
+    (local_experiment_dir / "EXPERIMENT.md").write_text("# local doc\n", encoding="utf-8")
+
+    remote_manifest = {
+        "experiment_id": "exp-1",
+        "name": "Remote Experiment",
+        "status": "active",
+        "created_at": "2026-03-31T00:00:00+00:00",
+        "updated_at": "2026-03-31T01:00:00+00:00",
+        "hypothesis": "Remote hypothesis",
+        "tags": ["gpu", "xgboost"],
+        "runs": ["run-a"],
+        "metadata": {"champion_run_id": "run-a"},
+    }
+    run_manifest = {
+        "run_id": "run-a",
+        "status": "FINISHED",
+        "experiment_id": "exp-1",
+        "execution": {"backend": "remote_pc"},
+        "data": {"target_col": "target_ender_20", "feature_set": "medium"},
+        "model": {"type": "XGBRegressor"},
+    }
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("experiments/exp-1/experiment.json", json.dumps(remote_manifest))
+        archive.writestr("runs/run-a/run.json", json.dumps(run_manifest))
+        archive.writestr("runs/run-a/resolved.json", json.dumps({"seed": 7}))
+        archive.writestr(
+            "runs/run-a/metrics.json",
+            json.dumps({"bmc_last_200_eras": {"mean": 0.12}, "bmc": {"mean": 0.08}}),
+        )
+        archive.writestr("runs/run-a/score_provenance.json", json.dumps({"joins": {"predictions_rows": 10}}))
+        archive.writestr("runs/run-a/artifacts/scoring/manifest.json", json.dumps({"stages": {"omissions": {}}}))
+        archive.writestr("runs/run-a/artifacts/scoring/corr_per_era.parquet", b"parquet-bytes")
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python_archive",
+        lambda *args, **kwargs: (
+            archive_buffer.getvalue(),
+            {
+                "experiment": remote_manifest,
+                "successful_run_ids": ["run-a"],
+                "missing_optional_count": 0,
+                "failures": [],
+                "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-1\experiment.json",
+                "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-1",
+            },
+        ),
+    )
+
+    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
+
+    assert result.target_id == "pc"
+    assert result.pulled_run_count == 1
+    assert result.failures == ()
+    assert result.local_experiment_manifest_path.is_file()
+    manifest = json.loads(result.local_experiment_manifest_path.read_text(encoding="utf-8"))
+    assert manifest["name"] == "Remote Experiment"
+    assert manifest["runs"] == ["run-a"]
+    assert manifest["metadata"]["remote_pull"]["last_target_id"] == "pc"
+    assert not (store_root / "runs" / "run-a").exists()
+    assert (result.cache_runs_root / "run-a" / "run.json").is_file()
+    assert (result.cache_experiment_dir / "pull.json").is_file()
+
+
+def test_pull_remote_experiment_records_failures_and_skips_unchanged_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    remote_manifest = {
+        "experiment_id": "exp-2",
+        "name": "Remote Experiment",
+        "status": "complete",
+        "created_at": "2026-03-31T00:00:00+00:00",
+        "updated_at": "2026-03-31T01:00:00+00:00",
+        "runs": ["run-a", "run-b"],
+        "metadata": {},
+    }
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("experiments/exp-2/experiment.json", json.dumps(remote_manifest))
+        archive.writestr("runs/run-a/run.json", json.dumps({"run_id": "run-a", "experiment_id": "exp-2"}))
+        archive.writestr("runs/run-a/resolved.json", json.dumps({}))
+        archive.writestr("runs/run-a/metrics.json", json.dumps({"bmc": {"mean": 0.01}}))
+        archive.writestr("runs/run-a/score_provenance.json", json.dumps({}))
+        archive.writestr("runs/run-a/artifacts/scoring/manifest.json", json.dumps({"stages": {"omissions": {}}}))
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python_archive",
+        lambda *args, **kwargs: (
+            archive_buffer.getvalue(),
+            {
+                "experiment": remote_manifest,
+                "successful_run_ids": ["run-a"],
+                "missing_optional_count": 1,
+                "failures": [{"run_id": "run-b", "missing_files": ["metrics.json", "run.json"]}],
+                "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-2\experiment.json",
+                "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-2",
+            },
+        ),
+    )
+
+    first = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-2", store_root=store_root)
+    second = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-2", store_root=store_root)
+
+    assert len(first.failures) == 1
+    assert first.failures[0].run_id == "run-b"
+    assert first.skipped_artifact_count == 1
+    assert second.skipped_artifact_count > first.skipped_artifact_count
+    assert not (store_root / "runs" / "run-a").exists()

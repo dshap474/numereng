@@ -72,6 +72,30 @@ class RemoteExperimentSyncResult:
 
 
 @dataclass(frozen=True)
+class RemoteExperimentPullFailure:
+    """One run-level failure encountered during remote pullback."""
+
+    run_id: str
+    missing_files: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RemoteExperimentPullResult:
+    """Result of pulling one experiment's viz-facing artifacts into the local cache."""
+
+    target_id: str
+    experiment_id: str
+    local_experiment_manifest_path: Path
+    cache_experiment_dir: Path
+    cache_runs_root: Path
+    pulled_at: str
+    pulled_run_count: int
+    cached_artifact_count: int
+    skipped_artifact_count: int
+    failures: tuple[RemoteExperimentPullFailure, ...]
+
+
+@dataclass(frozen=True)
 class RemoteConfigPushResult:
     """Result of pushing one ad hoc config to the remote repo temp area."""
 
@@ -127,6 +151,8 @@ __all__ = [
     "RemoteBootstrapStatus",
     "RemoteConfigPushResult",
     "RemoteDoctorResult",
+    "RemoteExperimentPullFailure",
+    "RemoteExperimentPullResult",
     "RemoteExperimentSyncResult",
     "RemoteRepoSyncResult",
     "RemoteSyncPolicy",
