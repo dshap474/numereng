@@ -7,9 +7,8 @@ export const load: PageLoad = async ({ params, fetch, url }) => {
 		source_kind: url.searchParams.get('source_kind'),
 		source_id: url.searchParams.get('source_id')
 	};
-	const [experiment, runs, capabilities] = await Promise.all([
+	const [experiment, capabilities] = await Promise.all([
 		api.getExperiment(params.id, source),
-		api.getExperimentRuns(params.id, source),
 		api.getSystemCapabilities().catch(() => ({ read_only: true, write_controls: false }))
 	]);
 
@@ -17,7 +16,6 @@ export const load: PageLoad = async ({ params, fetch, url }) => {
 		runId: params.runId,
 		experimentId: params.id,
 		experiment,
-		runs,
 		capabilities,
 		source
 	};

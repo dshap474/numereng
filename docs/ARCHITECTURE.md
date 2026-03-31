@@ -729,7 +729,7 @@ Viz scoring contract:
 - Viz also publishes generic payout-target aliases `corr_payout_mean` and `mmc_payout_mean`; `corr_payout_mean` comes from `corr_ender20`, while `mmc_mean` / `mmc_payout_mean` normalize to the payout-backed MMC surface with legacy `mmc_ender20` fallback for older runs.
 - Viz does not expose payout-derived metrics or payout-specific routes.
 - Per-era correlation payloads use `{ era, corr }`.
-- Run-detail section routes are independent (`manifest`, `metrics`, `per-era-corr`, `events`, `resources`, `trials`, `best-params`, `config`, `diagnostics-sources`); `/api/runs/{run_id}/bundle` remains compatibility-only.
+- Run-detail section routes remain independent (`manifest`, `metrics`, `per-era-corr`, `events`, `resources`, `trials`, `best-params`, `config`, `diagnostics-sources`), and `/api/runs/{run_id}/bundle` now also accepts an optional `sections=` query so the frontend can request only the first-paint subset or one lazy tab payload at a time. Omitting `sections` preserves the full compatibility bundle.
 - The experiment-page payout proxy scatter uses payout-target metrics (`corr_payout_mean`, `mmc_payout_mean`) rather than native-target metrics, so runs trained on different targets are compared on one common payout basis.
 - The experiment-page analysis panel also includes a target-scoped scatter (`Target Analysis`) that filters to actual runs for one selected training target and compares native `corr_mean` vs payout-backed `mmc_mean`.
 - Run-detail scoring charts prefer persisted `artifacts/scoring/run_metric_series.parquet` and use read-only legacy-file composition only for older runs that predate the canonical chart artifact. Legacy `bmc_ender20` / `mmc_ender20` / `corr_delta_vs_baseline_ender20` charts are normalized into `bmc` / `mmc` / `corr_delta_vs_baseline`, while `baseline_corr_*` and native contribution duplicates are hidden from the main performance panel.
@@ -744,19 +744,21 @@ Current frontend routes:
 
 Important UI contract:
 - There are no standalone `/run-ops` or `/configs` frontend pages.
-- `/experiments` is a mission-control dashboard, not a launch surface. It route-loads `/api/experiments/overview`, polls that endpoint every 3 seconds while visible, preserves the last successful snapshot on transient failures, and renders a left-rail experiment navigator with a right-pane live/attention/recent-activity dashboard.
+- The frontend is SSR-first again. Server-side route loads use `http://127.0.0.1:8502/api` by default and may be overridden with `VIZ_API_BASE`; browser requests still use `/api`.
+- The root layout is intentionally local-fast. It loads only the local experiment list plus system capabilities and does not fetch remote-aware mission-control data.
+- `/experiments` is a mission-control dashboard, not a launch surface. It route-loads `/api/experiments/overview?include_remote=false`, then refreshes `/api/experiments/overview?include_remote=true` after hydration and polls that remote-aware view every 10 seconds while visible, preserving the last successful snapshot on transient failures.
 - The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
 - The mission-control overview is canonicalized by `experiment_id`: when an experiment exists locally and on one remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate local/remote rows.
-- The left-rail experiment navigator uses that same canonicalized overview payload, so local experiments stay on the default `/experiments/<id>` route while remote-only experiments still preserve source-aware detail links.
+- The global left-rail experiment navigator now uses the local experiment list from the root layout, so unrelated routes stay fast and remote-free. Remote-aware canonicalized experiment rows remain on `/experiments`.
 - `make viz` runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before local API/frontend startup. That bootstrap step repo-syncs each enabled remote in `auto` mode, runs `remote doctor`, persists `ready|degraded` source state under `.numereng/remote_ops/bootstrap/viz.json`, and never starts a remote viz server on the target host.
 - Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
 - Launch/control actions are CLI/API-only by design.
 - `experiment pack` writes `EXPERIMENT.pack.md` into the experiment directory and includes `EXPERIMENT.md` plus a dashboard-aligned scalar run summary table only.
 - Experiment ranking defaults to `bmc_last_200_eras_mean`.
-- Run detail loading is progressive: the shell renders immediately from the selected run list row, and tab sections fetch lazily with localized loading states.
-- Remote experiment, run, study, and ensemble detail pages are read-only parity surfaces. Explicit source context is still preserved through query params for remote-only and ambiguous cases, but the default local route now uses local-first artifact resolution: local store -> pulled remote cache -> unique-source SSH fallback.
-- Run Ops and the dedicated run page no longer block on `/api/runs/{run_id}/bundle`; they share the same section-based loader and request cache/abort behavior.
+- Run detail loading is progressive and bundle-first: the shell renders from one initial partial bundle (`manifest`, `metrics`, `scoring_dashboard`), and diagnostics/artifacts/timeline sections lazy-load their own bundle sections with localized loading states.
+- Remote experiment, run, study, and ensemble detail pages are read-only parity surfaces. Explicit source context is still preserved through query params for remote-only and ambiguous cases, but the default local route now uses local-first artifact resolution: canonical local store -> pulled remote cache compatibility -> unique-source SSH fallback.
+- Run Ops and the dedicated run page now share a partial-bundle loader and request cache/abort behavior rather than a many-endpoint first-paint fan-out.
 - Run detail/chart reads are artifact-backed first; older runs that only have legacy scoring files are adapted in memory to the canonical dashboard payload, and rescoring remains the canonical backfill path.
 - Normal experiment/config catalogs exclude archived experiments by default.
 - Direct experiment lookups remain archive-aware, so `/experiments/[id]` can still render an archived experiment when addressed directly.

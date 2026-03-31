@@ -16,9 +16,16 @@ The key design choice is federated monitoring:
 
 This keeps one dashboard for local and remote runs without syncing SQLite stores, while still allowing finished remote history to be materialized locally when that is the preferred operating mode.
 
+The frontend is SSR-first again:
+- browser requests still use `/api`
+- server-side route loads default to `http://127.0.0.1:8502/api`
+- set `VIZ_API_BASE` if the local API is bound somewhere else
+- the root shell stays local-fast and does not fetch remote-aware mission-control data
+
 ## What Mission Control Assumes
 
 - `/api/experiments/overview` is the only source of truth for the experiments page
+- `/api/experiments/overview?include_remote=false` is the fast local-first load path for SSR and first paint
 - experiment ids may exist on both local and remote stores
 - the overview should collapse local+remote duplicates into one canonical local row when the experiment id matches
 - experiment and run detail routes keep the existing local URL shape and add optional `source_kind` / `source_id` query params only when explicit remote identity is required
@@ -35,11 +42,15 @@ This keeps one dashboard for local and remote runs without syncing SQLite stores
   check whether the browser tab is stale before assuming backend failure. Compare the page against `/api/experiments/overview`.
 - Overlapping client polls:
   the experiments page should allow only one in-flight overview refresh at a time.
+- Slow unrelated routes:
+  verify they are not accidentally route-loading remote overview data from the global shell.
 
 ## Useful Local Checks
 
 - Backend health: `curl http://127.0.0.1:8502/healthz`
 - Current overview: `curl http://127.0.0.1:8502/api/experiments/overview`
+- Local-only overview: `curl 'http://127.0.0.1:8502/api/experiments/overview?include_remote=false'`
+- Partial run bundle: `curl 'http://127.0.0.1:8502/api/runs/<run_id>/bundle?sections=manifest,metrics,scoring_dashboard'`
 - Remote snapshot directly:
   `ssh <target> "… uv run numereng monitor snapshot --store-root <store> --json"`
 

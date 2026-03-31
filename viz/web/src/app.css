@@ -385,6 +385,11 @@
 		color: var(--color-markdown-target-text);
 	}
 
+	.cv-section {
+		content-visibility: auto;
+		contain-intrinsic-size: auto 320px;
+	}
+
 	/* Reduced motion — disable animations for users who prefer it */
 	@media (prefers-reduced-motion: reduce) {
 		*, *::before, *::after {

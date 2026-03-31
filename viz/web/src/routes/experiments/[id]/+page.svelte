@@ -2022,15 +2022,17 @@
 				<div class="flex-1 min-w-0 flex flex-col min-h-0">
 					{#if selectedOp?.type === 'run'}
 						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
-							<RunDetailPanel
-								runId={selectedOp.id}
-								experimentId={data.experiment.experiment_id}
-								experimentName={data.experiment.name}
-								runs={data.runs}
-								source={data.source}
-								readOnly={readOnly}
-								onClose={() => (selectedOp = null)}
-							/>
+							{#key selectedOp.id}
+								<RunDetailPanel
+									runId={selectedOp.id}
+									experimentId={data.experiment.experiment_id}
+									experimentName={data.experiment.name}
+									runs={data.runs}
+									source={data.source}
+									readOnly={readOnly}
+									onClose={() => (selectedOp = null)}
+								/>
+							{/key}
 						</div>
 					{:else if selectedOp?.type === 'hpo'}
 						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
