@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import base64
-import io
 import json
 import subprocess
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -29,6 +27,18 @@ def _init_git_repo(repo_root: Path) -> None:
     subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=repo_root, check=True, capture_output=True)
+
+
+def _seed_staging_runs(staging_root: Path, run_manifests: dict[str, dict[str, object]]) -> Path:
+    runs_root = staging_root / "runs"
+    for run_id, manifest in run_manifests.items():
+        run_dir = runs_root / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (run_dir / "resolved.json").write_text(json.dumps({"seed": 7}), encoding="utf-8")
+        (run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+        (run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.08}}), encoding="utf-8")
+    return runs_root
 
 
 def test_sync_remote_repo_uses_git_visible_working_tree_only(
@@ -411,18 +421,6 @@ def test_pull_remote_experiment_materializes_finished_runs_and_reconciles_manife
         "data": {"target_col": "target_ender_20", "feature_set": "medium"},
         "model": {"type": "XGBRegressor"},
     }
-    archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("experiments/exp-1/experiment.json", json.dumps(remote_manifest))
-        archive.writestr("runs/run-a/run.json", json.dumps(run_manifest))
-        archive.writestr("runs/run-a/resolved.json", json.dumps({"seed": 7}))
-        archive.writestr(
-            "runs/run-a/metrics.json",
-            json.dumps({"bmc_last_200_eras": {"mean": 0.12}, "bmc": {"mean": 0.08}}),
-        )
-        archive.writestr("runs/run-a/score_provenance.json", json.dumps({"joins": {"predictions_rows": 10}}))
-        archive.writestr("runs/run-a/artifacts/scoring/manifest.json", json.dumps({"stages": {"omissions": {}}}))
-        archive.writestr("runs/run-a/artifacts/scoring/corr_per_era.parquet", b"parquet-bytes")
 
     monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
     monkeypatch.setattr(
@@ -439,21 +437,14 @@ def test_pull_remote_experiment_materializes_finished_runs_and_reconciles_manife
     )
     monkeypatch.setattr(
         remote_service,
-        "_run_remote_python_archive",
-        lambda *args, **kwargs: (
-            archive_buffer.getvalue(),
-            {
-                "archived_run_ids": ["run-a"],
-                "failures": [],
-                "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-1\experiment.json",
-                "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-1",
-            },
-        ),
+        "_copy_remote_runs_to_staging",
+        lambda **kwargs: _seed_staging_runs(kwargs["staging_root"], {"run-a": run_manifest}),
     )
 
     result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
 
     assert result.target_id == "pc"
+    assert result.already_materialized_run_ids == ()
     assert result.materialized_run_count == 1
     assert result.materialized_run_ids == ("run-a",)
     assert result.failures == ()
@@ -504,14 +495,17 @@ def test_pull_remote_experiment_returns_blockers_without_materializing_runs(
     assert not (store_root / "runs" / "run-a").exists()
 
 
-def test_pull_remote_experiment_skips_active_runs_and_aborts_on_local_conflict(
+def test_pull_remote_experiment_rerun_is_idempotent_for_existing_finished_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store_root = tmp_path / ".numereng"
     existing_run_dir = store_root / "runs" / "run-a"
     existing_run_dir.mkdir(parents=True)
-    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a"}), encoding="utf-8")
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
     remote_manifest = {
         "experiment_id": "exp-3",
         "name": "Remote Experiment",
@@ -533,11 +527,115 @@ def test_pull_remote_experiment_skips_active_runs_and_aborts_on_local_conflict(
             "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-3",
         },
     )
+    monkeypatch.setattr(
+        remote_service,
+        "_copy_remote_runs_to_staging",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("copy should not run for idempotent re-pull")),
+    )
 
     result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-3", store_root=store_root)
 
     assert result.materialized_run_count == 0
+    assert result.already_materialized_run_ids == ("run-a",)
     assert result.skipped_non_finished_run_ids == ("run-b",)
+    assert result.failures == ()
+
+
+def test_pull_remote_experiment_fails_on_incomplete_existing_run_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    existing_run_dir = store_root / "runs" / "run-a"
+    existing_run_dir.mkdir(parents=True)
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    remote_manifest = {
+        "experiment_id": "exp-4",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a"],
+        "metadata": {},
+    }
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-4\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-4",
+        },
+    )
+
+    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-4", store_root=store_root)
+
+    assert result.materialized_run_count == 0
     assert len(result.failures) == 1
     assert result.failures[0].run_id == "run-a"
-    assert result.failures[0].reason == "local_run_conflict"
+    assert result.failures[0].reason == "local_run_incomplete"
+    assert set(result.failures[0].missing_files) == {"resolved.json", "results.json", "metrics.json"}
+
+
+def test_pull_remote_experiment_only_copies_missing_finished_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    existing_run_dir = store_root / "runs" / "run-a"
+    existing_run_dir.mkdir(parents=True)
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    remote_manifest = {
+        "experiment_id": "exp-5",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a", "run-b"],
+        "metadata": {},
+    }
+    copied_run_ids: list[str] = []
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a", "run-b"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-5\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-5",
+        },
+    )
+
+    def _fake_copy(**kwargs: object) -> Path:
+        copied_run_ids.extend(kwargs["run_ids"])
+        return _seed_staging_runs(
+            kwargs["staging_root"],
+            {
+                "run-b": {
+                    "run_id": "run-b",
+                    "status": "FINISHED",
+                    "experiment_id": "exp-5",
+                    "execution": {"backend": "remote_pc"},
+                }
+            },
+        )
+
+    monkeypatch.setattr(remote_service, "_copy_remote_runs_to_staging", _fake_copy)
+
+    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-5", store_root=store_root)
+
+    assert copied_run_ids == ["run-b"]
+    assert result.already_materialized_run_ids == ("run-a",)
+    assert result.materialized_run_ids == ("run-b",)
+    assert result.materialized_run_count == 1
+    manifest = json.loads(result.local_experiment_manifest_path.read_text(encoding="utf-8"))
+    assert manifest["runs"] == ["run-a", "run-b"]
+    assert manifest["metadata"]["remote_pull"]["materialized_finished_run_ids"] == ["run-a", "run-b"]

@@ -49,6 +49,23 @@ def ssh_base_command(target: SshRemoteTargetProfile) -> list[str]:
     return args
 
 
+def scp_base_command(target: SshRemoteTargetProfile) -> list[str]:
+    """Build the base SCP argv prefix for one target."""
+
+    args = [
+        "scp",
+        "-B",
+        "-o",
+        f"ConnectTimeout={target.connect_timeout_seconds}",
+    ]
+    identity_file = _env_value(target.identity_file_env)
+    if identity_file:
+        args.extend(["-i", identity_file])
+    if target.port is not None:
+        args.extend(["-P", str(target.port)])
+    return args
+
+
 def build_ssh_command(target: SshRemoteTargetProfile, remote_command: str) -> list[str]:
     """Build the full SSH argv for one remote command."""
 
@@ -141,6 +158,7 @@ __all__ = [
     "build_remote_python_command",
     "build_remote_shell_command",
     "build_ssh_command",
+    "scp_base_command",
     "powershell_single_quote",
     "remote_path_join",
     "ssh_base_command",

@@ -195,6 +195,7 @@ def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperi
         local_experiment_manifest_path=str(result.local_experiment_manifest_path),
         local_runs_root=str(result.local_runs_root),
         pulled_at=result.pulled_at,
+        already_materialized_run_ids=list(result.already_materialized_run_ids),
         materialized_run_ids=list(result.materialized_run_ids),
         materialized_run_count=result.materialized_run_count,
         skipped_non_finished_run_ids=list(result.skipped_non_finished_run_ids),

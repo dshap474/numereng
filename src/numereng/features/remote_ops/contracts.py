@@ -89,6 +89,7 @@ class RemoteExperimentPullResult:
     local_experiment_manifest_path: Path
     local_runs_root: Path
     pulled_at: str
+    already_materialized_run_ids: tuple[str, ...]
     materialized_run_ids: tuple[str, ...]
     materialized_run_count: int
     skipped_non_finished_run_ids: tuple[str, ...]

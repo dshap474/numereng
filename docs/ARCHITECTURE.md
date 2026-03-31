@@ -267,7 +267,7 @@ Data model split:
 - sqlite indexes query surfaces for runs/metrics/experiments/HPO/ensembles/telemetry.
 - `cloud_jobs` is the active/in-flight cloud job control plane for jobs that do not yet have a materialized run directory.
 - `cache/cloud/*` holds transient cloud state and pull staging; it is not the durable run store.
-- `cache/remote_ops/pulls/*` is legacy compatibility-only state for older lightweight remote pullbacks; new `remote experiment pull` runs materialize finished remote runs directly into canonical local `runs/<run_id>` storage.
+- `cache/remote_ops/pulls/*` is legacy compatibility-only state for older lightweight remote pullbacks; new `remote experiment pull` runs materialize finished remote runs directly into canonical local `runs/<run_id>` storage and skip already-materialized valid runs on rerun instead of failing on local conflicts.
 - `tmp/*` is store-owned scratch space; `store doctor --fix-strays` prunes old `tmp/remote-configs/*.json` files only when they are older than 30 days and not referenced by active run lifecycles.
 - `remote_ops/*` is canonical operational state for SSH bootstrap/sync/detached launch workflows.
 - `store rebuild` re-derives index state from filesystem artifacts.

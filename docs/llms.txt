@@ -236,7 +236,7 @@ Viz/frontend topology:
 - `make viz` automatically runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before starting the local FastAPI + Vite stack. It never starts a remote viz server; the local viz backend remains the only UI/API process and keeps polling remote monitor snapshots over SSH.
 - `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
 - `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
-- `remote experiment pull` is the canonical remote result sync flow for remote-trained experiments. It materializes full `FINISHED` remote run directories into `.numereng/runs/<run_id>`, reconciles `.numereng/experiments/<id>/experiment.json` locally, and leaves active/incomplete remote runs to SSH fallback plus overview freshness overlay.
+- `remote experiment pull` is the canonical remote result sync flow for remote-trained experiments. It materializes full `FINISHED` remote run directories into `.numereng/runs/<run_id>`, reconciles `.numereng/experiments/<id>/experiment.json` locally, skips already-materialized valid runs idempotently on rerun, and leaves active/incomplete remote runs to SSH fallback plus overview freshness overlay.
 - `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
 - Live-run payloads now carry `progress_mode`:
   - `exact` for local lifecycle-backed percentages
