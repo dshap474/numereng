@@ -764,6 +764,8 @@ class VizStoreAdapter:
         self.db_path = self.store_root / "numereng.db"
         self._lock = threading.RLock()
         self._conn = self._connect_read_only()
+        self._table_exists_cache: dict[str, bool] = {}
+        self._resolved_run_dir_cache: dict[str, Path] = {}
 
     def _connect_read_only(self) -> sqlite3.Connection | None:
         if not self.db_path.exists():
@@ -797,11 +799,16 @@ class VizStoreAdapter:
         return rows[0] if rows else None
 
     def _table_exists(self, name: str) -> bool:
+        cached = self._table_exists_cache.get(name)
+        if cached is not None:
+            return cached
         row = self._query_one(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
             (name,),
         )
-        return row is not None
+        exists = row is not None
+        self._table_exists_cache[name] = exists
+        return exists
 
     def _in_store(self, path: Path) -> bool:
         try:
@@ -1906,6 +1913,11 @@ class VizStoreAdapter:
 
     def _resolve_run_dir(self, run_id: str) -> Path:
         _ensure_safe_id(run_id, label="run_id")
+        cached = self._resolved_run_dir_cache.get(run_id)
+        if cached is not None and cached.exists() and cached.is_dir():
+            return cached
+        if cached is not None:
+            self._resolved_run_dir_cache.pop(run_id, None)
         if self._table_exists("runs"):
             row = self._query_one("SELECT run_path FROM runs WHERE run_id = ?", (run_id,))
             if row is not None:
@@ -1913,6 +1925,7 @@ class VizStoreAdapter:
                 if isinstance(run_path, str) and run_path:
                     path = Path(run_path)
                     if path.exists() and path.is_dir():
+                        self._resolved_run_dir_cache[run_id] = path
                         return path
 
         if self._table_exists("run_jobs"):
@@ -1932,14 +1945,17 @@ class VizStoreAdapter:
                 if isinstance(run_dir, str) and run_dir:
                     path = Path(run_dir)
                     if path.exists() and path.is_dir():
+                        self._resolved_run_dir_cache[run_id] = path
                         return path
 
         local_run_dir = self.store_root / "runs" / run_id
         if local_run_dir.is_dir():
+            self._resolved_run_dir_cache[run_id] = local_run_dir
             return local_run_dir
 
         pulled_run_dir = self._resolve_pulled_run_dir(run_id)
         if pulled_run_dir is not None:
+            self._resolved_run_dir_cache[run_id] = pulled_run_dir
             return pulled_run_dir
 
         return local_run_dir

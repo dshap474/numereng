@@ -12,7 +12,7 @@ The key design choice is federated monitoring:
 - enabled SSH remotes are queried through `numereng monitor snapshot --json`
 - completed remote experiments can be pulled back into canonical local run storage under `.numereng/runs/<run_id>`
 - the frontend renders one merged overview with local-primary canonical rows when experiment ids overlap
-- remote experiment and run detail pages stay on the local viz server, but default resolution is now canonical local runs first, then legacy pulled-cache compatibility when present, then source-aware SSH fallback when needed
+- remote experiment and run detail pages stay on the local viz server, but local detail requests now return canonical local experiment/run artifacts directly without probing remote overlays. Explicit remote source routes and genuine local misses still use source-aware SSH fallback, with legacy pulled-cache compatibility only as a last read-only bridge.
 
 This keeps one dashboard for local and remote runs without syncing SQLite stores, while still allowing finished remote history to be materialized locally when that is the preferred operating mode.
 

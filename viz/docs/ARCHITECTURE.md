@@ -77,7 +77,7 @@ Important invariants:
 - live rows come from real lifecycle/cloud state, not stale active-looking jobs
 - experiment attribution may be synthesized when remote/external config runs have no indexed experiment row
 - config labels must tolerate Windows-style paths
-- local-first detail reads resolve canonical local artifacts first, then pulled remote cache artifacts, then SSH fallback
+- local-first detail reads treat canonical local artifacts as the hot path and do not probe remote overlay metadata on successful local reads; explicit remote-source requests and genuine local misses still fall through to pulled-cache compatibility and then SSH fallback
 
 ## Frontend Layers
 

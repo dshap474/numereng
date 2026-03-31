@@ -271,6 +271,7 @@ Data model split:
 - `tmp/*` is store-owned scratch space; `store doctor --fix-strays` prunes old `tmp/remote-configs/*.json` files only when they are older than 30 days and not referenced by active run lifecycles.
 - `remote_ops/*` is canonical operational state for SSH bootstrap/sync/detached launch workflows.
 - `store rebuild` re-derives index state from filesystem artifacts.
+- Viz detail reads treat local artifacts as authoritative hot-path data: local experiment/run detail requests do not fetch remote overlay metadata unless the caller explicitly supplies a remote source or the local artifact is missing.
 - Archived experiments keep the same experiment ID, but their experiment-local files move under `.numereng/experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
 
 ## 7. Core Execution Flows
