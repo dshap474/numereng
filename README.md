@@ -175,13 +175,14 @@ Use shared AWS credentials, `AWS_PROFILE`, or direct AWS credential env vars for
 Run the dashboard API and web app:
 
 ```bash
-make viz
+just viz
 ```
 
 - Requires Node.js 20+ and `npm` for the web app.
 - API: `http://127.0.0.1:8502`
 - Web: `http://127.0.0.1:5173`
-- Stop servers: `make kill-viz`
+- Stop servers: `just kill-viz`
+- `make viz` is deprecated and forwards to `just viz`
 
 The dashboard is monitor-only. Launch and control operations still happen through the CLI or Python API.
 Training and `run score` persist the canonical scoring-artifact bundle used by run-detail charts, including the per-era and cumulative metric series. Older runs can be backfilled with `uv run numereng store materialize-viz-artifacts --kind scoring-artifacts ...` (`per-era-corr` remains as a deprecated alias).
