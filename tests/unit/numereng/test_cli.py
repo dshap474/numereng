@@ -229,6 +229,7 @@ def test_cli_remote_experiment_pull_success(
             local_experiment_manifest_path=".numereng/experiments/exp-1/experiment.json",
             local_runs_root=".numereng/runs",
             pulled_at="2026-03-31T00:00:00+00:00",
+            already_materialized_run_ids=["run-0"],
             materialized_run_ids=["run-a", "run-b"],
             materialized_run_count=2,
             skipped_non_finished_run_ids=["run-c"],

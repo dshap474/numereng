@@ -123,6 +123,7 @@ class RemoteExperimentPullResponse(BaseModel):
     local_experiment_manifest_path: str
     local_runs_root: str
     pulled_at: str
+    already_materialized_run_ids: list[str] = Field(default_factory=list)
     materialized_run_ids: list[str] = Field(default_factory=list)
     materialized_run_count: int
     skipped_non_finished_run_ids: list[str] = Field(default_factory=list)
