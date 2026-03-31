@@ -1,8 +1,9 @@
 # Runtime store (always local, never committed)
-.numereng/
+.numereng/*
 .numereng_*/
 .local/
 .cache/
+
 
 # Data directories (downloaded and generated files)
 output/
@@ -79,6 +80,7 @@ deterministic-evaluation/
 dev/
 !dev/hygiene/
 !dev/hygiene/*.json
+.codex/rules/
 
 # Tracked README banner asset
 !docs/assets/numereng-banner.png
