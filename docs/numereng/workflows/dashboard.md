@@ -10,7 +10,7 @@ The dashboard reads store state. Launch and control actions still happen through
 ## Start
 
 ```bash
-make viz
+just viz
 ```
 
 Default local endpoints:
@@ -21,7 +21,7 @@ Default local endpoints:
 Stop both:
 
 ```bash
-make kill-viz
+just kill-viz
 ```
 
 ## Requirements

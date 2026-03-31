@@ -1,4 +1,4 @@
-.PHONY: ci fmt test test-all viz kill-viz oss-preflight security readiness deps-lint arch-lint
+.PHONY: ci fmt test test-all viz viz-start kill-viz oss-preflight security readiness deps-lint arch-lint
 
 API_PORT ?= 8502
 VITE_PORT ?= 5173
@@ -67,66 +67,11 @@ oss-preflight:
 	@echo "PASS: OSS preflight checks passed."
 
 kill-viz:
-	@for pid_file in "$(API_PID_FILE)" "$(VITE_PID_FILE)"; do \
-		if [ -f "$$pid_file" ]; then \
-			pid=$$(cat "$$pid_file" 2>/dev/null || true); \
-			if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
-				kill "$$pid" 2>/dev/null || true; \
-			fi; \
-			rm -f "$$pid_file"; \
-		fi; \
-	done
-	@lsof -ti:$(API_PORT) 2>/dev/null | xargs kill 2>/dev/null || true
-	@lsof -ti:$(VITE_PORT) 2>/dev/null | xargs kill 2>/dev/null || true
-	@for port in $(API_PORT) $(VITE_PORT); do \
-		attempt=0; \
-		while lsof -ti:$$port >/dev/null 2>&1; do \
-			attempt=$$((attempt + 1)); \
-			if [ $$attempt -gt 20 ]; then \
-				lsof -ti:$$port 2>/dev/null | xargs kill -9 2>/dev/null || true; \
-				break; \
-			fi; \
-			sleep 0.2; \
-		done; \
-	done
-	@echo "Viz servers stopped"
+	@./scripts/viz-stop.sh
 
-viz: kill-viz
-	@mkdir -p $(VIZ_DIR)
-	@if [ ! -d $(VIZ_WEB)/node_modules ]; then \
-		echo "Installing npm dependencies..."; \
-		cd $(VIZ_WEB) && npm install --include=dev; \
-	fi
-	@rm -f "$(VIZ_DIR)/bootstrap.log" "$(VIZ_DIR)/api.log" "$(VIZ_DIR)/vite.log"
-	@cd $(CURDIR); \
-	uv run numereng remote bootstrap-viz --store-root "$(CURDIR)/.numereng" > "$(VIZ_DIR)/bootstrap.log" 2>&1; \
-	status=$$?; \
-	cat "$(VIZ_DIR)/bootstrap.log"; \
-	exit $$status
-	@cd $(CURDIR); nohup uv run python -m uvicorn viz.api:app --host 127.0.0.1 --port $(API_PORT) \
-		> "$(VIZ_DIR)/api.log" 2>&1 & echo $$! > "$(API_PID_FILE)"
-	@cd $(VIZ_WEB); nohup npm run dev -- --host 127.0.0.1 --port $(VITE_PORT) \
-		> "$(VIZ_DIR)/vite.log" 2>&1 & echo $$! > "$(VITE_PID_FILE)"
-	@attempt=0; \
-	until curl -fsS "http://127.0.0.1:$(API_PORT)/healthz" >/dev/null 2>&1; do \
-		attempt=$$((attempt + 1)); \
-		if [ $$attempt -gt 50 ]; then \
-			echo "API failed to start on port $(API_PORT)"; \
-			tail -n 80 "$(VIZ_DIR)/api.log" || true; \
-			exit 1; \
-		fi; \
-		sleep 0.2; \
-	done
-	@attempt=0; \
-	until curl -fsS "http://127.0.0.1:$(VITE_PORT)" >/dev/null 2>&1; do \
-		attempt=$$((attempt + 1)); \
-		if [ $$attempt -gt 80 ]; then \
-			echo "Vite failed to start on port $(VITE_PORT)"; \
-			tail -n 80 "$(VIZ_DIR)/vite.log" || true; \
-			exit 1; \
-		fi; \
-		sleep 0.2; \
-	done
-	@echo "API started (pid $$(cat "$(API_PID_FILE)")) on http://127.0.0.1:$(API_PORT)"
-	@echo "Vite started (pid $$(cat "$(VITE_PID_FILE)")) on http://127.0.0.1:$(VITE_PORT)"
-	@echo "Viz running - logs: viz/bootstrap.log, viz/api.log, viz/vite.log"
+viz:
+	@echo "DEPRECATED: use 'just viz' instead of 'make viz'."
+	@just viz
+
+viz-start:
+	@./scripts/viz-start.sh

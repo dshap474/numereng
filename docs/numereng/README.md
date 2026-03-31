@@ -20,7 +20,7 @@ Stable public interfaces:
 - Build official-style dataset artifacts and maintain store state: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
 - Launch cloud workflows: `uv run numereng cloud --help`
 - Query Numerai datasets/models/rounds and scrape the forum: `uv run numereng numerai --help`
-- Launch the read-only dashboard: `make viz`
+- Launch the read-only dashboard: `just viz`
 
 Default runtime state lives under `.numereng/`.
 
@@ -31,7 +31,7 @@ uv sync --extra dev
 uv run numereng --help
 uv run numereng run train --config configs/run.json
 uv run numereng experiment list
-make viz
+just viz
 ```
 
 ## Architecture

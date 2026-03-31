@@ -84,7 +84,7 @@ uv run numereng cloud modal deploy --ecr-image-uri <registry>/<repository>:<tag>
 ## Optional Viz
 
 ```bash
-make viz
+just viz
 ```
 
 Frontend: `http://127.0.0.1:5173`  

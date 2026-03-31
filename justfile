@@ -28,5 +28,11 @@ security:
 build:
     uv build
 
+kill-viz:
+    ./scripts/viz-stop.sh
+
+viz:
+    ./scripts/viz-start.sh
+
 ci:
     make ci

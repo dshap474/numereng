@@ -8,7 +8,7 @@
 
 ## First checks
 
-1. Start the dashboard with `make viz`.
+1. Start the dashboard with `just viz`.
 2. Confirm the API health check: `http://127.0.0.1:8502/healthz`.
 3. Inspect `viz/api.log` and `viz/vite.log`.
 4. Confirm the underlying run artifacts exist under `.numereng/runs/<run_id>/`.
