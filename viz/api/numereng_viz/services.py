@@ -24,6 +24,20 @@ TOP_METRIC_NAMES = [
     "mmc_mean",
 ]
 
+RUN_BUNDLE_SECTIONS = frozenset(
+    {
+        "manifest",
+        "metrics",
+        "scoring_dashboard",
+        "events",
+        "resources",
+        "resolved_config",
+        "trials",
+        "best_params",
+        "diagnostics_sources",
+    }
+)
+
 
 class VizService:
     """Thin orchestration layer over the store adapter."""
@@ -36,8 +50,10 @@ class VizService:
     def list_experiments(self) -> list[dict[str, Any]]:
         return self.adapter.list_experiments()
 
-    def get_experiments_overview(self) -> dict[str, Any]:
+    def get_experiments_overview(self, *, include_remote: bool = True) -> dict[str, Any]:
         local_snapshot = build_monitor_snapshot(store_root=self.adapter.store_root, refresh_cloud=True)
+        if not include_remote:
+            return local_snapshot
         remote_snapshots = self.remote_snapshots.fetch_snapshots()
         return merge_monitor_snapshots(local_snapshot, remote_snapshots)
 
@@ -648,78 +664,74 @@ class VizService:
         self,
         run_id: str,
         *,
+        sections: set[str] | None = None,
         source_kind: str | None = None,
         source_id: str | None = None,
     ) -> dict[str, Any]:
         """Fetch bundle parts concurrently to reduce endpoint latency."""
 
+        requested_sections = RUN_BUNDLE_SECTIONS if sections is None else set(sections)
+
         if self._is_remote_source(source_kind=source_kind, source_id=source_id):
             payload = self._remote_call(
                 "get_run_bundle",
                 args=(run_id,),
+                kwargs={"sections": sorted(requested_sections)} if sections is not None else None,
                 source_kind=source_kind,
                 source_id=source_id,
             )
             assert isinstance(payload, dict)
             return payload
 
-        manifest = self.adapter.get_run_manifest(run_id)
-        metrics = self.adapter.get_run_metrics(run_id)
-        scoring_dashboard = self.adapter.get_scoring_dashboard(run_id)
-        if manifest is None and metrics is None and scoring_dashboard is None:
+        manifest = self.adapter.get_run_manifest(run_id) if "manifest" in requested_sections else None
+        metrics = self.adapter.get_run_metrics(run_id) if "metrics" in requested_sections else None
+        scoring_dashboard = (
+            self.adapter.get_scoring_dashboard(run_id) if "scoring_dashboard" in requested_sections else None
+        )
+        if (
+            ("manifest" not in requested_sections or manifest is None)
+            and ("metrics" not in requested_sections or metrics is None)
+            and ("scoring_dashboard" not in requested_sections or scoring_dashboard is None)
+            and not requested_sections.intersection(
+                {"events", "resources", "resolved_config", "trials", "best_params", "diagnostics_sources"}
+            )
+        ):
             remote_payload = self._remote_run_fallback("get_run_bundle", run_id)
             if isinstance(remote_payload, dict):
-                return remote_payload
+                return {key: remote_payload.get(key) for key in requested_sections}
 
-        metrics_task = asyncio.to_thread(
-            lambda: metrics if metrics is not None else self.adapter.get_run_metrics(run_id)
-        )
-        manifest_task = asyncio.to_thread(
-            lambda: manifest if manifest is not None else self.adapter.get_run_manifest(run_id)
-        )
-        events_task = asyncio.to_thread(self.adapter.list_run_events, run_id, limit=50)
-        resources_task = asyncio.to_thread(self.adapter.list_run_resources, run_id, limit=50)
-        scoring_dashboard_task = asyncio.to_thread(
-            lambda: scoring_dashboard if scoring_dashboard is not None else self.adapter.get_scoring_dashboard(run_id)
-        )
-        trials_task = asyncio.to_thread(self.adapter.get_trials, run_id)
-        params_task = asyncio.to_thread(self.adapter.get_best_params, run_id)
-        config_task = asyncio.to_thread(self.adapter.get_resolved_config, run_id)
-        diagnostics_sources_task = asyncio.to_thread(self.adapter.get_diagnostics_sources, run_id)
+        tasks: dict[str, asyncio.Future[Any]] = {}
+        if "metrics" in requested_sections:
+            tasks["metrics"] = asyncio.to_thread(
+                lambda: metrics if metrics is not None else self.adapter.get_run_metrics(run_id)
+            )
+        if "manifest" in requested_sections:
+            tasks["manifest"] = asyncio.to_thread(
+                lambda: manifest if manifest is not None else self.adapter.get_run_manifest(run_id)
+            )
+        if "events" in requested_sections:
+            tasks["events"] = asyncio.to_thread(self.adapter.list_run_events, run_id, limit=50)
+        if "resources" in requested_sections:
+            tasks["resources"] = asyncio.to_thread(self.adapter.list_run_resources, run_id, limit=50)
+        if "scoring_dashboard" in requested_sections:
+            tasks["scoring_dashboard"] = asyncio.to_thread(
+                lambda: (
+                    scoring_dashboard
+                    if scoring_dashboard is not None
+                    else self.adapter.get_scoring_dashboard(run_id)
+                )
+            )
+        if "trials" in requested_sections:
+            tasks["trials"] = asyncio.to_thread(self.adapter.get_trials, run_id)
+        if "best_params" in requested_sections:
+            tasks["best_params"] = asyncio.to_thread(self.adapter.get_best_params, run_id)
+        if "resolved_config" in requested_sections:
+            tasks["resolved_config"] = asyncio.to_thread(self.adapter.get_resolved_config, run_id)
+        if "diagnostics_sources" in requested_sections:
+            tasks["diagnostics_sources"] = asyncio.to_thread(self.adapter.get_diagnostics_sources, run_id)
 
-        (
-            metrics,
-            manifest,
-            events,
-            resources,
-            scoring_dashboard,
-            trials,
-            best_params,
-            resolved_config,
-            diagnostics_sources,
-        ) = await asyncio.gather(
-            metrics_task,
-            manifest_task,
-            events_task,
-            resources_task,
-            scoring_dashboard_task,
-            trials_task,
-            params_task,
-            config_task,
-            diagnostics_sources_task,
-        )
-
-        return {
-            "metrics": metrics,
-            "manifest": manifest,
-            "scoring_dashboard": scoring_dashboard,
-            "trials": trials,
-            "best_params": best_params,
-            "resolved_config": resolved_config,
-            "events": events,
-            "resources": resources,
-            "diagnostics_sources": diagnostics_sources,
-        }
+        results = await asyncio.gather(*tasks.values())
+        return dict(zip(tasks.keys(), results, strict=True))
 
     def list_studies(
         self,

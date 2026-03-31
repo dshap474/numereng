@@ -8,6 +8,7 @@
 		RecentExperimentActivityItem
 	} from '$lib/api/client';
 	import { api } from '$lib/api/client';
+	import { ensureClientPerfObservers, mark, measure } from '$lib/perf';
 	import { fmtPercent } from '$lib/utils';
 
 	let {
@@ -51,8 +52,17 @@
 	let remoteSourcesLoading = $derived(overviewBootstrapPending && remoteSources.length === 0);
 
 	$effect(() => {
+		ensureClientPerfObservers();
+	});
+
+	$effect(() => {
+		mark('experiments:local-ready:start');
 		overview = routeOverview();
 		overviewBootstrapPending = routeOverviewPending();
+		queueMicrotask(() => {
+			mark('experiments:local-ready:end');
+			measure('experiments_local_payload_ready', 'experiments:local-ready:start', 'experiments:local-ready:end');
+		});
 	});
 
 	$effect(() => {
@@ -72,20 +82,27 @@
 		void refreshOverview(session);
 		const timer = window.setInterval(() => {
 			void refreshOverview(session);
-		}, 3000);
+		}, 10000);
 		return () => window.clearInterval(timer);
 	});
 
 	async function refreshOverview(session: number) {
 		if (overviewRefreshInFlight) return;
 		overviewRefreshInFlight = true;
+		mark(`experiments:remote-refresh:${session}:start`);
 		try {
-			const next = await api.getExperimentsOverview();
+			const next = await api.getExperimentsOverview({ include_remote: true });
 			if (session !== overviewPollSession) return;
 			overview = next;
 		} catch {
 			if (session !== overviewPollSession) return;
 		} finally {
+			mark(`experiments:remote-refresh:${session}:end`);
+			measure(
+				`experiments_remote_refresh:${session}`,
+				`experiments:remote-refresh:${session}:start`,
+				`experiments:remote-refresh:${session}:end`
+			);
 			if (session === overviewPollSession) {
 				overviewBootstrapPending = false;
 			}
@@ -437,7 +454,7 @@
 </script>
 
 <div class="mission-shell -mx-8 -mt-14 -mb-8 flex h-screen min-h-0 flex-col overflow-x-hidden overflow-y-auto md:-mt-8 xl:overflow-hidden">
-		<section class="mission-panel mission-surface flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/8">
+		<section class="mission-panel mission-surface cv-section flex min-h-0 flex-1 flex-col overflow-hidden border-t border-white/8">
 			<header class="mission-toolbar px-5 py-4 sm:px-6">
 			<div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
 				<div class="min-w-0">
@@ -477,7 +494,7 @@
 		</header>
 
 		{#if remoteSourcesViewOpen}
-			<section class="flex min-h-0 flex-1 flex-col">
+			<section class="cv-section flex min-h-0 flex-1 flex-col">
 				<div class="border-b border-white/8 px-5 py-4 sm:px-6">
 					<div class="flex items-start justify-between gap-4">
 						<div>
@@ -620,7 +637,7 @@
 
 				<div class="flex min-h-0 flex-1 flex-col md:contents xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
 					<div class="flex min-h-0 flex-1 flex-col md:contents xl:grid xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.95fr)] xl:grid-rows-[minmax(0,1fr)]">
-							<section class="mission-pane flex min-h-0 flex-col border-b-[1.5px] border-white/12 md:col-start-1 md:row-start-2 md:col-span-2 md:border-b-0 xl:col-auto xl:row-auto xl:col-span-1 xl:border-r-[1.5px] xl:border-b-0">
+							<section class="mission-pane cv-section flex min-h-0 flex-col border-b-[1.5px] border-white/12 md:col-start-1 md:row-start-2 md:col-span-2 md:border-b-0 xl:col-auto xl:row-auto xl:col-span-1 xl:border-r-[1.5px] xl:border-b-0">
 								<div class="mission-pane-header border-y-[1.5px] border-white/12 px-5 py-4">
 								<div class="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
 									<div>

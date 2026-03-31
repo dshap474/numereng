@@ -5,12 +5,13 @@
 </script>
 
 <div class="space-y-6">
-	<RunDetailPanel
-		runId={data.runId}
-		experimentId={data.experimentId}
-		experimentName={data.experiment?.name ?? null}
-		runs={Array.isArray(data.runs) ? data.runs : []}
-		source={data.source}
-		readOnly={Boolean(data.capabilities?.read_only)}
-	/>
+	{#key data.runId}
+		<RunDetailPanel
+			runId={data.runId}
+			experimentId={data.experimentId}
+			experimentName={data.experiment?.name ?? null}
+			source={data.source}
+			readOnly={Boolean(data.capabilities?.read_only)}
+		/>
+	{/key}
 </div>

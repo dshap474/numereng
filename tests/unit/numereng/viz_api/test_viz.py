@@ -2280,6 +2280,83 @@ def test_experiments_overview_route_returns_mission_control_payload(
     assert payload["recent_activity"][0]["status"] == "completed"
 
 
+def test_experiments_overview_route_can_skip_remote_snapshots(tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+    seen: list[bool] = []
+
+    def fake_get_experiments_overview(*, include_remote: bool = True) -> dict[str, Any]:
+        seen.append(include_remote)
+        return {"summary": {}, "experiments": [], "live_experiments": [], "recent_activity": []}
+
+    service.get_experiments_overview = fake_get_experiments_overview  # type: ignore[method-assign]
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/experiments/overview?include_remote=false")
+
+    assert response.status_code == 200
+    assert seen == [False]
+
+
+def test_run_bundle_route_accepts_selected_sections(tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+    calls: list[dict[str, Any]] = []
+
+    async def fake_get_run_bundle(
+        run_id: str,
+        *,
+        sections: set[str] | None = None,
+        source_kind: str | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        calls.append(
+            {
+                "run_id": run_id,
+                "sections": set() if sections is None else set(sections),
+                "source_kind": source_kind,
+                "source_id": source_id,
+            }
+        )
+        return {"manifest": {"run_id": run_id}, "metrics": {"bmc_mean": 0.1}}
+
+    service.get_run_bundle = fake_get_run_bundle  # type: ignore[method-assign]
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/runs/run-1/bundle?sections=manifest,metrics")
+
+    assert response.status_code == 200
+    assert response.json()["manifest"]["run_id"] == "run-1"
+    assert calls == [
+        {
+            "run_id": "run-1",
+            "sections": {"manifest", "metrics"},
+            "source_kind": None,
+            "source_id": None,
+        }
+    ]
+
+
+def test_run_bundle_route_rejects_unknown_sections(tmp_path: Path) -> None:
+    store_root = _seed_experiments_overview_store(tmp_path)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+    service = VizService(adapter)
+    app = FastAPI()
+    app.include_router(create_router(service))
+    client = TestClient(app)
+
+    response = client.get("/api/runs/run-1/bundle?sections=manifest,wat")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unknown bundle sections: wat"
+
+
 def test_numereng_docs_tree_uses_docs_numereng_root_only(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)

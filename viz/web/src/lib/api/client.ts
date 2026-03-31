@@ -1,6 +1,12 @@
+import { browser } from '$app/environment';
 import { normalizedSource, sourceQueryParams, type SourceContext } from '$lib/source';
 
-const BASE = '/api';
+const serverProcess = globalThis as typeof globalThis & {
+	process?: {
+		env?: Record<string, string | undefined>;
+	};
+};
+const BASE = browser ? '/api' : (serverProcess.process?.env?.VIZ_API_BASE ?? 'http://127.0.0.1:8502/api');
 
 type FetchFn = typeof globalThis.fetch;
 
@@ -261,16 +267,27 @@ export interface DiagnosticsSources {
 }
 
 export interface RunBundle {
-	metrics: Record<string, number> | null;
-	manifest: RunManifest | null;
-	scoring_dashboard: ScoringDashboard | null;
-	trials: Record<string, unknown>[] | null;
-	best_params: Record<string, unknown> | null;
-	resolved_config: { yaml: string } | null;
-	events: RunEvent[] | null;
-	resources: ResourceSample[] | null;
-	diagnostics_sources: DiagnosticsSources | null;
+	metrics?: Record<string, number> | null;
+	manifest?: RunManifest | null;
+	scoring_dashboard?: ScoringDashboard | null;
+	trials?: Record<string, unknown>[] | null;
+	best_params?: Record<string, unknown> | null;
+	resolved_config?: { yaml: string } | null;
+	events?: RunEvent[] | null;
+	resources?: ResourceSample[] | null;
+	diagnostics_sources?: DiagnosticsSources | null;
 }
+
+export type RunBundleSection =
+	| 'manifest'
+	| 'metrics'
+	| 'scoring_dashboard'
+	| 'events'
+	| 'resources'
+	| 'resolved_config'
+	| 'trials'
+	| 'best_params'
+	| 'diagnostics_sources';
 
 export interface ExperimentConfigSummary {
 	run_id?: string | null;
@@ -586,6 +603,18 @@ export interface SystemCapabilities {
 const bundleCache = new Map<string, RunBundle>();
 const immutableRunSectionCache = new Map<string, unknown>();
 
+const RUN_BUNDLE_SECTIONS: RunBundleSection[] = [
+	'manifest',
+	'metrics',
+	'scoring_dashboard',
+	'events',
+	'resources',
+	'resolved_config',
+	'trials',
+	'best_params',
+	'diagnostics_sources'
+];
+
 function cachedKey(section: string, runId: string, source?: SourceContext): string {
 	const normalized = normalizedSource(source);
 	return `${section}:${normalized.source_kind}:${normalized.source_id}:${runId}`;
@@ -643,7 +672,11 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				fetchFn
 			),
 		listExperiments: () => get<Experiment[]>('/experiments', fetchFn),
-		getExperimentsOverview: () => get<ExperimentOverviewResponse>('/experiments/overview', fetchFn),
+		getExperimentsOverview: (params?: { include_remote?: boolean }) =>
+			get<ExperimentOverviewResponse>(
+				`/experiments/overview${query({ include_remote: params?.include_remote })}`,
+				fetchFn
+			),
 		getExperiment: (id: string, source?: SourceContext) =>
 			get<Experiment>(`/experiments/${id}${query(sourceQueryParams(source))}`, fetchFn),
 		getExperimentConfigs: (
@@ -806,13 +839,29 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				after_sample_id: params?.after_sample_id,
 				...sourceQueryParams(params)
 			})}`,
-		getRunBundle: (runId: string, source?: SourceContext): Promise<RunBundle> => {
-			const key = cachedKey('bundle', runId, source);
+		getRunBundle: (
+			runId: string,
+			params?: { sections?: RunBundleSection[]; signal?: AbortSignal } & SourceContext
+		): Promise<RunBundle> => {
+			const key = cachedKey('bundle', runId, params);
 			const cached = bundleCache.get(key);
-			if (cached) return Promise.resolve(cached);
-			return get<RunBundle>(`/runs/${runId}/bundle${query(sourceQueryParams(source))}`, fetchFn).then((data) => {
-				bundleCache.set(key, data);
-				return data;
+			const requestedSections = params?.sections?.length
+				? Array.from(new Set(params.sections))
+				: RUN_BUNDLE_SECTIONS;
+			if (cached && requestedSections.every((section) => section in cached)) {
+				return Promise.resolve(cached);
+			}
+			return get<RunBundle>(
+				`/runs/${runId}/bundle${query({
+					sections: params?.sections?.length ? requestedSections.join(',') : undefined,
+					...sourceQueryParams(params)
+				})}`,
+				fetchFn,
+				params?.signal
+			).then((data) => {
+				const next = { ...(cached ?? {}), ...data };
+				bundleCache.set(key, next);
+				return next;
 			});
 		},
 		getSystemCapabilities: () => get<SystemCapabilities>('/system/capabilities', fetchFn),

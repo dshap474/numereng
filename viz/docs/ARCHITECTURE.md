@@ -86,8 +86,8 @@ Important invariants:
 Initial route load for mission control.
 
 Important invariant:
-- fetch the real `/api/experiments/overview` on load
-- fallback-only parent experiment data is not sufficient for federated mission control
+- fetch `/api/experiments/overview?include_remote=false` on first load
+- remote-aware overview refresh happens after hydration, not in the root layout
 
 ### `viz/web/src/routes/experiments/+page.svelte`
 
@@ -98,6 +98,7 @@ Important invariants:
 - allow only one in-flight overview refresh at a time
 - hold the last good snapshot on failure
 - keyed lists must be source-aware
+- poll every 10 seconds while visible, not from the root shell
 
 Required keys:
 
@@ -111,7 +112,7 @@ If the page keys by `experiment_id` only, remote-only rows can still collide wit
 
 ## Polling and Freshness
 
-Mission control uses a 3-second poll.
+Mission control uses a 10-second visible-only poll after one immediate post-hydration refresh.
 
 The critical client rule is single-flight polling:
 - start one overview request

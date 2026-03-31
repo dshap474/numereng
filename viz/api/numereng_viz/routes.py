@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from numereng_viz.contracts import capabilities_payload
-from numereng_viz.services import VizService
+from numereng_viz.services import RUN_BUNDLE_SECTIONS, VizService
 
 _VALID_EXPERIMENT_DOCS = {"EXPERIMENT.md", "REPORT.md"}
 _VALID_RUN_DOCS = {"RUN.md"}
@@ -123,8 +123,8 @@ def create_router(service: VizService) -> APIRouter:
         return _cached_response(service.list_experiments(), max_age=30)
 
     @router.get("/experiments/overview")
-    def get_experiments_overview() -> JSONResponse:
-        return _nocache_response(service.get_experiments_overview())
+    def get_experiments_overview(include_remote: bool = True) -> JSONResponse:
+        return _nocache_response(service.get_experiments_overview(include_remote=include_remote))
 
     @router.get("/experiments/{experiment_id}")
     def get_experiment(
@@ -733,11 +733,26 @@ def create_router(service: VizService) -> APIRouter:
     @router.get("/runs/{run_id}/bundle")
     async def get_run_bundle(
         run_id: str,
+        sections: str | None = None,
         source_kind: str | None = None,
         source_id: str | None = None,
     ) -> JSONResponse:
+        requested_sections: set[str] | None = None
+        if sections:
+            requested_sections = {value.strip() for value in sections.split(",") if value.strip()}
+            invalid_sections = requested_sections - RUN_BUNDLE_SECTIONS
+            if invalid_sections:
+                raise HTTPException(
+                    400,
+                    f"Unknown bundle sections: {', '.join(sorted(invalid_sections))}",
+                )
         try:
-            payload = await service.get_run_bundle(run_id, source_kind=source_kind, source_id=source_id)
+            payload = await service.get_run_bundle(
+                run_id,
+                sections=requested_sections,
+                source_kind=source_kind,
+                source_id=source_id,
+            )
         except (ValueError, LookupError, FileNotFoundError) as exc:
             _raise_service_http_error(exc)
         return _cached_response(payload)

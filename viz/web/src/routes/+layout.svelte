@@ -1,7 +1,7 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/stores';
-	import { normalizedSource, withSourceHref } from '$lib/source';
+	import { ensureClientPerfObservers, mark, measure } from '$lib/perf';
 
 	let { data, children } = $props();
 
@@ -27,13 +27,8 @@
 		return match ? match[1] : null;
 	});
 
-	function isActive(exp: { experiment_id: string; source_kind?: string | null; source_id?: string | null }): boolean {
-		const source = normalizedSource(exp);
-		return (
-			activeExperimentId === exp.experiment_id &&
-			currentSourceKind === source.source_kind &&
-			currentSourceId === source.source_id
-		);
+	function isActive(exp: { experiment_id: string }): boolean {
+		return activeExperimentId === exp.experiment_id && currentSourceKind === 'local' && currentSourceId === 'local';
 	}
 
 	function closeSidebar() {
@@ -43,6 +38,15 @@
 	function toggleSidebarCollapsed() {
 		sidebarCollapsed = !sidebarCollapsed;
 	}
+
+	$effect(() => {
+		ensureClientPerfObservers();
+		mark('layout:shell:start');
+		queueMicrotask(() => {
+			mark('layout:shell:end');
+			measure('layout_shell_ready', 'layout:shell:start', 'layout:shell:end');
+		});
+	});
 </script>
 
 <!-- Skip to content -->
@@ -198,10 +202,10 @@
 						<div class="bg-sidebar-accent/30 rounded-b-md p-1 space-y-1 max-h-[60vh] overflow-y-auto">
 							<nav aria-label="Experiments">
 								<ul class="space-y-1">
-									{#each data.experiments as exp (`${exp.source_kind ?? 'local'}:${exp.source_id ?? 'local'}:${exp.experiment_id}`)}
+									{#each data.experiments as exp (exp.experiment_id)}
 										<li>
 											<a
-												href={exp.detail_href ?? withSourceHref(`/experiments/${exp.experiment_id}`, exp)}
+												href={`/experiments/${exp.experiment_id}`}
 												aria-current={isActive(exp) ? 'page' : undefined}
 												class="block px-3 py-3 rounded-md transition-colors {isActive(exp)
 													? 'bg-sidebar-accent text-sidebar-accent-foreground'
@@ -212,11 +216,6 @@
 													<span class="text-[9px] text-sidebar-foreground/40 tabular-nums">{exp.created_at?.slice(0, 10) ?? ''}</span>
 													</div>
 												<span class="text-sm font-medium truncate block">{exp.name}</span>
-												{#if (exp.source_kind ?? 'local') !== 'local'}
-													<span class="mt-1 inline-flex max-w-full rounded border border-sidebar-border/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-sidebar-foreground/60">
-														{exp.source_label ?? exp.source_id ?? exp.source_kind}
-													</span>
-												{/if}
 											</a>
 										</li>
 									{/each}
