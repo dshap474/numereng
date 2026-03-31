@@ -214,6 +214,38 @@ def test_cli_remote_run_train_success(
     assert payload["repo_synced"] is True
 
 
+def test_cli_remote_experiment_pull_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_experiment_pull(
+        request: api_module.RemoteExperimentPullRequest,
+    ) -> api_module.RemoteExperimentPullResponse:
+        assert request.target_id == "pc"
+        assert request.experiment_id == "exp-1"
+        return api_module.RemoteExperimentPullResponse(
+            target_id="pc",
+            experiment_id="exp-1",
+            local_experiment_manifest_path=".numereng/experiments/exp-1/experiment.json",
+            cache_experiment_dir=".numereng/cache/remote_ops/pulls/pc/experiments/exp-1",
+            cache_runs_root=".numereng/cache/remote_ops/pulls/pc/runs",
+            pulled_at="2026-03-31T00:00:00+00:00",
+            pulled_run_count=2,
+            cached_artifact_count=14,
+            skipped_artifact_count=1,
+            failures=[],
+        )
+
+    monkeypatch.setattr(api_module, "remote_experiment_pull", fake_remote_experiment_pull)
+
+    exit_code = cli.main(["remote", "experiment", "pull", "--target", "pc", "--experiment-id", "exp-1"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["experiment_id"] == "exp-1"
+    assert payload["pulled_run_count"] == 2
+
+
 def test_cli_run_submit_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -3286,7 +3318,14 @@ def test_cli_research_commands_success(
             ),
             phases=[],
             source_path="/tmp/numerai-experiment-loop.md",
-            raw_markdown="---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n",
+            raw_markdown=(
+                "---\n"
+                "id: numerai-experiment-loop\n"
+                "---\n"
+                "Context:\n"
+                "$CONTEXT_JSON\n\n"
+                "$VALIDATION_FEEDBACK_BLOCK\n"
+            ),
         ),
     )
     monkeypatch.setattr(

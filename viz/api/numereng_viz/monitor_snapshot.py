@@ -119,29 +119,50 @@ def merge_monitor_snapshots(local_snapshot: dict[str, Any], remote_snapshots: li
     live_experiments = [copy.deepcopy(item) for item in local_snapshot.get("live_experiments", [])]
     recent_activity = [copy.deepcopy(item) for item in local_snapshot.get("recent_activity", [])]
     sources = [copy.deepcopy(local_snapshot.get("source", {}))]
-
-    total_experiments = int(local_snapshot.get("summary", {}).get("total_experiments", len(experiments)))
-    active_experiments = int(local_snapshot.get("summary", {}).get("active_experiments", 0))
-    completed_experiments = int(local_snapshot.get("summary", {}).get("completed_experiments", 0))
+    local_experiments_by_id = {
+        str(item["experiment_id"]): item
+        for item in experiments
+        if isinstance(item, dict) and isinstance(item.get("experiment_id"), str)
+    }
+    local_live_by_id = {
+        str(item["experiment_id"]): item
+        for item in live_experiments
+        if isinstance(item, dict) and isinstance(item.get("experiment_id"), str)
+    }
 
     for snapshot in remote_snapshots:
-        sources.append(copy.deepcopy(snapshot.get("source", {})))
-        experiments.extend(copy.deepcopy(snapshot.get("experiments", [])))
-        live_experiments.extend(copy.deepcopy(snapshot.get("live_experiments", [])))
+        source = copy.deepcopy(snapshot.get("source", {}))
+        sources.append(source)
+        for item in snapshot.get("experiments", []):
+            if not isinstance(item, dict):
+                continue
+            experiment_id = _to_non_empty_str(item.get("experiment_id"))
+            if experiment_id is not None and experiment_id in local_experiments_by_id:
+                _apply_remote_overlay(local_experiments_by_id[experiment_id], item, source=source)
+                continue
+            experiments.append(copy.deepcopy(item))
+        for item in snapshot.get("live_experiments", []):
+            if not isinstance(item, dict):
+                continue
+            experiment_id = _to_non_empty_str(item.get("experiment_id"))
+            if experiment_id is not None and experiment_id in local_experiments_by_id:
+                _apply_remote_overlay(local_experiments_by_id[experiment_id], item, source=source)
+                existing_live = local_live_by_id.get(experiment_id)
+                if existing_live is None:
+                    canonical_live = _canonicalize_remote_live_experiment(item, source=source)
+                    live_experiments.append(canonical_live)
+                    local_live_by_id[experiment_id] = canonical_live
+                    existing_live = canonical_live
+                _merge_remote_live_overlay(existing_live, item, source=source)
+                continue
+            live_experiments.append(copy.deepcopy(item))
         recent_activity.extend(copy.deepcopy(snapshot.get("recent_activity", [])))
-        remote_summary = snapshot.get("summary", {})
-        total_experiments += int(remote_summary.get("total_experiments", 0))
-        active_experiments += int(remote_summary.get("active_experiments", 0))
-        completed_experiments += int(remote_summary.get("completed_experiments", 0))
 
     experiments = _sort_experiments(experiments)
     live_experiments = _sort_live_experiments(live_experiments)
     recent_activity = _sort_recent_activity(recent_activity)[:8]
     live_runs = _flatten_live_runs(live_experiments)
     summary = _recompute_summary(experiments=experiments, live_experiments=live_experiments)
-    summary["total_experiments"] = total_experiments
-    summary["active_experiments"] = active_experiments
-    summary["completed_experiments"] = completed_experiments
 
     return {
         "generated_at": _utc_now_iso(),
@@ -152,6 +173,90 @@ def merge_monitor_snapshots(local_snapshot: dict[str, Any], remote_snapshots: li
         "recent_activity": recent_activity,
         "sources": sources,
     }
+
+
+def _apply_remote_overlay(local_item: dict[str, Any], remote_item: dict[str, Any], *, source: dict[str, Any]) -> None:
+    local_item["has_remote_overlay"] = True
+    local_item["overlay_source_kind"] = source.get("kind")
+    local_item["overlay_source_id"] = source.get("id")
+    local_item["overlay_source_label"] = source.get("label")
+    local_item["overlay_state"] = source.get("state")
+    remote_updated_at = _to_non_empty_str(remote_item.get("updated_at")) or _to_non_empty_str(
+        remote_item.get("latest_activity_at")
+    )
+    if remote_updated_at is not None:
+        local_item["overlay_updated_at"] = remote_updated_at
+        local_item["latest_activity_at"] = _latest_timestamp(local_item.get("latest_activity_at"), remote_updated_at)
+
+
+def _canonicalize_remote_live_experiment(item: dict[str, Any], *, source: dict[str, Any]) -> dict[str, Any]:
+    payload = copy.deepcopy(item)
+    payload["source_kind"] = "local"
+    payload["source_id"] = "local"
+    payload["source_label"] = "Local store"
+    experiment_id = _to_non_empty_str(payload.get("experiment_id"))
+    payload["detail_href"] = f"/experiments/{experiment_id}" if experiment_id is not None else None
+    payload["has_remote_overlay"] = True
+    payload["overlay_source_kind"] = source.get("kind")
+    payload["overlay_source_id"] = source.get("id")
+    payload["overlay_source_label"] = source.get("label")
+    payload["overlay_state"] = source.get("state")
+    return payload
+
+
+def _merge_remote_live_overlay(
+    local_item: dict[str, Any],
+    remote_item: dict[str, Any],
+    *,
+    source: dict[str, Any],
+) -> None:
+    local_item["has_remote_overlay"] = True
+    local_item["overlay_source_kind"] = source.get("kind")
+    local_item["overlay_source_id"] = source.get("id")
+    local_item["overlay_source_label"] = source.get("label")
+    local_item["overlay_state"] = source.get("state")
+    local_item["latest_activity_at"] = _latest_timestamp(
+        local_item.get("latest_activity_at"),
+        remote_item.get("latest_activity_at"),
+    )
+    local_item["aggregate_progress_percent"] = remote_item.get("aggregate_progress_percent")
+    local_item["live_run_count"] = max(
+        int(local_item.get("live_run_count") or 0),
+        int(remote_item.get("live_run_count") or 0),
+    )
+    local_item["queued_run_count"] = max(
+        int(local_item.get("queued_run_count") or 0),
+        int(remote_item.get("queued_run_count") or 0),
+    )
+    local_item["runs"] = _merge_remote_live_runs(local_item.get("runs", []), remote_item.get("runs", []))
+
+
+def _merge_remote_live_runs(
+    local_runs: list[dict[str, Any]],
+    remote_runs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = [copy.deepcopy(item) for item in local_runs if isinstance(item, dict)]
+    seen_run_ids = {
+        str(item.get("run_id"))
+        for item in merged
+        if isinstance(item.get("run_id"), str)
+    }
+    for item in remote_runs:
+        if not isinstance(item, dict):
+            continue
+        run_id = _to_non_empty_str(item.get("run_id"))
+        if run_id is None or run_id in seen_run_ids:
+            continue
+        merged.append(copy.deepcopy(item))
+        seen_run_ids.add(run_id)
+    return merged
+
+
+def _latest_timestamp(*values: Any) -> str | None:
+    timestamps = [str(value) for value in values if isinstance(value, str) and value.strip()]
+    if not timestamps:
+        return None
+    return max(timestamps)
 
 
 class RemoteSnapshotCoordinator:

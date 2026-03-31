@@ -50,7 +50,7 @@ Source map:
 - `viz/api/numereng_viz/*`: authoritative read-only viz backend package (routes, services, monitor snapshot composition, store merge logic).
 - `src/numereng/features/viz/*`: compatibility shim only; no real viz business logic should live here.
 - `src/numereng/platform/remotes/*`: tracked SSH remote-target schema/loader/docs + shell-aware SSH helpers; real user profiles live in the gitignored `profiles/` subdir or an override via `NUMERENG_REMOTE_PROFILES_DIR`. SSH targets declare `shell: posix|powershell`; use `powershell` for Windows remotes. Remote targets also declare `python_cmd` for helper scripts and may declare `runner_cmd` for detached CLI launches; Windows detached targets should point directly at the remote venv executables rather than `uv run ...`.
-- `src/numereng/features/remote_ops/*`: SSH remote doctor + repo sync + experiment sync + ad hoc config push + detached remote launch.
+- `src/numereng/features/remote_ops/*`: SSH remote doctor + repo sync + experiment sync + experiment pullback + ad hoc config push + detached remote launch.
 - `src/numereng/api/__init__.py`: curated public Python facade; research exports lazy-load so unrelated CLI/API entrypoints do not import `agentic_research` at package import time.
 - `src/numereng/api/pipeline.py`: public workflow entrypoint for full local train flows.
 - `src/numereng/api/_*.py`: internal API operation/stage wrappers; not stable import paths.
@@ -61,6 +61,12 @@ Default store layout (`.numereng`):
 - Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
 - Dynamic roots may appear: `hpo/`, `ensembles/`.
 - Legacy compatibility state may still appear under `cloud/` during migration, but new cloud writers use `cache/cloud/`.
+- Canonical rolling research memory now lives under `notes/__RESEARCH_MEMORY__/`:
+  - `CURRENT.md` is the single rolling frontier / next-step note
+  - `experiments/<experiment_id>.md` stores one durable review per completed experiment
+  - `topics/*.md` stores hybrid topic ledgers (current synthesis + evidence log)
+  - `decisions/*.md` is used only for material frontier shifts
+  - `legacy-progression/` preserves the old `__PROGRESSION__` month summaries as historical inputs only
 
 Key artifacts:
 - `runs/<run_id>/run.json`
@@ -76,6 +82,9 @@ Key artifacts:
 - `cache/cloud/<provider>/runs/<run_id>/state.json`
 - `cache/cloud/<provider>/runs/<run_id>/pull/`
 - `cache/cloud/<provider>/ops/<op_id>/state.json`
+- `cache/remote_ops/pulls/<target_id>/experiments/<experiment_id>/experiment.json`
+- `cache/remote_ops/pulls/<target_id>/experiments/<experiment_id>/pull.json`
+- `cache/remote_ops/pulls/<target_id>/runs/<run_id>/*`
 - `tmp/remote-configs/*.json`
   - retention-managed staging for detached/ad hoc remote launches only; not canonical run provenance
 - `tmp/lifecycle_smoke/<session>/*.json`
@@ -148,7 +157,7 @@ Wiring map:
   - `cli store repair-run-lifecycles [--run-id <id>|--all] -> api.store_repair_run_lifecycles -> features.telemetry.reconcile_run_lifecycles`
 - Monitor:
   `cli monitor snapshot [--store-root <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
-  `cli remote list|doctor|repo sync|experiment sync|config push|run train -> api.remote_* -> features.remote_ops.*`
+  `cli remote list|doctor|repo sync|experiment sync|experiment pull|config push|run train -> api.remote_* -> features.remote_ops.*`
 - Dataset tooling command:
   `uv run numereng dataset-tools build-downsampled-full --data-version v5.2`
 - Cloud AWS:
@@ -201,10 +210,13 @@ Experiment scoping behavior:
 
 Viz/frontend topology:
 - Frontend routes: `/docs`, `/docs/numerai`, `/notes`, `/experiments`, `/experiments/[id]`.
+- Notes routing caveat:
+  - note-relative markdown links are the safe navigation primitive inside `notes/__RESEARCH_MEMORY__/`
+  - use explicit app routes like `/experiments/<id>` or `/experiments/<id>/runs/<run_id>` for experiment navigation from notes
 - Viz backend launcher shim is `viz/api.py`; the actual backend package is `viz/api/numereng_viz`.
 - No standalone frontend routes for `/run-ops` or `/configs`.
 - `/experiments` is the mission-control dashboard. It route-loads `/api/experiments/overview`, keeps a page-local snapshot, and polls the same read-only overview every 3 seconds while the page is visible. The left rail lists all experiments; the right pane shows live experiments plus recent terminal activity and attention states.
-- Experiment and run detail routes keep the existing local path shape and add optional `source_kind` + `source_id` query params. When present for an SSH source, the local viz backend proxies the same read-only payload shapes over SSH instead of requiring a remote viz server.
+- Experiment and run detail routes keep the existing local path shape and add optional `source_kind` + `source_id` query params. By default the local viz backend now resolves local canonical store first, then the pulled remote artifact cache under `.numereng/cache/remote_ops/pulls`, then falls back to SSH when there is exactly one eligible remote source.
 - Mission control also exposes remote source health from `overview.sources`; enabled SSH remotes can appear as `live`, `cached`, or `unavailable`, and carry persisted bootstrap metadata (`bootstrap_status`, `last_bootstrap_at`, `last_bootstrap_error`) from the local viz bootstrap step.
 - Mission control live cards render one canonical progress instrument per live experiment, chosen from the freshest active `primary` run (`updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`). The card keeps a single progress bar plus adjacent percent instead of stacked aggregate/per-run rails.
 - Experiment page contains Analysis + Progress + Run Ops tabs; all launch/control remains monitor-only and CLI/API-driven.
@@ -219,12 +231,13 @@ Viz/frontend topology:
   - materialized local/remote/cloud runs read durable backend/provider provenance from `runs/<run_id>/run.json -> execution`
   - local live progress comes from active `run_lifecycles`
   - SageMaker/Batch jobs that are not yet materialized into `runs/<run_id>` are refreshed from `cloud_jobs`
-- SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles; the poller builds either a POSIX `cd ... && ...` command or an explicit `powershell -NoProfile -Command "Set-Location ...; ..."` command based on the profile shell
-- Remote experiment navigation is source-aware end to end: mission control cards and the left rail use `detail_href` values that preserve `source_kind` + `source_id`, and lazy experiment/run detail fetches pass the same source context on docs, runs, run jobs, studies, ensembles, and scoring endpoints.
+- SSH remotes are polled by running `numereng monitor snapshot --json` on the remote numereng repo/store through configured remote profiles; the poller builds either a POSIX `cd ... && ...` command or an explicit `powershell -NoProfile -Command "Set-Location ...; ..."` command based on the profile shell.
+- Mission control now canonicalizes by `experiment_id`: when an experiment exists both locally and on one SSH remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate cards.
 - `numereng remote bootstrap-viz` is the canonical federated viz bootstrap flow. It loads all enabled remote profiles, runs repo sync in `auto` mode, then runs `remote doctor`, and persists per-target `ready|degraded` state under `<store_root>/remote_ops/bootstrap/viz.json`.
 - `make viz` automatically runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before starting the local FastAPI + Vite stack. It never starts a remote viz server; the local viz backend remains the only UI/API process and keeps polling remote monitor snapshots over SSH.
 - `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
 - `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
+- `remote experiment pull` is the lightweight artifact pullback flow for remote-trained experiments. It writes only viz-facing manifests + scoring artifacts under `.numereng/cache/remote_ops/pulls/<target_id>/...`, reconciles `.numereng/experiments/<id>/experiment.json` locally, and never materializes remote runs into `.numereng/runs/<run_id>`.
 - `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
 - Live-run payloads now carry `progress_mode`:
   - `exact` for local lifecycle-backed percentages

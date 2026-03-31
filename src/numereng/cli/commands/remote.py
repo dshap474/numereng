@@ -31,6 +31,8 @@ def handle_remote_command(args: Sequence[str]) -> int:
         return _handle_remote_repo_sync(args[2:])
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "sync":
         return _handle_remote_experiment_sync(args[2:])
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "pull":
+        return _handle_remote_experiment_pull(args[2:])
     if args[0] == "config" and len(args) >= 2 and args[1] == "push":
         return _handle_remote_config_push(args[2:])
     if args[0] == "run" and len(args) >= 2 and args[1] == "train":
@@ -174,6 +176,44 @@ def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
     try:
         payload = api.remote_experiment_sync(
             api.RemoteExperimentSyncRequest(
+                target_id=target_id,
+                experiment_id=experiment_id,
+                store_root=values.get("--store-root", ".numereng"),
+            )
+        )
+    except ValidationError as exc:
+        print(_validation_error_message(exc), file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(payload.model_dump_json())
+    return 0
+
+
+def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--store-root"})
+    if parse_error == "__help__":
+        print(USAGE)
+        return 0
+    if parse_error is not None:
+        print(parse_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    target_id = values.get("--target")
+    experiment_id = values.get("--experiment-id")
+    if target_id is None:
+        print("missing required argument: --target", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    if experiment_id is None:
+        print("missing required argument: --experiment-id", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    try:
+        payload = api.remote_experiment_pull(
+            api.RemoteExperimentPullRequest(
                 target_id=target_id,
                 experiment_id=experiment_id,
                 store_root=values.get("--store-root", ".numereng"),

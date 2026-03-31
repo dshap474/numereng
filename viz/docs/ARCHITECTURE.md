@@ -32,10 +32,11 @@ So `viz` uses federation:
 - each machine keeps its own `.numereng`
 - the local backend fetches a normalized snapshot from each store
 - the UI renders one merged overview
+- completed remote experiments can be pulled back as lightweight viz caches under `.numereng/cache/remote_ops/pulls/<target_id>/...`
 
 This avoids:
 - SQLite-over-network problems
-- mirroring run directories and active lifecycle files
+- mirroring full remote run directories and active lifecycle files
 - accidental cross-machine state corruption
 
 ## Backend Layers
@@ -60,11 +61,12 @@ Responsibilities:
 - decorate entries with source metadata
 - fetch SSH remote snapshots
 - merge local + remote experiments/live activity
+- canonicalize duplicate local+remote experiment ids into one local-primary row with remote overlay metadata
 - emit one merged overview payload with `generated_at`
 
 Important invariants:
 - remote source success does not imply remote live runs
-- overview merge must preserve duplicate experiment ids from different sources
+- overview merge must preserve remote-only rows but collapse exact local+remote experiment-id matches into one canonical local row
 - merged overview must emit a current `generated_at`
 
 ### `viz/api/numereng_viz/store_adapter.py`
@@ -75,6 +77,7 @@ Important invariants:
 - live rows come from real lifecycle/cloud state, not stale active-looking jobs
 - experiment attribution may be synthesized when remote/external config runs have no indexed experiment row
 - config labels must tolerate Windows-style paths
+- local-first detail reads resolve canonical local artifacts first, then pulled remote cache artifacts, then SSH fallback
 
 ## Frontend Layers
 
@@ -104,7 +107,7 @@ live experiments -> source_kind:source_id:experiment_id
 recent activity  -> source + job/run identity
 ```
 
-If the page keys by `experiment_id` only, federated local+remote rows like `testing` will collide and the page will crash or freeze on stale state.
+If the page keys by `experiment_id` only, remote-only rows can still collide with each other. For canonical local+remote duplicates, the backend now collapses them before the frontend sees them.
 
 ## Polling and Freshness
 
@@ -146,16 +149,15 @@ When a user says “the live run is not showing”:
    - inspect remote `runtime.json`
 4. Check for client-side stale tab/session:
    - compare visible `Last pulse` against `overview.generated_at`
-5. Check for duplicate-key crashes if local and remote share experiment ids
+5. Check whether the backend collapsed a local+remote duplicate into one canonical row with overlay metadata
 
 ## Problems Solved in This Iteration
 
 The federated mission-control work uncovered and fixed these concrete issues:
 
-1. Duplicate-key frontend crash
-- local and remote stores can both have `testing`
-- keyed Svelte lists were using `experiment_id` only
-- fix: key by source + experiment identity
+1. Duplicate local+remote experiment rows
+- local and remote stores can both have the same experiment id
+- fix: backend canonicalizes to one local-primary row and keeps remote freshness as overlay metadata
 
 2. Fallback-only initial route load
 - page initially rendered parent experiments only
@@ -170,12 +172,12 @@ The federated mission-control work uncovered and fixed these concrete issues:
 - fix: single-flight polling
 
 5. Remote attribution gaps
-- remote/external-config runs needed synthesized experiment rows and Windows path-safe config labels
+- remote/external-config runs needed synthesized experiment rows, Windows path-safe config labels, and a local-first fallback path for pulled cache artifacts
 
 ## Future Hardening
 
 Useful next hardening steps:
-- add an explicit frontend test for duplicate local+remote experiment ids
+- add an explicit frontend test that verifies canonical local+remote experiment collapse plus overlay rendering
 - add a browser test that simulates a slow overview response and verifies single-flight polling
 - expose poll latency in a lightweight debug panel or response header for mission-control troubleshooting
 - consider marking the current overview source age directly in the UI when the feed is holding

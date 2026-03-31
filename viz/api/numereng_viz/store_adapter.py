@@ -114,6 +114,7 @@ _HIDDEN_DASHBOARD_METRIC_PREFIXES: tuple[str, ...] = (
     "mmc_",
     "corr_delta_vs_baseline_",
 )
+_REMOTE_PULLS_RELATIVE_DIR = ("cache", "remote_ops", "pulls")
 
 
 @lru_cache(maxsize=256)
@@ -880,6 +881,44 @@ class VizStoreAdapter:
     def _archived_experiments_root(self) -> Path:
         return self._experiments_root() / _EXPERIMENT_ARCHIVE_DIRNAME
 
+    def _remote_pulls_root(self) -> Path:
+        return (
+            self.store_root
+            / _REMOTE_PULLS_RELATIVE_DIR[0]
+            / _REMOTE_PULLS_RELATIVE_DIR[1]
+            / _REMOTE_PULLS_RELATIVE_DIR[2]
+        )
+
+    def _iter_remote_pull_target_roots(self) -> list[Path]:
+        root = self._remote_pulls_root()
+        if not root.is_dir():
+            return []
+        return sorted([child for child in root.iterdir() if child.is_dir()], key=lambda path: path.name)
+
+    def _manifest_run_ids(self, experiment_id: str) -> list[str]:
+        manifest = _read_json_dict(self._resolve_experiment_dir(experiment_id) / "experiment.json")
+        runs = manifest.get("runs")
+        if not isinstance(runs, list):
+            return []
+        payload: list[str] = []
+        seen: set[str] = set()
+        for item in runs:
+            if not isinstance(item, str):
+                continue
+            run_id = item.strip()
+            if not run_id or run_id in seen:
+                continue
+            seen.add(run_id)
+            payload.append(run_id)
+        return payload
+
+    def _resolve_pulled_run_dir(self, run_id: str) -> Path | None:
+        for target_root in self._iter_remote_pull_target_roots():
+            candidate = target_root / "runs" / run_id
+            if (candidate / "run.json").is_file():
+                return candidate
+        return None
+
     def _experiment_path_candidates(self, experiment_id: str) -> tuple[Path, Path]:
         return (
             self._experiments_root() / experiment_id,
@@ -1449,7 +1488,9 @@ class VizStoreAdapter:
             for row in rows:
                 row_dict = dict(row)
                 exp_id = row_dict.get("experiment_id")
-                run_count = counts.get(exp_id, 0) if isinstance(exp_id, str) else 0
+                run_count = 0
+                if isinstance(exp_id, str):
+                    run_count = max(counts.get(exp_id, 0), len(self._manifest_run_ids(exp_id)))
                 payload.append(self._format_experiment(row_dict, run_count=run_count))
             return payload
 
@@ -1501,6 +1542,7 @@ class VizStoreAdapter:
                         (experiment_id,),
                     )
                     run_count = int(count_row["cnt"]) if count_row else 0
+                run_count = max(run_count, len(self._manifest_run_ids(experiment_id)))
                 payload = self._format_experiment(dict(row), run_count=run_count)
                 payload["study_count"] = self.count_studies(experiment_id=experiment_id)
                 payload["ensemble_count"] = self.count_ensembles(experiment_id=experiment_id)
@@ -1569,7 +1611,7 @@ class VizStoreAdapter:
         for run_id in run_ids:
             if run_id in target_map:
                 continue
-            manifest = _read_json_dict(self.store_root / "runs" / run_id / "run.json")
+            manifest = _read_json_dict(self._resolve_run_dir(run_id) / "run.json")
             target_train, _, _ = _resolve_run_targets(manifest)
             target_map[run_id] = target_train
 
@@ -1584,9 +1626,7 @@ class VizStoreAdapter:
     ) -> dict[str, Any]:
         manifest = _parse_json_object(row.get("manifest_json"))
         run_id = row.get("run_id")
-        resolved = (
-            _read_json_dict(self.store_root / "runs" / run_id / "resolved.json") if isinstance(run_id, str) else {}
-        )
+        resolved = _read_json_dict(self._resolve_run_dir(run_id) / "resolved.json") if isinstance(run_id, str) else {}
         model_raw = manifest.get("model")
         model_info: dict[str, Any] = model_raw if isinstance(model_raw, dict) else {}
         data_raw = manifest.get("data")
@@ -1627,6 +1667,8 @@ class VizStoreAdapter:
                 if isinstance(champion, str):
                     champion_run_id = champion
 
+        payload: list[dict[str, Any]] = []
+        seen_run_ids: set[str] = set()
         if self._table_exists("runs"):
             rows = self._query(
                 """
@@ -1639,12 +1681,12 @@ class VizStoreAdapter:
             )
             run_ids = [row["run_id"] for row in rows if isinstance(row["run_id"], str)]
             metrics_map = self._run_metrics_map(run_ids)
-            payload: list[dict[str, Any]] = []
             for row in rows:
                 row_dict = dict(row)
                 run_id = row_dict.get("run_id")
                 if not isinstance(run_id, str):
                     continue
+                seen_run_ids.add(run_id)
                 payload.append(
                     self._format_run(
                         row_dict,
@@ -1652,22 +1694,24 @@ class VizStoreAdapter:
                         metrics=metrics_map.get(run_id, {}),
                     )
                 )
-            if payload:
-                return payload
 
-        # Filesystem fallback.
-        payload = []
-        runs_dir = self.store_root / "runs"
-        if not runs_dir.exists():
-            return payload
-        for run_dir in sorted(runs_dir.iterdir(), key=lambda p: p.name):
-            if not run_dir.is_dir():
+        candidate_run_ids = self._manifest_run_ids(experiment_id)
+        if not candidate_run_ids:
+            runs_dir = self.store_root / "runs"
+            if runs_dir.exists():
+                candidate_run_ids = sorted(
+                    [child.name for child in runs_dir.iterdir() if child.is_dir()],
+                )
+
+        for run_id in candidate_run_ids:
+            if run_id in seen_run_ids:
                 continue
+            run_dir = self._resolve_run_dir(run_id)
             manifest_path = run_dir / "run.json"
             if not manifest_path.exists():
                 continue
             try:
-                payload_raw = json.loads(manifest_path.read_text())
+                payload_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 continue
             if not isinstance(payload_raw, dict):
@@ -1677,14 +1721,14 @@ class VizStoreAdapter:
             exp_id = payload_raw.get("experiment_id") or lineage.get("experiment_id")
             if exp_id != experiment_id:
                 continue
-            run_id = payload_raw.get("run_id")
-            if not isinstance(run_id, str):
+            manifest_run_id = payload_raw.get("run_id")
+            if not isinstance(manifest_run_id, str):
                 continue
             metrics = {}
             metrics_path = run_dir / "metrics.json"
             if metrics_path.exists():
                 try:
-                    metric_payload = json.loads(metrics_path.read_text())
+                    metric_payload = json.loads(metrics_path.read_text(encoding="utf-8"))
                 except json.JSONDecodeError:
                     metric_payload = {}
                 if isinstance(metric_payload, dict):
@@ -1697,11 +1741,11 @@ class VizStoreAdapter:
             resolved_payload = _read_json_dict(run_dir / "resolved.json")
             payload.append(
                 {
-                    "run_id": run_id,
+                    "run_id": manifest_run_id,
                     "experiment_id": experiment_id,
                     "created_at": payload_raw.get("created_at"),
                     "status": payload_raw.get("status"),
-                    "is_champion": bool(champion_run_id and champion_run_id == run_id),
+                    "is_champion": bool(champion_run_id and champion_run_id == manifest_run_id),
                     "metrics": _normalize_round_metrics(metrics, target_col=target_train),
                     "config_hash": payload_raw.get("config_hash"),
                     "notes": None,
@@ -1890,7 +1934,15 @@ class VizStoreAdapter:
                     if path.exists() and path.is_dir():
                         return path
 
-        return self.store_root / "runs" / run_id
+        local_run_dir = self.store_root / "runs" / run_id
+        if local_run_dir.is_dir():
+            return local_run_dir
+
+        pulled_run_dir = self._resolve_pulled_run_dir(run_id)
+        if pulled_run_dir is not None:
+            return pulled_run_dir
+
+        return local_run_dir
 
     def _read_artifact_records(self, *, parquet_path: Path) -> list[dict[str, Any]] | None:
         if parquet_path.exists():

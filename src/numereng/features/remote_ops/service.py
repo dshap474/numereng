@@ -7,7 +7,9 @@ import hashlib
 import json
 import shlex
 import subprocess
+import zipfile
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,8 @@ from numereng.features.remote_ops.contracts import (
     RemoteBootstrapStatus,
     RemoteConfigPushResult,
     RemoteDoctorResult,
+    RemoteExperimentPullFailure,
+    RemoteExperimentPullResult,
     RemoteExperimentSyncResult,
     RemoteRepoSyncResult,
     RemoteSyncPolicy,
@@ -32,10 +36,9 @@ from numereng.features.remote_ops.sync import (
     remote_repo_metadata_path,
     sync_entries_to_remote,
 )
-from numereng.features.store import resolve_store_root
+from numereng.features.store import resolve_store_root, upsert_experiment
 from numereng.features.training import PostTrainingScoringPolicy, TrainingProfile
 from numereng.platform import load_remote_targets
-from numereng.platform.run_execution import build_run_execution, serialize_run_execution
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 from numereng.platform.remotes.ssh import (
     build_monitor_snapshot_command,
@@ -43,12 +46,32 @@ from numereng.platform.remotes.ssh import (
     build_ssh_command,
     remote_path_join,
 )
+from numereng.platform.run_execution import build_run_execution, serialize_run_execution
 
 _SYNC_TIMEOUT_SECONDS = 180
 _REMOTE_BOOTSTRAP_DIR = ("remote_ops", "bootstrap")
 _REMOTE_VIZ_BOOTSTRAP_FILE = "viz.json"
 _REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS = 10.0
 _REMOTE_WINDOWS_STARTUP_POLL_SECONDS = 0.25
+_REMOTE_PULLS_DIR = ("cache", "remote_ops", "pulls")
+_REMOTE_PULL_REQUIRED_FILES: tuple[str, ...] = (
+    "run.json",
+    "resolved.json",
+    "metrics.json",
+    "score_provenance.json",
+    "artifacts/scoring/manifest.json",
+)
+_REMOTE_PULL_OPTIONAL_FILES: tuple[str, ...] = (
+    "results.json",
+    "artifacts/scoring/run_metric_series.parquet",
+    "artifacts/scoring/corr_per_era.parquet",
+    "artifacts/scoring/post_fold_snapshots.parquet",
+    "artifacts/scoring/post_training_core_summary.parquet",
+    "artifacts/scoring/post_training_full_summary.parquet",
+    "artifacts/scoring/post_training_features_summary.parquet",
+    "artifacts/reports/trials.parquet",
+    "artifacts/reports/best_params.json",
+)
 
 
 class RemoteOpsError(Exception):
@@ -318,6 +341,94 @@ def sync_remote_experiment(
     )
 
 
+def pull_remote_experiment(
+    *,
+    target_id: str,
+    experiment_id: str,
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentPullResult:
+    """Pull one remote experiment's viz-facing artifacts into the local cache."""
+
+    target = _get_target(target_id)
+    resolved_store_root = resolve_store_root(store_root)
+    cache_root = _remote_pull_target_root(resolved_store_root, target_id=target.id)
+    cache_experiment_dir = _remote_pull_experiment_dir(
+        resolved_store_root,
+        target_id=target.id,
+        experiment_id=experiment_id,
+    )
+    cache_runs_root = _remote_pull_runs_root(resolved_store_root, target_id=target.id)
+    cache_experiment_dir.mkdir(parents=True, exist_ok=True)
+    cache_runs_root.mkdir(parents=True, exist_ok=True)
+
+    archive_bytes, metadata = _run_remote_python_archive(
+        target,
+        _pull_python_script(),
+        args=[
+            experiment_id,
+            target.store_root,
+            base64.b64encode(json.dumps(list(_REMOTE_PULL_REQUIRED_FILES)).encode("utf-8")).decode("ascii"),
+            base64.b64encode(json.dumps(list(_REMOTE_PULL_OPTIONAL_FILES)).encode("utf-8")).decode("ascii"),
+        ],
+    )
+    remote_manifest = metadata.get("experiment")
+    if not isinstance(remote_manifest, dict):
+        raise RemoteExecutionError("remote_experiment_pull_missing_manifest")
+
+    extraction = _extract_pull_archive(archive_bytes, cache_root=cache_root)
+    pulled_at = _utc_now_iso()
+    failures = tuple(
+        RemoteExperimentPullFailure(
+            run_id=str(item["run_id"]),
+            missing_files=tuple(str(name) for name in item.get("missing_files", [])),
+        )
+        for item in metadata.get("failures", [])
+        if isinstance(item, dict) and isinstance(item.get("run_id"), str)
+    )
+    successful_run_ids = tuple(str(item) for item in metadata.get("successful_run_ids", []) if isinstance(item, str))
+    skipped_optional_count = int(metadata.get("missing_optional_count") or 0)
+    skipped_artifact_count = extraction["skipped_artifact_count"] + skipped_optional_count
+    pull_manifest = {
+        "version": 1,
+        "target_id": target.id,
+        "experiment_id": experiment_id,
+        "pulled_at": pulled_at,
+        "successful_run_ids": list(successful_run_ids),
+        "cached_artifact_count": extraction["cached_artifact_count"],
+        "skipped_artifact_count": skipped_artifact_count,
+        "failures": [
+            {"run_id": item.run_id, "missing_files": list(item.missing_files)}
+            for item in failures
+        ],
+        "remote_manifest_path": metadata.get("remote_manifest_path"),
+        "remote_experiment_dir": metadata.get("remote_experiment_dir"),
+    }
+    (cache_experiment_dir / "pull.json").write_text(
+        json.dumps(pull_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    local_experiment_manifest_path = _reconcile_local_experiment_manifest(
+        store_root=resolved_store_root,
+        target_id=target.id,
+        experiment_id=experiment_id,
+        remote_manifest=remote_manifest,
+        pulled_at=pulled_at,
+    )
+    return RemoteExperimentPullResult(
+        target_id=target.id,
+        experiment_id=experiment_id,
+        local_experiment_manifest_path=local_experiment_manifest_path,
+        cache_experiment_dir=cache_experiment_dir,
+        cache_runs_root=cache_runs_root,
+        pulled_at=pulled_at,
+        pulled_run_count=len(successful_run_ids),
+        cached_artifact_count=extraction["cached_artifact_count"],
+        skipped_artifact_count=skipped_artifact_count,
+        failures=failures,
+    )
+
+
 def push_remote_config(
     *,
     target_id: str,
@@ -400,7 +511,13 @@ def remote_run_train(
     launch_id = _launch_id_for_config(resolved_config_path)
     remote_log_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.log")
     remote_metadata_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.json")
-    command = [*_split_target_command(target.runner_cmd, shell=target.shell), "run", "train", "--config", remote_config_path]
+    command = [
+        *_split_target_command(target.runner_cmd, shell=target.shell),
+        "run",
+        "train",
+        "--config",
+        remote_config_path,
+    ]
     if inferred_experiment_id is not None:
         command.extend(["--experiment-id", inferred_experiment_id])
     if profile is not None:
@@ -538,6 +655,102 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
     return entries
 
 
+def _remote_pull_target_root(store_root: Path, *, target_id: str) -> Path:
+    safe_target_id = _safe_name(target_id)
+    return store_root / _REMOTE_PULLS_DIR[0] / _REMOTE_PULLS_DIR[1] / _REMOTE_PULLS_DIR[2] / safe_target_id
+
+
+def _remote_pull_experiment_dir(store_root: Path, *, target_id: str, experiment_id: str) -> Path:
+    safe_experiment_id = _safe_name(experiment_id)
+    return _remote_pull_target_root(store_root, target_id=target_id) / "experiments" / safe_experiment_id
+
+
+def _remote_pull_runs_root(store_root: Path, *, target_id: str) -> Path:
+    return _remote_pull_target_root(store_root, target_id=target_id) / "runs"
+
+
+def _reconcile_local_experiment_manifest(
+    *,
+    store_root: Path,
+    target_id: str,
+    experiment_id: str,
+    remote_manifest: dict[str, Any],
+    pulled_at: str,
+) -> Path:
+    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = experiment_dir / "experiment.json"
+    local_manifest = _read_json_dict(manifest_path)
+
+    merged = dict(local_manifest)
+    merged["experiment_id"] = experiment_id
+    for key in ("name", "hypothesis", "status", "schema_version", "champion_run_id"):
+        value = remote_manifest.get(key)
+        if value is not None:
+            merged[key] = value
+
+    remote_tags = remote_manifest.get("tags")
+    if isinstance(remote_tags, list):
+        merged["tags"] = [str(tag) for tag in remote_tags]
+
+    merged["created_at"] = _to_non_empty_str(local_manifest.get("created_at")) or _to_non_empty_str(
+        remote_manifest.get("created_at")
+    ) or pulled_at
+    merged["updated_at"] = pulled_at
+
+    local_runs = local_manifest.get("runs")
+    remote_runs = remote_manifest.get("runs")
+    merged["runs"] = sorted(
+        {
+            str(run_id)
+            for payload in (local_runs, remote_runs)
+            if isinstance(payload, list)
+            for run_id in payload
+            if isinstance(run_id, str) and run_id.strip()
+        }
+    )
+
+    metadata: dict[str, Any] = {}
+    local_metadata = local_manifest.get("metadata")
+    if isinstance(local_metadata, dict):
+        metadata.update(local_metadata)
+    remote_metadata = remote_manifest.get("metadata")
+    if isinstance(remote_metadata, dict):
+        metadata.update(remote_metadata)
+    if "hypothesis" not in metadata and isinstance(merged.get("hypothesis"), str):
+        metadata["hypothesis"] = merged["hypothesis"]
+    if "tags" not in metadata and isinstance(merged.get("tags"), list):
+        metadata["tags"] = merged["tags"]
+    if "champion_run_id" not in metadata and isinstance(merged.get("champion_run_id"), str):
+        metadata["champion_run_id"] = merged["champion_run_id"]
+    remote_pull_payload = metadata.get("remote_pull") if isinstance(metadata.get("remote_pull"), dict) else {}
+    remote_pull_payload.update({"last_target_id": target_id, "last_pulled_at": pulled_at})
+    metadata["remote_pull"] = remote_pull_payload
+    merged["metadata"] = metadata
+
+    manifest_path.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    upsert_experiment(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        name=_to_non_empty_str(merged.get("name")) or experiment_id,
+        status=_to_non_empty_str(merged.get("status")) or "active",
+        created_at=str(merged["created_at"]),
+        updated_at=str(merged["updated_at"]),
+        metadata=metadata,
+    )
+    return manifest_path
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _git_head_sha(repo_root: Path) -> str | None:
     result = subprocess.run(
         ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
@@ -613,6 +826,33 @@ def _run_remote_snapshot(target: SshRemoteTargetProfile) -> dict[str, Any] | Non
     return _extract_json_object(result.stdout)
 
 
+def _run_remote_python_archive(
+    target: SshRemoteTargetProfile,
+    script_source: str,
+    *,
+    args: list[str],
+) -> tuple[bytes, dict[str, Any]]:
+    command = build_ssh_command(
+        target,
+        build_remote_python_command(target, script_source, args=args, cwd=target.repo_root),
+    )
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        timeout=target.command_timeout_seconds,
+        check=False,
+    )
+    metadata = _extract_json_bytes(result.stderr)
+    if result.returncode != 0:
+        error = metadata.get("error")
+        if isinstance(error, str) and error.strip():
+            raise RemoteExecutionError(error)
+        raise RemoteExecutionError("remote_experiment_pull_failed")
+    if not metadata:
+        raise RemoteExecutionError("remote_experiment_pull_metadata_missing")
+    return result.stdout, metadata
+
+
 def _run_remote_python(target: SshRemoteTargetProfile, script_source: str, *, args: list[str]) -> dict[str, Any] | None:
     command = build_ssh_command(
         target,
@@ -630,6 +870,10 @@ def _run_remote_python(target: SshRemoteTargetProfile, script_source: str, *, ar
     return _extract_json_object(result.stdout)
 
 
+def _extract_json_bytes(payload: bytes) -> dict[str, Any]:
+    return _extract_json_object(payload.decode("utf-8", errors="replace")) or {}
+
+
 def _extract_json_object(stdout: str) -> dict[str, Any] | None:
     for line in reversed(stdout.splitlines()):
         stripped = line.strip()
@@ -642,6 +886,41 @@ def _extract_json_object(stdout: str) -> dict[str, Any] | None:
         if isinstance(payload, dict):
             return payload
     return None
+
+
+def _extract_pull_archive(archive_bytes: bytes, *, cache_root: Path) -> dict[str, int]:
+    cached_artifact_count = 0
+    skipped_artifact_count = 0
+    if not archive_bytes:
+        return {
+            "cached_artifact_count": 0,
+            "skipped_artifact_count": 0,
+        }
+    with zipfile.ZipFile(BytesIO(archive_bytes), mode="r") as archive:
+        for member in archive.infolist():
+            if member.is_dir():
+                continue
+            destination = (cache_root / Path(member.filename)).resolve()
+            try:
+                destination.relative_to(cache_root.resolve())
+            except ValueError as exc:
+                raise RemoteExecutionError(f"remote_experiment_pull_invalid_archive_path:{member.filename}") from exc
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            content = archive.read(member.filename)
+            if destination.is_file():
+                try:
+                    if destination.read_bytes() == content:
+                        cached_artifact_count += 1
+                        skipped_artifact_count += 1
+                        continue
+                except OSError:
+                    pass
+            destination.write_bytes(content)
+            cached_artifact_count += 1
+    return {
+        "cached_artifact_count": cached_artifact_count,
+        "skipped_artifact_count": skipped_artifact_count,
+    }
 
 
 def _optional_str(payload: dict[str, Any] | None, key: str) -> str | None:
@@ -677,6 +956,13 @@ def _utc_now_iso() -> str:
 
 def _safe_name(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+
+
+def _to_non_empty_str(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def _split_target_command(command: str, *, shell: str) -> list[str]:
@@ -920,6 +1206,106 @@ if __name__ == "__main__":
     ).strip()
 
 
+def _pull_python_script() -> str:
+    return """
+import base64
+import io
+import json
+import sys
+import zipfile
+from pathlib import Path
+
+
+def _read_json_arg(raw: str) -> list[str]:
+    payload = json.loads(base64.b64decode(raw).decode("utf-8"))
+    if not isinstance(payload, list):
+        raise SystemExit("remote_pull_arguments_invalid")
+    return [str(item) for item in payload if isinstance(item, str)]
+
+
+def _emit_error(error: str, **extra: object) -> None:
+    payload = {"error": error, **extra}
+    sys.stderr.write(json.dumps(payload, sort_keys=True) + "\\n")
+
+
+def main() -> None:
+    if len(sys.argv) != 5:
+        raise SystemExit("remote_pull_arguments_invalid")
+    experiment_id = sys.argv[1]
+    store_root = Path(sys.argv[2]).expanduser()
+    required_files = _read_json_arg(sys.argv[3])
+    optional_files = _read_json_arg(sys.argv[4])
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    archived_dir = store_root / "experiments" / "_archive" / experiment_id
+    if (experiment_dir / "experiment.json").is_file():
+        resolved_experiment_dir = experiment_dir
+    elif (archived_dir / "experiment.json").is_file():
+        resolved_experiment_dir = archived_dir
+    else:
+        _emit_error("remote_experiment_not_found", experiment_id=experiment_id)
+        raise SystemExit(3)
+
+    manifest_path = resolved_experiment_dir / "experiment.json"
+    try:
+        experiment_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        _emit_error("remote_experiment_manifest_invalid", experiment_id=experiment_id)
+        raise SystemExit(4)
+    if not isinstance(experiment_manifest, dict):
+        _emit_error("remote_experiment_manifest_invalid", experiment_id=experiment_id)
+        raise SystemExit(4)
+
+    run_ids = experiment_manifest.get("runs")
+    if not isinstance(run_ids, list):
+        run_ids = []
+
+    failures = []
+    successful_run_ids = []
+    missing_optional_count = 0
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            f"experiments/{experiment_id}/experiment.json",
+            json.dumps(experiment_manifest, indent=2, sort_keys=True) + "\\n",
+        )
+        for raw_run_id in run_ids:
+            if not isinstance(raw_run_id, str) or not raw_run_id.strip():
+                continue
+            run_id = raw_run_id.strip()
+            run_dir = store_root / "runs" / run_id
+            missing_required = [relpath for relpath in required_files if not (run_dir / relpath).is_file()]
+            if missing_required:
+                failures.append({"run_id": run_id, "missing_files": missing_required})
+                continue
+            successful_run_ids.append(run_id)
+            for relpath in [*required_files, *optional_files]:
+                source_path = run_dir / relpath
+                if not source_path.is_file():
+                    if relpath in optional_files:
+                        missing_optional_count += 1
+                    continue
+                archive.write(source_path, arcname=f"runs/{run_id}/{relpath.replace('\\\\', '/')}")
+
+    metadata = {
+        "ok": True,
+        "experiment": experiment_manifest,
+        "experiment_id": experiment_id,
+        "remote_experiment_dir": str(resolved_experiment_dir),
+        "remote_manifest_path": str(manifest_path),
+        "successful_run_ids": successful_run_ids,
+        "missing_optional_count": missing_optional_count,
+        "failures": failures,
+    }
+    sys.stderr.write(json.dumps(metadata, sort_keys=True) + "\\n")
+    sys.stdout.buffer.write(buffer.getvalue())
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
 __all__ = [
     "RemoteExecutionError",
     "RemoteOpsError",
@@ -929,6 +1315,7 @@ __all__ = [
     "doctor_remote_target",
     "load_viz_bootstrap_state",
     "list_remote_targets",
+    "pull_remote_experiment",
     "push_remote_config",
     "remote_run_train",
     "remote_viz_bootstrap_state_path",

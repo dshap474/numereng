@@ -55,7 +55,26 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_experiment(experiment_id)
+        payload = self.adapter.get_experiment(experiment_id)
+        remote_source = self._unique_remote_source_for_experiment(experiment_id)
+        if remote_source is None:
+            return payload
+        remote_payload = self._remote_call(
+            "get_experiment",
+            args=(experiment_id,),
+            source_kind=remote_source["kind"],
+            source_id=remote_source["id"],
+        )
+        if isinstance(payload, dict):
+            if isinstance(remote_payload, dict):
+                payload = dict(payload)
+                payload["has_remote_overlay"] = True
+                payload["overlay_source_id"] = remote_source["id"]
+                payload["overlay_source_kind"] = remote_source["kind"]
+                payload["overlay_source_label"] = remote_source["label"]
+                payload["overlay_updated_at"] = remote_payload.get("updated_at")
+            return payload
+        return remote_payload if isinstance(remote_payload, dict) else None
 
     def list_experiment_configs(
         self,
@@ -152,7 +171,19 @@ class VizService:
             )
             assert isinstance(payload, list)
             return payload
-        return self.adapter.list_experiment_runs(experiment_id)
+        local_payload = self.adapter.list_experiment_runs(experiment_id)
+        remote_source = self._unique_remote_source_for_experiment(experiment_id)
+        if remote_source is None:
+            return local_payload
+        remote_payload = self._remote_call(
+            "list_experiment_runs",
+            args=(experiment_id,),
+            source_kind=remote_source["kind"],
+            source_id=remote_source["id"],
+        )
+        if not isinstance(remote_payload, list):
+            return local_payload
+        return self._merge_local_and_remote_runs(local_payload, remote_payload, remote_source=remote_source)
 
     def list_experiment_round_results(
         self,
@@ -426,7 +457,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_run_manifest(run_id)
+        payload = self.adapter.get_run_manifest(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_run_manifest", run_id)
 
     def get_run_metrics(
         self,
@@ -442,7 +476,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_run_metrics(run_id)
+        payload = self.adapter.get_run_metrics(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_run_metrics", run_id)
 
     def get_run_events(
         self,
@@ -498,7 +535,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_per_era_corr(run_id)
+        payload = self.adapter.get_per_era_corr(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_per_era_corr", run_id)
 
     def get_per_era_corr_result(
         self,
@@ -526,7 +566,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_scoring_dashboard(run_id)
+        payload = self.adapter.get_scoring_dashboard(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_scoring_dashboard", run_id)
 
     def get_trials(
         self,
@@ -542,7 +585,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_trials(run_id)
+        payload = self.adapter.get_trials(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_trials", run_id)
 
     def get_best_params(
         self,
@@ -558,7 +604,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_best_params(run_id)
+        payload = self.adapter.get_best_params(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_best_params", run_id)
 
     def get_resolved_config(
         self,
@@ -574,7 +623,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_resolved_config(run_id)
+        payload = self.adapter.get_resolved_config(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_resolved_config", run_id)
 
     def get_diagnostics_sources(
         self,
@@ -590,7 +642,10 @@ class VizService:
                 source_kind=source_kind,
                 source_id=source_id,
             )
-        return self.adapter.get_diagnostics_sources(run_id)
+        payload = self.adapter.get_diagnostics_sources(run_id)
+        if payload is not None:
+            return payload
+        return self._remote_run_fallback("get_diagnostics_sources", run_id)
 
     async def get_run_bundle(
         self,
@@ -611,11 +666,25 @@ class VizService:
             assert isinstance(payload, dict)
             return payload
 
-        metrics_task = asyncio.to_thread(self.adapter.get_run_metrics, run_id)
-        manifest_task = asyncio.to_thread(self.adapter.get_run_manifest, run_id)
+        manifest = self.adapter.get_run_manifest(run_id)
+        metrics = self.adapter.get_run_metrics(run_id)
+        scoring_dashboard = self.adapter.get_scoring_dashboard(run_id)
+        if manifest is None and metrics is None and scoring_dashboard is None:
+            remote_payload = self._remote_run_fallback("get_run_bundle", run_id)
+            if isinstance(remote_payload, dict):
+                return remote_payload
+
+        metrics_task = asyncio.to_thread(
+            lambda: metrics if metrics is not None else self.adapter.get_run_metrics(run_id)
+        )
+        manifest_task = asyncio.to_thread(
+            lambda: manifest if manifest is not None else self.adapter.get_run_manifest(run_id)
+        )
         events_task = asyncio.to_thread(self.adapter.list_run_events, run_id, limit=50)
         resources_task = asyncio.to_thread(self.adapter.list_run_resources, run_id, limit=50)
-        scoring_dashboard_task = asyncio.to_thread(self.adapter.get_scoring_dashboard, run_id)
+        scoring_dashboard_task = asyncio.to_thread(
+            lambda: scoring_dashboard if scoring_dashboard is not None else self.adapter.get_scoring_dashboard(run_id)
+        )
         trials_task = asyncio.to_thread(self.adapter.get_trials, run_id)
         params_task = asyncio.to_thread(self.adapter.get_best_params, run_id)
         config_task = asyncio.to_thread(self.adapter.get_resolved_config, run_id)
@@ -878,3 +947,96 @@ class VizService:
         if normalized_kind in {"", "local"} and normalized_id in {"", "local"}:
             return False
         return True
+
+    def _remote_run_fallback(self, method: str, run_id: str) -> Any:
+        remote_source = self._unique_remote_source_for_run(run_id)
+        if remote_source is None:
+            return None
+        return self._remote_call(
+            method,
+            args=(run_id,),
+            source_kind=remote_source["kind"],
+            source_id=remote_source["id"],
+        )
+
+    def _merge_local_and_remote_runs(
+        self,
+        local_payload: list[dict[str, Any]],
+        remote_payload: list[dict[str, Any]],
+        *,
+        remote_source: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        merged: list[dict[str, Any]] = [dict(item) for item in local_payload]
+        seen_run_ids = {
+            str(item.get("run_id"))
+            for item in merged
+            if isinstance(item.get("run_id"), str)
+        }
+        for item in remote_payload:
+            if not isinstance(item, dict):
+                continue
+            run_id = item.get("run_id")
+            if not isinstance(run_id, str) or run_id in seen_run_ids:
+                continue
+            remote_item = dict(item)
+            remote_item["source_kind"] = remote_source["kind"]
+            remote_item["source_id"] = remote_source["id"]
+            remote_item["source_label"] = remote_source["label"]
+            merged.append(remote_item)
+            seen_run_ids.add(run_id)
+        merged.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return merged
+
+    def _unique_remote_source_for_experiment(self, experiment_id: str) -> dict[str, str] | None:
+        matches: dict[tuple[str, str], dict[str, str]] = {}
+        for snapshot in self.remote_snapshots.fetch_snapshots():
+            source = snapshot.get("source")
+            if not isinstance(source, dict):
+                continue
+            source_kind = str(source.get("kind") or "")
+            source_id = str(source.get("id") or "")
+            source_label = str(source.get("label") or source_id or source_kind)
+            if not source_kind or not source_id:
+                continue
+            if any(
+                isinstance(item, dict) and item.get("experiment_id") == experiment_id
+                for section_name in ("experiments", "live_experiments")
+                for item in snapshot.get(section_name, [])
+            ):
+                matches[(source_kind, source_id)] = {
+                    "kind": source_kind,
+                    "id": source_id,
+                    "label": source_label,
+                }
+        if len(matches) != 1:
+            return None
+        return next(iter(matches.values()))
+
+    def _unique_remote_source_for_run(self, run_id: str) -> dict[str, str] | None:
+        matches: dict[tuple[str, str], dict[str, str]] = {}
+        for snapshot in self.remote_snapshots.fetch_snapshots():
+            source = snapshot.get("source")
+            if not isinstance(source, dict):
+                continue
+            source_kind = str(source.get("kind") or "")
+            source_id = str(source.get("id") or "")
+            source_label = str(source.get("label") or source_id or source_kind)
+            if not source_kind or not source_id:
+                continue
+            has_run = any(
+                isinstance(experiment, dict)
+                and any(isinstance(item, dict) and item.get("run_id") == run_id for item in experiment.get("runs", []))
+                for experiment in snapshot.get("live_experiments", [])
+            ) or any(
+                isinstance(item, dict) and item.get("run_id") == run_id
+                for item in snapshot.get("recent_activity", [])
+            )
+            if has_run:
+                matches[(source_kind, source_id)] = {
+                    "kind": source_kind,
+                    "id": source_id,
+                    "label": source_label,
+                }
+        if len(matches) != 1:
+            return None
+        return next(iter(matches.values()))
