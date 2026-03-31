@@ -56,24 +56,17 @@ class VizService:
                 source_id=source_id,
             )
         payload = self.adapter.get_experiment(experiment_id)
+        if isinstance(payload, dict):
+            return payload
         remote_source = self._unique_remote_source_for_experiment(experiment_id)
         if remote_source is None:
-            return payload
+            return None
         remote_payload = self._remote_call(
             "get_experiment",
             args=(experiment_id,),
             source_kind=remote_source["kind"],
             source_id=remote_source["id"],
         )
-        if isinstance(payload, dict):
-            if isinstance(remote_payload, dict):
-                payload = dict(payload)
-                payload["has_remote_overlay"] = True
-                payload["overlay_source_id"] = remote_source["id"]
-                payload["overlay_source_kind"] = remote_source["kind"]
-                payload["overlay_source_label"] = remote_source["label"]
-                payload["overlay_updated_at"] = remote_payload.get("updated_at")
-            return payload
         return remote_payload if isinstance(remote_payload, dict) else None
 
     def list_experiment_configs(
@@ -172,6 +165,10 @@ class VizService:
             assert isinstance(payload, list)
             return payload
         local_payload = self.adapter.list_experiment_runs(experiment_id)
+        if local_payload:
+            return local_payload
+        if self.adapter.get_experiment(experiment_id) is not None:
+            return local_payload
         remote_source = self._unique_remote_source_for_experiment(experiment_id)
         if remote_source is None:
             return local_payload

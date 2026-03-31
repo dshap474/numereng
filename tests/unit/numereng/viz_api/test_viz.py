@@ -3368,12 +3368,58 @@ def test_merge_monitor_snapshots_canonicalizes_duplicate_local_and_remote_experi
     assert payload["summary"]["total_experiments"] == 1
 
 
-def test_service_list_experiment_runs_merges_remote_overlay_for_local_experiment(tmp_path: Path) -> None:
+def test_service_get_experiment_prefers_local_without_remote_overlay_lookup(tmp_path: Path) -> None:
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
+    service = VizService(adapter)
+    service.adapter.get_experiment = lambda experiment_id: {"experiment_id": "exp-1", "status": "active"}  # type: ignore[method-assign]
+    service.remote_snapshots.fetch_snapshots = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("remote snapshots should not load")
+    )
+
+    payload = service.get_experiment("exp-1")
+
+    assert payload == {"experiment_id": "exp-1", "status": "active"}
+
+
+def test_service_get_experiment_falls_back_to_unique_remote_source_when_local_missing(tmp_path: Path) -> None:
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
+    service = VizService(adapter)
+    service.adapter.get_experiment = lambda experiment_id: None  # type: ignore[method-assign]
+    service.remote_snapshots.fetch_snapshots = lambda: [  # type: ignore[method-assign]
+        {
+            "source": {"kind": "ssh", "id": "pc", "label": "PC", "state": "live"},
+            "experiments": [{"experiment_id": "exp-1"}],
+            "live_experiments": [],
+            "recent_activity": [],
+        }
+    ]
+    service.remote_details.call = lambda method, **kwargs: {"experiment_id": "exp-1", "status": "active"}  # type: ignore[method-assign]
+
+    payload = service.get_experiment("exp-1")
+
+    assert payload == {"experiment_id": "exp-1", "status": "active"}
+
+
+def test_service_list_experiment_runs_prefers_local_without_remote_overlay_lookup(tmp_path: Path) -> None:
     adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
     service = VizService(adapter)
     service.adapter.list_experiment_runs = lambda experiment_id: [  # type: ignore[method-assign]
         {"run_id": "run-local", "created_at": "2026-03-31T00:00:00+00:00", "status": "FINISHED"}
     ]
+    service.remote_snapshots.fetch_snapshots = lambda: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        AssertionError("remote snapshots should not load")
+    )
+
+    payload = service.list_experiment_runs("exp-1")
+
+    assert [item["run_id"] for item in payload] == ["run-local"]
+
+
+def test_service_list_experiment_runs_falls_back_to_unique_remote_source_when_local_missing(tmp_path: Path) -> None:
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=tmp_path / ".numereng", repo_root=tmp_path))
+    service = VizService(adapter)
+    service.adapter.list_experiment_runs = lambda experiment_id: []  # type: ignore[method-assign]
+    service.adapter.get_experiment = lambda experiment_id: None  # type: ignore[method-assign]
     service.remote_snapshots.fetch_snapshots = lambda: [  # type: ignore[method-assign]
         {
             "source": {"kind": "ssh", "id": "pc", "label": "PC", "state": "live"},
@@ -3383,16 +3429,12 @@ def test_service_list_experiment_runs_merges_remote_overlay_for_local_experiment
         }
     ]
     service.remote_details.call = lambda method, **kwargs: [  # type: ignore[method-assign]
-        {"run_id": "run-local", "created_at": "2026-03-31T00:00:00+00:00", "status": "FINISHED"},
         {"run_id": "run-remote", "created_at": "2026-03-31T01:00:00+00:00", "status": "RUNNING"},
     ]
 
     payload = service.list_experiment_runs("exp-1")
 
-    assert [item["run_id"] for item in payload] == ["run-remote", "run-local"]
-    remote_item = next(item for item in payload if item["run_id"] == "run-remote")
-    assert remote_item["source_kind"] == "ssh"
-    assert remote_item["source_id"] == "pc"
+    assert [item["run_id"] for item in payload] == ["run-remote"]
 
 
 def test_service_run_manifest_falls_back_to_unique_remote_source(tmp_path: Path) -> None:
