@@ -114,18 +114,18 @@ class RemoteExperimentPullRequest(BaseModel):
 class RemoteExperimentPullFailureResponse(BaseModel):
     run_id: str
     missing_files: list[str] = Field(default_factory=list)
+    reason: str | None = None
 
 
 class RemoteExperimentPullResponse(BaseModel):
     target_id: str
     experiment_id: str
     local_experiment_manifest_path: str
-    cache_experiment_dir: str
-    cache_runs_root: str
+    local_runs_root: str
     pulled_at: str
-    pulled_run_count: int
-    cached_artifact_count: int
-    skipped_artifact_count: int
+    materialized_run_ids: list[str] = Field(default_factory=list)
+    materialized_run_count: int
+    skipped_non_finished_run_ids: list[str] = Field(default_factory=list)
     failures: list[RemoteExperimentPullFailureResponse] = Field(default_factory=list)
 
 

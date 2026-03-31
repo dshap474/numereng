@@ -77,21 +77,21 @@ class RemoteExperimentPullFailure:
 
     run_id: str
     missing_files: tuple[str, ...]
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
 class RemoteExperimentPullResult:
-    """Result of pulling one experiment's viz-facing artifacts into the local cache."""
+    """Result of pulling one remote experiment into canonical local run storage."""
 
     target_id: str
     experiment_id: str
     local_experiment_manifest_path: Path
-    cache_experiment_dir: Path
-    cache_runs_root: Path
+    local_runs_root: Path
     pulled_at: str
-    pulled_run_count: int
-    cached_artifact_count: int
-    skipped_artifact_count: int
+    materialized_run_ids: tuple[str, ...]
+    materialized_run_count: int
+    skipped_non_finished_run_ids: tuple[str, ...]
     failures: tuple[RemoteExperimentPullFailure, ...]
 
 

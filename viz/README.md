@@ -10,11 +10,11 @@ The key design choice is federated monitoring:
 - every machine keeps its own `.numereng` store
 - the local viz backend reads the local store directly
 - enabled SSH remotes are queried through `numereng monitor snapshot --json`
-- completed remote experiments can be pulled back as lightweight viz caches under `.numereng/cache/remote_ops/pulls/<target_id>/...`
+- completed remote experiments can be pulled back into canonical local run storage under `.numereng/runs/<run_id>`
 - the frontend renders one merged overview with local-primary canonical rows when experiment ids overlap
-- remote experiment and run detail pages stay on the local viz server, but default resolution is now local store first, then pulled cache, then source-aware SSH fallback when needed
+- remote experiment and run detail pages stay on the local viz server, but default resolution is now canonical local runs first, then legacy pulled-cache compatibility when present, then source-aware SSH fallback when needed
 
-This avoids syncing SQLite stores or full remote run directories between machines while still giving one dashboard for local and remote runs.
+This keeps one dashboard for local and remote runs without syncing SQLite stores, while still allowing finished remote history to be materialized locally when that is the preferred operating mode.
 
 ## What Mission Control Assumes
 

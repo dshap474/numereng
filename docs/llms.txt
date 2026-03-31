@@ -82,9 +82,8 @@ Key artifacts:
 - `cache/cloud/<provider>/runs/<run_id>/state.json`
 - `cache/cloud/<provider>/runs/<run_id>/pull/`
 - `cache/cloud/<provider>/ops/<op_id>/state.json`
-- `cache/remote_ops/pulls/<target_id>/experiments/<experiment_id>/experiment.json`
-- `cache/remote_ops/pulls/<target_id>/experiments/<experiment_id>/pull.json`
-- `cache/remote_ops/pulls/<target_id>/runs/<run_id>/*`
+- `cache/remote_ops/pulls/<target_id>/...`
+  - legacy read-only compatibility for older remote pullbacks; new `remote experiment pull` runs materialize full finished runs into `runs/<run_id>/`
 - `tmp/remote-configs/*.json`
   - retention-managed staging for detached/ad hoc remote launches only; not canonical run provenance
 - `tmp/lifecycle_smoke/<session>/*.json`
@@ -216,7 +215,7 @@ Viz/frontend topology:
 - Viz backend launcher shim is `viz/api.py`; the actual backend package is `viz/api/numereng_viz`.
 - No standalone frontend routes for `/run-ops` or `/configs`.
 - `/experiments` is the mission-control dashboard. It route-loads `/api/experiments/overview`, keeps a page-local snapshot, and polls the same read-only overview every 3 seconds while the page is visible. The left rail lists all experiments; the right pane shows live experiments plus recent terminal activity and attention states.
-- Experiment and run detail routes keep the existing local path shape and add optional `source_kind` + `source_id` query params. By default the local viz backend now resolves local canonical store first, then the pulled remote artifact cache under `.numereng/cache/remote_ops/pulls`, then falls back to SSH when there is exactly one eligible remote source.
+- Experiment and run detail routes keep the existing local path shape and add optional `source_kind` + `source_id` query params. By default the local viz backend now resolves canonical local run storage first, keeps a narrow read-only compatibility fallback for older pulled-cache artifacts under `.numereng/cache/remote_ops/pulls`, then falls back to SSH when there is exactly one eligible remote source.
 - Mission control also exposes remote source health from `overview.sources`; enabled SSH remotes can appear as `live`, `cached`, or `unavailable`, and carry persisted bootstrap metadata (`bootstrap_status`, `last_bootstrap_at`, `last_bootstrap_error`) from the local viz bootstrap step.
 - Mission control live cards render one canonical progress instrument per live experiment, chosen from the freshest active `primary` run (`updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`). The card keeps a single progress bar plus adjacent percent instead of stacked aggregate/per-run rails.
 - Experiment page contains Analysis + Progress + Run Ops tabs; all launch/control remains monitor-only and CLI/API-driven.
@@ -237,7 +236,7 @@ Viz/frontend topology:
 - `make viz` automatically runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before starting the local FastAPI + Vite stack. It never starts a remote viz server; the local viz backend remains the only UI/API process and keeps polling remote monitor snapshots over SSH.
 - `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
 - `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
-- `remote experiment pull` is the lightweight artifact pullback flow for remote-trained experiments. It writes only viz-facing manifests + scoring artifacts under `.numereng/cache/remote_ops/pulls/<target_id>/...`, reconciles `.numereng/experiments/<id>/experiment.json` locally, and never materializes remote runs into `.numereng/runs/<run_id>`.
+- `remote experiment pull` is the canonical remote result sync flow for remote-trained experiments. It materializes full `FINISHED` remote run directories into `.numereng/runs/<run_id>`, reconciles `.numereng/experiments/<id>/experiment.json` locally, and leaves active/incomplete remote runs to SSH fallback plus overview freshness overlay.
 - `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
 - Live-run payloads now carry `progress_mode`:
   - `exact` for local lifecycle-backed percentages

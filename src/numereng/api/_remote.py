@@ -193,16 +193,16 @@ def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperi
         target_id=result.target_id,
         experiment_id=result.experiment_id,
         local_experiment_manifest_path=str(result.local_experiment_manifest_path),
-        cache_experiment_dir=str(result.cache_experiment_dir),
-        cache_runs_root=str(result.cache_runs_root),
+        local_runs_root=str(result.local_runs_root),
         pulled_at=result.pulled_at,
-        pulled_run_count=result.pulled_run_count,
-        cached_artifact_count=result.cached_artifact_count,
-        skipped_artifact_count=result.skipped_artifact_count,
+        materialized_run_ids=list(result.materialized_run_ids),
+        materialized_run_count=result.materialized_run_count,
+        skipped_non_finished_run_ids=list(result.skipped_non_finished_run_ids),
         failures=[
             RemoteExperimentPullFailureResponse(
                 run_id=item.run_id,
                 missing_files=list(item.missing_files),
+                reason=item.reason,
             )
             for item in result.failures
         ],
