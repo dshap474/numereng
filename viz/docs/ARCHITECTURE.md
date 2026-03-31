@@ -32,11 +32,11 @@ So `viz` uses federation:
 - each machine keeps its own `.numereng`
 - the local backend fetches a normalized snapshot from each store
 - the UI renders one merged overview
-- completed remote experiments can be pulled back as lightweight viz caches under `.numereng/cache/remote_ops/pulls/<target_id>/...`
+- completed remote experiments can be pulled back into canonical local run storage under `.numereng/runs/<run_id>`
 
 This avoids:
 - SQLite-over-network problems
-- mirroring full remote run directories and active lifecycle files
+- active lifecycle replication and cross-machine DB coupling
 - accidental cross-machine state corruption
 
 ## Backend Layers

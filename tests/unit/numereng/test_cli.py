@@ -227,12 +227,11 @@ def test_cli_remote_experiment_pull_success(
             target_id="pc",
             experiment_id="exp-1",
             local_experiment_manifest_path=".numereng/experiments/exp-1/experiment.json",
-            cache_experiment_dir=".numereng/cache/remote_ops/pulls/pc/experiments/exp-1",
-            cache_runs_root=".numereng/cache/remote_ops/pulls/pc/runs",
+            local_runs_root=".numereng/runs",
             pulled_at="2026-03-31T00:00:00+00:00",
-            pulled_run_count=2,
-            cached_artifact_count=14,
-            skipped_artifact_count=1,
+            materialized_run_ids=["run-a", "run-b"],
+            materialized_run_count=2,
+            skipped_non_finished_run_ids=["run-c"],
             failures=[],
         )
 
@@ -243,7 +242,7 @@ def test_cli_remote_experiment_pull_success(
 
     assert exit_code == 0
     assert payload["experiment_id"] == "exp-1"
-    assert payload["pulled_run_count"] == 2
+    assert payload["materialized_run_count"] == 2
 
 
 def test_cli_run_submit_success(

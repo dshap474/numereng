@@ -6,7 +6,10 @@ import base64
 import hashlib
 import json
 import shlex
+import shutil
+import sqlite3
 import subprocess
+import tempfile
 import zipfile
 from datetime import UTC, datetime
 from io import BytesIO
@@ -36,7 +39,7 @@ from numereng.features.remote_ops.sync import (
     remote_repo_metadata_path,
     sync_entries_to_remote,
 )
-from numereng.features.store import resolve_store_root, upsert_experiment
+from numereng.features.store import index_run, init_store_db, resolve_store_root, upsert_experiment
 from numereng.features.training import PostTrainingScoringPolicy, TrainingProfile
 from numereng.platform import load_remote_targets
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
@@ -53,25 +56,7 @@ _REMOTE_BOOTSTRAP_DIR = ("remote_ops", "bootstrap")
 _REMOTE_VIZ_BOOTSTRAP_FILE = "viz.json"
 _REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS = 10.0
 _REMOTE_WINDOWS_STARTUP_POLL_SECONDS = 0.25
-_REMOTE_PULLS_DIR = ("cache", "remote_ops", "pulls")
-_REMOTE_PULL_REQUIRED_FILES: tuple[str, ...] = (
-    "run.json",
-    "resolved.json",
-    "metrics.json",
-    "score_provenance.json",
-    "artifacts/scoring/manifest.json",
-)
-_REMOTE_PULL_OPTIONAL_FILES: tuple[str, ...] = (
-    "results.json",
-    "artifacts/scoring/run_metric_series.parquet",
-    "artifacts/scoring/corr_per_era.parquet",
-    "artifacts/scoring/post_fold_snapshots.parquet",
-    "artifacts/scoring/post_training_core_summary.parquet",
-    "artifacts/scoring/post_training_full_summary.parquet",
-    "artifacts/scoring/post_training_features_summary.parquet",
-    "artifacts/reports/trials.parquet",
-    "artifacts/reports/best_params.json",
-)
+_REMOTE_PULL_STAGING_DIR = ("tmp", "remote_ops", "pulls")
 
 
 class RemoteOpsError(Exception):
@@ -347,66 +332,92 @@ def pull_remote_experiment(
     experiment_id: str,
     store_root: str | Path = ".numereng",
 ) -> RemoteExperimentPullResult:
-    """Pull one remote experiment's viz-facing artifacts into the local cache."""
+    """Pull one remote experiment's finished runs into canonical local storage."""
 
     target = _get_target(target_id)
-    resolved_store_root = resolve_store_root(store_root)
-    cache_root = _remote_pull_target_root(resolved_store_root, target_id=target.id)
-    cache_experiment_dir = _remote_pull_experiment_dir(
-        resolved_store_root,
-        target_id=target.id,
-        experiment_id=experiment_id,
-    )
-    cache_runs_root = _remote_pull_runs_root(resolved_store_root, target_id=target.id)
-    cache_experiment_dir.mkdir(parents=True, exist_ok=True)
-    cache_runs_root.mkdir(parents=True, exist_ok=True)
+    init_result = init_store_db(store_root=store_root)
+    resolved_store_root = init_result.store_root
+    local_runs_root = resolved_store_root / "runs"
+    local_experiment_manifest_path = resolved_store_root / "experiments" / experiment_id / "experiment.json"
 
-    archive_bytes, metadata = _run_remote_python_archive(
+    preflight = _run_remote_python(
         target,
-        _pull_python_script(),
-        args=[
-            experiment_id,
-            target.store_root,
-            base64.b64encode(json.dumps(list(_REMOTE_PULL_REQUIRED_FILES)).encode("utf-8")).decode("ascii"),
-            base64.b64encode(json.dumps(list(_REMOTE_PULL_OPTIONAL_FILES)).encode("utf-8")).decode("ascii"),
-        ],
+        _pull_preflight_python_script(),
+        args=[experiment_id, target.store_root],
     )
-    remote_manifest = metadata.get("experiment")
+    if preflight is None:
+        raise RemoteExecutionError("remote_experiment_pull_preflight_failed")
+    preflight_error = _optional_str(preflight, "error")
+    if preflight_error is not None:
+        raise RemoteExecutionError(preflight_error)
+
+    remote_manifest = preflight.get("experiment")
     if not isinstance(remote_manifest, dict):
         raise RemoteExecutionError("remote_experiment_pull_missing_manifest")
 
-    extraction = _extract_pull_archive(archive_bytes, cache_root=cache_root)
     pulled_at = _utc_now_iso()
-    failures = tuple(
-        RemoteExperimentPullFailure(
-            run_id=str(item["run_id"]),
-            missing_files=tuple(str(name) for name in item.get("missing_files", [])),
+    failures = _decode_pull_failures(preflight.get("failures"))
+    materializable_run_ids = tuple(
+        str(item)
+        for item in preflight.get("eligible_finished_run_ids", [])
+        if isinstance(item, str) and item.strip()
+    )
+    skipped_non_finished_run_ids = tuple(
+        str(item)
+        for item in preflight.get("skipped_non_finished_run_ids", [])
+        if isinstance(item, str) and item.strip()
+    )
+
+    if not failures:
+        failures = _local_pull_conflicts(local_runs_root=local_runs_root, run_ids=materializable_run_ids)
+    if failures:
+        return RemoteExperimentPullResult(
+            target_id=target.id,
+            experiment_id=experiment_id,
+            local_experiment_manifest_path=local_experiment_manifest_path,
+            local_runs_root=local_runs_root,
+            pulled_at=pulled_at,
+            materialized_run_ids=(),
+            materialized_run_count=0,
+            skipped_non_finished_run_ids=skipped_non_finished_run_ids,
+            failures=failures,
         )
-        for item in metadata.get("failures", [])
-        if isinstance(item, dict) and isinstance(item.get("run_id"), str)
-    )
-    successful_run_ids = tuple(str(item) for item in metadata.get("successful_run_ids", []) if isinstance(item, str))
-    skipped_optional_count = int(metadata.get("missing_optional_count") or 0)
-    skipped_artifact_count = extraction["skipped_artifact_count"] + skipped_optional_count
-    pull_manifest = {
-        "version": 1,
-        "target_id": target.id,
-        "experiment_id": experiment_id,
-        "pulled_at": pulled_at,
-        "successful_run_ids": list(successful_run_ids),
-        "cached_artifact_count": extraction["cached_artifact_count"],
-        "skipped_artifact_count": skipped_artifact_count,
-        "failures": [
-            {"run_id": item.run_id, "missing_files": list(item.missing_files)}
-            for item in failures
-        ],
-        "remote_manifest_path": metadata.get("remote_manifest_path"),
-        "remote_experiment_dir": metadata.get("remote_experiment_dir"),
-    }
-    (cache_experiment_dir / "pull.json").write_text(
-        json.dumps(pull_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+
+    materialized_run_ids: tuple[str, ...] = ()
+    if materializable_run_ids:
+        archive_bytes, metadata = _run_remote_python_archive(
+            target,
+            _pull_archive_python_script(),
+            args=[
+                experiment_id,
+                target.store_root,
+                base64.b64encode(json.dumps(list(materializable_run_ids)).encode("utf-8")).decode("ascii"),
+            ],
+        )
+        archive_failures = _decode_pull_failures(metadata.get("failures"))
+        if archive_failures:
+            return RemoteExperimentPullResult(
+                target_id=target.id,
+                experiment_id=experiment_id,
+                local_experiment_manifest_path=local_experiment_manifest_path,
+                local_runs_root=local_runs_root,
+                pulled_at=pulled_at,
+                materialized_run_ids=(),
+                materialized_run_count=0,
+                skipped_non_finished_run_ids=skipped_non_finished_run_ids,
+                failures=archive_failures,
+            )
+        staging_root = _remote_pull_staging_dir(resolved_store_root, experiment_id=experiment_id)
+        try:
+            extracted_runs_root = _extract_pull_archive(archive_bytes, stage_root=staging_root)
+            _ensure_staged_runs_present(extracted_runs_root=extracted_runs_root, run_ids=materializable_run_ids)
+            materialized_run_ids = _materialize_staged_runs(
+                store_root=resolved_store_root,
+                staging_runs_root=extracted_runs_root,
+                run_ids=materializable_run_ids,
+            )
+        finally:
+            shutil.rmtree(staging_root, ignore_errors=True)
 
     local_experiment_manifest_path = _reconcile_local_experiment_manifest(
         store_root=resolved_store_root,
@@ -414,18 +425,18 @@ def pull_remote_experiment(
         experiment_id=experiment_id,
         remote_manifest=remote_manifest,
         pulled_at=pulled_at,
+        materialized_run_ids=materialized_run_ids,
     )
     return RemoteExperimentPullResult(
         target_id=target.id,
         experiment_id=experiment_id,
         local_experiment_manifest_path=local_experiment_manifest_path,
-        cache_experiment_dir=cache_experiment_dir,
-        cache_runs_root=cache_runs_root,
+        local_runs_root=local_runs_root,
         pulled_at=pulled_at,
-        pulled_run_count=len(successful_run_ids),
-        cached_artifact_count=extraction["cached_artifact_count"],
-        skipped_artifact_count=skipped_artifact_count,
-        failures=failures,
+        materialized_run_ids=materialized_run_ids,
+        materialized_run_count=len(materialized_run_ids),
+        skipped_non_finished_run_ids=skipped_non_finished_run_ids,
+        failures=(),
     )
 
 
@@ -655,18 +666,10 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
     return entries
 
 
-def _remote_pull_target_root(store_root: Path, *, target_id: str) -> Path:
-    safe_target_id = _safe_name(target_id)
-    return store_root / _REMOTE_PULLS_DIR[0] / _REMOTE_PULLS_DIR[1] / _REMOTE_PULLS_DIR[2] / safe_target_id
-
-
-def _remote_pull_experiment_dir(store_root: Path, *, target_id: str, experiment_id: str) -> Path:
-    safe_experiment_id = _safe_name(experiment_id)
-    return _remote_pull_target_root(store_root, target_id=target_id) / "experiments" / safe_experiment_id
-
-
-def _remote_pull_runs_root(store_root: Path, *, target_id: str) -> Path:
-    return _remote_pull_target_root(store_root, target_id=target_id) / "runs"
+def _remote_pull_staging_dir(store_root: Path, *, experiment_id: str) -> Path:
+    staging_root = store_root / _REMOTE_PULL_STAGING_DIR[0] / _REMOTE_PULL_STAGING_DIR[1] / _REMOTE_PULL_STAGING_DIR[2]
+    staging_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{_safe_name(experiment_id)}-", dir=staging_root))
 
 
 def _reconcile_local_experiment_manifest(
@@ -676,6 +679,7 @@ def _reconcile_local_experiment_manifest(
     experiment_id: str,
     remote_manifest: dict[str, Any],
     pulled_at: str,
+    materialized_run_ids: tuple[str, ...],
 ) -> Path:
     experiment_dir = store_root / "experiments" / experiment_id
     experiment_dir.mkdir(parents=True, exist_ok=True)
@@ -724,7 +728,13 @@ def _reconcile_local_experiment_manifest(
     if "champion_run_id" not in metadata and isinstance(merged.get("champion_run_id"), str):
         metadata["champion_run_id"] = merged["champion_run_id"]
     remote_pull_payload = metadata.get("remote_pull") if isinstance(metadata.get("remote_pull"), dict) else {}
-    remote_pull_payload.update({"last_target_id": target_id, "last_pulled_at": pulled_at})
+    remote_pull_payload.update(
+        {
+            "last_target_id": target_id,
+            "last_pulled_at": pulled_at,
+            "materialized_finished_run_ids": list(materialized_run_ids),
+        }
+    )
     metadata["remote_pull"] = remote_pull_payload
     merged["metadata"] = metadata
 
@@ -888,39 +898,117 @@ def _extract_json_object(stdout: str) -> dict[str, Any] | None:
     return None
 
 
-def _extract_pull_archive(archive_bytes: bytes, *, cache_root: Path) -> dict[str, int]:
-    cached_artifact_count = 0
-    skipped_artifact_count = 0
-    if not archive_bytes:
-        return {
-            "cached_artifact_count": 0,
-            "skipped_artifact_count": 0,
-        }
+def _extract_pull_archive(archive_bytes: bytes, *, stage_root: Path) -> Path:
+    stage_root.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(BytesIO(archive_bytes), mode="r") as archive:
         for member in archive.infolist():
             if member.is_dir():
                 continue
-            destination = (cache_root / Path(member.filename)).resolve()
+            destination = (stage_root / Path(member.filename)).resolve()
             try:
-                destination.relative_to(cache_root.resolve())
+                destination.relative_to(stage_root.resolve())
             except ValueError as exc:
                 raise RemoteExecutionError(f"remote_experiment_pull_invalid_archive_path:{member.filename}") from exc
             destination.parent.mkdir(parents=True, exist_ok=True)
-            content = archive.read(member.filename)
-            if destination.is_file():
-                try:
-                    if destination.read_bytes() == content:
-                        cached_artifact_count += 1
-                        skipped_artifact_count += 1
-                        continue
-                except OSError:
-                    pass
-            destination.write_bytes(content)
-            cached_artifact_count += 1
-    return {
-        "cached_artifact_count": cached_artifact_count,
-        "skipped_artifact_count": skipped_artifact_count,
-    }
+            destination.write_bytes(archive.read(member.filename))
+    return stage_root / "runs"
+
+
+def _decode_pull_failures(payload: Any) -> tuple[RemoteExperimentPullFailure, ...]:
+    failures: list[RemoteExperimentPullFailure] = []
+    if not isinstance(payload, list):
+        return ()
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        run_id = item.get("run_id")
+        if not isinstance(run_id, str) or not run_id.strip():
+            continue
+        missing_files_raw = item.get("missing_files")
+        missing_files = (
+            tuple(str(name) for name in missing_files_raw if isinstance(name, str))
+            if isinstance(missing_files_raw, list)
+            else ()
+        )
+        failures.append(
+            RemoteExperimentPullFailure(
+                run_id=run_id,
+                missing_files=missing_files,
+                reason=_to_non_empty_str(item.get("reason")),
+            )
+        )
+    return tuple(failures)
+
+
+def _local_pull_conflicts(
+    *,
+    local_runs_root: Path,
+    run_ids: tuple[str, ...],
+) -> tuple[RemoteExperimentPullFailure, ...]:
+    failures: list[RemoteExperimentPullFailure] = []
+    for run_id in run_ids:
+        if (local_runs_root / run_id).exists():
+            failures.append(
+                RemoteExperimentPullFailure(
+                    run_id=run_id,
+                    missing_files=(),
+                    reason="local_run_conflict",
+                )
+            )
+    return tuple(failures)
+
+
+def _ensure_staged_runs_present(*, extracted_runs_root: Path, run_ids: tuple[str, ...]) -> None:
+    missing_run_ids = [run_id for run_id in run_ids if not (extracted_runs_root / run_id / "run.json").is_file()]
+    if missing_run_ids:
+        raise RemoteExecutionError(f"remote_experiment_pull_stage_incomplete:{','.join(sorted(missing_run_ids))}")
+
+
+def _materialize_staged_runs(
+    *,
+    store_root: Path,
+    staging_runs_root: Path,
+    run_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    local_runs_root = store_root / "runs"
+    moved_run_ids: list[str] = []
+    try:
+        for run_id in run_ids:
+            source_dir = staging_runs_root / run_id
+            destination_dir = local_runs_root / run_id
+            if destination_dir.exists():
+                raise RemoteValidationError(f"remote_experiment_pull_local_conflict:{run_id}")
+            source_dir.rename(destination_dir)
+            moved_run_ids.append(run_id)
+        for run_id in run_ids:
+            index_run(store_root=store_root, run_id=run_id)
+    except Exception:
+        _rollback_materialized_runs(store_root=store_root, run_ids=tuple(moved_run_ids))
+        _delete_run_index_rows(store_root=store_root, run_ids=tuple(moved_run_ids))
+        raise
+    return tuple(run_ids)
+
+
+def _rollback_materialized_runs(*, store_root: Path, run_ids: tuple[str, ...]) -> None:
+    local_runs_root = store_root / "runs"
+    for run_id in run_ids:
+        shutil.rmtree(local_runs_root / run_id, ignore_errors=True)
+
+
+def _delete_run_index_rows(*, store_root: Path, run_ids: tuple[str, ...]) -> None:
+    if not run_ids:
+        return
+    init_result = init_store_db(store_root=store_root)
+    try:
+        with sqlite3.connect(init_result.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for run_id in run_ids:
+                conn.execute("DELETE FROM metrics WHERE run_id = ?", (run_id,))
+                conn.execute("DELETE FROM run_artifacts WHERE run_id = ?", (run_id,))
+                conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            conn.commit()
+    except sqlite3.Error:
+        return
 
 
 def _optional_str(payload: dict[str, Any] | None, key: str) -> str | None:
@@ -1206,7 +1294,100 @@ if __name__ == "__main__":
     ).strip()
 
 
-def _pull_python_script() -> str:
+def _pull_preflight_python_script() -> str:
+    return """
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("remote_pull_preflight_arguments_invalid")
+    experiment_id = sys.argv[1]
+    store_root = Path(sys.argv[2]).expanduser()
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    archived_dir = store_root / "experiments" / "_archive" / experiment_id
+    if (experiment_dir / "experiment.json").is_file():
+        resolved_experiment_dir = experiment_dir
+    elif (archived_dir / "experiment.json").is_file():
+        resolved_experiment_dir = archived_dir
+    else:
+        print(json.dumps({"error": "remote_experiment_not_found", "experiment_id": experiment_id}, sort_keys=True))
+        return
+
+    experiment_manifest_path = resolved_experiment_dir / "experiment.json"
+    try:
+        experiment_manifest = json.loads(experiment_manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        print(
+            json.dumps(
+                {"error": "remote_experiment_manifest_invalid", "experiment_id": experiment_id},
+                sort_keys=True,
+            )
+        )
+        return
+    if not isinstance(experiment_manifest, dict):
+        print(
+            json.dumps(
+                {"error": "remote_experiment_manifest_invalid", "experiment_id": experiment_id},
+                sort_keys=True,
+            )
+        )
+        return
+
+    run_ids = experiment_manifest.get("runs")
+    if not isinstance(run_ids, list):
+        run_ids = []
+
+    failures = []
+    eligible_finished_run_ids = []
+    skipped_non_finished_run_ids = []
+    for raw_run_id in run_ids:
+        if not isinstance(raw_run_id, str) or not raw_run_id.strip():
+            continue
+        run_id = raw_run_id.strip()
+        run_dir = store_root / "runs" / run_id
+        run_manifest_path = run_dir / "run.json"
+        if not run_dir.is_dir():
+            failures.append({"run_id": run_id, "missing_files": ["run_dir"], "reason": "run_dir_missing"})
+            continue
+        if not run_manifest_path.is_file():
+            failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_missing"})
+            continue
+        try:
+            run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_invalid"})
+            continue
+        if not isinstance(run_manifest, dict):
+            failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_invalid"})
+            continue
+        status = str(run_manifest.get("status") or "").strip()
+        if status == "FINISHED":
+            eligible_finished_run_ids.append(run_id)
+            continue
+        skipped_non_finished_run_ids.append(run_id)
+
+    metadata = {
+        "experiment": experiment_manifest,
+        "experiment_id": experiment_id,
+        "remote_experiment_dir": str(resolved_experiment_dir),
+        "remote_manifest_path": str(experiment_manifest_path),
+        "eligible_finished_run_ids": eligible_finished_run_ids,
+        "skipped_non_finished_run_ids": skipped_non_finished_run_ids,
+        "failures": failures,
+    }
+    print(json.dumps(metadata, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
+def _pull_archive_python_script() -> str:
     return """
 import base64
 import io
@@ -1219,22 +1400,16 @@ from pathlib import Path
 def _read_json_arg(raw: str) -> list[str]:
     payload = json.loads(base64.b64decode(raw).decode("utf-8"))
     if not isinstance(payload, list):
-        raise SystemExit("remote_pull_arguments_invalid")
-    return [str(item) for item in payload if isinstance(item, str)]
-
-
-def _emit_error(error: str, **extra: object) -> None:
-    payload = {"error": error, **extra}
-    sys.stderr.write(json.dumps(payload, sort_keys=True) + "\\n")
+        raise SystemExit("remote_pull_archive_arguments_invalid")
+    return [str(item).strip() for item in payload if isinstance(item, str) and str(item).strip()]
 
 
 def main() -> None:
-    if len(sys.argv) != 5:
-        raise SystemExit("remote_pull_arguments_invalid")
+    if len(sys.argv) != 4:
+        raise SystemExit("remote_pull_archive_arguments_invalid")
     experiment_id = sys.argv[1]
     store_root = Path(sys.argv[2]).expanduser()
-    required_files = _read_json_arg(sys.argv[3])
-    optional_files = _read_json_arg(sys.argv[4])
+    run_ids = _read_json_arg(sys.argv[3])
 
     experiment_dir = store_root / "experiments" / experiment_id
     archived_dir = store_root / "experiments" / "_archive" / experiment_id
@@ -1243,59 +1418,51 @@ def main() -> None:
     elif (archived_dir / "experiment.json").is_file():
         resolved_experiment_dir = archived_dir
     else:
-        _emit_error("remote_experiment_not_found", experiment_id=experiment_id)
+        sys.stderr.write(
+            json.dumps(
+                {"error": "remote_experiment_not_found", "experiment_id": experiment_id},
+                sort_keys=True,
+            )
+            + "\\n"
+        )
         raise SystemExit(3)
 
     manifest_path = resolved_experiment_dir / "experiment.json"
-    try:
-        experiment_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        _emit_error("remote_experiment_manifest_invalid", experiment_id=experiment_id)
-        raise SystemExit(4)
-    if not isinstance(experiment_manifest, dict):
-        _emit_error("remote_experiment_manifest_invalid", experiment_id=experiment_id)
-        raise SystemExit(4)
-
-    run_ids = experiment_manifest.get("runs")
-    if not isinstance(run_ids, list):
-        run_ids = []
-
     failures = []
-    successful_run_ids = []
-    missing_optional_count = 0
+    for run_id in run_ids:
+        run_dir = store_root / "runs" / run_id
+        manifest_candidate = run_dir / "run.json"
+        if not run_dir.is_dir():
+            failures.append({"run_id": run_id, "missing_files": ["run_dir"], "reason": "run_dir_missing"})
+            continue
+        if not manifest_candidate.is_file():
+            failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_missing"})
+    if failures:
+        metadata = {
+            "experiment_id": experiment_id,
+            "remote_experiment_dir": str(resolved_experiment_dir),
+            "remote_manifest_path": str(manifest_path),
+            "archived_run_ids": [],
+            "failures": failures,
+        }
+        sys.stderr.write(json.dumps(metadata, sort_keys=True) + "\\n")
+        return
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(
-            f"experiments/{experiment_id}/experiment.json",
-            json.dumps(experiment_manifest, indent=2, sort_keys=True) + "\\n",
-        )
-        for raw_run_id in run_ids:
-            if not isinstance(raw_run_id, str) or not raw_run_id.strip():
-                continue
-            run_id = raw_run_id.strip()
+        for run_id in run_ids:
             run_dir = store_root / "runs" / run_id
-            missing_required = [relpath for relpath in required_files if not (run_dir / relpath).is_file()]
-            if missing_required:
-                failures.append({"run_id": run_id, "missing_files": missing_required})
-                continue
-            successful_run_ids.append(run_id)
-            for relpath in [*required_files, *optional_files]:
-                source_path = run_dir / relpath
-                if not source_path.is_file():
-                    if relpath in optional_files:
-                        missing_optional_count += 1
+            for path in sorted(run_dir.rglob("*")):
+                if not path.is_file():
                     continue
-                archive.write(source_path, arcname=f"runs/{run_id}/{relpath.replace('\\\\', '/')}")
+                archive.write(path, arcname=f"runs/{run_id}/{path.relative_to(run_dir).as_posix()}")
 
     metadata = {
-        "ok": True,
-        "experiment": experiment_manifest,
         "experiment_id": experiment_id,
         "remote_experiment_dir": str(resolved_experiment_dir),
         "remote_manifest_path": str(manifest_path),
-        "successful_run_ids": successful_run_ids,
-        "missing_optional_count": missing_optional_count,
-        "failures": failures,
+        "archived_run_ids": run_ids,
+        "failures": [],
     }
     sys.stderr.write(json.dumps(metadata, sort_keys=True) + "\\n")
     sys.stdout.buffer.write(buffer.getvalue())

@@ -267,7 +267,7 @@ Data model split:
 - sqlite indexes query surfaces for runs/metrics/experiments/HPO/ensembles/telemetry.
 - `cloud_jobs` is the active/in-flight cloud job control plane for jobs that do not yet have a materialized run directory.
 - `cache/cloud/*` holds transient cloud state and pull staging; it is not the durable run store.
-- `cache/remote_ops/pulls/*` holds disposable viz-facing remote pullbacks; it is not canonical run storage and does not replace the remote machine's full `runs/<run_id>` directories.
+- `cache/remote_ops/pulls/*` is legacy compatibility-only state for older lightweight remote pullbacks; new `remote experiment pull` runs materialize finished remote runs directly into canonical local `runs/<run_id>` storage.
 - `tmp/*` is store-owned scratch space; `store doctor --fix-strays` prunes old `tmp/remote-configs/*.json` files only when they are older than 30 days and not referenced by active run lifecycles.
 - `remote_ops/*` is canonical operational state for SSH bootstrap/sync/detached launch workflows.
 - `store rebuild` re-derives index state from filesystem artifacts.
@@ -696,13 +696,13 @@ Store/remote monitor contract:
   - the local store snapshot
   - zero or more SSH remote store snapshots loaded from `src/numereng/platform/remotes/profiles/*.yaml` or `NUMERENG_REMOTE_PROFILES_DIR`
 - SSH monitoring is numereng-owned and read-only: the local viz backend runs `numereng monitor snapshot --json` on the remote machine over SSH and merges the returned snapshot.
-- Remote detail reads stay local-server-owned too: experiment/run/study/ensemble detail routes keep the same frontend paths and add optional `source_kind` + `source_id` query params, while the local viz backend resolves local canonical artifacts first, then the pulled remote artifact cache under `.numereng/cache/remote_ops/pulls`, and only then dispatches remaining misses over SSH with remote Python helpers instead of starting a remote viz API.
+- Remote detail reads stay local-server-owned too: experiment/run/study/ensemble detail routes keep the same frontend paths and add optional `source_kind` + `source_id` query params, while the local viz backend resolves canonical local run artifacts first, keeps a narrow read-only compatibility fallback for older pulled-cache artifacts under `.numereng/cache/remote_ops/pulls`, and only then dispatches remaining misses over SSH with remote Python helpers instead of starting a remote viz API.
 - SSH remote profiles declare `shell: posix|powershell`; `posix` keeps the existing `cd ... && ...` command path, while `powershell` wraps the snapshot command in `powershell -NoProfile -Command "Set-Location ...; ..."` for Windows SSH targets.
 - Remote ops use the same target profiles plus `python_cmd` for helper scripts and optional `runner_cmd` for detached CLI launches. Sync is local-driven and archive-based over SSH:
   - repo sync includes tracked files plus untracked nonignored files from the local working tree
   - repo sync excludes `.git`, `.numereng`, gitignored machine profiles, envs, caches, and build outputs
   - experiment sync includes only `.numereng/experiments/<id>/experiment.json|EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
-  - experiment pull includes only viz-facing run manifests and scoring artifacts, writes them under `.numereng/cache/remote_ops/pulls/<target_id>/...`, reconciles the local experiment manifest, and never materializes remote runs under `.numereng/runs/<run_id>`
+  - experiment pull preflights one remote experiment, selects only `FINISHED` runs, fails cleanly on local run-id conflicts, materializes full remote run directories into `.numereng/runs/<run_id>`, and reconciles the local experiment manifest while leaving active/incomplete remote runs to SSH fallback
   - ad hoc remote launch configs are staged under `.numereng/tmp/remote-configs/*` on the remote repo
   - no command mirrors the full `.numereng` store
 - Sync metadata is stored under each machine's `.numereng/remote_ops/sync/<target_id>/*.json`, and detached remote launch metadata/logs live under `.numereng/remote_ops/launches/*` on the remote machine.
