@@ -10,6 +10,7 @@ import pytest
 
 import numereng.features.training.service as service_module
 from numereng.features.scoring.models import (
+    BenchmarkSource,
     PostTrainingScoringRequest,
     PostTrainingScoringResult,
     ResolvedScoringPolicy,
@@ -43,6 +44,46 @@ def _bind_training_launch_metadata() -> object:
 def test_resolve_model_config_requires_params() -> None:
     with pytest.raises(TrainingConfigError, match="training_model_params_missing"):
         service_module.resolve_model_config({"type": "LGBMRegressor"})
+
+
+def test_build_results_benchmark_payload_for_active_source() -> None:
+    payload = service_module.build_results_benchmark_payload(
+        BenchmarkSource(
+            mode="active",
+            name="active_benchmark",
+            predictions_path=Path("/tmp/active/predictions.parquet"),
+            pred_col="prediction",
+            metadata_path=Path("/tmp/active/benchmark.json"),
+        )
+    )
+
+    assert payload == {
+        "mode": "active",
+        "name": "active_benchmark",
+        "file": "/tmp/active/predictions.parquet",
+        "pred_col": "prediction",
+        "metadata_file": "/tmp/active/benchmark.json",
+    }
+
+
+def test_build_results_benchmark_payload_for_path_source() -> None:
+    payload = service_module.build_results_benchmark_payload(
+        BenchmarkSource(
+            mode="path",
+            name="custom_benchmark",
+            predictions_path=Path("/tmp/custom/predictions.parquet"),
+            pred_col="prediction",
+            metadata_path=None,
+        )
+    )
+
+    assert payload == {
+        "mode": "path",
+        "name": "custom_benchmark",
+        "file": "/tmp/custom/predictions.parquet",
+        "pred_col": "prediction",
+        "metadata_file": None,
+    }
 
 
 def test_resolve_model_config_promotes_model_device_to_device_type() -> None:
