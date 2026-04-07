@@ -193,7 +193,7 @@ from numereng.features.submission import (
 )
 from numereng.features.telemetry import get_launch_metadata
 from numereng.features.telemetry.contracts import RunCancelResult, RunLifecycleRecord, RunLifecycleRepairResult
-from numereng.features.training import ScoreRunResult, TrainingError, TrainingModelError, TrainingRunResult
+from numereng.features.training import ScoreRunResult, TrainingDataError, TrainingError, TrainingModelError, TrainingRunResult
 from numereng.platform.errors import ForumScraperError, NumeraiClientError
 
 CloudApiFunc = Callable[[Any], CloudEc2Response]
@@ -1489,6 +1489,36 @@ def test_run_training_translates_training_error(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(api_module, "run_training_pipeline", fake_run_training_pipeline)
 
     with pytest.raises(PackageError, match="training_run_failed"):
+        run_training(TrainRunRequest(config_path="configs/run.json"))
+
+
+def test_run_training_passes_unlabeled_target_training_data_error_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run_training_pipeline(
+        *,
+        config_path: str,
+        output_dir: str | None,
+        post_training_scoring: str | None,
+        engine_mode: str | None,
+        window_size_eras: int | None,
+        embargo_eras: int | None,
+        experiment_id: str | None,
+    ) -> TrainingRunResult:
+        _ = (
+            config_path,
+            output_dir,
+            post_training_scoring,
+            engine_mode,
+            window_size_eras,
+            embargo_eras,
+            experiment_id,
+        )
+        raise TrainingDataError("training_target_rows_all_unlabeled:split=train:target=target_jeremy_20:fold=0")
+
+    monkeypatch.setattr(api_module, "run_training_pipeline", fake_run_training_pipeline)
+
+    with pytest.raises(PackageError, match="training_target_rows_all_unlabeled:split=train:target=target_jeremy_20:fold=0"):
         run_training(TrainRunRequest(config_path="configs/run.json"))
 
 

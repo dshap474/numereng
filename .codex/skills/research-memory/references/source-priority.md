@@ -1,6 +1,6 @@
 # Source Priority
 
-Use this order when building a research-memory update for one experiment.
+Use this order when building a research-memory update.
 
 ## Canonical structured sources
 
@@ -11,14 +11,14 @@ Use this order when building a research-memory update for one experiment.
 5. `results.json`
 6. `score_provenance.json`
 
-These are the source of truth for:
+These are the default source of truth for:
 
 - experiment identity
 - run membership
 - feature scope
 - target
 - model family
-- surface/profile
+- surface / profile
 - metrics
 
 ## Narrative sources
@@ -41,4 +41,14 @@ Use broader notes only as supporting context:
 - relevant `.numereng/notes/research/research-briefs/*`
 - `.numereng/notes/__RESEARCH_MEMORY__/legacy-progression/*`
 
-Executed experiment evidence always dominates broader priors.
+## Evidence-Quality Gate
+
+Executed experiment artifacts dominate only after a lightweight evidence-quality check:
+
+- are artifacts complete?
+- is the surface trustworthy for the claim?
+- is the comparison actually comparable?
+- are there obvious confounds or missing contextual caveats?
+- does broader history support, weaken, or contradict the claim?
+
+If the gate is weak, record the claim as provisional rather than promoting it as a strong default.

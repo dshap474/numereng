@@ -16,8 +16,7 @@
 !implement-custom-model/**
 !store-ops/
 !store-ops/**
-!research-memory/
-!research-memory/**
+
 
 # Keep Python cache artifacts in allowlisted skills local-only.
 numerai-api-ops/**/__pycache__/
@@ -28,5 +27,3 @@ numereng-experiment-ops/**/__pycache__/
 numereng-experiment-ops/**/*.py[cod]
 store-ops/**/__pycache__/
 store-ops/**/*.py[cod]
-research-memory/**/__pycache__/
-research-memory/**/*.py[cod]

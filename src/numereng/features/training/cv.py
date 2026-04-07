@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from numereng.features.training.errors import TrainingConfigError
+from numereng.features.training.errors import TrainingConfigError, TrainingDataError
 from numereng.features.training.model_factory import build_model
 from numereng.features.training.models import ModelDataBatch, ModelDataLoaderProtocol
 
@@ -280,10 +280,25 @@ def _run_fold_prediction(
     train_data = _load_data(data_loader, train_eras)
     val_data = _load_data(data_loader, val_eras)
 
+    raw_train_rows = _data_length(train_data)
+    raw_val_rows = _data_length(val_data)
+    if raw_train_rows == 0 or raw_val_rows == 0:
+        return None
+
+    train_data, train_rows_dropped = _filter_labeled_batch(
+        train_data,
+        target_col=target_col,
+        split="train",
+        fold_idx=fold_idx,
+    )
+    val_data, val_rows_dropped = _filter_labeled_batch(
+        val_data,
+        target_col=target_col,
+        split="validation",
+        fold_idx=fold_idx,
+    )
     train_rows = _data_length(train_data)
     val_rows = _data_length(val_data)
-    if train_rows == 0 or val_rows == 0:
-        return None
 
     model = build_model(
         model_type,
@@ -309,7 +324,9 @@ def _run_fold_prediction(
         "train_eras": len(train_eras),
         "val_eras": len(val_eras),
         "train_rows": int(train_rows),
+        "train_rows_unlabeled_dropped": int(train_rows_dropped),
         "val_rows": int(val_rows),
+        "val_rows_unlabeled_dropped": int(val_rows_dropped),
         "train_intervals": descriptor["train_intervals"],
         "val_interval": descriptor["val_interval"],
         "purge_intervals": descriptor["purge_intervals"],
@@ -333,9 +350,15 @@ def build_full_history_predictions(
     """Train one model on all eras and return in-sample predictions."""
     all_eras = _sorted_unique_eras(eras)
     full_data = _load_data(data_loader, all_eras)
-    total_rows = _data_length(full_data)
-    if total_rows == 0:
+    raw_total_rows = _data_length(full_data)
+    if raw_total_rows == 0:
         raise TrainingConfigError("training_full_history_no_rows")
+    full_data, unlabeled_rows_dropped = _filter_labeled_batch(
+        full_data,
+        target_col=target_col,
+        split="full_history",
+    )
+    total_rows = _data_length(full_data)
 
     model = build_model(
         model_type,
@@ -368,6 +391,8 @@ def build_full_history_predictions(
                 "val_eras": len(all_eras),
                 "train_rows": int(total_rows),
                 "val_rows": int(total_rows),
+                "train_rows_unlabeled_dropped": int(unlabeled_rows_dropped),
+                "val_rows_unlabeled_dropped": int(unlabeled_rows_dropped),
             }
         ],
     }
@@ -386,6 +411,57 @@ def _load_data(
 
 def _data_length(data: ModelDataBatch) -> int:
     return len(data.X)
+
+
+def _filter_labeled_batch(
+    data: ModelDataBatch,
+    *,
+    target_col: str,
+    split: str,
+    fold_idx: int | None = None,
+) -> tuple[ModelDataBatch, int]:
+    original_rows = _data_length(data)
+    if original_rows == 0:
+        return data, 0
+
+    mask = _build_labeled_target_mask(data.y)
+    kept_rows = int(mask.sum())
+    dropped_rows = original_rows - kept_rows
+    if dropped_rows == 0:
+        return data, 0
+    if kept_rows == 0:
+        raise TrainingDataError(_unlabeled_rows_error(target_col=target_col, split=split, fold_idx=fold_idx))
+
+    filtered_id = data.id.loc[mask] if data.id is not None else None
+    filtered = ModelDataBatch(
+        X=data.X.loc[mask],
+        y=data.y.loc[mask],
+        era=data.era.loc[mask],
+        id=filtered_id,
+    )
+    return filtered, dropped_rows
+
+
+def _build_labeled_target_mask(y: pd.Series) -> pd.Series:
+    mask = y.notna().astype(bool)
+    if not bool(mask.any()):
+        return mask
+
+    numeric_targets = pd.to_numeric(y.loc[mask], errors="coerce")
+    finite_mask = np.isfinite(numeric_targets.to_numpy(dtype=float, copy=False))
+    if finite_mask.all():
+        return mask
+
+    invalid_index = numeric_targets.index[~finite_mask]
+    mask.loc[invalid_index] = False
+    return mask
+
+
+def _unlabeled_rows_error(*, target_col: str, split: str, fold_idx: int | None) -> str:
+    message = f"training_target_rows_all_unlabeled:split={split}:target={target_col}"
+    if fold_idx is not None:
+        message += f":fold={fold_idx}"
+    return message
 
 
 def _as_array(values: pd.Series | np.ndarray) -> np.ndarray:

@@ -1,6 +1,5 @@
 # Runtime store (always local, never committed)
 .numereng/*
-.numereng_*/
 .local/
 .cache/
 

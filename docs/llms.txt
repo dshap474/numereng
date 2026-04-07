@@ -276,6 +276,7 @@ Critical invariants:
 - `model.device` is valid only for `LGBMRegressor`; if `model.params.device_type` is also set it must exactly match.
 - Windows LightGBM GPU/OpenCL runs should use `model.params.device_type=gpu` without top-level `model.device`; `model.device=gpu` is invalid.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
+- Active-target rows with null or non-finite labels are treated as unlabeled for that target: training drops them before fit, target-aware validation/scoring excludes them, and folds with zero labeled rows fail with `training_target_rows_all_unlabeled:split=<split>:target=<target_col>[:fold=<n>]`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.
 - Model fitting/prediction persistence completes first. Training writes `post_fold` artifacts during CV, then applies the resolved `training.post_training_scoring` policy: `none` leaves scoring deferred, `core` refreshes `post_training_core`, `full` refreshes inclusive `post_training_full`, and `round_core|round_full` defer single-run scoring for later experiment round batch materialization.
 - Scoring persists `results.json`, `metrics.json`, `score_provenance.json`, and the canonical `artifacts/scoring/` bundle. The bundle writes `run_metric_series.parquet` plus staged parquet artifacts: `post_fold_per_era`, `post_fold_snapshots`, `post_training_core_summary`, and `post_training_full_summary` when feature-neutral diagnostics are materialized. Stage-limited `post_training_core` and `post_training_full` rescoring also persist `run_metric_series.parquet` so viz retains the standard per-era and cumulative charts after summary refreshes. Historical runs may still have legacy `post_training_summary` / `post_training_features_summary` files, which remain readable.
@@ -313,6 +314,7 @@ Critical invariants:
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - `model.x_groups` hard-fails on benchmark aliases (`benchmark`, `benchmarks`, `benchmark_models`) with `training_model_x_groups_benchmark_not_supported`.
 - In `train_plus_validation` mode, `data_type=validation` filtering is applied only to validation sources (never to `train.parquet`).
+- Training treats rows with null or non-finite values in the active `target_col` as unlabeled for that target, so validation prediction/scoring artifacts only include labeled rows for that target and train/validation folds fail explicitly when filtering would leave zero labeled rows.
 - Purged walk-forward CV requires at least `chunk_size + 1` unique eras; otherwise training fails with an explicit configuration error.
 - `full_history_refit` is final-fit only for training; it skips `post_fold` because there is no CV artifact surface, and post-training scoring remains policy-driven in the same way as other profiles.
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.

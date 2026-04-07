@@ -3,7 +3,8 @@
 **Updated**: <YYYY-MM-DD>  
 **Primary metric**: `bmc_last_200_eras.mean`  
 **Tie-break**: `bmc.mean`  
-**Decision policy**: information gain first, then expected upside, then cost / operability
+**Decision policy**: information gain first, then expected upside, then cost / operability  
+**Frontier freshness**: `<fresh|aging|stale>`
 
 ## Summary Snapshot
 
@@ -11,18 +12,26 @@
 
 ## Current Promoted Defaults
 
-- <default 1>
-- <default 2>
+### <default-title>
+
+- **Claim**: <...>
+- **Scope conditions**: <...>
+- **Confidence**: <high|medium|low>
+- **Freshness**: <fresh|aging|stale>
+- **Key evidence links**: <...>
 
 ## Active Frontier
 
-- <frontier question 1>
-- <frontier question 2>
+- <unresolved question 1>
+- <unresolved question 2>
 
 ## What We Are Not Doing
 
-- <blocked / deprioritized path 1>
-- <blocked / deprioritized path 2>
+### <blocked-path-title>
+
+- **Blocked path**: <...>
+- **Why blocked**: <...>
+- **Reopen conditions**: <...>
 
 ## Top 5 Ranked Next Experiments
 
@@ -34,6 +43,7 @@
 - **Expected upside**: <high|medium|low>
 - **Success criteria**: <...>
 - **Minimal run plan**: <...>
+- **Base-rate check**: <broader history supports|weakens|contradicts>
 - **Evidence links**: <...>
 
 ## Recent Material Shifts

@@ -25,6 +25,9 @@ export const load: PageLoad = async ({ fetch }) => {
 	const overview = await api.getExperimentsOverview({ include_remote: false }).catch(() => fallbackOverview());
 	return {
 		overview,
-		overviewPending: false
+		// The route SSRs a fast local-only overview first, then the page hydrates and
+		// performs the remote-aware refresh. Keep mission-control in a bootstrap
+		// loading state until that first SSH-backed refresh settles.
+		overviewPending: true
 	};
 };

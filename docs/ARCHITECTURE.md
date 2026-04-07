@@ -360,6 +360,7 @@ Data loading and CV rules:
 - `dataset-tools build-downsampled-full` uses default era filtering of every 4th era (`offset=0`).
 - `data.dataset_scope=train_only` uses `train.parquet` only.
 - `data.dataset_scope=train_plus_validation` uses `train.parquet` plus `validation.parquet`, and applies `data_type=validation` filtering only on validation sources.
+- Rows with null or non-finite values in the active `target_col` are treated as unlabeled for that target: train/full-history fits drop them before `model.fit`, validation prediction/scoring artifacts include only labeled rows for that target, and folds that become fully unlabeled fail with `training_target_rows_all_unlabeled:split=<split>:target=<target_col>[:fold=<n>]`.
 - `purged_walk_forward` uses walk-forward defaults of `chunk_size=156`; embargo is horizon-based (`20d -> 8`, `60d -> 16`).
 - `training.resources.max_threads_per_worker` accepts integer >= 1 or `"default"`; `"default"` (and omitted/`null` for backward compatibility) resolves to `max(1, floor(available_cpus / parallel_folds))`.
 - Legacy `data.loading` is removed from the training schema. Config loading now hard-fails if it is present, and training always uses the materialized loader. Run hashing strips that removed subtree so historical identities remain stable.
@@ -839,7 +840,9 @@ success/help
 28. `full_history_refit` is final-fit only for training and does not emit `post_fold`; post-training scoring stays policy-driven just like other profiles.
 29. Training writes run-local live logs to `runs/<run_id>/run.log` and records the file in `run.json -> artifacts.log`.
 30. Training never applies row-level subsampling; any size reduction must happen at dataset construction/downsampling time.
-31. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
+31. Null or non-finite labels in the active `target_col` are treated as unlabeled rows for that target, so supervised training and target-aware validation/scoring exclude them instead of sending them to the model backend.
+32. If label filtering leaves zero rows in a train, validation, or full-history batch, training fails with `training_target_rows_all_unlabeled:...` rather than a backend-specific fit error.
+33. Managed AWS extract only promotes `runs/<run_id>/*` archive members; non-`runs/*` members are skipped and recorded as warnings.
 32. Managed AWS extract hard-fails on unsafe archive members (absolute/traversal paths, links, invalid run IDs) and on hash-mismatched run-dir collisions.
 33. Managed AWS extract indexes only extracted run IDs and does not fallback-index the outer cloud run ID.
 34. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.

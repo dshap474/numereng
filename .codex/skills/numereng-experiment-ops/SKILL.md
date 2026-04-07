@@ -36,6 +36,7 @@ In scope:
 - baseline-directory and active-benchmark setup guidance for benchmark-relative scoring
 - current CLI/API command contract for experiment execution
 - run output and metric artifact expectations
+- remote finished-run pullback into local canonical storage
 - champion handoff for final refit and official Numerai submission
 - deciding when to hand off to `store-ops`
 
@@ -50,6 +51,7 @@ Out of scope:
 - Prefer package CLI entrypoints and explicit commands:
   - `uv run numereng experiment create|list|details|archive|unarchive|train|promote|report|pack ...`
   - `uv run numereng run train ...`
+  - `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
   - `uv run numereng ensemble build|list|details ...`
   - `uv run numereng hpo create ...`
   - `uv run numereng store init|index|rebuild|doctor ...`
@@ -262,6 +264,7 @@ uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --fo
 uv run numereng experiment pack --id <id>
 uv run numereng experiment details --id <id> --format json
 uv run numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
+uv run numereng remote experiment pull --target <target_id> --experiment-id <id>
 uv run numereng ensemble build --experiment-id <id> --run-ids <run_a,run_b,...> --method rank_avg
 uv run numereng hpo create --study-config <path.json>
 ```
@@ -295,6 +298,35 @@ Recommended scripted sweep commands:
   - `bash .numereng/experiments/<id>/run_scripts/launch_all.sh --score-stage post_training_full`
 - manual recovery path:
   - `uv run numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>`
+
+## Remote Experiment Pullback
+
+If training ran on a remote target such as the GPU PC, treat finished-run pullback as a
+standard post-experiment closeout step.
+
+Use:
+
+```bash
+uv run numereng remote experiment pull --target <target_id> --experiment-id <id>
+```
+
+Current contract:
+
+- pullback is manual; it does not happen automatically when remote training finishes
+- only `FINISHED` remote runs are materialized locally
+- pulled runs become canonical local runs under `.numereng/runs/<run_id>/`
+- the local experiment manifest is reconciled so viz and local reporting see the run history
+- rerunning the same pull is idempotent: already-materialized runs are treated as no-ops
+- active or incomplete remote runs remain remote-only until they finish and a later pull is run
+
+Default workflow rule:
+
+1. finish the remote experiment or finish the current batch of remote runs
+2. run `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+3. only then treat the experiment as fully available for local viz, reporting, packing, and research-memory ingestion
+
+If the user is working on the remote PC workflow and asks what to do at the end of an
+experiment, explicitly remind them to run the pull command.
 
 ## Pack Completed Experiment
 
@@ -362,6 +394,13 @@ Core files expected for completed runs:
 - `results.json`
 - `metrics.json`
 - `score_provenance.json` after post-training scoring has been materialized
+
+Remote pullback note:
+
+- when runs were trained on a remote target, they do not become part of the local canonical run
+  store until `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+  succeeds
+- after pullback, the canonical expectation is the same: `.numereng/runs/<run_id>/` should exist locally
 
 Expect `run.json` to carry:
 

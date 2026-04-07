@@ -25,6 +25,13 @@ from numereng.features.training import (
 from numereng.platform.errors import NumeraiClientError, PackageError
 
 
+def _map_training_data_error(exc: TrainingDataError) -> str:
+    message = str(exc)
+    if message.startswith("training_target_rows_all_unlabeled:"):
+        return message
+    return "training_data_load_failed"
+
+
 def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
     """Run the full local train workflow through explicit API stages."""
     launch_scope = (
@@ -46,7 +53,7 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
     except TrainingDataError as exc:
         if state is not None:
             fail_training_run(state, exc)
-        raise PackageError("training_data_load_failed") from exc
+        raise PackageError(_map_training_data_error(exc)) from exc
     except TrainingModelError as exc:
         if state is not None:
             fail_training_run(state, exc)
