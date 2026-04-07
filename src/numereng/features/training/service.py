@@ -248,13 +248,7 @@ def build_results_payload(
             "configured_embargo_eras": configured_embargo_eras,
             "effective_embargo_eras": effective_embargo_eras,
         },
-        "benchmark": {
-            "mode": benchmark_source.mode,
-            "name": benchmark_source.name,
-            "file": str(benchmark_source.predictions_path),
-            "pred_col": benchmark_source.pred_col,
-            "metadata_file": str(benchmark_source.metadata_path) if benchmark_source.metadata_path else None,
-        },
+        "benchmark": build_results_benchmark_payload(benchmark_source),
         "meta_model": {
             "column": meta_model_col,
             "file": str(
@@ -292,6 +286,17 @@ def build_results_payload(
                 "chunk_size": cv_meta.get("chunk_size"),
             },
         },
+    }
+
+
+def build_results_benchmark_payload(benchmark_source: BenchmarkSource) -> dict[str, object]:
+    """Build the canonical results payload benchmark block."""
+    return {
+        "mode": benchmark_source.mode,
+        "name": benchmark_source.name,
+        "file": str(benchmark_source.predictions_path),
+        "pred_col": benchmark_source.pred_col,
+        "metadata_file": str(benchmark_source.metadata_path) if benchmark_source.metadata_path else None,
     }
 
 

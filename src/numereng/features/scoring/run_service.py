@@ -30,7 +30,7 @@ from numereng.features.training.repo import (
     save_scoring_artifacts,
 )
 from numereng.features.training.run_log import log_error, log_info, resolve_run_log_path
-from numereng.features.training.service import resolve_benchmark_source
+from numereng.features.training.service import build_results_benchmark_payload, resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
 _DEFAULT_DATASET_VARIANT = "non_downsampled"
@@ -162,6 +162,7 @@ def score_run(
     results_output["predictions_file"] = str(predictions_relative)
     results_output["score_provenance_file"] = str(score_provenance_relative)
     results["output"] = results_output
+    results["benchmark"] = build_results_benchmark_payload(request.benchmark_source)
     results["metrics"] = metrics_payload
     results_training = _as_mapping(results.get("training"))
     results_training["scoring"] = _updated_scoring_payload(

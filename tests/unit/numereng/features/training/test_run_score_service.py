@@ -96,6 +96,7 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     _write_json(
         run_dir / "results.json",
         {
+            "benchmark": {"file": "v5.2/full_benchmark_models.parquet", "model": "v52_lgbm_ender20"},
             "metrics": {"status": "failed", "reason": "old"},
             "output": {"output_dir": str(run_dir), "predictions_file": "artifacts/predictions/pred.parquet"},
             "training": {"scoring": {"requested_stage": "all", "refreshed_stages": []}},
@@ -177,6 +178,18 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert indexed_runs == [run_id]
 
     saved_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    resolved_data = cast(
+        dict[str, object],
+        json.loads((run_dir / "resolved.json").read_text(encoding="utf-8"))["data"],
+    )
+    expected_benchmark = run_score_module.build_results_benchmark_payload(
+        run_score_module.resolve_benchmark_source(
+            data_config=resolved_data,
+            data_root=run_score_module.DEFAULT_DATASETS_DIR,
+        )
+    )
+    assert saved_results["benchmark"] == expected_benchmark
+    assert "model" not in saved_results["benchmark"]
     assert saved_results["metrics"]["corr"]["mean"] == 0.1
     assert "payout_estimate_mean" not in saved_results["metrics"]
     assert saved_results["output"]["score_provenance_file"] == "score_provenance.json"
@@ -209,6 +222,108 @@ def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_pa
 def test_score_run_requires_existing_run(tmp_path: Path) -> None:
     with pytest.raises(TrainingError, match="training_score_run_not_found:run-missing"):
         run_score_module.score_run(run_id="run-missing", store_root=tmp_path / "store")
+
+
+def test_score_run_replaces_legacy_benchmark_block(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    store_root = tmp_path / "store"
+    run_id = "run-legacy"
+    run_dir = store_root / "runs" / run_id
+    predictions_path = run_dir / "artifacts" / "predictions" / "pred.parquet"
+    predictions_path.parent.mkdir(parents=True, exist_ok=True)
+    predictions_path.write_text("placeholder", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run.json",
+        {
+            "run_id": run_id,
+            "status": "FINISHED",
+            "data": {"version": "v5.2", "feature_set": "medium", "target_col": "target"},
+            "artifacts": {
+                "predictions": "artifacts/predictions/pred.parquet",
+                "resolved_config": "resolved.json",
+                "results": "results.json",
+            },
+        },
+    )
+    _write_json(
+        run_dir / "resolved.json",
+        {
+            "data": {
+                "data_version": "v5.2",
+                "dataset_variant": "non_downsampled",
+                "dataset_scope": "train_plus_validation",
+                "feature_set": "medium",
+                "target_col": "target",
+                "benchmark_source": {
+                    "source": "path",
+                    "predictions_path": "benchmarks/custom.parquet",
+                    "name": "custom",
+                },
+                "meta_model_col": "numerai_meta_model",
+            },
+            "output": {"predictions_name": "pred"},
+        },
+    )
+    _write_json(
+        run_dir / "results.json",
+        {
+            "benchmark": {"file": "v5.2/full_benchmark_models.parquet", "model": "v52_lgbm_ender20"},
+            "output": {},
+            "training": {},
+        },
+    )
+
+    monkeypatch.setattr(run_score_module, "create_training_data_client", lambda: object())
+    monkeypatch.setattr(
+        run_score_module,
+        "run_scoring",
+        lambda **kwargs: PostTrainingScoringResult(
+            summaries=_scoring_summaries(),
+            score_provenance={"stages": {"emitted": ["run_metric_series"], "omissions": {}}},
+            policy=ResolvedScoringPolicy(
+                fnc_feature_set="fncv3_features",
+                fnc_target_policy="scoring_target",
+                benchmark_min_overlap_ratio=0.0,
+            ),
+            artifacts=ScoringArtifactBundle(
+                series_frames={},
+                manifest={},
+                stage_frames={
+                    "run_metric_series": pd.DataFrame(
+                        [
+                            {
+                                "run_id": run_id,
+                                "config_hash": "abc123",
+                                "seed": None,
+                                "target_col": "target",
+                                "payout_target_col": "target_ender_20",
+                                "prediction_col": "prediction",
+                                "era": "era1",
+                                "metric_key": "corr_native",
+                                "series_type": "per_era",
+                                "value": 0.12,
+                            }
+                        ]
+                    ),
+                },
+            ),
+            requested_stage="run_metric_series",
+            refreshed_stages=("run_metric_series",),
+        ),
+    )
+    monkeypatch.setattr(run_score_module, "index_run", lambda **kwargs: None)
+
+    run_score_module.score_run(run_id=run_id, store_root=store_root, stage="run_metric_series")
+
+    saved_results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    assert saved_results["benchmark"] == {
+        "mode": "path",
+        "name": "custom",
+        "file": str((run_score_module.DEFAULT_DATASETS_DIR / "benchmarks" / "custom.parquet").resolve()),
+        "pred_col": "prediction",
+        "metadata_file": None,
+    }
+    assert "model" not in saved_results["benchmark"]
 
 
 def test_score_run_partial_stage_preserves_existing_unselected_artifacts(
