@@ -46,6 +46,13 @@ from numereng.features.training import (
 from numereng.platform.errors import NumeraiClientError, PackageError
 
 
+def _map_training_data_error(exc: TrainingDataError) -> str:
+    message = str(exc)
+    if message.startswith("training_target_rows_all_unlabeled:"):
+        return message
+    return "training_data_load_failed"
+
+
 def submit_predictions(request: SubmissionRequest) -> SubmissionResponse:
     """Submit predictions by file path or run-id artifact lookup."""
     from numereng import api as api_module
@@ -155,7 +162,7 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
     except TrainingConfigError as exc:
         raise PackageError("training_config_invalid") from exc
     except TrainingDataError as exc:
-        raise PackageError("training_data_load_failed") from exc
+        raise PackageError(_map_training_data_error(exc)) from exc
     except TrainingModelError as exc:
         message = str(exc)
         if "training_model_backend_missing_lightgbm" in message:

@@ -4,15 +4,26 @@
 
 ## Current State
 
-- <...>
+- <short synthesis only>
 
-## Promoted Beliefs / Defaults
+## Scoped Promoted Beliefs
 
-- <...>
+### <belief-title>
 
-## Anti-Patterns / Invalidated Beliefs
+- **Claim**: <...>
+- **Scope conditions**: <...>
+- **Confidence**: <high|medium|low>
+- **Freshness**: <fresh|aging|stale>
+- **Evidence links**: <...>
 
-- <...>
+## Conditional Anti-Patterns
+
+### <anti-pattern-title>
+
+- **Path to avoid**: <...>
+- **Why**: <...>
+- **Scope conditions**: <...>
+- **Reopen conditions**: <...>
 
 ## Open Questions
 

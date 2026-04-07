@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 import numereng.features.training.cv as cv_module
-from numereng.features.training.errors import TrainingConfigError
+from numereng.features.training.errors import TrainingConfigError, TrainingDataError
 from numereng.features.training.models import build_model_data_loader
 
 
@@ -17,6 +17,22 @@ class _FakeModel:
         return self
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        return np.full(len(X), 0.42, dtype=float)
+
+
+class _RecordingModel:
+    def __init__(self) -> None:
+        self.fit_rows: list[int] = []
+        self.predict_rows: list[int] = []
+
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> _RecordingModel:
+        self.fit_rows.append(len(X))
+        assert len(X) == len(y)
+        assert not y.isna().any()
+        return self
+
+    def predict(self, X: pd.DataFrame) -> np.ndarray:
+        self.predict_rows.append(len(X))
         return np.full(len(X), 0.42, dtype=float)
 
 
@@ -206,6 +222,222 @@ def test_build_full_history_predictions(monkeypatch) -> None:  # type: ignore[no
     assert cast(str, meta["mode"]) == "full_history_refit"
     assert cast(int, meta["folds_used"]) == 1
     assert "max_train_eras" not in meta
+
+
+def test_build_oof_predictions_filters_unlabeled_rows_before_fit_and_output(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    model = _RecordingModel()
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: model)
+
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d", "e", "f"],
+            "era": ["1", "1", "2", "2", "3", "3"],
+            "target": [0.1, np.nan, 0.3, 0.4, 0.5, np.nan],
+            "feature_1": [1, 2, 3, 4, 5, 6],
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    predictions, meta = cv_module.build_oof_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="LGBMRegressor",
+        model_params={},
+        model_config={},
+        cv_config={
+            "embargo": 0,
+            "mode": "train_validation_holdout",
+            "min_train_size": 1,
+            "train_eras": ["1", "2"],
+            "val_eras": ["3"],
+        },
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+    )
+
+    assert model.fit_rows == [3]
+    assert model.predict_rows == [1]
+    assert predictions["id"].tolist() == ["e"]
+    assert predictions["target"].tolist() == [0.5]
+    assert cast(list[dict[str, object]], meta["folds"])[0]["train_rows"] == 3
+    assert cast(list[dict[str, object]], meta["folds"])[0]["train_rows_unlabeled_dropped"] == 1
+    assert cast(list[dict[str, object]], meta["folds"])[0]["val_rows"] == 1
+    assert cast(list[dict[str, object]], meta["folds"])[0]["val_rows_unlabeled_dropped"] == 1
+
+
+def test_build_oof_predictions_raises_when_train_fold_has_no_labeled_rows(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: _RecordingModel())
+
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["1", "1", "2", "2"],
+            "target": [np.nan, np.nan, 0.3, 0.4],
+            "feature_1": [1, 2, 3, 4],
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    with pytest.raises(TrainingDataError, match="training_target_rows_all_unlabeled:split=train:target=target:fold=0"):
+        cv_module.build_oof_predictions(
+            eras=full["era"],
+            data_loader=loader,
+            model_type="LGBMRegressor",
+            model_params={},
+            model_config={},
+            cv_config={
+                "embargo": 0,
+                "mode": "train_validation_holdout",
+                "min_train_size": 1,
+                "train_eras": ["1"],
+                "val_eras": ["2"],
+            },
+            id_col="id",
+            era_col="era",
+            target_col="target",
+            feature_cols=["feature_1"],
+        )
+
+
+def test_build_oof_predictions_raises_when_validation_fold_has_no_labeled_rows(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: _RecordingModel())
+
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["1", "1", "2", "2"],
+            "target": [0.1, 0.2, np.nan, np.nan],
+            "feature_1": [1, 2, 3, 4],
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    with pytest.raises(TrainingDataError, match="training_target_rows_all_unlabeled:split=validation:target=target:fold=0"):
+        cv_module.build_oof_predictions(
+            eras=full["era"],
+            data_loader=loader,
+            model_type="LGBMRegressor",
+            model_params={},
+            model_config={},
+            cv_config={
+                "embargo": 0,
+                "mode": "train_validation_holdout",
+                "min_train_size": 1,
+                "train_eras": ["1"],
+                "val_eras": ["2"],
+            },
+            id_col="id",
+            era_col="era",
+            target_col="target",
+            feature_cols=["feature_1"],
+        )
+
+
+def test_build_full_history_predictions_filters_unlabeled_rows(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    model = _RecordingModel()
+    monkeypatch.setattr(cv_module, "build_model", lambda *args, **kwargs: model)
+
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d"],
+            "era": ["1", "1", "2", "2"],
+            "target": [0.1, np.nan, 0.3, 0.4],
+            "feature_1": [1, 2, 3, 4],
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    predictions, meta = cv_module.build_full_history_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="LGBMRegressor",
+        model_params={},
+        model_config={},
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+    )
+
+    assert model.fit_rows == [3]
+    assert model.predict_rows == [3]
+    assert predictions["id"].tolist() == ["a", "c", "d"]
+    assert cast(list[dict[str, object]], meta["folds"])[0]["train_rows_unlabeled_dropped"] == 1
+
+
+def test_build_oof_predictions_xgboost_trains_after_unlabeled_rows_are_filtered() -> None:
+    pytest.importorskip("xgboost")
+
+    full = pd.DataFrame(
+        {
+            "id": ["a", "b", "c", "d", "e", "f"],
+            "era": ["1", "1", "2", "2", "3", "3"],
+            "target": [0.1, np.nan, 0.3, 0.4, 0.5, np.nan],
+            "feature_1": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    loader = build_model_data_loader(
+        full=full,
+        x_cols=["feature_1"],
+        era_col="era",
+        target_col="target",
+        id_col="id",
+    )
+
+    predictions, meta = cv_module.build_oof_predictions(
+        eras=full["era"],
+        data_loader=loader,
+        model_type="XGBoostRegressor",
+        model_params={
+            "objective": "reg:squarederror",
+            "tree_method": "hist",
+            "device": "cpu",
+            "n_estimators": 2,
+            "learning_rate": 0.1,
+            "random_state": 0,
+        },
+        model_config={"module_path": "xgboost_model.py"},
+        cv_config={
+            "embargo": 0,
+            "mode": "train_validation_holdout",
+            "min_train_size": 1,
+            "train_eras": ["1", "2"],
+            "val_eras": ["3"],
+        },
+        id_col="id",
+        era_col="era",
+        target_col="target",
+        feature_cols=["feature_1"],
+    )
+
+    assert predictions["id"].tolist() == ["e"]
+    assert cast(list[dict[str, object]], meta["folds"])[0]["train_rows_unlabeled_dropped"] == 1
 
 
 def test_build_oof_predictions_invokes_fold_callback_serial(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -27,6 +27,7 @@ surface.
 
 - `uv run numereng experiment create|list|details|train|promote|report|pack ...`
 - `uv run numereng run train ...`
+- `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
 - `uv run numereng ensemble build|list|details ...`
 - `uv run numereng hpo create ...`
 - `uv run numereng store init|index|rebuild|doctor ...`
@@ -55,3 +56,19 @@ At minimum:
   `requested_stage`, and `refreshed_stages`
 - artifact paths declared in `run.json` should exist
 - the manifest and store should agree on the run set unless drift is being investigated
+
+## Remote Pullback Closeout
+
+When an experiment was trained on a remote target, finished runs are not available in the local
+canonical run store until they are pulled back explicitly.
+
+Use:
+
+- `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+
+Contract:
+
+- pullback is manual
+- only `FINISHED` remote runs materialize locally
+- successful pullback writes canonical local run dirs under `.numereng/runs/<run_id>/`
+- rerunning the same pull is idempotent and should no-op for already materialized runs

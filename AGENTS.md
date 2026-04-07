@@ -1,0 +1,74 @@
+# numereng
+
+Read order:
+1. `docs/llms.txt` (agent entrypoint)
+2. `docs/ARCHITECTURE.md` (deep system map)
+
+## Fast Commands
+- Install `just` if you want to use the wrapper commands below.
+- `uv sync --extra dev`
+- `just test`
+- `just test-all`
+- `just build`
+
+## Environment Rules
+- Python baseline is `3.12+`.
+- Use only the project-managed env (`.venv`) via `uv sync --extra dev`.
+- Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `ty`, `numereng`, etc.).
+- If direct Python is required, use `.venv/bin/python`.
+- Do not create ad-hoc virtual envs.
+- Numerai MCP auth is project-local via `.codex/config.toml` and expects `NUMERAI_MCP_AUTH` in the launching shell environment.
+- If Numerai MCP tools are loaded but return missing-auth errors, run `eval "$(uv run python -m numereng.platform.export_numerai_mcp_auth)"` from the repo root, then relaunch Codex from that shell if MCP access is needed.
+
+## Non-Negotiable Rules
+- Preserve dependency direction: `config -> platform -> features -> api -> cli`.
+- Keep CLI thin: parse/dispatch/output only. Business logic belongs in `features/*` behind `api/*`.
+- `platform/*` must not import `features/*`.
+- Public surfaces are `src/numereng/api/` and `src/numereng/cli/`.
+- No source file in `src/numereng/api/` or `src/numereng/cli/` may exceed 500 lines.
+- Update `docs/llms.txt` and `docs/ARCHITECTURE.md` when contracts/flows change.
+
+## Boundary Contracts
+- CLI entrypoint: `numereng = "numereng.cli:main"`.
+- Python entrypoint: `import numereng.api as api_module`.
+- Stable contracts live in `src/numereng/api/contracts.py`.
+- Full local train/score pipeline entrypoint: `src/numereng/api/pipeline.py::run_training_pipeline(request)`.
+  It runs `prepare_training_run -> load_training_data -> train_model -> finalize_training_run`, maps internal failures to `PackageError`, and always performs cleanup.
+  Deferred post-training scoring is materialized later from saved predictions via `run score` or `experiment score-round`.
+- API boundary must translate internal errors to `PackageError`.
+- CLI exit codes are fixed: `0` success/help, `1` runtime/boundary error, `2` parse/usage error.
+
+## High-Risk Gotchas
+- Submission source is XOR: exactly one of `run_id` or `predictions_path`.
+- Neutralization source is XOR: exactly one of `run_id` or `predictions_path`.
+- Training/HPO config files are JSON-only and reject unknown keys (`extra=forbid`).
+- Legacy `data.loading` config is removed. Training configs hard-fail if it is present; training is materialized-loader only, and run hashing strips the removed block for identity compatibility.
+- Training profile allowed only: `simple|purged_walk_forward|full_history_refit`; legacy `submission` profile references hard-fail with a rename error.
+- `TabPFNRegressor` resolves bare checkpoint names under the effective run `store_root` at `cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
+- Run IDs are deterministic hash-based IDs (12-char prefixes).
+- Training requires successful pre-finalization `index_run`; if it fails, command fails.
+- Training writes `post_fold` during CV and automatically refreshes `post_training_core`; training/rescore scoring metadata is rebuilt from the persisted scoring manifest, and `post_training_full` is marked `not_requested` until that fuller stage is requested.
+- `experiment train` enforces `output_dir == store_root` (or omit output dir).
+- `experiment pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
+- Telemetry is fail-open and opt-in via launch metadata binding.
+- Launch metadata precedence: explicit outer binding first (CLI/API caller), API defaults only when unbound.
+- `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
+- If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
+- `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
+- `research init` requires `--program`; initialized sessions persist the selected program in `agentic_research/program.json` and `session_program.md`.
+- Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
+- `numerai-experiment-loop` is now config-centric: each autonomous round selects one parent config, applies a small LLM mutation, validates one child config, and trains that single child.
+- Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
+- Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
+- Legacy runs may be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` remains as a deprecated alias. Viz otherwise uses a bounded read-only fallback on first miss.
+- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
+- `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
+- `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.
+- `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.
+
+## Verification Anchors
+- Fast gate: `just test`
+- Full gate: `just test-all`
+- Smoke surface contract: `tests/integration/test_smoke_structure.py`
+
+## User Notes (Do Not Edit)
