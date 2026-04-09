@@ -56,8 +56,9 @@ Source map:
 - `src/numereng/api/_*.py`: internal API operation/stage wrappers; not stable import paths.
 - `src/numereng/cli/*`: parsing/dispatch/help.
 
-Default store layout (`.numereng`):
-- Top-level dirs: `runs`, `datasets`, `experiments`, `notes`, `cache`, `tmp`, `remote_ops`.
+Workspace layout:
+- Workspace-root dirs: `experiments`, `notes`, `custom_models`, `research_programs`, `.agents/skills`.
+- Hidden store dirs under `.numereng`: `runs`, `datasets`, `cache`, `tmp`, `remote_ops`.
 - Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
 - Dynamic roots may appear: `hpo/`, `ensembles/`.
 - Legacy compatibility state may still appear under `cloud/` during migration, but new cloud writers use `cache/cloud/`.
@@ -155,7 +156,7 @@ Wiring map:
   `cli store * -> api.store_* -> features.store`
   - `cli store repair-run-lifecycles [--run-id <id>|--all] -> api.store_repair_run_lifecycles -> features.telemetry.reconcile_run_lifecycles`
 - Monitor:
-  `cli monitor snapshot [--store-root <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
+  `cli monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
   `cli remote list|doctor|repo sync|experiment sync|experiment pull|config push|run train -> api.remote_* -> features.remote_ops.*`
 - Dataset tooling command:
   `uv run numereng dataset-tools build-downsampled-full --data-version v5.2`
@@ -204,8 +205,8 @@ Local run telemetry write path:
 
 Experiment scoping behavior:
 - Preferred: pass `experiment_id` explicitly (`run train --experiment-id ...` or experiment train flow).
-- Fallback: telemetry infers experiment from config path under `.numereng/experiments/<id>/configs/*`.
-- Archived experiments live under `.numereng/experiments/_archive/<id>/configs/*`; direct reads are archive-aware, but archived experiments are read-only.
+- Fallback: telemetry infers experiment from config path under `experiments/<id>/configs/*`.
+- Archived experiments live under `experiments/_archive/<id>/configs/*`; direct reads are archive-aware, but archived experiments are read-only.
 
 Viz/frontend topology:
 - Frontend routes: `/docs`, `/docs/numerai`, `/notes`, `/experiments`, `/experiments/[id]`.
@@ -227,7 +228,7 @@ Viz/frontend topology:
 - Run launch/control is CLI/API-only.
 - Monitor snapshots are now a public read-only package contract:
   - Python API: `numereng.api.build_monitor_snapshot`
-  - CLI: `numereng monitor snapshot --store-root <path> --json`
+  - CLI: `numereng monitor snapshot [--workspace <path>] --json`
 - Snapshot monitoring is store-based:
   - materialized local/remote/cloud runs read durable backend/provider provenance from `runs/<run_id>/run.json -> execution`
   - local live progress comes from active `run_lifecycles`
@@ -237,10 +238,10 @@ Viz/frontend topology:
 - `numereng remote bootstrap-viz` is the canonical federated viz bootstrap flow. It loads all enabled remote profiles, runs repo sync in `auto` mode, then runs `remote doctor`, and persists per-target `ready|degraded` state under `<store_root>/remote_ops/bootstrap/viz.json`.
 - `just viz` is the canonical local dashboard launcher. It runs the same startup flow that used to live under `make viz`: remote bootstrap first, then local FastAPI + Vite startup. `make viz` is now a deprecated shim that warns and forwards to `just viz`.
 - `remote repo sync` mirrors the local git-visible working tree only; it never mirrors the full `.numereng` store and never syncs `src/numereng/platform/remotes/profiles/*.yaml`
-- `remote experiment sync` mirrors only experiment authoring files under `.numereng/experiments/<id>/`
-- `remote experiment pull` is the canonical remote result sync flow for remote-trained experiments. It materializes full `FINISHED` remote run directories into `.numereng/runs/<run_id>`, reconciles `.numereng/experiments/<id>/experiment.json` locally, skips already-materialized valid runs idempotently on rerun, and leaves active/incomplete remote runs to SSH fallback plus overview freshness overlay.
+- `remote experiment sync` mirrors only experiment authoring files under `experiments/<id>/`
+- `remote experiment pull` is the canonical remote result sync flow for remote-trained experiments. It materializes full `FINISHED` remote run directories into `.numereng/runs/<run_id>`, reconciles `experiments/<id>/experiment.json` locally, skips already-materialized valid runs idempotently on rerun, and leaves active/incomplete remote runs to SSH fallback plus overview freshness overlay.
 - Local experiment and run detail reads are now strict local-first hot paths: if the local experiment or run artifacts exist, the viz API returns them directly without probing remote snapshot overlays. SSH detail fallback only happens for explicit remote source requests or genuine local misses.
-- `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `.numereng/experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
+- `remote run train` optionally repo-syncs first, syncs the experiment bundle when the config lives under `experiments/<id>/configs/*`, and otherwise pushes the config into `repo_root/.numereng/tmp/remote-configs/*` before detached launch
 - Live-run payloads now carry `progress_mode`:
   - `exact` for local lifecycle-backed percentages
   - `estimated` for cloud runs with coarse phase/status mapping

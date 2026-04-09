@@ -44,7 +44,7 @@ def _handle_cloud_aws_image_command(args: Sequence[str]) -> int:
             "--runtime-profile",
             "--platform",
             "--state-path",
-            "--store-root",
+            "--workspace",
         },
     )
     if parse_error == "__help__":
@@ -67,7 +67,7 @@ def _handle_cloud_aws_image_command(args: Sequence[str]) -> int:
             runtime_profile=values.get("--runtime-profile", "standard"),
             platform=values.get("--platform"),
             state_path=values.get("--state-path"),
-            store_root=values.get("--store-root", ".numereng"),
+            workspace_root=values.get("--workspace", "."),
         )
     except ValidationError as exc:
         print(_validation_error_message(exc), file=sys.stderr)
@@ -114,7 +114,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--batch-job-queue",
                 "--batch-job-definition",
                 "--state-path",
-                "--store-root",
+                "--workspace",
             },
             bool_flags={"--spot", "--on-demand"},
         )
@@ -200,7 +200,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 batch_job_queue=values.get("--batch-job-queue"),
                 batch_job_definition=values.get("--batch-job-definition"),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -225,7 +225,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--batch-job-id",
                 "--region",
                 "--state-path",
-                "--store-root",
+                "--workspace",
             },
         )
         if parse_error == "__help__":
@@ -251,7 +251,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 batch_job_id=values.get("--batch-job-id"),
                 region=values.get("--region"),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -275,7 +275,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--batch-job-id",
                 "--region",
                 "--state-path",
-                "--store-root",
+                "--workspace",
                 "--lines",
             },
             bool_flags={"--follow"},
@@ -316,7 +316,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 lines=lines,
                 follow=("--follow" in toggles),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -340,7 +340,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--batch-job-id",
                 "--region",
                 "--state-path",
-                "--store-root",
+                "--workspace",
             },
         )
         if parse_error == "__help__":
@@ -366,7 +366,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 batch_job_id=values.get("--batch-job-id"),
                 region=values.get("--region"),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -390,7 +390,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--output-s3-uri",
                 "--output-dir",
                 "--state-path",
-                "--store-root",
+                "--workspace",
             },
         )
         if parse_error == "__help__":
@@ -408,7 +408,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 output_s3_uri=values.get("--output-s3-uri"),
                 output_dir=values.get("--output-dir"),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
@@ -431,7 +431,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 "--bucket",
                 "--output-dir",
                 "--state-path",
-                "--store-root",
+                "--workspace",
             },
         )
         if parse_error == "__help__":
@@ -448,7 +448,7 @@ def _handle_cloud_aws_train_command(args: Sequence[str]) -> int:
                 bucket=values.get("--bucket"),
                 output_dir=values.get("--output-dir"),
                 state_path=values.get("--state-path"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)

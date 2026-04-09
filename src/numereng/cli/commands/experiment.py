@@ -100,7 +100,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "create":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--name", "--hypothesis", "--tags", "--store-root"},
+            value_flags={"--id", "--name", "--hypothesis", "--tags", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -122,7 +122,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                     name=values.get("--name"),
                     hypothesis=values.get("--hypothesis"),
                     tags=tags,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -138,7 +138,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "list":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--status", "--format", "--store-root"},
+            value_flags={"--status", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -167,7 +167,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             list_payload = api.experiment_list(
                 api.ExperimentListRequest(
                     status=status,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -186,7 +186,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "details":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--format", "--store-root"},
+            value_flags={"--id", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -212,7 +212,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             details_payload = api.experiment_get(
                 api.ExperimentGetRequest(
                     experiment_id=experiment_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -231,7 +231,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] in {"archive", "unarchive"}:
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--store-root"},
+            value_flags={"--id", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -250,14 +250,14 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                 payload = api.experiment_archive(
                     api.ExperimentArchiveRequest(
                         experiment_id=experiment_id,
-                        store_root=values.get("--store-root", ".numereng"),
+                        workspace_root=values.get("--workspace", "."),
                     )
                 )
             else:
                 payload = api.experiment_unarchive(
                     api.ExperimentArchiveRequest(
                         experiment_id=experiment_id,
-                        store_root=values.get("--store-root", ".numereng"),
+                        workspace_root=values.get("--workspace", "."),
                     )
                 )
         except ValidationError as exc:
@@ -282,7 +282,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                 "--engine-mode",
                 "--window-size-eras",
                 "--embargo-eras",
-                "--store-root",
+                "--workspace",
             },
         )
         if parse_error == "__help__":
@@ -334,7 +334,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                         output_dir=values.get("--output-dir"),
                         profile=profile,
                         post_training_scoring=post_training_scoring,
-                        store_root=values.get("--store-root", ".numereng"),
+                        workspace_root=values.get("--workspace", "."),
                     )
                 )
         except ValidationError as exc:
@@ -350,7 +350,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "score-round":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--round", "--stage", "--store-root"},
+            value_flags={"--id", "--round", "--stage", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -388,7 +388,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                         experiment_id=experiment_id,
                         round=round_label,
                         stage=stage,
-                        store_root=values.get("--store-root", ".numereng"),
+                        workspace_root=values.get("--workspace", "."),
                     )
                 )
         except ValidationError as exc:
@@ -404,7 +404,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "promote":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--run", "--metric", "--store-root"},
+            value_flags={"--id", "--run", "--metric", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -424,7 +424,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                     experiment_id=experiment_id,
                     run_id=values.get("--run"),
                     metric=values.get("--metric", "bmc_last_200_eras.mean"),
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -440,7 +440,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "report":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--metric", "--limit", "--format", "--store-root"},
+            value_flags={"--id", "--metric", "--limit", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -478,7 +478,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                     experiment_id=experiment_id,
                     metric=values.get("--metric", "bmc_last_200_eras.mean"),
                     limit=limit,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -497,7 +497,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "pack":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--store-root"},
+            value_flags={"--id", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -515,7 +515,7 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             pack_payload = api.experiment_pack(
                 api.ExperimentPackRequest(
                     experiment_id=experiment_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

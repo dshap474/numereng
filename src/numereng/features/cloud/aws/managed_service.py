@@ -54,6 +54,7 @@ from numereng.features.store.layout import (
     resolve_cloud_run_pull_dir,
     resolve_cloud_run_state_path,
     resolve_path,
+    resolve_workspace_layout_from_store_root,
     validate_cloud_state_path,
 )
 from numereng.features.training.service import resolve_model_config
@@ -1452,12 +1453,13 @@ def _parse_s3_uri(uri: str, *, default_bucket: str) -> tuple[str, str] | None:
 def _infer_experiment_id_from_config_path(config_path: str, *, store_root: str) -> str | None:
     path = Path(config_path).expanduser()
     store_root_path = Path(store_root).expanduser().resolve()
+    workspace_root = resolve_workspace_layout_from_store_root(store_root_path).workspace_root
     if not path.is_absolute():
-        path = (store_root_path / path).resolve()
+        path = (workspace_root / path).resolve()
     else:
         path = path.resolve()
     try:
-        relative = path.relative_to(store_root_path)
+        relative = path.relative_to(workspace_root)
     except ValueError:
         return None
     parts = list(relative.parts)

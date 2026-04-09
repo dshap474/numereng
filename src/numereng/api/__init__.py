@@ -58,6 +58,7 @@ from numereng.api._store import (
     store_rebuild,
     store_repair_run_lifecycles,
 )
+from numereng.api._workspace import workspace_init
 from numereng.api.cloud import (
     cloud_aws_image_build_push,
     cloud_aws_train_cancel,
@@ -219,6 +220,8 @@ from numereng.api.contracts import (
     TrainingProfile,
     TrainRunRequest,
     TrainRunResponse,
+    WorkspaceInitRequest,
+    WorkspaceInitResponse,
 )
 from numereng.features.baseline import build_baseline as build_baseline_record
 from numereng.features.cloud.aws import (
@@ -343,6 +346,7 @@ def list_research_program_records(*args, **kwargs):
 
 def run_research_program(*args, **kwargs):
     return _agentic_research_feature_module().run_research(*args, **kwargs)
+
 
 __all__ = [
     "AwsImageBuildPushRequest",
@@ -505,6 +509,8 @@ __all__ = [
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
+    "WorkspaceInitRequest",
+    "WorkspaceInitResponse",
     "TrainingEngineMode",
     "PostTrainingScoringPolicy",
     "TrainingProfile",
@@ -622,6 +628,7 @@ __all__ = [
     "store_materialize_viz_artifacts",
     "store_repair_run_lifecycles",
     "store_rebuild",
+    "workspace_init",
     "run_training",
     "run_bootstrap_check",
     "init_research_program",

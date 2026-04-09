@@ -9,7 +9,7 @@ import socket
 from collections.abc import Mapping
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import cast
 
 RUN_EXECUTION_ENV_VAR = "NUMERENG_RUN_EXECUTION_JSON"
 RUN_EXECUTION_ENV_B64_VAR = "NUMERENG_RUN_EXECUTION_JSON_B64"
@@ -176,12 +176,13 @@ def stamp_run_execution(
 def _normalize_existing(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         return {}
+    mapping = cast(Mapping[str, object], value)
     normalized: dict[str, object] = {}
     for key in _RUN_EXECUTION_BASE_FIELDS:
-        candidate = _normalize_scalar(value.get(key))
+        candidate = _normalize_scalar(mapping.get(key))
         if candidate is not None:
             normalized[key] = candidate
-    metadata = _normalize_metadata(value.get("metadata"))
+    metadata = _normalize_metadata(mapping.get("metadata"))
     if metadata:
         normalized["metadata"] = metadata
     return normalized
@@ -200,8 +201,9 @@ def _parse_execution_json(raw: str) -> dict[str, object]:
 def _normalize_metadata(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         return {}
+    mapping = cast(Mapping[object, object], value)
     normalized: dict[str, object] = {}
-    for key, child in value.items():
+    for key, child in mapping.items():
         key_text = str(key).strip()
         if not key_text:
             continue

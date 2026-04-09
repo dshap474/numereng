@@ -59,7 +59,7 @@ def handle_neutralize_command(args: Sequence[str]) -> int:
                 "--neutralization-mode",
                 "--neutralizer-cols",
                 "--output-path",
-                "--store-root",
+                "--workspace",
             },
             bool_flags={"--no-neutralization-rank"},
         )
@@ -122,7 +122,7 @@ def handle_neutralize_command(args: Sequence[str]) -> int:
                     neutralizer_cols=neutralizer_cols,
                     neutralization_rank_output="--no-neutralization-rank" not in toggles,
                     output_path=values.get("--output-path"),
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

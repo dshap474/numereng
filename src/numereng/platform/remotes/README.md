@@ -29,7 +29,7 @@ Those profile files are gitignored so each clone stays clean for OSS users.
 2. Fill in your SSH host alias or explicit host
 3. Set any referenced env vars for username/key path if needed
 4. Make sure the remote machine can run:
-   - `uv run numereng monitor snapshot --store-root <store_root> --json`
+   - `uv run numereng monitor snapshot --workspace <store_root> --json`
 
 ## Remote ops
 

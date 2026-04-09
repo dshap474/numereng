@@ -75,7 +75,9 @@ def research_program_list(request: ResearchProgramListRequest) -> ResearchProgra
     from numereng import api as api_module
 
     try:
-        programs = api_module.list_research_program_records()
+        programs = api_module.list_research_program_records(
+            user_programs_dir=request.workspace_layout.research_programs_root
+        )
     except (AgenticResearchValidationError, AgenticResearchError, ValueError) as exc:
         raise PackageError(str(exc)) from exc
 
@@ -100,7 +102,10 @@ def research_program_show(request: ResearchProgramShowRequest) -> ResearchProgra
     from numereng import api as api_module
 
     try:
-        details = api_module.get_research_program_record(request.program_id)
+        details = api_module.get_research_program_record(
+            request.program_id,
+            user_programs_dir=request.workspace_layout.research_programs_root,
+        )
     except (AgenticResearchValidationError, AgenticResearchError, ValueError) as exc:
         raise PackageError(str(exc)) from exc
 

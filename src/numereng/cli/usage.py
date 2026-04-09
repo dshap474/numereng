@@ -3,51 +3,52 @@
 USAGE = (
     "usage:\n"
     "  numereng [--fail]\n"
-    "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
-    "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--experiment-id <id>]\n"  # noqa: E501
-    "  numereng run cancel --run-id <id> [--store-root <path>]\n"
-    "  numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng baseline build --run-ids <id1,id2,...> --name <baseline_name> [--default-target <target_col>] [--description <text>] [--promote-active] [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng experiment archive --id <id> [--store-root <path>]\n"
-    "  numereng experiment unarchive --id <id> [--store-root <path>]\n"
-    "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]\n"
-    "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng experiment pack --id <id> [--store-root <path>]\n"
-    "  numereng research program list [--format <table|json>]\n"
-    "  numereng research program show --program <id> [--format <table|json>]\n"
-    "  numereng research init --experiment-id <id> --program <id> [--store-root <path>]\n"
-    "  numereng research status --experiment-id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--store-root <path>]\n"  # noqa: E501
-    "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng hpo details --study-id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng hpo trials --study-id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--store-root <path>]\n"  # noqa: E501
-    "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--store-root <path>]\n"  # noqa: E501
-    "  numereng monitor snapshot [--store-root <path>] [--no-refresh-cloud] [--json]\n"
+    "  numereng init [--workspace <path>]\n"
+    "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--workspace <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
+    "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--experiment-id <id>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng run cancel --run-id <id> [--workspace <path>]\n"
+    "  numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng baseline build --run-ids <id1,id2,...> --name <baseline_name> [--default-target <target_col>] [--description <text>] [--promote-active] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment details --id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng experiment archive --id <id> [--workspace <path>]\n"
+    "  numereng experiment unarchive --id <id> [--workspace <path>]\n"
+    "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--workspace <path>]\n"
+    "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment pack --id <id> [--workspace <path>]\n"
+    "  numereng research program list [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research program show --program <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research init --experiment-id <id> --program <id> [--workspace <path>]\n"
+    "  numereng research status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]\n"  # noqa: E501
+    "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng hpo trials --study-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
+    "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
+    "  numereng monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json]\n"
     "  numereng remote list [--format <table|json>]\n"
-    "  numereng remote bootstrap-viz [--store-root <path>]\n"
+    "  numereng remote bootstrap-viz [--workspace <path>]\n"
     "  numereng remote doctor --target <id>\n"
-    "  numereng remote repo sync --target <id> [--store-root <path>]\n"
-    "  numereng remote experiment sync --target <id> --experiment-id <id> [--store-root <path>]\n"
-    "  numereng remote experiment pull --target <id> --experiment-id <id> [--store-root <path>]\n"
-    "  numereng remote config push --target <id> --config <path.json> [--store-root <path>]\n"
-    "  numereng remote run train --target <id> --config <path.json> [--experiment-id <id>] [--sync-repo <auto|always|never>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--store-root <path>]\n"  # noqa: E501
+    "  numereng remote repo sync --target <id> [--workspace <path>]\n"
+    "  numereng remote experiment sync --target <id> --experiment-id <id> [--workspace <path>]\n"
+    "  numereng remote experiment pull --target <id> --experiment-id <id> [--workspace <path>]\n"
+    "  numereng remote config push --target <id> --config <path.json> [--workspace <path>]\n"
+    "  numereng remote run train --target <id> --config <path.json> [--experiment-id <id>] [--sync-repo <auto|always|never>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--workspace <path>]\n"  # noqa: E501
     "  numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]\n"  # noqa: E501
-    "  numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng ensemble details --ensemble-id <id> [--format <table|json>] [--store-root <path>]\n"
-    "  numereng store init [--store-root <path>]\n"
-    "  numereng store index --run-id <id> [--store-root <path>]\n"
-    "  numereng store rebuild [--store-root <path>]\n"
-    "  numereng store doctor [--store-root <path>] [--fix-strays]\n"
-    "  numereng store backfill-run-execution (--run-id <id> | --all) [--store-root <path>]\n"
-    "  numereng store repair-run-lifecycles [--run-id <id>] [--store-root <path>] [--all]\n"
-    "  numereng store materialize-viz-artifacts --kind <scoring-artifacts|per-era-corr(deprecated)> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]\n"  # noqa: E501
+    "  numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng ensemble details --ensemble-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng store init [--workspace <path>]\n"
+    "  numereng store index --run-id <id> [--workspace <path>]\n"
+    "  numereng store rebuild [--workspace <path>]\n"
+    "  numereng store doctor [--workspace <path>] [--fix-strays]\n"
+    "  numereng store backfill-run-execution (--run-id <id> | --all) [--workspace <path>]\n"
+    "  numereng store repair-run-lifecycles [--run-id <id>] [--workspace <path>] [--all]\n"
+    "  numereng store materialize-viz-artifacts --kind <scoring-artifacts|per-era-corr(deprecated)> (--run-id <id> | --experiment-id <id> | --all) [--workspace <path>]\n"  # noqa: E501
     "  numereng cloud ec2 init-iam [--region <region>] [--bucket <bucket>] [--role-name <name>] [--security-group-name <name>]\n"  # noqa: E501
     "  numereng cloud ec2 setup-data --data-version <v> [--cache-dir <path>] [--region <region>] [--bucket <bucket>]\n"  # noqa: E501
     "  numereng cloud ec2 provision --run-id <id> [--tier <tier>] [--spot|--on-demand] [--region <region>] [--bucket <bucket>] [--state-path <path>]\n"  # noqa: E501
@@ -64,13 +65,13 @@ USAGE = (
     "  numereng cloud ec2 s3 ls --prefix <prefix> [--region <region>] [--bucket <bucket>]\n"
     "  numereng cloud ec2 s3 cp --src <path|s3://...> --dst <path|s3://...> [--region <region>] [--bucket <bucket>]\n"  # noqa: E501
     "  numereng cloud ec2 s3 rm --uri <s3://...> [--recursive] [--region <region>] [--bucket <bucket>]\n"
-    "  numereng cloud aws image build-push [--run-id <id>] [--context-dir <path>] [--dockerfile <path>] [--runtime-profile <standard|lgbm-cuda>] [--repository <name>] [--image-tag <tag>] [--platform <value>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train submit [--run-id <id>] [--backend <sagemaker|batch>] [--config <path.json>] [--config-s3-uri <s3://...json>] [--image-uri <uri>] [--runtime-profile <standard|lgbm-cuda>] [--role-arn <arn>] [--instance-type <name>] [--instance-count <n>] [--volume-size-gb <n>] [--max-runtime-seconds <n>] [--max-wait-seconds <n>] [--spot|--on-demand] [--checkpoint-s3-uri <s3://...>] [--output-s3-uri <s3://...>] [--batch-job-queue <name>] [--batch-job-definition <name>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train status [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train logs [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--lines <n>] [--follow] [--region <region>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train cancel [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train pull [--run-id <id>] [--output-s3-uri <s3://...>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
-    "  numereng cloud aws train extract [--run-id <id>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]\n"  # noqa: E501
+    "  numereng cloud aws image build-push [--run-id <id>] [--context-dir <path>] [--dockerfile <path>] [--runtime-profile <standard|lgbm-cuda>] [--repository <name>] [--image-tag <tag>] [--platform <value>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train submit [--run-id <id>] [--backend <sagemaker|batch>] [--config <path.json>] [--config-s3-uri <s3://...json>] [--image-uri <uri>] [--runtime-profile <standard|lgbm-cuda>] [--role-arn <arn>] [--instance-type <name>] [--instance-count <n>] [--volume-size-gb <n>] [--max-runtime-seconds <n>] [--max-wait-seconds <n>] [--spot|--on-demand] [--checkpoint-s3-uri <s3://...>] [--output-s3-uri <s3://...>] [--batch-job-queue <name>] [--batch-job-definition <name>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train status [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train logs [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--lines <n>] [--follow] [--region <region>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train cancel [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train pull [--run-id <id>] [--output-s3-uri <s3://...>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng cloud aws train extract [--run-id <id>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]\n"  # noqa: E501
     "  numereng cloud modal deploy --ecr-image-uri <uri:tag> [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--aws-profile <name>] [--timeout-seconds <n>] [--gpu <value>] [--cpu <n>] [--memory-mb <n>] [--data-volume-name <name>] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
     "  numereng cloud modal data sync --config <path.json> --volume-name <name> [--force] [--no-create-if-missing] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501
     "  numereng cloud modal train submit --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--app-name <name>] [--function-name <name>] [--environment-name <name>] [--metadata <k=v,...>] [--state-path <path>]\n"  # noqa: E501

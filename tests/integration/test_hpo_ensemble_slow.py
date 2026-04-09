@@ -137,7 +137,7 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
                     "high": 0.2,
                 }
             },
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert created.status == "completed"
@@ -148,7 +148,7 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
     trials = api_module.hpo_trials(
         api_module.HpoStudyTrialsRequest(
             study_id=created.study_id,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert len(trials.trials) == n_trials
@@ -192,7 +192,7 @@ def test_ensemble_slow_large_matrix_optimize_smoke(tmp_path: Path) -> None:
             metric="corr_sharpe",
             target="target_ender_20",
             optimize_weights=True,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert created.status == "completed"
@@ -216,7 +216,7 @@ def test_ensemble_slow_large_matrix_optimize_smoke(tmp_path: Path) -> None:
     loaded = api_module.ensemble_get(
         api_module.EnsembleGetRequest(
             ensemble_id=created.ensemble_id,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert loaded.ensemble_id == created.ensemble_id

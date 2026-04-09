@@ -51,7 +51,7 @@ def test_capabilities_payload_read_only_flag() -> None:
 
 def test_list_experiments_fallback_without_db(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    (store_root / "experiments" / "exp-a").mkdir(parents=True)
+    (tmp_path / "experiments" / "exp-a").mkdir(parents=True)
 
     adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
 
@@ -63,7 +63,7 @@ def test_list_experiments_fallback_without_db(tmp_path: Path) -> None:
 
 def test_list_experiment_configs_discovers_json_configs(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    config_dir = store_root / "experiments" / "exp-json" / "configs"
+    config_dir = tmp_path / "experiments" / "exp-json" / "configs"
     config_dir.mkdir(parents=True)
     config_path = config_dir / "base.json"
     config_path.write_text(
@@ -93,8 +93,8 @@ def test_list_experiment_configs_discovers_json_configs(tmp_path: Path) -> None:
 
 def test_list_experiments_hides_archived_but_archived_detail_paths_still_resolve(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    live_dir = store_root / "experiments" / "exp-live"
-    archived_dir = store_root / "experiments" / "_archive" / "exp-archived"
+    live_dir = tmp_path / "experiments" / "exp-live"
+    archived_dir = tmp_path / "experiments" / "_archive" / "exp-archived"
     (live_dir / "configs").mkdir(parents=True)
     (archived_dir / "configs").mkdir(parents=True)
     (live_dir / "experiment.json").write_text('{"experiment_id":"exp-live","name":"Live","status":"active","runs":[]}')
@@ -1427,7 +1427,7 @@ def test_build_monitor_snapshot_ignores_active_looking_jobs_without_live_lifecyc
                 'attempt-ghost',
                 'ghost.json',
                 'config',
-                '.numereng/experiments/exp-done/configs/ghost.json',
+                'experiments/exp-done/configs/ghost.json',
                 'sha256',
                 '{}',
                 'run',
@@ -1566,9 +1566,7 @@ def test_remote_snapshot_coordinator_builds_posix_ssh_command() -> None:
     coordinator = RemoteSnapshotCoordinator()
     command = coordinator._ssh_command(target)
 
-    assert command[-1] == (
-        "cd /srv/numereng && uv run numereng monitor snapshot --store-root /srv/numereng/.numereng --json"
-    )
+    assert command[-1] == ("cd /srv/numereng && uv run numereng monitor snapshot --workspace /srv/numereng --json")
 
 
 def test_remote_snapshot_coordinator_builds_powershell_ssh_command() -> None:
@@ -1590,7 +1588,7 @@ def test_remote_snapshot_coordinator_builds_powershell_ssh_command() -> None:
     assert command[-1] == (
         'powershell -NoProfile -Command "'
         r"Set-Location 'C:\Users\<you>\remote-access\numereng'; "
-        r"uv run numereng monitor snapshot --store-root 'C:\Users\<you>\remote-access\numereng\.numereng' --json"
+        r"uv run numereng monitor snapshot --workspace 'C:\Users\<you>\remote-access\numereng' --json"
         '"'
     )
 
@@ -1675,7 +1673,7 @@ def test_build_monitor_snapshot_repairs_cloud_experiment_context_from_state_file
         updated_at="2026-03-27T10:00:00+00:00",
         metadata={"tags": ["live"]},
     )
-    config_path = store_root / "experiments" / "exp-live" / "configs" / "train.json"
+    config_path = tmp_path / "experiments" / "exp-live" / "configs" / "train.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text("{}", encoding="utf-8")
     upsert_cloud_job(
@@ -2704,7 +2702,7 @@ def test_list_experiment_runs_includes_corr_with_benchmark_metric(tmp_path: Path
 
 def test_list_experiment_round_results_includes_corr_with_benchmark_metric(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    exp_dir = store_root / "experiments" / "exp-1"
+    exp_dir = tmp_path / "experiments" / "exp-1"
     (exp_dir / "configs").mkdir(parents=True)
     (exp_dir / "results").mkdir(parents=True)
     (exp_dir / "experiment.json").write_text(
@@ -3170,7 +3168,7 @@ def test_run_job_stream_stops_when_second_stage_fetch_fails() -> None:
 
 def test_notes_content_accepts_plus_in_path(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    notes_root = store_root / "notes"
+    notes_root = tmp_path / "notes"
     notes_root.mkdir(parents=True)
     target = notes_root / "signals-+-qc.md"
     target.write_text("# Signals\n", encoding="utf-8")
@@ -3190,7 +3188,7 @@ def test_notes_content_accepts_plus_in_path(tmp_path: Path) -> None:
 def test_get_notes_tree_missing_root_returns_empty_without_creating_directory(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)
-    notes_root = store_root / "notes"
+    notes_root = tmp_path / "notes"
     assert not notes_root.exists()
 
     adapter = VizStoreAdapter(
@@ -3311,7 +3309,7 @@ def test_adapter_rejects_ensemble_artifacts_path_outside_store(tmp_path: Path) -
 
 def test_adapter_reads_run_artifacts_from_remote_pull_cache(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    experiment_dir = store_root / "experiments" / "exp-pulled"
+    experiment_dir = tmp_path / "experiments" / "exp-pulled"
     experiment_dir.mkdir(parents=True)
     (experiment_dir / "experiment.json").write_text(
         json.dumps(

@@ -123,7 +123,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             "--neutralization-proportion",
             "--neutralization-mode",
             "--neutralizer-cols",
-            "--store-root",
+            "--workspace",
         },
         bool_flags={"--neutralize", "--no-neutralization-rank"},
     )
@@ -329,7 +329,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
                 neutralization_mode=neutralization_mode,
                 neutralizer_cols=neutralizer_cols,
                 neutralization_rank_output=neutralization_rank_output,
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:

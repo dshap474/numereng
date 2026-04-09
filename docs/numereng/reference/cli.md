@@ -10,8 +10,8 @@ Reference for the supported `numereng` CLI surface.
 ## `run`
 
 - `numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--experiment-id <id>] [--post-training-scoring <none|core|full|round_core|round_full>]`
-- `numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--store-root <path>]`
-- `numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--store-root <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]`
+- `numereng run score --run-id <id> [--stage <all|run_metric_series|post_fold|post_training_core|post_training_full>] [--workspace <path>]`
+- `numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--workspace <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]`
 
 Notes:
 
@@ -23,44 +23,44 @@ Notes:
 
 ## `experiment`
 
-- `numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--store-root <path>]`
-- `numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--store-root <path>]`
-- `numereng experiment details --id <id> [--format <table|json>] [--store-root <path>]`
-- `numereng experiment archive --id <id> [--store-root <path>]`
-- `numereng experiment unarchive --id <id> [--store-root <path>]`
-- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--store-root <path>]`
-- `numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--store-root <path>]`
-- `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--store-root <path>]`
-- `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--store-root <path>]`
-- `numereng experiment pack --id <id> [--store-root <path>]`
+- `numereng experiment create --id <YYYY-MM-DD_slug> [--name <text>] [--hypothesis <text>] [--tags <csv>] [--workspace <path>]`
+- `numereng experiment list [--status <draft|active|complete|archived>] [--format <table|json>] [--workspace <path>]`
+- `numereng experiment details --id <id> [--format <table|json>] [--workspace <path>]`
+- `numereng experiment archive --id <id> [--workspace <path>]`
+- `numereng experiment unarchive --id <id> [--workspace <path>]`
+- `numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--workspace <path>]`
+- `numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--workspace <path>]`
+- `numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--workspace <path>]`
+- `numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--workspace <path>]`
+- `numereng experiment pack --id <id> [--workspace <path>]`
 
 Notes:
 
-- `experiment create` scaffolds `.numereng/experiments/<id>/` with `experiment.json`, a rich `EXPERIMENT.md` skeleton, `configs/`, a header-only `run_plan.csv`, and `run_scripts/launch_all.py|.sh|.ps1`
+- `experiment create` scaffolds `experiments/<id>/` with `experiment.json`, a rich `EXPERIMENT.md` skeleton, `configs/`, a header-only `run_plan.csv`, and `run_scripts/launch_all.py|.sh|.ps1`
 - archived experiments are hidden from normal experiment and config catalogs but still readable by direct experiment ID
-- `archive` moves `.numereng/experiments/<id>` to `.numereng/experiments/_archive/<id>` and updates indexed experiment status to `archived`
+- `archive` moves `experiments/<id>` to `experiments/_archive/<id>` and updates indexed experiment status to `archived`
 - `unarchive` moves the directory back to the live root and restores the pre-archive status when recorded
 - archived experiments are read-only; `experiment train` and `experiment promote` hard-fail until the experiment is unarchived
 - `--post-training-scoring` overrides the config policy for that experiment run
 - `round_core` and `round_full` require an `rN_*` config filename because the round label is derived from the config stem
-- `pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` with the current `EXPERIMENT.md` body plus one dashboard-aligned scalar metrics table across manifest-listed runs
+- `pack` writes `experiments/<id>/EXPERIMENT.pack.md` with the current `EXPERIMENT.md` body plus one dashboard-aligned scalar metrics table across manifest-listed runs
 
 ## `hpo`
 
-- `numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--store-root <path>]`
-- `numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]`
-- `numereng hpo details --study-id <id> [--format <table|json>] [--store-root <path>]`
-- `numereng hpo trials --study-id <id> [--format <table|json>] [--store-root <path>]`
+- `numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]`
+- `numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]`
+- `numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]`
+- `numereng hpo trials --study-id <id> [--format <table|json>] [--workspace <path>]`
 
 ## `ensemble`
 
-- `numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--store-root <path>]`
-- `numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--store-root <path>]`
-- `numereng ensemble details --ensemble-id <id> [--format <table|json>] [--store-root <path>]`
+- `numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--workspace <path>]`
+- `numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]`
+- `numereng ensemble details --ensemble-id <id> [--format <table|json>] [--workspace <path>]`
 
 ## `neutralize`
 
-- `numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--store-root <path>]`
+- `numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]`
 
 ## `dataset-tools`
 
@@ -68,11 +68,11 @@ Notes:
 
 ## `store`
 
-- `numereng store init [--store-root <path>]`
-- `numereng store index --run-id <id> [--store-root <path>]`
-- `numereng store rebuild [--store-root <path>]`
-- `numereng store doctor [--store-root <path>] [--fix-strays]`
-- `numereng store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--run-id <id> | --experiment-id <id> | --all) [--store-root <path>]`
+- `numereng store init [--workspace <path>]`
+- `numereng store index --run-id <id> [--workspace <path>]`
+- `numereng store rebuild [--workspace <path>]`
+- `numereng store doctor [--workspace <path>] [--fix-strays]`
+- `numereng store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--run-id <id> | --experiment-id <id> | --all) [--workspace <path>]`
 
 Notes:
 
@@ -106,11 +106,11 @@ Notes:
 
 ### `cloud aws`
 
-- `numereng cloud aws image build-push [--run-id <id>] [--context-dir <path>] [--dockerfile <path>] [--runtime-profile <standard|lgbm-cuda>] [--repository <name>] [--image-tag <tag>] [--platform <value>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]`
-- `numereng cloud aws train submit [--run-id <id>] [--backend <sagemaker|batch>] [--config <path.json>] [--config-s3-uri <s3://...json>] [--image-uri <uri>] [--runtime-profile <standard|lgbm-cuda>] [--role-arn <arn>] [--instance-type <name>] [--instance-count <n>] [--volume-size-gb <n>] [--max-runtime-seconds <n>] [--max-wait-seconds <n>] [--spot|--on-demand] [--checkpoint-s3-uri <s3://...>] [--output-s3-uri <s3://...>] [--batch-job-queue <name>] [--batch-job-definition <name>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--store-root <path>]`
-- `numereng cloud aws train status [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--store-root <path>]`
-- `numereng cloud aws train logs [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--lines <n>] [--follow] [--region <region>] [--state-path <path>] [--store-root <path>]`
-- `numereng cloud aws train cancel [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--store-root <path>]`
+- `numereng cloud aws image build-push [--run-id <id>] [--context-dir <path>] [--dockerfile <path>] [--runtime-profile <standard|lgbm-cuda>] [--repository <name>] [--image-tag <tag>] [--platform <value>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]`
+- `numereng cloud aws train submit [--run-id <id>] [--backend <sagemaker|batch>] [--config <path.json>] [--config-s3-uri <s3://...json>] [--image-uri <uri>] [--runtime-profile <standard|lgbm-cuda>] [--role-arn <arn>] [--instance-type <name>] [--instance-count <n>] [--volume-size-gb <n>] [--max-runtime-seconds <n>] [--max-wait-seconds <n>] [--spot|--on-demand] [--checkpoint-s3-uri <s3://...>] [--output-s3-uri <s3://...>] [--batch-job-queue <name>] [--batch-job-definition <name>] [--region <region>] [--bucket <bucket>] [--state-path <path>] [--workspace <path>]`
+- `numereng cloud aws train status [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--workspace <path>]`
+- `numereng cloud aws train logs [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--lines <n>] [--follow] [--region <region>] [--state-path <path>] [--workspace <path>]`
+- `numereng cloud aws train cancel [--backend <sagemaker|batch>] [--run-id <id>] [--training-job-name <name>] [--batch-job-id <id>] [--region <region>] [--state-path <path>] [--workspace <path>]`
 - `numereng cloud aws train pull [--run-id <id>] [--output-s3-uri <s3://...>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>]`
 - `numereng cloud aws train extract [--run-id <id>] [--output-dir <path>] [--region <region>] [--bucket <bucket>] [--state-path <path>]`
 

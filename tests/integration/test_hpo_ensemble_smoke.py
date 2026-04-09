@@ -143,7 +143,7 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                     "high": 0.1,
                 }
             },
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert created.status == "completed"
@@ -154,7 +154,7 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     listed = api_module.hpo_list(
         api_module.HpoStudyListRequest(
             experiment_id="exp-smoke",
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert len(listed.studies) == 1
@@ -163,7 +163,7 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     loaded = api_module.hpo_get(
         api_module.HpoStudyGetRequest(
             study_id=created.study_id,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert loaded.study_id == created.study_id
@@ -172,7 +172,7 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     trials = api_module.hpo_trials(
         api_module.HpoStudyTrialsRequest(
             study_id=created.study_id,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert len(trials.trials) == 2
@@ -298,7 +298,7 @@ def test_hpo_api_roundtrip_with_neutralization_smoke(monkeypatch: pytest.MonkeyP
                     "high": 0.1,
                 }
             },
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert created.status == "completed"
@@ -334,7 +334,7 @@ def test_ensemble_api_roundtrip_smoke(tmp_path: Path) -> None:
             experiment_id="exp-smoke",
             metric="corr_sharpe",
             target="target_ender_20",
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert created.status == "completed"
@@ -354,7 +354,7 @@ def test_ensemble_api_roundtrip_smoke(tmp_path: Path) -> None:
     listed = api_module.ensemble_list(
         api_module.EnsembleListRequest(
             experiment_id="exp-smoke",
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert len(listed.ensembles) == 1
@@ -363,7 +363,7 @@ def test_ensemble_api_roundtrip_smoke(tmp_path: Path) -> None:
     loaded = api_module.ensemble_get(
         api_module.EnsembleGetRequest(
             ensemble_id=created.ensemble_id,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
     assert loaded.ensemble_id == created.ensemble_id
@@ -403,7 +403,7 @@ def test_ensemble_api_roundtrip_with_neutralization_smoke(tmp_path: Path) -> Non
             neutralizer_path=str(neutralizer_path),
             neutralization_mode="era",
             neutralization_proportion=0.5,
-            store_root=str(store_root),
+            workspace_root=str(store_root.parent),
         )
     )
 

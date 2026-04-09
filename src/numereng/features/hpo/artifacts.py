@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.features.store import resolve_workspace_layout_from_store_root
 from numereng.platform.parquet import write_parquet
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
@@ -31,7 +32,7 @@ def resolve_study_storage_path(*, store_root: Path, experiment_id: str | None, s
     """Resolve canonical storage path for one study."""
 
     if experiment_id:
-        root = store_root / "experiments" / experiment_id / "hpo" / study_id
+        root = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id / "hpo" / study_id
     else:
         root = store_root / "hpo" / study_id
     root.mkdir(parents=True, exist_ok=True)

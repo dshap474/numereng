@@ -1,18 +1,23 @@
-"""Canonical store layout constants and path-guard helpers."""
+"""Canonical workspace/store layout constants and path-guard helpers."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "runs",
     "datasets",
     "cloud",
-    "experiments",
-    "notes",
     "cache",
     "tmp",
     "remote_ops",
+)
+CANONICAL_WORKSPACE_TOP_LEVEL_DIRS: tuple[str, ...] = (
+    "experiments",
+    "notes",
+    "custom_models",
+    "research_programs",
 )
 CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
     "numereng.db",
@@ -24,6 +29,20 @@ TARGETED_STRAY_DIRS: tuple[str, ...] = (
     "modal_smoke_data",
     "smoke_live_check",
 )
+CANONICAL_STORE_DIRNAME = ".numereng"
+
+
+@dataclass(frozen=True)
+class WorkspaceLayout:
+    """Canonical resolved paths for one numereng workspace."""
+
+    workspace_root: Path
+    store_root: Path
+    experiments_root: Path
+    notes_root: Path
+    custom_models_root: Path
+    research_programs_root: Path
+    skills_root: Path
 
 
 def resolve_path(value: str | Path) -> Path:
@@ -31,9 +50,57 @@ def resolve_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def resolve_default_workspace_root() -> Path:
+    """Resolve the canonical default workspace root (`.`)."""
+
+    return resolve_path(".")
+
+
+def resolve_workspace_root(workspace_root: str | Path = ".") -> Path:
+    """Resolve one workspace root path."""
+
+    return resolve_path(workspace_root)
+
+
 def resolve_default_store_root() -> Path:
     """Resolve canonical default store root (`.numereng`)."""
-    return resolve_path(".numereng")
+
+    return resolve_default_workspace_root() / CANONICAL_STORE_DIRNAME
+
+
+def resolve_workspace_layout(workspace_root: str | Path = ".") -> WorkspaceLayout:
+    """Resolve the canonical layout for one workspace root."""
+
+    resolved_workspace_root = resolve_workspace_root(workspace_root)
+    store_root = resolved_workspace_root / CANONICAL_STORE_DIRNAME
+    return WorkspaceLayout(
+        workspace_root=resolved_workspace_root,
+        store_root=store_root,
+        experiments_root=resolved_workspace_root / "experiments",
+        notes_root=resolved_workspace_root / "notes",
+        custom_models_root=resolved_workspace_root / "custom_models",
+        research_programs_root=resolved_workspace_root / "research_programs",
+        skills_root=resolved_workspace_root / ".agents" / "skills",
+    )
+
+
+def resolve_workspace_layout_from_store_root(store_root: str | Path = CANONICAL_STORE_DIRNAME) -> WorkspaceLayout:
+    """Resolve one workspace layout from the hidden runtime store root."""
+
+    resolved_store_root = resolve_path(store_root)
+    workspace_root = resolved_store_root.parent
+    layout = resolve_workspace_layout(workspace_root)
+    if resolved_store_root == layout.store_root:
+        return layout
+    return WorkspaceLayout(
+        workspace_root=layout.workspace_root,
+        store_root=resolved_store_root,
+        experiments_root=layout.experiments_root,
+        notes_root=layout.notes_root,
+        custom_models_root=layout.custom_models_root,
+        research_programs_root=layout.research_programs_root,
+        skills_root=layout.skills_root,
+    )
 
 
 def is_within(path: Path, root: Path) -> bool:
@@ -230,7 +297,7 @@ def _safe_cloud_token(value: str, *, field: str) -> str:
 def _looks_like_canonical_cloud_state_path(path: Path, *, allow_legacy_cloud: bool) -> bool:
     parts = path.parts
     for index in range(len(parts) - 2):
-        if parts[index] != ".numereng":
+        if parts[index] != CANONICAL_STORE_DIRNAME:
             continue
         if allow_legacy_cloud and parts[index + 1] == "cloud":
             return True
@@ -240,9 +307,12 @@ def _looks_like_canonical_cloud_state_path(path: Path, *, allow_legacy_cloud: bo
 
 
 __all__ = [
+    "CANONICAL_STORE_DIRNAME",
     "CANONICAL_STORE_TOP_LEVEL_DIRS",
     "CANONICAL_STORE_TOP_LEVEL_FILES",
+    "CANONICAL_WORKSPACE_TOP_LEVEL_DIRS",
     "TARGETED_STRAY_DIRS",
+    "WorkspaceLayout",
     "ensure_allowed_store_target",
     "ensure_store_root_not_nested",
     "is_cloud_cache_path",
@@ -253,11 +323,15 @@ __all__ = [
     "resolve_cloud_run_cache_root",
     "resolve_cloud_run_pull_dir",
     "resolve_cloud_run_state_path",
+    "resolve_default_workspace_root",
     "resolve_default_store_root",
     "resolve_legacy_cloud_state_path",
     "resolve_tmp_remote_configs_root",
     "resolve_tmp_root",
     "resolve_path",
+    "resolve_workspace_layout",
+    "resolve_workspace_layout_from_store_root",
+    "resolve_workspace_root",
     "targeted_stray_paths",
     "validate_cloud_state_path",
 ]

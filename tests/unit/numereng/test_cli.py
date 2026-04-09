@@ -226,7 +226,7 @@ def test_cli_remote_experiment_pull_success(
         return api_module.RemoteExperimentPullResponse(
             target_id="pc",
             experiment_id="exp-1",
-            local_experiment_manifest_path=".numereng/experiments/exp-1/experiment.json",
+            local_experiment_manifest_path="experiments/exp-1/experiment.json",
             local_runs_root=".numereng/runs",
             pulled_at="2026-03-31T00:00:00+00:00",
             already_materialized_run_ids=["run-0"],
@@ -676,7 +676,7 @@ def test_cli_experiment_create_success(
             champion_run_id=None,
             runs=[],
             metadata={},
-            manifest_path="/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json",
+            manifest_path="/tmp/experiments/2026-02-22_test-exp/experiment.json",
         )
 
     monkeypatch.setattr(api_module, "experiment_create", fake_experiment_create)
@@ -917,7 +917,7 @@ def test_cli_experiment_list_table_success(
                     updated_at="2026-02-22T00:05:00+00:00",
                     champion_run_id="run-1",
                     runs=["run-1"],
-                    manifest_path="/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json",
+                    manifest_path="/tmp/experiments/2026-02-22_test-exp/experiment.json",
                 )
             ]
         )
@@ -948,7 +948,7 @@ def test_cli_experiment_details_table_success(
             updated_at="2026-02-22T00:05:00+00:00",
             champion_run_id="run-1",
             runs=["run-1", "run-2"],
-            manifest_path="/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json",
+            manifest_path="/tmp/experiments/2026-02-22_test-exp/experiment.json",
         )
 
     monkeypatch.setattr(api_module, "experiment_get", fake_experiment_get)
@@ -970,7 +970,7 @@ def test_cli_experiment_archive_and_unarchive_success(
         return api_module.ExperimentArchiveResponse(
             experiment_id=request.experiment_id,
             status="archived",
-            manifest_path="/tmp/.numereng/experiments/_archive/2026-02-22_test-exp/experiment.json",
+            manifest_path="/tmp/experiments/_archive/2026-02-22_test-exp/experiment.json",
             archived=True,
         )
 
@@ -979,7 +979,7 @@ def test_cli_experiment_archive_and_unarchive_success(
         return api_module.ExperimentArchiveResponse(
             experiment_id=request.experiment_id,
             status="active",
-            manifest_path="/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json",
+            manifest_path="/tmp/experiments/2026-02-22_test-exp/experiment.json",
             archived=False,
         )
 
@@ -1065,9 +1065,9 @@ def test_cli_experiment_pack_success(
         assert request.experiment_id == "2026-02-22_test-exp"
         return api_module.ExperimentPackResponse(
             experiment_id=request.experiment_id,
-            output_path="/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md",
-            experiment_path="/tmp/.numereng/experiments/2026-02-22_test-exp",
-            source_markdown_path="/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.md",
+            output_path="/tmp/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md",
+            experiment_path="/tmp/experiments/2026-02-22_test-exp",
+            source_markdown_path="/tmp/experiments/2026-02-22_test-exp/EXPERIMENT.md",
             run_count=2,
             packed_at="2026-02-22T00:05:00+00:00",
         )
@@ -2563,7 +2563,7 @@ def test_cli_hpo_create_success(
             best_value=0.12,
             best_run_id="run-1",
             config={},
-            storage_path=".numereng/experiments/exp-1/hpo/study-a-1",
+            storage_path="experiments/exp-1/hpo/study-a-1",
             error_message=None,
             created_at="2026-02-22T00:00:00+00:00",
             updated_at="2026-02-22T00:00:00+00:00",
@@ -2753,7 +2753,7 @@ def test_cli_ensemble_build_success(
                 api_module.EnsembleComponentResponse(run_id="run-b", weight=0.4, rank=1),
             ],
             metrics=[api_module.EnsembleMetricResponse(name="corr_mean", value=0.11)],
-            artifacts_path=".numereng/experiments/exp-1/ensembles/ens-1",
+            artifacts_path="experiments/exp-1/ensembles/ens-1",
             config={},
             created_at="2026-02-22T00:00:00+00:00",
             updated_at="2026-02-22T00:00:00+00:00",
@@ -2800,7 +2800,7 @@ def test_cli_ensemble_build_with_artifact_flags_success(
                 api_module.EnsembleComponentResponse(run_id="run-b", weight=0.5, rank=1),
             ],
             metrics=[api_module.EnsembleMetricResponse(name="corr_mean", value=0.1)],
-            artifacts_path=".numereng/experiments/exp-1/ensembles/ens-2",
+            artifacts_path="experiments/exp-1/ensembles/ens-2",
             config={},
             created_at="2026-02-22T00:00:00+00:00",
             updated_at="2026-02-22T00:00:00+00:00",
@@ -2884,7 +2884,7 @@ def test_cli_hpo_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytes
                     best_value=0.12,
                     best_run_id="run-1",
                     config={},
-                    storage_path=".numereng/experiments/exp-1/hpo/study-1",
+                    storage_path="experiments/exp-1/hpo/study-1",
                     error_message=None,
                     created_at="2026-02-22T00:00:00+00:00",
                     updated_at="2026-02-22T00:00:00+00:00",
@@ -2917,7 +2917,7 @@ def test_cli_hpo_details_table_output(monkeypatch: pytest.MonkeyPatch, capsys: p
             best_value=0.12,
             best_run_id="run-1",
             config={},
-            storage_path=".numereng/experiments/exp-1/hpo/study-1",
+            storage_path="experiments/exp-1/hpo/study-1",
             error_message=None,
             created_at="2026-02-22T00:00:00+00:00",
             updated_at="2026-02-22T00:00:00+00:00",
@@ -3011,7 +3011,7 @@ def test_cli_ensemble_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: 
                     status="completed",
                     components=[api_module.EnsembleComponentResponse(run_id="run-a", weight=1.0, rank=0)],
                     metrics=[api_module.EnsembleMetricResponse(name="corr_mean", value=0.12)],
-                    artifacts_path=".numereng/experiments/exp-1/ensembles/ens-1",
+                    artifacts_path="experiments/exp-1/ensembles/ens-1",
                     config={},
                     created_at="2026-02-22T00:00:00+00:00",
                     updated_at="2026-02-22T00:00:00+00:00",
@@ -3319,12 +3319,7 @@ def test_cli_research_commands_success(
             phases=[],
             source_path="/tmp/numerai-experiment-loop.md",
             raw_markdown=(
-                "---\n"
-                "id: numerai-experiment-loop\n"
-                "---\n"
-                "Context:\n"
-                "$CONTEXT_JSON\n\n"
-                "$VALIDATION_FEEDBACK_BLOCK\n"
+                "---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n"
             ),
         ),
     )

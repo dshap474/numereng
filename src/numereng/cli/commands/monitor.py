@@ -25,7 +25,7 @@ def handle_monitor_command(args: Sequence[str]) -> int:
     if args[0] == "snapshot":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--store-root"},
+            value_flags={"--workspace"},
             bool_flags={"--json", "--no-refresh-cloud"},
         )
         if parse_error == "__help__":
@@ -38,7 +38,7 @@ def handle_monitor_command(args: Sequence[str]) -> int:
         try:
             payload = api.build_monitor_snapshot(
                 api.MonitorSnapshotRequest(
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                     refresh_cloud="--no-refresh-cloud" not in toggles,
                 )
             )

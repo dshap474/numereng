@@ -61,6 +61,7 @@ from numereng.features.experiments import (
     ExperimentTrainResult,
     create_experiment,
 )
+from numereng.features.store import resolve_workspace_layout_from_store_root
 
 
 def _valid_training_config() -> dict[str, object]:
@@ -211,11 +212,15 @@ def _raw_planner_execution(
 
 
 def _seed_config(store_root: Path, experiment_id: str, filename: str = "base.json") -> Path:
-    config_dir = store_root / "experiments" / experiment_id / "configs"
+    config_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / filename
     config_path.write_text(json.dumps(_valid_training_config(), indent=2, sort_keys=True), encoding="utf-8")
     return config_path
+
+
+def _experiments_root(store_root: Path) -> Path:
+    return resolve_workspace_layout_from_store_root(store_root).experiments_root
 
 
 def _write_phase_aware_program(directory: Path, program_id: str = "kaggle-gm-loop") -> Path:
@@ -604,9 +609,7 @@ def test_render_validation_feedback_block_is_inline_and_trimmed() -> None:
     assert render_validation_feedback_block(None) == ""
     assert render_validation_feedback_block("   ") == ""
     assert render_validation_feedback_block("  bad path  ") == (
-        "Validation feedback from the last attempt:\n"
-        "bad path\n"
-        "Fix the issue and return a valid response."
+        "Validation feedback from the last attempt:\nbad path\nFix the issue and return a valid response."
     )
 
 
@@ -899,9 +902,9 @@ def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> N
     )
 
     assert config_dirs == [
-        store_root / "experiments" / grandchild_exp.experiment_id / "configs",
-        store_root / "experiments" / child_exp.experiment_id / "configs",
-        store_root / "experiments" / root_exp.experiment_id / "configs",
+        _experiments_root(store_root) / grandchild_exp.experiment_id / "configs",
+        _experiments_root(store_root) / child_exp.experiment_id / "configs",
+        _experiments_root(store_root) / root_exp.experiment_id / "configs",
     ]
 
 
@@ -946,9 +949,10 @@ def test_init_research_persists_session_program_markdown(tmp_path: Path) -> None
 
     assert result.program_id == "numerai-experiment-loop"
     assert result.session_program_path == session_program_path(result.agentic_research_dir)
-    assert result.session_program_path.read_text(encoding="utf-8") == load_program_details(
-        "numerai-experiment-loop"
-    ).raw_markdown
+    assert (
+        result.session_program_path.read_text(encoding="utf-8")
+        == load_program_details("numerai-experiment-loop").raw_markdown
+    )
 
 
 def test_run_research_executes_one_full_round(
@@ -1040,13 +1044,13 @@ def test_run_research_executes_one_full_round(
 
     assert result.status == "stopped"
     assert result.stop_reason == "max_rounds_reached"
-    program_path = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "program.json"
+    program_path = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
     state = load_program_state(program_path)
     assert state.total_rounds_completed == 1
     assert state.next_round_number == 2
     assert state.best_overall.run_id == "run-1"
     assert state.program_id == "numerai-experiment-loop"
-    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     assert (round_dir / "round.json").is_file()
     assert (round_dir / "round.md").is_file()
     assert (round_dir / "llm_trace.jsonl").is_file()
@@ -1103,7 +1107,7 @@ def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -
 
     assert result.status == "stopped"
     assert result.stop_reason == "codex_planning_failed"
-    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
     assert round_payload["planner"]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
     trace_lines = [
@@ -1210,7 +1214,7 @@ def test_run_research_trace_prefers_raw_response_text(
     result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
 
     assert result.status == "stopped"
-    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     trace_lines = [
         json.loads(line)
         for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1320,7 +1324,7 @@ def test_run_research_retries_once_when_mutation_is_duplicate(
 
     assert result.status == "stopped"
     assert planner_calls["count"] == 2
-    round_dir = store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
+    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
     round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
     trace_lines = [
         json.loads(line)
@@ -1420,7 +1424,7 @@ def test_run_research_resumes_after_interrupt(
     first = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
     assert first.interrupted is True
     interrupted_state = load_program_state(
-        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "program.json"
+        _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
     )
     assert interrupted_state.current_round is not None
     assert interrupted_state.current_round.next_config_index == 1
@@ -1428,7 +1432,7 @@ def test_run_research_resumes_after_interrupt(
     second = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
     assert second.interrupted is False
     resumed_state = load_program_state(
-        store_root / "experiments" / root_exp.experiment_id / "agentic_research" / "program.json"
+        _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
     )
     assert resumed_state.total_rounds_completed == 1
 

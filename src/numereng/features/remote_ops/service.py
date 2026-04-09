@@ -37,7 +37,13 @@ from numereng.features.remote_ops.sync import (
     remote_repo_metadata_path,
     sync_entries_to_remote,
 )
-from numereng.features.store import index_run, init_store_db, resolve_store_root, upsert_experiment
+from numereng.features.store import (
+    index_run,
+    init_store_db,
+    resolve_store_root,
+    resolve_workspace_layout_from_store_root,
+    upsert_experiment,
+)
 from numereng.features.training import PostTrainingScoringPolicy, TrainingProfile
 from numereng.platform import load_remote_targets
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
@@ -312,7 +318,7 @@ def sync_remote_experiment(
     outcome = sync_entries_to_remote(
         target=target,
         entries=entries,
-        remote_root=target.store_root,
+        remote_root=target.repo_root,
         scope=f"experiment:{experiment_id}",
         local_marker_path=local_marker_path,
         remote_marker_path=remote_marker_path,
@@ -323,7 +329,7 @@ def sync_remote_experiment(
     return RemoteExperimentSyncResult(
         target_id=target.id,
         experiment_id=experiment_id,
-        remote_experiment_dir=remote_path_join(target, target.store_root, "experiments", experiment_id),
+        remote_experiment_dir=remote_path_join(target, target.repo_root, "experiments", experiment_id),
         manifest_hash=outcome.manifest_hash,
         synced_files=outcome.synced_files,
         deleted_files=outcome.deleted_files,
@@ -344,8 +350,9 @@ def pull_remote_experiment(
     target = _get_target(target_id)
     init_result = init_store_db(store_root=store_root)
     resolved_store_root = init_result.store_root
+    local_layout = resolve_workspace_layout_from_store_root(resolved_store_root)
     local_runs_root = resolved_store_root / "runs"
-    local_experiment_manifest_path = resolved_store_root / "experiments" / experiment_id / "experiment.json"
+    local_experiment_manifest_path = local_layout.experiments_root / experiment_id / "experiment.json"
 
     preflight = _run_remote_python(
         target,
@@ -365,9 +372,7 @@ def pull_remote_experiment(
     pulled_at = _utc_now_iso()
     failures = _decode_pull_failures(preflight.get("failures"))
     materializable_run_ids = tuple(
-        str(item)
-        for item in preflight.get("eligible_finished_run_ids", [])
-        if isinstance(item, str) and item.strip()
+        str(item) for item in preflight.get("eligible_finished_run_ids", []) if isinstance(item, str) and item.strip()
     )
     skipped_non_finished_run_ids = tuple(
         str(item)
@@ -634,7 +639,8 @@ def _skip_repo_relpath(relpath: str) -> bool:
 
 
 def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[SyncEntry]:
-    experiment_root = store_root / "experiments" / experiment_id
+    workspace_layout = resolve_workspace_layout_from_store_root(store_root)
+    experiment_root = workspace_layout.experiments_root / experiment_id
     if not experiment_root.is_dir():
         raise RemoteValidationError(f"experiment_not_found:{experiment_id}")
 
@@ -645,7 +651,7 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
             entries.append(
                 SyncEntry(
                     local_path=path,
-                    remote_relpath=str(path.relative_to(store_root)).replace("\\", "/"),
+                    remote_relpath=str(path.relative_to(workspace_layout.workspace_root)).replace("\\", "/"),
                 )
             )
 
@@ -659,7 +665,7 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
             entries.append(
                 SyncEntry(
                     local_path=path,
-                    remote_relpath=str(path.relative_to(store_root)).replace("\\", "/"),
+                    remote_relpath=str(path.relative_to(workspace_layout.workspace_root)).replace("\\", "/"),
                 )
             )
     return entries
@@ -680,7 +686,7 @@ def _reconcile_local_experiment_manifest(
     pulled_at: str,
     materialized_run_ids: tuple[str, ...],
 ) -> Path:
-    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id
     experiment_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = experiment_dir / "experiment.json"
     local_manifest = _read_json_dict(manifest_path)
@@ -696,9 +702,11 @@ def _reconcile_local_experiment_manifest(
     if isinstance(remote_tags, list):
         merged["tags"] = [str(tag) for tag in remote_tags]
 
-    merged["created_at"] = _to_non_empty_str(local_manifest.get("created_at")) or _to_non_empty_str(
-        remote_manifest.get("created_at")
-    ) or pulled_at
+    merged["created_at"] = (
+        _to_non_empty_str(local_manifest.get("created_at"))
+        or _to_non_empty_str(remote_manifest.get("created_at"))
+        or pulled_at
+    )
     merged["updated_at"] = pulled_at
 
     local_runs = local_manifest.get("runs")
@@ -797,8 +805,9 @@ def _should_sync_repo(target_id: str, store_root: Path) -> bool:
 
 
 def _infer_experiment_id(config_path: Path, store_root: Path) -> str | None:
+    workspace_root = resolve_workspace_layout_from_store_root(store_root).workspace_root
     try:
-        relative = config_path.relative_to(store_root)
+        relative = config_path.relative_to(workspace_root)
     except ValueError:
         return None
     parts = relative.parts
@@ -808,8 +817,9 @@ def _infer_experiment_id(config_path: Path, store_root: Path) -> str | None:
 
 
 def _is_experiment_config(config_path: Path, store_root: Path, experiment_id: str) -> bool:
+    workspace_root = resolve_workspace_layout_from_store_root(store_root).workspace_root
     try:
-        relative = config_path.relative_to(store_root)
+        relative = config_path.relative_to(workspace_root)
     except ValueError:
         return False
     parts = relative.parts
@@ -817,8 +827,9 @@ def _is_experiment_config(config_path: Path, store_root: Path, experiment_id: st
 
 
 def _remote_store_relative_path(target: SshRemoteTargetProfile, store_root: Path, config_path: Path) -> str:
-    relative = config_path.relative_to(store_root)
-    return remote_path_join(target, target.store_root, *relative.parts)
+    workspace_root = resolve_workspace_layout_from_store_root(store_root).workspace_root
+    relative = config_path.relative_to(workspace_root)
+    return remote_path_join(target, target.repo_root, *relative.parts)
 
 
 def _run_remote_snapshot(target: SshRemoteTargetProfile) -> dict[str, Any] | None:
@@ -918,11 +929,7 @@ def _classify_local_finished_runs(
                 )
             )
             continue
-        core_missing = [
-            relpath
-            for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES
-            if not (run_dir / relpath).is_file()
-        ]
+        core_missing = [relpath for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES if not (run_dir / relpath).is_file()]
         if core_missing:
             failures.append(
                 RemoteExperimentPullFailure(
@@ -1189,7 +1196,8 @@ print(
 
 
 def _launch_python_script() -> str:
-    return """
+    return (
+        """
 import json
 import base64
 import os
@@ -1335,12 +1343,15 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 """.replace(
-        "__STARTUP_TIMEOUT_SECONDS__",
-        repr(_REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS),
-    ).replace(
-        "__STARTUP_POLL_SECONDS__",
-        repr(_REMOTE_WINDOWS_STARTUP_POLL_SECONDS),
-    ).strip()
+            "__STARTUP_TIMEOUT_SECONDS__",
+            repr(_REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS),
+        )
+        .replace(
+            "__STARTUP_POLL_SECONDS__",
+            repr(_REMOTE_WINDOWS_STARTUP_POLL_SECONDS),
+        )
+        .strip()
+    )
 
 
 def _pull_preflight_python_script() -> str:
@@ -1355,9 +1366,11 @@ def main() -> None:
         raise SystemExit("remote_pull_preflight_arguments_invalid")
     experiment_id = sys.argv[1]
     store_root = Path(sys.argv[2]).expanduser()
+    workspace_root = store_root.parent
+    experiments_root = workspace_root / "experiments"
 
-    experiment_dir = store_root / "experiments" / experiment_id
-    archived_dir = store_root / "experiments" / "_archive" / experiment_id
+    experiment_dir = experiments_root / experiment_id
+    archived_dir = experiments_root / "_archive" / experiment_id
     if (experiment_dir / "experiment.json").is_file():
         resolved_experiment_dir = experiment_dir
     elif (archived_dir / "experiment.json").is_file():

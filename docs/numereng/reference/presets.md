@@ -13,7 +13,7 @@ Preset/template runtime execution is removed.
 Use explicit JSON configs you own, for example:
 
 - `configs/run.json`
-- `.numereng/experiments/<experiment_id>/configs/run.json`
+- `experiments/<experiment_id>/configs/run.json`
 - `configs/hpo/study.json`
 
 Then run them through current command families:

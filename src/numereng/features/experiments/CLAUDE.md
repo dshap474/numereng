@@ -4,8 +4,8 @@ Explorations driven by `features.experiments` land directly in the viz read path
 
 ## Surface points into viz
 
-- `create_experiment` now seeds the deterministic experiment skeleton under `.numereng/experiments/<id>/`: `experiment.json`, `EXPERIMENT.md`, `configs/`, `run_plan.csv`, and `run_scripts/launch_all.*`. Those files are experiment-local scaffolding only; viz still treats the manifest plus run artifacts as the canonical read path.
-- `VizStoreAdapter` (via `features.viz`) is the single point that touches `.numereng/experiments/*`, `.numereng/runs/*`, and the SQLite store (`experiments`, `runs`, `metrics`, `run_jobs`, etc.). It always tries the indexed tables first and falls back to the filesystem tree, so experiment/manifest operations must call `features.store.index_run` / `upsert_experiment` whenever metadata changes so viz sees the update.
+- `create_experiment` now seeds the deterministic experiment skeleton under `experiments/<id>/`: `experiment.json`, `EXPERIMENT.md`, `configs/`, `run_plan.csv`, and `run_scripts/launch_all.*`. Those files are experiment-local scaffolding only; viz still treats the manifest plus run artifacts as the canonical read path.
+- `VizStoreAdapter` (via `features.viz`) is the single point that touches `experiments/*`, `.numereng/runs/*`, and the SQLite store (`experiments`, `runs`, `metrics`, `run_jobs`, etc.). It always tries the indexed tables first and falls back to the filesystem tree, so experiment/manifest operations must call `features.store.index_run` / `upsert_experiment` whenever metadata changes so viz sees the update.
 - `list_experiment_configs` and `list_all_configs` sanitize every config by reading the YAML, hashing it, and synthesizing the summary that the dashboard shows (`run_id`, `model_type`, `target`, `feature_set`, `stages`). Viz expects `data.target` (or `target_col`/`target_train`) inside the config map even if the experiment only logically targets one column.
 - `list_experiment_runs` and `list_experiment_round_results` combine manifest metadata, run metrics, and metrics files to surface run timelines. Champion linkage comes from the experiment manifest (`champion_run_id`) and is honored even during the filesystem fallback path.
 - `linked_runs_for_configs` ties experiment configs to the canonical `run_id` (via `run_jobs.canonical_run_id`) so viz can open the latest qualifying run.
@@ -41,4 +41,4 @@ Any experiment workflow change that touches the store manifest, run artifact nam
 3. `src/numereng/features/viz/store_adapter.py` where the flattening/alias logic lives
 4. `docs/numereng/*` docs referenced by viz if there are new user-visible behaviours
 
-Keep the experiments store index in lockstep with `.numereng` so viz’s SQLite-first reads always see the latest champion/promoted runs and experiment metadata.
+Keep the experiments store index in lockstep with the workspace and `.numereng` runtime store so viz’s SQLite-first reads always see the latest champion/promoted runs and experiment metadata.

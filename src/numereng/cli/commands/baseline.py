@@ -25,7 +25,7 @@ def handle_baseline_command(args: Sequence[str]) -> int:
     if args[0] == "build":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--run-ids", "--name", "--default-target", "--description", "--store-root"},
+            value_flags={"--run-ids", "--name", "--default-target", "--description", "--workspace"},
             bool_flags={"--promote-active"},
         )
         if parse_error == "__help__":
@@ -56,7 +56,7 @@ def handle_baseline_command(args: Sequence[str]) -> int:
                     default_target=values.get("--default-target", "target_ender_20"),
                     description=values.get("--description"),
                     promote_active="--promote-active" in toggles,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

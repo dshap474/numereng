@@ -27,7 +27,13 @@ from numereng.features.experiments.contracts import (
 )
 from numereng.features.scoring.batch_service import score_run_batch
 from numereng.features.scoring.summary_metrics import SHARED_RUN_METRIC_NAMES, normalize_shared_run_metrics
-from numereng.features.store import StoreError, index_run, resolve_store_root, upsert_experiment
+from numereng.features.store import (
+    StoreError,
+    index_run,
+    resolve_store_root,
+    resolve_workspace_layout_from_store_root,
+    upsert_experiment,
+)
 from numereng.features.training import TrainingProfile, run_training
 from numereng.features.training.run_log import log_error, resolve_run_log_path
 from numereng.features.training.service import (
@@ -551,11 +557,11 @@ def _ensure_round_label(value: str) -> str:
 
 
 def _live_experiment_dir(root: Path, experiment_id: str) -> Path:
-    return root / "experiments" / experiment_id
+    return resolve_workspace_layout_from_store_root(root).experiments_root / experiment_id
 
 
 def _archived_experiment_dir(root: Path, experiment_id: str) -> Path:
-    return root / "experiments" / _ARCHIVE_DIRNAME / experiment_id
+    return resolve_workspace_layout_from_store_root(root).experiments_root / _ARCHIVE_DIRNAME / experiment_id
 
 
 def _experiment_paths(root: Path, experiment_id: str) -> _ExperimentPaths:
@@ -689,7 +695,7 @@ def _load_round_config_stems(*, experiment_dir: Path, round: str) -> tuple[str, 
 
 def _iter_experiment_manifest_paths(root: Path, *, include_archived: bool = False) -> tuple[Path, ...]:
     manifest_paths: list[Path] = []
-    live_root = root / "experiments"
+    live_root = resolve_workspace_layout_from_store_root(root).experiments_root
     if live_root.is_dir():
         for experiment_dir in sorted(live_root.iterdir(), key=lambda path: path.name):
             if not experiment_dir.is_dir() or experiment_dir.name == _ARCHIVE_DIRNAME:
@@ -888,7 +894,7 @@ def _render_experiment_doc_template(manifest: dict[str, object]) -> str:
             "- Executed configs:",
             "- Failed / interrupted configs:",
             "- Skipped / superseded configs:",
-            f"- Launcher path (if used): `.numereng/experiments/{experiment_id}/run_scripts/launch_all.sh`",
+            f"- Launcher path (if used): `experiments/{experiment_id}/run_scripts/launch_all.sh`",
             (
                 "- Verification source of truth: `experiment.json`, `run_plan.csv`, "
                 "`run.json`, `metrics.json`, `results.json`, `score_provenance.json`"
@@ -927,7 +933,7 @@ def _render_experiment_doc_template(manifest: dict[str, object]) -> str:
             "| config_path | command | status |",
             "|---|---|---|",
             (
-                f"| `.numereng/experiments/{experiment_id}/configs/<config>.json` | "
+                f"| `experiments/{experiment_id}/configs/<config>.json` | "
                 f"`uv run numereng experiment train --id {experiment_id} --config "
                 "<config>.json --post-training-scoring none` | "
                 "<planned|running|done|failed> |"
@@ -979,7 +985,7 @@ def _render_experiment_doc_template(manifest: dict[str, object]) -> str:
             ),
             "|---|---|---:|---|---:|---:|---:|---:|---:|---|",
             (
-                f"| `<run_id>` | `.numereng/experiments/{experiment_id}/configs/<config>.json` | "
+                f"| `<run_id>` | `experiments/{experiment_id}/configs/<config>.json` | "
                 "`<N>` | `<FINISHED>` | `<...>` | `<...>` | `<...>` | "
                 "`<...|n/a>` | `<...|n/a>` | `<trade-off or selection note>` |"
             ),
@@ -1084,7 +1090,7 @@ def _render_experiment_doc_template(manifest: dict[str, object]) -> str:
             "```bash",
             f"uv run numereng experiment details --id {experiment_id} --format json",
             f"uv run numereng experiment report --id {experiment_id} --metric bmc_last_200_eras.mean --format table",
-            f"bash .numereng/experiments/{experiment_id}/run_scripts/launch_all.sh",
+            f"bash experiments/{experiment_id}/run_scripts/launch_all.sh",
             f"uv run numereng experiment pack --id {experiment_id}",
             "uv run numereng ensemble details --ensemble-id <ensemble_id> --format json",
             f"uv run numereng experiment promote --id {experiment_id} --metric bmc_last_200_eras.mean",

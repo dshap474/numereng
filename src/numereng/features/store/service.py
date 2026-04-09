@@ -732,6 +732,7 @@ def init_store_db(*, store_root: str | Path = ".numereng") -> StoreInitResult:
     resolved_store_root = resolve_store_root(store_root)
     resolved_store_root.mkdir(parents=True, exist_ok=True)
     (resolved_store_root / "runs").mkdir(parents=True, exist_ok=True)
+    (resolved_store_root / "datasets").mkdir(parents=True, exist_ok=True)
     (resolved_store_root / "cache").mkdir(parents=True, exist_ok=True)
     (resolved_store_root / "tmp").mkdir(parents=True, exist_ok=True)
     (resolved_store_root / "remote_ops").mkdir(parents=True, exist_ok=True)

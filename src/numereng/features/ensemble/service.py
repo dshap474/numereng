@@ -37,7 +37,7 @@ from numereng.features.feature_neutralization import (
     load_neutralizer_table,
     neutralize_prediction_frame,
 )
-from numereng.features.store import resolve_store_root
+from numereng.features.store import resolve_store_root, resolve_workspace_layout_from_store_root
 from numereng.platform.parquet import write_parquet
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
@@ -493,7 +493,12 @@ def _write_artifacts(
 
 def _resolve_artifacts_path(*, store_root: Path, experiment_id: str | None, ensemble_id: str) -> Path:
     if experiment_id:
-        path = store_root / "experiments" / experiment_id / "ensembles" / ensemble_id
+        path = (
+            resolve_workspace_layout_from_store_root(store_root).experiments_root
+            / experiment_id
+            / "ensembles"
+            / ensemble_id
+        )
     else:
         path = store_root / "ensembles" / ensemble_id
     return path

@@ -53,7 +53,7 @@ Optional neutralization controls:
 Study artifacts are stored either:
 
 - globally under `.numereng/hpo/<study_id>/`
-- under an experiment at `.numereng/experiments/<experiment_id>/hpo/<study_id>/`
+- under an experiment at `experiments/<experiment_id>/hpo/<study_id>/`
 
 Trial runs still produce normal run artifacts and are indexed like any other run.
 

@@ -22,6 +22,7 @@ from numereng.features.agentic_research.utils.types import (
     ResearchProgramRoundPolicy,
     ResearchProgramSource,
 )
+from numereng.features.store import resolve_workspace_layout
 
 _PROGRAMS_DIR = Path(__file__).resolve().parents[1] / "programs"
 _DEFAULT_TRACKED_PROGRAM_IDS = frozenset({"numerai-experiment-loop"})
@@ -134,7 +135,17 @@ def resolve_user_programs_dir(path: str | Path | None = None) -> Path:
     env_value = os.getenv(_ENV_PROGRAMS_DIR)
     if env_value:
         return Path(env_value).expanduser().resolve()
-    return _PROGRAMS_DIR
+    return resolve_workspace_layout().research_programs_root
+
+
+def _iter_program_directories(path: str | Path | None = None) -> tuple[Path, ...]:
+    directories: list[Path] = []
+    for directory in (resolve_user_programs_dir(path), _PROGRAMS_DIR):
+        resolved = directory.resolve()
+        if resolved in directories:
+            continue
+        directories.append(resolved)
+    return tuple(directories)
 
 
 def program_markdown_sha256(markdown_text: str) -> str:
@@ -146,29 +157,29 @@ def list_program_catalog(*, user_dir: str | Path | None = None) -> tuple[Researc
     """Return the active repo-local plus optional override program catalog."""
     entries: list[ResearchProgramCatalogEntry] = []
     seen_ids: set[str] = set()
-    directory = resolve_user_programs_dir(user_dir)
-    if not directory.is_dir():
-        return ()
-    for path in sorted(directory.glob(_PROGRAM_GLOB)):
-        if not path.is_file() or path.name.startswith(".") or path.name == "README.md":
+    for directory in _iter_program_directories(user_dir):
+        if not directory.is_dir():
             continue
-        source = _program_source_for(path=path, program_id=path.stem, directory=directory)
-        details = _load_program_details(path=path, source=source)
-        program_id = details.definition.program_id
-        if program_id in seen_ids:
-            raise ValueError(f"agentic_research_program_id_duplicate:{program_id}")
-        seen_ids.add(program_id)
-        entries.append(
-            ResearchProgramCatalogEntry(
-                program_id=program_id,
-                title=details.definition.title,
-                description=details.definition.description,
-                source=details.definition.source,
-                planner_contract=details.definition.planner_contract,
-                phase_aware=bool(details.definition.phases),
-                source_path=details.definition.source_path,
+        for path in sorted(directory.glob(_PROGRAM_GLOB)):
+            if not path.is_file() or path.name.startswith(".") or path.name == "README.md":
+                continue
+            source = _program_source_for(path=path, program_id=path.stem, directory=directory)
+            details = _load_program_details(path=path, source=source)
+            program_id = details.definition.program_id
+            if program_id in seen_ids:
+                continue
+            seen_ids.add(program_id)
+            entries.append(
+                ResearchProgramCatalogEntry(
+                    program_id=program_id,
+                    title=details.definition.title,
+                    description=details.definition.description,
+                    source=details.definition.source,
+                    planner_contract=details.definition.planner_contract,
+                    phase_aware=bool(details.definition.phases),
+                    source_path=details.definition.source_path,
+                )
             )
-        )
     return tuple(entries)
 
 
@@ -179,11 +190,11 @@ def load_program_definition(program_id: str, *, user_dir: str | Path | None = No
 
 def load_program_details(program_id: str, *, user_dir: str | Path | None = None) -> ResearchProgramDetails:
     """Load one resolved program definition and its raw markdown source by id."""
-    directory = resolve_user_programs_dir(user_dir)
-    path = directory / f"{program_id}.md"
-    if path.is_file():
-        source = _program_source_for(path=path, program_id=program_id, directory=directory)
-        return _load_program_details(path=path, source=source)
+    for directory in _iter_program_directories(user_dir):
+        path = directory / f"{program_id}.md"
+        if path.is_file():
+            source = _program_source_for(path=path, program_id=program_id, directory=directory)
+            return _load_program_details(path=path, source=source)
     raise ValueError(f"agentic_research_program_not_found:{program_id}")
 
 

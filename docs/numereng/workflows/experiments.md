@@ -12,7 +12,7 @@ uv run numereng experiment create \
   --tags baseline,lgbm
 ```
 
-This creates `.numereng/experiments/<experiment_id>/` with:
+This creates `experiments/<experiment_id>/` with:
 
 - `experiment.json`
 - `EXPERIMENT.md` seeded to the current report-section scaffold
@@ -35,7 +35,7 @@ Optional overrides:
 - `--output-dir <path>`
 - `--profile <simple|purged_walk_forward|full_history_refit>`
 - `--post-training-scoring <none|core|full|round_core|round_full>`
-- `--store-root <path>`
+- `--workspace <path>`
 
 `experiment train` uses the same training engine profiles as `run train`, but it links the resulting run to the experiment manifest and report surfaces.
 
@@ -69,7 +69,7 @@ uv run numereng experiment report --id 2026-03-12_lgbm-baseline --format table
 uv run numereng experiment pack --id 2026-03-12_lgbm-baseline
 ```
 
-Useful artifacts under `.numereng/experiments/<experiment_id>/`:
+Useful artifacts under `experiments/<experiment_id>/`:
 
 - `experiment.json`
 - `EXPERIMENT.md`
@@ -98,6 +98,6 @@ If `--run` is omitted, numereng promotes the best candidate by the selected metr
 
 - `experiment train` requires both `--id` and `--config`
 - config files must end in `.json`
-- if you override `--store-root`, keep experiment paths and output paths aligned to the same store
+- if you override `--workspace`, keep experiment paths and output paths aligned to the same store
 - `full_history_refit` should be reserved for final refits because it emits no validation metrics
 - `round_core` and `round_full` require `experiment train` plus an `rN_*` config filename

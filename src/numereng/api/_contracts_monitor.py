@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from numereng.api._contracts_base import WorkspaceBoundRequest
 
-class MonitorSnapshotRequest(BaseModel):
-    store_root: str = ".numereng"
+
+class MonitorSnapshotRequest(WorkspaceBoundRequest):
     refresh_cloud: bool = True
 
 

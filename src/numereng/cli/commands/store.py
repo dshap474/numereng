@@ -25,7 +25,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "init":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--store-root"},
+            value_flags={"--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -35,7 +35,7 @@ def handle_store_command(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         try:
-            init_payload = api.store_init(api.StoreInitRequest(store_root=values.get("--store-root", ".numereng")))
+            init_payload = api.store_init(api.StoreInitRequest(workspace_root=values.get("--workspace", ".")))
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
             print(USAGE, file=sys.stderr)
@@ -49,7 +49,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "index":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--run-id", "--store-root"},
+            value_flags={"--run-id", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -69,7 +69,7 @@ def handle_store_command(args: Sequence[str]) -> int:
             index_payload = api.store_index_run(
                 api.StoreIndexRequest(
                     run_id=run_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -85,7 +85,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "rebuild":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--store-root"},
+            value_flags={"--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -95,9 +95,7 @@ def handle_store_command(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         try:
-            rebuild_payload = api.store_rebuild(
-                api.StoreRebuildRequest(store_root=values.get("--store-root", ".numereng"))
-            )
+            rebuild_payload = api.store_rebuild(api.StoreRebuildRequest(workspace_root=values.get("--workspace", ".")))
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
             print(USAGE, file=sys.stderr)
@@ -111,7 +109,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "doctor":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--store-root"},
+            value_flags={"--workspace"},
             bool_flags={"--fix-strays"},
         )
         if parse_error == "__help__":
@@ -124,7 +122,7 @@ def handle_store_command(args: Sequence[str]) -> int:
         try:
             doctor_payload = api.store_doctor(
                 api.StoreDoctorRequest(
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                     fix_strays="--fix-strays" in toggles,
                 )
             )
@@ -141,7 +139,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "backfill-run-execution":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--run-id", "--store-root"},
+            value_flags={"--run-id", "--workspace"},
             bool_flags={"--all"},
         )
         if parse_error == "__help__":
@@ -154,7 +152,7 @@ def handle_store_command(args: Sequence[str]) -> int:
         try:
             payload = api.store_backfill_run_execution(
                 api.StoreRunExecutionBackfillRequest(
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                     run_id=values.get("--run-id"),
                     all="--all" in toggles,
                 )
@@ -172,7 +170,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "repair-run-lifecycles":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--run-id", "--store-root"},
+            value_flags={"--run-id", "--workspace"},
             bool_flags={"--all"},
         )
         if parse_error == "__help__":
@@ -185,7 +183,7 @@ def handle_store_command(args: Sequence[str]) -> int:
         try:
             payload = api.store_repair_run_lifecycles(
                 api.StoreRunLifecycleRepairRequest(
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                     run_id=values.get("--run-id"),
                     active_only="--all" not in toggles,
                 )
@@ -203,7 +201,7 @@ def handle_store_command(args: Sequence[str]) -> int:
     if args[0] == "materialize-viz-artifacts":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--store-root", "--kind", "--run-id", "--experiment-id"},
+            value_flags={"--workspace", "--kind", "--run-id", "--experiment-id"},
             bool_flags={"--all"},
         )
         if parse_error == "__help__":
@@ -220,7 +218,7 @@ def handle_store_command(args: Sequence[str]) -> int:
         try:
             payload = api.store_materialize_viz_artifacts(
                 api.StoreMaterializeVizArtifactsRequest(
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                     kind=values["--kind"],
                     run_id=values.get("--run-id"),
                     experiment_id=values.get("--experiment-id"),

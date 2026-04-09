@@ -81,7 +81,7 @@ For a scored local run, the canonical minimum set is:
 
 ## Experiment Artifacts
 
-Experiments live under `.numereng/experiments/<experiment_id>/` and typically contain:
+Experiments live under `experiments/<experiment_id>/` and typically contain:
 
 - `experiment.json`: manifest and run linkage
 - `EXPERIMENT.md`: experiment notes/reporting
@@ -102,7 +102,7 @@ Use `store doctor --fix-strays` only when you explicitly want cleanup of detecte
 ## Path Rules
 
 - Training and HPO configs are JSON-only.
-- Runtime defaults target `.numereng` unless `--store-root` overrides it.
+- Runtime defaults target `.numereng` unless `--workspace` overrides it.
 - Managed cloud state paths should live under `.numereng/cloud/*.json`.
 - Store-owned scratch space lives under `.numereng/tmp/`; ad hoc remote config staging uses `.numereng/tmp/remote-configs/`.
 - Custom model discovery defaults to `src/numereng/features/models/custom_models/`.

@@ -67,7 +67,7 @@ def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | 
     run_id: str | None = None
     predictions_path: str | None = None
     model_name: str | None = None
-    store_root = ".numereng"
+    workspace_root = "."
     tournament: api.NumeraiTournament = "classic"
     allow_non_live_artifact = False
     neutralize = False
@@ -98,7 +98,7 @@ def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | 
             "--run-id",
             "--predictions",
             "--model-name",
-            "--store-root",
+            "--workspace",
             "--tournament",
             "--neutralizer-path",
             "--neutralization-proportion",
@@ -114,8 +114,8 @@ def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | 
                 predictions_path = value
             elif arg == "--model-name":
                 model_name = value
-            elif arg == "--store-root":
-                store_root = value
+            elif arg == "--workspace":
+                workspace_root = value
             elif arg == "--neutralizer-path":
                 neutralizer_path = value
             elif arg == "--neutralization-proportion":
@@ -164,7 +164,7 @@ def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | 
             neutralization_mode=neutralization_mode,
             neutralizer_cols=neutralizer_cols,
             neutralization_rank_output=neutralization_rank_output,
-            store_root=store_root,
+            workspace_root=workspace_root,
         )
     except ValidationError as exc:
         errors = exc.errors()
@@ -178,6 +178,7 @@ def _parse_submit_request(argv: Sequence[str]) -> tuple[api.SubmissionRequest | 
 def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | None, str | None]:
     config_path: str | None = None
     output_dir: str | None = None
+    workspace_root = "."
     profile: api.TrainingProfile | None = None
     post_training_scoring: PostTrainingScoringValue | None = None
     window_size_eras: int | None = None
@@ -202,6 +203,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
         if arg in {
             "--config",
             "--output-dir",
+            "--workspace",
             "--profile",
             "--post-training-scoring",
             "--experiment-id",
@@ -213,6 +215,8 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
                 config_path = value
             elif arg == "--output-dir":
                 output_dir = value
+            elif arg == "--workspace":
+                workspace_root = value
             elif arg == "--profile":
                 parsed_profile, parse_error = _parse_training_profile_value(value)
                 if parse_error is not None:
@@ -241,6 +245,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
             window_size_eras=window_size_eras,
             embargo_eras=embargo_eras,
             experiment_id=experiment_id,
+            workspace_root=workspace_root,
         )
     except ValidationError as exc:
         errors = exc.errors()
@@ -253,7 +258,7 @@ def _parse_train_request(argv: Sequence[str]) -> tuple[api.TrainRunRequest | Non
 
 def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | None, str | None]:
     run_id: str | None = None
-    store_root = ".numereng"
+    workspace_root = "."
     stage: ScoreStageValue = "all"
 
     idx = 0
@@ -261,7 +266,7 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
         arg = argv[idx]
         if arg in {"-h", "--help"}:
             return None, "__help__"
-        if arg in {"--run-id", "--store-root", "--stage"}:
+        if arg in {"--run-id", "--workspace", "--stage"}:
             if idx + 1 >= len(argv):
                 return None, f"missing value for {arg}"
             value = argv[idx + 1]
@@ -275,7 +280,7 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
                     return None, "invalid value for --stage"
                 stage = parsed_stage
             else:
-                store_root = value
+                workspace_root = value
             idx += 2
             continue
         return None, f"unknown arguments: {arg}"
@@ -284,7 +289,7 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
         return None, "missing required argument: --run-id"
 
     try:
-        request = api.ScoreRunRequest(run_id=run_id, store_root=store_root, stage=stage)
+        request = api.ScoreRunRequest(run_id=run_id, workspace_root=workspace_root, stage=stage)
     except ValidationError as exc:
         errors = exc.errors()
         if errors:
@@ -296,21 +301,21 @@ def _parse_score_request(argv: Sequence[str]) -> tuple[api.ScoreRunRequest | Non
 
 def _parse_cancel_request(argv: Sequence[str]) -> tuple[api.RunCancelRequest | None, str | None]:
     run_id: str | None = None
-    store_root = ".numereng"
+    workspace_root = "."
 
     idx = 0
     while idx < len(argv):
         arg = argv[idx]
         if arg in {"-h", "--help"}:
             return None, "__help__"
-        if arg in {"--run-id", "--store-root"}:
+        if arg in {"--run-id", "--workspace"}:
             if idx + 1 >= len(argv):
                 return None, f"missing value for {arg}"
             value = argv[idx + 1]
             if arg == "--run-id":
                 run_id = value
             else:
-                store_root = value
+                workspace_root = value
             idx += 2
             continue
         return None, f"unknown arguments: {arg}"
@@ -319,7 +324,7 @@ def _parse_cancel_request(argv: Sequence[str]) -> tuple[api.RunCancelRequest | N
         return None, "missing required argument: --run-id"
 
     try:
-        request = api.RunCancelRequest(run_id=run_id, store_root=store_root)
+        request = api.RunCancelRequest(run_id=run_id, workspace_root=workspace_root)
     except ValidationError as exc:
         errors = exc.errors()
         if errors:

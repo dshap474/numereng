@@ -31,6 +31,7 @@ from numereng.features.scoring.summary_metrics import (
     expand_shared_metric_query_names,
     normalize_shared_run_metrics,
 )
+from numereng.features.store import resolve_workspace_layout_from_store_root
 
 logger = logging.getLogger(__name__)
 
@@ -883,7 +884,10 @@ class VizStoreAdapter:
         return path
 
     def _experiments_root(self) -> Path:
-        return self.store_root / "experiments"
+        return resolve_workspace_layout_from_store_root(self.store_root).experiments_root
+
+    def _workspace_root(self) -> Path:
+        return resolve_workspace_layout_from_store_root(self.store_root).workspace_root
 
     def _archived_experiments_root(self) -> Path:
         return self._experiments_root() / _EXPERIMENT_ARCHIVE_DIRNAME
@@ -985,7 +989,7 @@ class VizStoreAdapter:
         payload = self._safe_read_yaml(path)
         summary = self._config_summary(payload)
         runnable, reason = self._runnable_status(payload)
-        rel = path.relative_to(self.store_root).as_posix()
+        rel = path.relative_to(self._workspace_root()).as_posix()
         return {
             "config_id": rel,
             "relative_path": rel,
@@ -1441,15 +1445,15 @@ class VizStoreAdapter:
                 item["attention_state"] = self._attention_state_for_status(latest_terminal.get("status"))
 
             ordered_experiments = sorted(
-            experiment_items.values(),
-            key=lambda item: (
-                int(bool(item.get("has_live"))),
-                _ATTENTION_STATUS_RANK.get(str(item.get("attention_state") or "none"), 0),
-                str(item.get("latest_activity_at") or item.get("updated_at") or item.get("created_at") or ""),
-                str(item.get("experiment_id") or ""),
-            ),
-            reverse=True,
-        )
+                experiment_items.values(),
+                key=lambda item: (
+                    int(bool(item.get("has_live"))),
+                    _ATTENTION_STATUS_RANK.get(str(item.get("attention_state") or "none"), 0),
+                    str(item.get("latest_activity_at") or item.get("updated_at") or item.get("created_at") or ""),
+                    str(item.get("experiment_id") or ""),
+                ),
+                reverse=True,
+            )
 
         summary = self._overview_summary_from_experiments(ordered_experiments)
         summary["live_experiments"] = len(live_experiments)
@@ -1819,7 +1823,7 @@ class VizStoreAdapter:
             )
             created_at = datetime.fromtimestamp(metrics_path.stat().st_mtime, tz=UTC).isoformat()
             try:
-                source_file = metrics_path.relative_to(self.store_root).as_posix()
+                source_file = metrics_path.relative_to(self._workspace_root()).as_posix()
             except ValueError:
                 source_file = str(metrics_path)
 
@@ -3445,7 +3449,7 @@ class VizStoreAdapter:
         return {"content": path.read_text(), "exists": True}
 
     def notes_root(self) -> Path:
-        return self.store_root / "notes"
+        return resolve_workspace_layout_from_store_root(self.store_root).notes_root
 
     def _scan_notes_tree(self, root: Path, rel: Path | None = None) -> list[dict[str, Any]]:
         base = root if rel is None else root / rel

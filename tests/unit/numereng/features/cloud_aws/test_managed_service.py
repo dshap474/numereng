@@ -264,7 +264,10 @@ def test_image_build_push_defaults_to_catalog_alias_tag(tmp_path: Path) -> None:
     assert response.state is not None
     assert response.state.repository == "numereng-training"
     assert response.state.image_tag == "sagemaker-standard-current"
-    assert response.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    assert (
+        response.state.image_uri
+        == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    )
     assert ecr.image_tag == "sagemaker-standard-current"
     assert docker.pushed[-1] == response.state.image_uri
 
@@ -316,7 +319,10 @@ def test_train_submit_and_status_sagemaker(tmp_path: Path) -> None:
     assert submit.action == "cloud.aws.train.submit"
     assert submit.state is not None
     assert submit.state.training_job_name is not None
-    assert submit.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    assert (
+        submit.state.image_uri
+        == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+    )
     assert submit.state.image_digest == "sha256:abc"
     assert sagemaker.last_spec is not None
     assert ecr.image_tag == "sagemaker-standard-current"
@@ -429,7 +435,7 @@ def test_train_submit_sagemaker_missing_catalog_image_fails_pre_submit(tmp_path:
 def test_train_status_preserves_cloud_job_metadata_without_explicit_submit_context(tmp_path: Path) -> None:
     service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
     state_path = _state_path(tmp_path)
-    config_dir = tmp_path / ".numereng" / "experiments" / "exp-live" / "configs"
+    config_dir = tmp_path / "experiments" / "exp-live" / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
     config_path = config_dir / "train.json"
     config_path.write_text(
@@ -530,7 +536,10 @@ def test_train_submit_cuda_uses_catalog_alias_when_image_uri_omitted(tmp_path: P
     )
 
     assert submit.state is not None
-    assert submit.state.image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-lgbm-cuda-current"
+    assert (
+        submit.state.image_uri
+        == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-lgbm-cuda-current"
+    )
     assert submit.state.image_digest == "sha256:abc"
     assert sagemaker.last_spec is not None
     assert sagemaker.last_spec.image_uri == submit.state.image_uri
@@ -862,7 +871,9 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
                 "backend": "sagemaker",
                 "region": "us-east-2",
                 "bucket": "numereng-artifacts",
-                "image_uri": "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current",
+                "image_uri": (
+                    "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
+                ),
                 "image_digest": "sha256:new",
                 "runtime_profile": "standard",
                 "training_job_name": "job-1",
