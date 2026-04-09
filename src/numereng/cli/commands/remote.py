@@ -72,7 +72,7 @@ def _handle_remote_list(args: Sequence[str]) -> int:
 
 
 def _handle_remote_bootstrap_viz(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--store-root"})
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -81,9 +81,7 @@ def _handle_remote_bootstrap_viz(args: Sequence[str]) -> int:
         print(USAGE, file=sys.stderr)
         return 2
     try:
-        payload = api.remote_bootstrap_viz(
-            api.RemoteVizBootstrapRequest(store_root=values.get("--store-root", ".numereng"))
-        )
+        payload = api.remote_bootstrap_viz(api.RemoteVizBootstrapRequest(workspace_root=values.get("--workspace", ".")))
     except ValidationError as exc:
         print(_validation_error_message(exc), file=sys.stderr)
         print(USAGE, file=sys.stderr)
@@ -123,7 +121,7 @@ def _handle_remote_doctor(args: Sequence[str]) -> int:
 
 
 def _handle_remote_repo_sync(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--store-root"})
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -140,7 +138,7 @@ def _handle_remote_repo_sync(args: Sequence[str]) -> int:
         payload = api.remote_repo_sync(
             api.RemoteRepoSyncRequest(
                 target_id=target_id,
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:
@@ -155,7 +153,7 @@ def _handle_remote_repo_sync(args: Sequence[str]) -> int:
 
 
 def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--store-root"})
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -178,7 +176,7 @@ def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
             api.RemoteExperimentSyncRequest(
                 target_id=target_id,
                 experiment_id=experiment_id,
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:
@@ -193,7 +191,7 @@ def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
 
 
 def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--store-root"})
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -216,7 +214,7 @@ def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
             api.RemoteExperimentPullRequest(
                 target_id=target_id,
                 experiment_id=experiment_id,
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:
@@ -231,7 +229,7 @@ def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
 
 
 def _handle_remote_config_push(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--config", "--store-root"})
+    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--config", "--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -254,7 +252,7 @@ def _handle_remote_config_push(args: Sequence[str]) -> int:
             api.RemoteConfigPushRequest(
                 target_id=target_id,
                 config_path=config_path,
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:
@@ -278,7 +276,7 @@ def _handle_remote_run_train(args: Sequence[str]) -> int:
             "--sync-repo",
             "--profile",
             "--post-training-scoring",
-            "--store-root",
+            "--workspace",
         },
     )
     if parse_error == "__help__":
@@ -307,7 +305,7 @@ def _handle_remote_run_train(args: Sequence[str]) -> int:
                 sync_repo=values.get("--sync-repo", "auto"),
                 profile=values.get("--profile"),
                 post_training_scoring=values.get("--post-training-scoring"),
-                store_root=values.get("--store-root", ".numereng"),
+                workspace_root=values.get("--workspace", "."),
             )
         )
     except ValidationError as exc:

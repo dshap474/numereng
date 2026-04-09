@@ -23,8 +23,7 @@ def _print_program_list_table(payload: api.ResearchProgramListResponse) -> None:
     for item in payload.programs:
         phase_text = "phase-aware" if item.phase_aware else "single-phase"
         print(
-            f"{item.program_id} | {item.title} | source={item.source} | "
-            f"contract={item.planner_contract} | {phase_text}"
+            f"{item.program_id} | {item.title} | source={item.source} | contract={item.planner_contract} | {phase_text}"
         )
 
 
@@ -77,7 +76,7 @@ def handle_research_command(args: Sequence[str]) -> int:
             print(USAGE)
             return 0
         if args[1] == "list":
-            values, _, parse_error = _parse_simple_options(args[2:], value_flags={"--format"})
+            values, _, parse_error = _parse_simple_options(args[2:], value_flags={"--format", "--workspace"})
             if parse_error == "__help__":
                 print(USAGE)
                 return 0
@@ -93,7 +92,9 @@ def handle_research_command(args: Sequence[str]) -> int:
                     print(USAGE, file=sys.stderr)
                     return 2
             try:
-                payload = api.research_program_list(api.ResearchProgramListRequest())
+                payload = api.research_program_list(
+                    api.ResearchProgramListRequest(workspace_root=values.get("--workspace", "."))
+                )
             except ValidationError as exc:
                 print(_validation_error_message(exc), file=sys.stderr)
                 print(USAGE, file=sys.stderr)
@@ -107,7 +108,10 @@ def handle_research_command(args: Sequence[str]) -> int:
                 _print_program_list_table(payload)
             return 0
         if args[1] == "show":
-            values, _, parse_error = _parse_simple_options(args[2:], value_flags={"--program", "--format"})
+            values, _, parse_error = _parse_simple_options(
+                args[2:],
+                value_flags={"--program", "--format", "--workspace"},
+            )
             if parse_error == "__help__":
                 print(USAGE)
                 return 0
@@ -128,7 +132,12 @@ def handle_research_command(args: Sequence[str]) -> int:
                     print(USAGE, file=sys.stderr)
                     return 2
             try:
-                payload = api.research_program_show(api.ResearchProgramShowRequest(program_id=program_id))
+                payload = api.research_program_show(
+                    api.ResearchProgramShowRequest(
+                        program_id=program_id,
+                        workspace_root=values.get("--workspace", "."),
+                    )
+                )
             except ValidationError as exc:
                 print(_validation_error_message(exc), file=sys.stderr)
                 print(USAGE, file=sys.stderr)
@@ -147,7 +156,7 @@ def handle_research_command(args: Sequence[str]) -> int:
     if args[0] == "init":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--experiment-id", "--program", "--store-root"},
+            value_flags={"--experiment-id", "--program", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -171,7 +180,7 @@ def handle_research_command(args: Sequence[str]) -> int:
                 api.ResearchInitRequest(
                     experiment_id=experiment_id,
                     program_id=program_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -187,7 +196,7 @@ def handle_research_command(args: Sequence[str]) -> int:
     if args[0] == "status":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--experiment-id", "--store-root", "--format"},
+            value_flags={"--experiment-id", "--workspace", "--format"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -212,7 +221,7 @@ def handle_research_command(args: Sequence[str]) -> int:
             payload = api.research_status(
                 api.ResearchStatusRequest(
                     experiment_id=experiment_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -231,7 +240,7 @@ def handle_research_command(args: Sequence[str]) -> int:
     if args[0] == "run":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--experiment-id", "--store-root", "--max-rounds", "--max-paths"},
+            value_flags={"--experiment-id", "--workspace", "--max-rounds", "--max-paths"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -265,7 +274,7 @@ def handle_research_command(args: Sequence[str]) -> int:
                     experiment_id=experiment_id,
                     max_rounds=max_rounds,
                     max_paths=max_paths,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

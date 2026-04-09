@@ -13,6 +13,7 @@ from numereng.cli.commands import (
     handle_ensemble_command,
     handle_experiment_command,
     handle_hpo_command,
+    handle_init_command,
     handle_monitor_command,
     handle_neutralize_command,
     handle_numerai_command,
@@ -38,6 +39,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args and args[0] == "dataset-tools":
         return handle_dataset_tools_command(args[1:])
+
+    if args and args[0] == "init":
+        return handle_init_command(args[1:])
 
     if args and args[0] == "experiment":
         return handle_experiment_command(args[1:])

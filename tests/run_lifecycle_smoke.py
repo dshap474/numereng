@@ -84,9 +84,9 @@ def parse_args() -> argparse.Namespace:
     repo_root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--store-root",
-        default=str(repo_root / ".numereng"),
-        help="Numereng store root. Defaults to <repo>/.numereng",
+        "--workspace",
+        default=str(repo_root),
+        help="Numereng workspace root. Defaults to the repo root.",
     )
     parser.add_argument(
         "--experiment-id",
@@ -121,9 +121,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parents[1]
-    store_root = Path(args.store_root).expanduser().resolve()
+    workspace_root = Path(args.workspace).expanduser().resolve()
+    store_root = workspace_root / ".numereng"
     generated_root = Path(args.generated_root).expanduser().resolve()
-    template_root = store_root / "experiments" / args.experiment_id / "configs"
+    template_root = workspace_root / "experiments" / args.experiment_id / "configs"
 
     selected_cases = [item.strip() for item in args.cases.split(",") if item.strip()]
     if not selected_cases:
@@ -137,6 +138,7 @@ def main() -> int:
     generated_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[smoke] repo_root={repo_root}")
+    print(f"[smoke] workspace_root={workspace_root}")
     print(f"[smoke] store_root={store_root}")
     print(f"[smoke] experiment_id={args.experiment_id}")
     print(f"[smoke] generated_dir={generated_dir}")
@@ -144,7 +146,7 @@ def main() -> int:
     cleanup_success = False
     try:
         run_cli(
-            ["uv", "run", "numereng", "store", "init", "--store-root", str(store_root)],
+            ["uv", "run", "numereng", "store", "init", "--workspace", str(workspace_root)],
             cwd=repo_root,
             expect_returncodes={0},
             capture=True,
@@ -164,6 +166,7 @@ def main() -> int:
             if spec.name == "complete":
                 result = run_complete_case(
                     repo_root=repo_root,
+                    workspace_root=workspace_root,
                     store_root=store_root,
                     experiment_id=args.experiment_id,
                     config_path=generated_config,
@@ -174,6 +177,7 @@ def main() -> int:
             elif spec.name == "cancel":
                 result = run_cancel_case(
                     repo_root=repo_root,
+                    workspace_root=workspace_root,
                     store_root=store_root,
                     experiment_id=args.experiment_id,
                     config_path=generated_config,
@@ -184,6 +188,7 @@ def main() -> int:
             else:
                 result = run_stale_case(
                     repo_root=repo_root,
+                    workspace_root=workspace_root,
                     store_root=store_root,
                     experiment_id=args.experiment_id,
                     config_path=generated_config,
@@ -212,6 +217,7 @@ def main() -> int:
 def run_complete_case(
     *,
     repo_root: Path,
+    workspace_root: Path,
     store_root: Path,
     experiment_id: str,
     config_path: Path,
@@ -221,6 +227,7 @@ def run_complete_case(
 ) -> CaseResult:
     process = start_train_process(
         repo_root=repo_root,
+        workspace_root=workspace_root,
         store_root=store_root,
         experiment_id=experiment_id,
         config_path=config_path,
@@ -258,6 +265,7 @@ def run_complete_case(
 def run_cancel_case(
     *,
     repo_root: Path,
+    workspace_root: Path,
     store_root: Path,
     experiment_id: str,
     config_path: Path,
@@ -267,6 +275,7 @@ def run_cancel_case(
 ) -> CaseResult:
     process = start_train_process(
         repo_root=repo_root,
+        workspace_root=workspace_root,
         store_root=store_root,
         experiment_id=experiment_id,
         config_path=config_path,
@@ -281,7 +290,7 @@ def run_cancel_case(
         )
         run_id = str(running_row["run_id"])
         cancel_completed = run_cli(
-            ["uv", "run", "numereng", "run", "cancel", "--run-id", run_id, "--store-root", str(store_root)],
+            ["uv", "run", "numereng", "run", "cancel", "--run-id", run_id, "--workspace", str(workspace_root)],
             cwd=repo_root,
             expect_returncodes={0},
             capture=True,
@@ -317,6 +326,7 @@ def run_cancel_case(
 def run_stale_case(
     *,
     repo_root: Path,
+    workspace_root: Path,
     store_root: Path,
     experiment_id: str,
     config_path: Path,
@@ -326,6 +336,7 @@ def run_stale_case(
 ) -> CaseResult:
     process = start_train_process(
         repo_root=repo_root,
+        workspace_root=workspace_root,
         store_root=store_root,
         experiment_id=experiment_id,
         config_path=config_path,
@@ -363,8 +374,8 @@ def run_stale_case(
                 "repair-run-lifecycles",
                 "--run-id",
                 run_id,
-                "--store-root",
-                str(store_root),
+                "--workspace",
+                str(workspace_root),
             ],
             cwd=repo_root,
             expect_returncodes={0},
@@ -411,6 +422,7 @@ def build_generated_config(
 def start_train_process(
     *,
     repo_root: Path,
+    workspace_root: Path,
     store_root: Path,
     experiment_id: str,
     config_path: Path,
@@ -426,8 +438,8 @@ def start_train_process(
             experiment_id,
             "--config",
             str(config_path),
-            "--store-root",
-            str(store_root),
+            "--workspace",
+            str(workspace_root),
         ],
         cwd=repo_root,
         stdout=subprocess.PIPE,
@@ -449,7 +461,7 @@ def assert_runtime_snapshot_exists(*, store_root: Path, run_id: str) -> None:
 def assert_terminal_artifacts(*, store_root: Path, run_id: str, spec: CaseSpec) -> CaseResult:
     import numereng.api as api
 
-    lifecycle = api.get_run_lifecycle(api.RunLifecycleRequest(run_id=run_id, store_root=str(store_root)))
+    lifecycle = api.get_run_lifecycle(api.RunLifecycleRequest(run_id=run_id, workspace_root=str(store_root.parent)))
     if lifecycle.status != spec.expected_status:
         raise AssertionError(f"unexpected API lifecycle status for {run_id}: {lifecycle.status}")
     if lifecycle.terminal_reason != spec.expected_terminal_reason:

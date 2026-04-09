@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -62,7 +63,7 @@ from numereng.features.experiments import (
     score_experiment_round,
     train_experiment,
 )
-from numereng.features.store import resolve_store_root
+from numereng.features.store import resolve_store_root, resolve_workspace_layout_from_store_root
 from numereng.features.telemetry import bind_launch_metadata
 
 _DEFAULT_CODEX_COMMAND = default_codex_command()
@@ -110,10 +111,12 @@ def init_research(
 ) -> ResearchInitResult:
     """Initialize one agentic research supervisor rooted at one experiment."""
     root = resolve_store_root(store_root)
+    workspace_layout = resolve_workspace_layout_from_store_root(root)
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
     if experiment.status == "archived":
         raise AgenticResearchValidationError("agentic_research_root_experiment_archived")
-    selected = get_research_program(program_id)
+    user_programs_dir = os.getenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR") or workspace_layout.research_programs_root
+    selected = get_research_program(program_id, user_programs_dir=user_programs_dir)
     threshold = improvement_threshold or selected.definition.improvement_threshold_default
     if threshold <= 0.0:
         raise AgenticResearchValidationError("agentic_research_improvement_threshold_invalid")

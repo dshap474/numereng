@@ -52,7 +52,7 @@ The frontend is SSR-first again:
 - Local-only overview: `curl 'http://127.0.0.1:8502/api/experiments/overview?include_remote=false'`
 - Partial run bundle: `curl 'http://127.0.0.1:8502/api/runs/<run_id>/bundle?sections=manifest,metrics,scoring_dashboard'`
 - Remote snapshot directly:
-  `ssh <target> "… uv run numereng monitor snapshot --store-root <store> --json"`
+  `ssh <target> "… uv run numereng monitor snapshot --workspace <workspace> --json"`
 
 ## Related Files
 

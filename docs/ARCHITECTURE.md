@@ -272,7 +272,7 @@ Data model split:
 - `remote_ops/*` is canonical operational state for SSH bootstrap/sync/detached launch workflows.
 - `store rebuild` re-derives index state from filesystem artifacts.
 - Viz detail reads treat local artifacts as authoritative hot-path data: local experiment/run detail requests do not fetch remote overlay metadata unless the caller explicitly supplies a remote source or the local artifact is missing.
-- Archived experiments keep the same experiment ID, but their experiment-local files move under `.numereng/experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
+- Archived experiments keep the same experiment ID, but their experiment-local files move under `experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
 
 ## 7. Core Execution Flows
 
@@ -440,8 +440,8 @@ cli experiment archive|unarchive
       - resolve experiment from live or archived root
       - mutate manifest status (`archived` or restored pre-archive status)
       - move experiment dir between:
-          .numereng/experiments/<id>
-          .numereng/experiments/_archive/<id>
+          experiments/<id>
+          experiments/_archive/<id>
       - upsert experiment index row so viz reflects the change immediately
 ```
 
@@ -455,10 +455,10 @@ cli research init|status|run
   -> api.research_init|api.research_status|api.research_run
   -> features.agentic_research.init_research|get_research_status|run_research
       - persist supervisor state under:
-          .numereng/experiments/<root>/agentic_research/program.json
-          .numereng/experiments/<root>/agentic_research/session_program.md
-          .numereng/experiments/<root>/agentic_research/lineage.json
-          .numereng/experiments/<root>/agentic_research/rounds/rN/*
+          experiments/<root>/agentic_research/program.json
+          experiments/<root>/agentic_research/session_program.md
+          experiments/<root>/agentic_research/lineage.json
+          experiments/<root>/agentic_research/rounds/rN/*
       - `research init` requires one persisted `program_id`
       - the default tracked program lives under `src/numereng/features/agentic_research/programs/numerai-experiment-loop.md`
       - local custom programs can be dropped into `src/numereng/features/agentic_research/programs/*.md`; that folder includes a README and `.gitignore` so extra programs stay untracked by default
@@ -482,7 +482,7 @@ cli research init|status|run
         - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
       - phase-aware custom programs can still use the structured planner JSON contract
         - the JSON schema is generated from the persisted program definition instead of loaded from strategy assets
-      - persist planner trace entries per round at `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
+      - persist planner trace entries per round at `experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
       - persist one canonical round bundle per round at `rounds/rN/round.json` and `rounds/rN/round.md`
       - round bundles and planner traces record `program_id`, `program_sha256`, and `session_program_path`
       - the round markdown is deliberately compact: round status, parent selection, mutation lineage, scored outcome, and links back to the full planner trace for that round
@@ -659,7 +659,7 @@ Stable lifecycle statuses:
 Experiment id for telemetry job rows is resolved as:
 1. explicit `experiment_id` argument (preferred)
 2. fallback inference from config path under:
-   `.numereng/experiments/<experiment_id>/configs/*`
+   `experiments/<experiment_id>/configs/*`
 
 Operational impact:
 - `numereng run train --experiment-id <id>` guarantees experiment-scoped monitor visibility.
@@ -692,7 +692,7 @@ Backend packaging/layout:
 - The wheel ships both `src/numereng` and `viz/api/numereng_viz`.
 
 Store/remote monitor contract:
-- `numereng.api.build_monitor_snapshot(request)` and `numereng monitor snapshot --store-root <path> --json` build one normalized read-only monitor snapshot for a single numereng store.
+- `numereng.api.build_monitor_snapshot(request)` and `numereng monitor snapshot --workspace <path> --json` build one normalized read-only monitor snapshot for a single numereng store.
 - `numereng.api.remote_*` and `numereng remote ...` provide SSH-backed repo sync, experiment authoring sync, experiment artifact pullback, ad hoc config push, and detached remote launch.
 - Mission control overview merges:
   - the local store snapshot
@@ -703,7 +703,7 @@ Store/remote monitor contract:
 - Remote ops use the same target profiles plus `python_cmd` for helper scripts and optional `runner_cmd` for detached CLI launches. Sync is local-driven and archive-based over SSH:
   - repo sync includes tracked files plus untracked nonignored files from the local working tree
   - repo sync excludes `.git`, `.numereng`, gitignored machine profiles, envs, caches, and build outputs
-  - experiment sync includes only `.numereng/experiments/<id>/experiment.json|EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
+  - experiment sync includes only `experiments/<id>/experiment.json|EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
   - experiment pull preflights one remote experiment, selects only `FINISHED` runs, fails cleanly on local run-id conflicts, materializes full remote run directories into `.numereng/runs/<run_id>`, and reconciles the local experiment manifest while leaving active/incomplete remote runs to SSH fallback
   - ad hoc remote launch configs are staged under `.numereng/tmp/remote-configs/*` on the remote repo
   - no command mirrors the full `.numereng` store
@@ -751,7 +751,7 @@ Important UI contract:
 - The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
 - The mission-control overview is canonicalized by `experiment_id`: when an experiment exists locally and on one remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate local/remote rows.
 - The global left-rail experiment navigator now uses the local experiment list from the root layout, so unrelated routes stay fast and remote-free. Remote-aware canonicalized experiment rows remain on `/experiments`.
-- `just viz` is the canonical dashboard launcher. It runs `numereng remote bootstrap-viz --store-root <repo>/.numereng` before local API/frontend startup. That bootstrap step repo-syncs each enabled remote in `auto` mode, runs `remote doctor`, persists `ready|degraded` source state under `.numereng/remote_ops/bootstrap/viz.json`, and never starts a remote viz server on the target host. `make viz` is a deprecated shim that forwards to `just viz`.
+- `just viz` is the canonical dashboard launcher. It runs `numereng remote bootstrap-viz --workspace <repo>/.numereng` before local API/frontend startup. That bootstrap step repo-syncs each enabled remote in `auto` mode, runs `remote doctor`, persists `ready|degraded` source state under `.numereng/remote_ops/bootstrap/viz.json`, and never starts a remote viz server on the target host. `make viz` is a deprecated shim that forwards to `just viz`.
 - Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
 - Launch/control actions are CLI/API-only by design.
@@ -848,7 +848,7 @@ success/help
 34. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
 35. Managed AWS `--state-path` defaults under `<store_root>/cache/cloud/aws/...`; explicit overrides must resolve under `<store_root>/cache/cloud/**/*.json` or legacy `<store_root>/cloud/*.json` during the migration window. Submit-time `NUMERENG_RUN_EXECUTION_JSON` is intentionally trimmed to the minimum provider/runtime fields needed inside the container so long descriptive run IDs and canonical state paths stay under SageMaker env-size limits; full cloud provenance is recovered from managed state during pull/extract.
 36. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
-37. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
+37. Experiment archive moves affect only `experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
 38. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
 39. SageMaker submit may omit `--image-uri`; when omitted, numereng resolves the checked-in default alias for the selected `runtime_profile`, persists the resolved `image_uri`, and records the tag digest in managed state/cloud metadata for reproducibility.
 40. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.

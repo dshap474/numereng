@@ -6,10 +6,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from numereng.api._contracts_base import NeutralizationMode
+from numereng.api._contracts_base import NeutralizationMode, WorkspaceBoundRequest
 
 
-class HpoStudyCreateRequest(BaseModel):
+class HpoStudyCreateRequest(WorkspaceBoundRequest):
     study_name: str
     config_path: str
     experiment_id: str | None = None
@@ -25,7 +25,6 @@ class HpoStudyCreateRequest(BaseModel):
     neutralization_mode: NeutralizationMode = "era"
     neutralizer_cols: list[str] | None = None
     neutralization_rank_output: bool = True
-    store_root: str = ".numereng"
 
     @model_validator(mode="after")
     def _validate_neutralization(self) -> HpoStudyCreateRequest:
@@ -34,22 +33,19 @@ class HpoStudyCreateRequest(BaseModel):
         return self
 
 
-class HpoStudyListRequest(BaseModel):
+class HpoStudyListRequest(WorkspaceBoundRequest):
     experiment_id: str | None = None
     status: str | None = None
     limit: int = Field(default=50, ge=1)
     offset: int = Field(default=0, ge=0)
-    store_root: str = ".numereng"
 
 
-class HpoStudyGetRequest(BaseModel):
+class HpoStudyGetRequest(WorkspaceBoundRequest):
     study_id: str
-    store_root: str = ".numereng"
 
 
-class HpoStudyTrialsRequest(BaseModel):
+class HpoStudyTrialsRequest(WorkspaceBoundRequest):
     study_id: str
-    store_root: str = ".numereng"
 
 
 class HpoTrialResponse(BaseModel):
@@ -95,13 +91,12 @@ class HpoStudyTrialsResponse(BaseModel):
     trials: list[HpoTrialResponse]
 
 
-class BaselineBuildRequest(BaseModel):
+class BaselineBuildRequest(WorkspaceBoundRequest):
     run_ids: list[str]
     name: str = Field(min_length=1)
     default_target: str = "target_ender_20"
     description: str | None = None
     promote_active: bool = False
-    store_root: str = ".numereng"
 
 
 class BaselineBuildResponse(BaseModel):
@@ -118,7 +113,7 @@ class BaselineBuildResponse(BaseModel):
     created_at: str
 
 
-class EnsembleBuildRequest(BaseModel):
+class EnsembleBuildRequest(WorkspaceBoundRequest):
     run_ids: list[str]
     experiment_id: str | None = None
     method: Literal["rank_avg"] = "rank_avg"
@@ -138,7 +133,6 @@ class EnsembleBuildRequest(BaseModel):
     neutralization_mode: NeutralizationMode = "era"
     neutralizer_cols: list[str] | None = None
     neutralization_rank_output: bool = True
-    store_root: str = ".numereng"
 
     @model_validator(mode="after")
     def _validate_neutralization(self) -> EnsembleBuildRequest:
@@ -147,16 +141,14 @@ class EnsembleBuildRequest(BaseModel):
         return self
 
 
-class EnsembleListRequest(BaseModel):
+class EnsembleListRequest(WorkspaceBoundRequest):
     experiment_id: str | None = None
     limit: int = Field(default=50, ge=1)
     offset: int = Field(default=0, ge=0)
-    store_root: str = ".numereng"
 
 
-class EnsembleGetRequest(BaseModel):
+class EnsembleGetRequest(WorkspaceBoundRequest):
     ensemble_id: str
-    store_root: str = ".numereng"
 
 
 class EnsembleComponentResponse(BaseModel):
@@ -190,8 +182,8 @@ class EnsembleListResponse(BaseModel):
     ensembles: list[EnsembleResponse]
 
 
-class StoreInitRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreInitRequest(WorkspaceBoundRequest):
+    pass
 
 
 class StoreInitResponse(BaseModel):
@@ -201,9 +193,8 @@ class StoreInitResponse(BaseModel):
     schema_migration: str
 
 
-class StoreIndexRequest(BaseModel):
+class StoreIndexRequest(WorkspaceBoundRequest):
     run_id: str
-    store_root: str = ".numereng"
 
 
 class StoreIndexResponse(BaseModel):
@@ -215,8 +206,8 @@ class StoreIndexResponse(BaseModel):
     warnings: list[str]
 
 
-class StoreRebuildRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreRebuildRequest(WorkspaceBoundRequest):
+    pass
 
 
 class StoreRebuildFailureResponse(BaseModel):
@@ -233,8 +224,7 @@ class StoreRebuildResponse(BaseModel):
     failures: list[StoreRebuildFailureResponse]
 
 
-class StoreDoctorRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreDoctorRequest(WorkspaceBoundRequest):
     fix_strays: bool = False
 
 
@@ -249,8 +239,7 @@ class StoreDoctorResponse(BaseModel):
     missing_paths: list[str] = Field(default_factory=list)
 
 
-class StoreRunLifecycleRepairRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreRunLifecycleRepairRequest(WorkspaceBoundRequest):
     run_id: str | None = None
     active_only: bool = True
 
@@ -265,8 +254,7 @@ class StoreRunLifecycleRepairResponse(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
 
 
-class StoreRunExecutionBackfillRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreRunExecutionBackfillRequest(WorkspaceBoundRequest):
     run_id: str | None = None
     all: bool = False
 
@@ -288,8 +276,7 @@ class StoreRunExecutionBackfillResponse(BaseModel):
     skipped_run_ids: list[str] = Field(default_factory=list)
 
 
-class StoreMaterializeVizArtifactsRequest(BaseModel):
-    store_root: str = ".numereng"
+class StoreMaterializeVizArtifactsRequest(WorkspaceBoundRequest):
     kind: str
     run_id: str | None = None
     experiment_id: str | None = None
@@ -339,6 +326,18 @@ class DatasetToolsBuildDownsampleResponse(BaseModel):
     downsample_offset: int
 
 
+class WorkspaceInitRequest(WorkspaceBoundRequest):
+    pass
+
+
+class WorkspaceInitResponse(BaseModel):
+    workspace_root: str
+    store_root: str
+    created_paths: list[str] = Field(default_factory=list)
+    skipped_existing_paths: list[str] = Field(default_factory=list)
+    installed_skill_ids: list[str] = Field(default_factory=list)
+
+
 __all__ = [
     "BaselineBuildRequest",
     "BaselineBuildResponse",
@@ -375,4 +374,6 @@ __all__ = [
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
+    "WorkspaceInitRequest",
+    "WorkspaceInitResponse",
 ]

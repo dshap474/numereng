@@ -132,7 +132,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
                 "--neutralization-proportion",
                 "--neutralization-mode",
                 "--neutralizer-cols",
-                "--store-root",
+                "--workspace",
             },
             bool_flags={
                 "--optimize-weights",
@@ -240,7 +240,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
                     neutralization_mode=neutralization_mode,
                     neutralizer_cols=neutralizer_cols,
                     neutralization_rank_output="--no-neutralization-rank" not in toggles,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -257,7 +257,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
     if args[0] == "list":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--experiment-id", "--limit", "--offset", "--format", "--store-root"},
+            value_flags={"--experiment-id", "--limit", "--offset", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -300,7 +300,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
                     experiment_id=values.get("--experiment-id"),
                     limit=limit,
                     offset=offset,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -320,7 +320,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
     if args[0] == "details":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--ensemble-id", "--format", "--store-root"},
+            value_flags={"--ensemble-id", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -349,7 +349,7 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
             details_payload = api.ensemble_get(
                 api.EnsembleGetRequest(
                     ensemble_id=ensemble_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

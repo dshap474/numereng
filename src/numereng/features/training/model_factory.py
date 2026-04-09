@@ -11,15 +11,40 @@ from typing import Any
 
 from numereng.config.settings import load_settings
 from numereng.features.models.lgbm import LGBMRegressor
+from numereng.features.store import resolve_workspace_layout
 from numereng.features.training.errors import TrainingModelError
 from numereng.features.training.target_transforms import TargetTransformWrapper
 
 _BUILTIN_MODELS = {"LGBMRegressor": LGBMRegressor}
 
 
-def _resolve_custom_models_root() -> Path:
-    """Return the repository-local custom model directory."""
+def _resolve_builtin_custom_models_root() -> Path:
+    """Return the packaged built-in custom model directory."""
+
     return (Path(__file__).resolve().parents[1] / "models" / "custom_models").resolve()
+
+
+def _resolve_custom_models_root() -> Path:
+    """Return the packaged built-in custom model directory.
+
+    Kept as the singular helper so existing tests and callers can still monkeypatch
+    the non-workspace fallback root directly.
+    """
+
+    return _resolve_builtin_custom_models_root()
+
+
+def _resolve_custom_models_roots() -> tuple[Path, ...]:
+    """Return workspace-first then packaged custom model roots."""
+
+    workspace_root = resolve_workspace_layout().custom_models_root
+    builtin_root = _resolve_custom_models_root()
+    roots: list[Path] = []
+    for root in (workspace_root, builtin_root):
+        resolved = root.resolve()
+        if resolved not in roots:
+            roots.append(resolved)
+    return tuple(roots)
 
 
 def _load_model_registry(module_path: Path) -> dict[str, Any]:
@@ -45,11 +70,22 @@ def _load_model_registry(module_path: Path) -> dict[str, Any]:
 
 def _iter_module_paths(module_path: str | None) -> list[Path]:
     """Return candidate plugin module paths."""
-    root = _resolve_custom_models_root()
+    roots = _resolve_custom_models_roots()
     if module_path is None:
-        if not root.exists():
-            return []
-        return [p for p in root.rglob("*.py") if p.name != "__init__.py"]
+        module_paths: list[Path] = []
+        seen: set[Path] = set()
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.rglob("*.py"):
+                if path.name == "__init__.py":
+                    continue
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                module_paths.append(resolved)
+        return module_paths
 
     explicit = Path(module_path)
     candidates: list[Path] = []
@@ -57,7 +93,7 @@ def _iter_module_paths(module_path: str | None) -> list[Path]:
     if explicit.is_absolute():
         candidates.append(explicit)
     else:
-        for base in (root, Path.cwd()):
+        for base in (*roots, Path.cwd()):
             resolved = (base / explicit).resolve()
             candidates.append(resolved)
             if resolved.suffix != ".py":

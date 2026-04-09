@@ -1,5 +1,15 @@
 """Public surface for agentic research supervisor services."""
 
+from numereng.features.agentic_research.run import (
+    AgenticResearchError,
+    AgenticResearchNotInitializedError,
+    AgenticResearchValidationError,
+    get_research_program,
+    get_research_status,
+    init_research,
+    list_research_programs,
+    run_research,
+)
 from numereng.features.agentic_research.utils.types import (
     CodexConfigPayload,
     CodexDecision,
@@ -17,16 +27,6 @@ from numereng.features.agentic_research.utils.types import (
     ResearchRoundState,
     ResearchRunResult,
     ResearchStatusResult,
-)
-from numereng.features.agentic_research.run import (
-    AgenticResearchError,
-    AgenticResearchNotInitializedError,
-    AgenticResearchValidationError,
-    get_research_program,
-    get_research_status,
-    init_research,
-    list_research_programs,
-    run_research,
 )
 
 __all__ = [

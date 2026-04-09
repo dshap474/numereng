@@ -711,7 +711,7 @@ def test_upsert_cloud_job_merges_metadata_json(tmp_path: Path) -> None:
             metadata_json=json.dumps(
                 {
                     "experiment_id": "exp-1",
-                    "config_path": ".numereng/experiments/exp-1/configs/base.json",
+                    "config_path": "experiments/exp-1/configs/base.json",
                     "config_label": "base.json",
                 }
             ),
@@ -742,7 +742,7 @@ def test_upsert_cloud_job_merges_metadata_json(tmp_path: Path) -> None:
     assert row is not None
     metadata = json.loads(str(row[0]))
     assert metadata["experiment_id"] == "exp-1"
-    assert metadata["config_path"] == ".numereng/experiments/exp-1/configs/base.json"
+    assert metadata["config_path"] == "experiments/exp-1/configs/base.json"
     assert metadata["config_label"] == "base.json"
     assert metadata["status"] == "Completed"
 

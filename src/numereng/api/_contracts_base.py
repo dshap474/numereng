@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path, PureWindowsPath
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -9,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from numereng.config.training import ensure_json_config_path
 from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.experiments import ExperimentStatus
+from numereng.features.store import WorkspaceLayout, resolve_workspace_layout
 from numereng.features.training import TrainingEngineMode, TrainingProfile
 
 NumeraiTournament = Literal["classic", "signals", "crypto"]
@@ -26,7 +29,23 @@ class HealthResponse(BaseModel):
     version: str
 
 
-class SubmissionRequest(BaseModel):
+class WorkspaceBoundRequest(BaseModel):
+    workspace_root: str = "."
+
+    @property
+    def workspace_layout(self) -> WorkspaceLayout:
+        return resolve_workspace_layout(self.workspace_root)
+
+    @property
+    def store_root(self) -> str:
+        if self.workspace_root in ("", "."):
+            return ".numereng"
+        if "\\" in self.workspace_root or re.match(r"^[A-Za-z]:", self.workspace_root):
+            return str(PureWindowsPath(self.workspace_root) / ".numereng")
+        return str(Path(self.workspace_root) / ".numereng")
+
+
+class SubmissionRequest(WorkspaceBoundRequest):
     model_name: str
     tournament: NumeraiTournament = "classic"
     run_id: str | None = None
@@ -38,7 +57,6 @@ class SubmissionRequest(BaseModel):
     neutralization_mode: NeutralizationMode = "era"
     neutralizer_cols: list[str] | None = None
     neutralization_rank_output: bool = True
-    store_root: str = ".numereng"
 
     @model_validator(mode="after")
     def _validate_source(self) -> SubmissionRequest:
@@ -59,7 +77,7 @@ class SubmissionResponse(BaseModel):
     run_id: str | None = None
 
 
-class NeutralizeRequest(BaseModel):
+class NeutralizeRequest(WorkspaceBoundRequest):
     run_id: str | None = None
     predictions_path: str | None = None
     neutralizer_path: str
@@ -68,7 +86,6 @@ class NeutralizeRequest(BaseModel):
     neutralizer_cols: list[str] | None = None
     neutralization_rank_output: bool = True
     output_path: str | None = None
-    store_root: str = ".numereng"
 
     @model_validator(mode="after")
     def _validate_source(self) -> NeutralizeRequest:
@@ -129,7 +146,7 @@ class NumeraiCurrentRoundRequest(BaseModel):
     tournament: NumeraiTournament = "classic"
 
 
-class TrainRunRequest(BaseModel):
+class TrainRunRequest(WorkspaceBoundRequest):
     config_path: str
     output_dir: str | None = None
     profile: TrainingProfile | None = None
@@ -158,9 +175,8 @@ class TrainRunResponse(BaseModel):
     results_path: str
 
 
-class ScoreRunRequest(BaseModel):
+class ScoreRunRequest(WorkspaceBoundRequest):
     run_id: str = Field(min_length=1)
-    store_root: str = ".numereng"
     stage: ScoringStage = "all"
 
 
@@ -174,9 +190,8 @@ class ScoreRunResponse(BaseModel):
     refreshed_stages: list[str] = Field(default_factory=list)
 
 
-class RunLifecycleRequest(BaseModel):
+class RunLifecycleRequest(WorkspaceBoundRequest):
     run_id: str = Field(min_length=1)
-    store_root: str = ".numereng"
 
 
 class RunLifecycleResponse(BaseModel):
@@ -223,9 +238,8 @@ class RunLifecycleResponse(BaseModel):
     reconciled: bool = False
 
 
-class RunCancelRequest(BaseModel):
+class RunCancelRequest(WorkspaceBoundRequest):
     run_id: str = Field(min_length=1)
-    store_root: str = ".numereng"
 
 
 class RunCancelResponse(BaseModel):
@@ -237,27 +251,23 @@ class RunCancelResponse(BaseModel):
     accepted: bool
 
 
-class ExperimentCreateRequest(BaseModel):
+class ExperimentCreateRequest(WorkspaceBoundRequest):
     experiment_id: str
     name: str | None = None
     hypothesis: str | None = None
     tags: list[str] = Field(default_factory=list)
-    store_root: str = ".numereng"
 
 
-class ExperimentListRequest(BaseModel):
+class ExperimentListRequest(WorkspaceBoundRequest):
     status: ExperimentStatus | None = None
-    store_root: str = ".numereng"
 
 
-class ExperimentGetRequest(BaseModel):
+class ExperimentGetRequest(WorkspaceBoundRequest):
     experiment_id: str
-    store_root: str = ".numereng"
 
 
-class ExperimentArchiveRequest(BaseModel):
+class ExperimentArchiveRequest(WorkspaceBoundRequest):
     experiment_id: str
-    store_root: str = ".numereng"
 
 
 class ExperimentResponse(BaseModel):
@@ -285,7 +295,7 @@ class ExperimentArchiveResponse(BaseModel):
     archived: bool
 
 
-class ExperimentTrainRequest(BaseModel):
+class ExperimentTrainRequest(WorkspaceBoundRequest):
     experiment_id: str
     config_path: str
     output_dir: str | None = None
@@ -294,7 +304,6 @@ class ExperimentTrainRequest(BaseModel):
     engine_mode: TrainingEngineMode | None = None
     window_size_eras: int | None = Field(default=None, ge=1)
     embargo_eras: int | None = Field(default=None, ge=1)
-    store_root: str = ".numereng"
 
     @field_validator("config_path")
     @classmethod
@@ -316,11 +325,10 @@ class ExperimentTrainResponse(BaseModel):
     results_path: str
 
 
-class ExperimentScoreRoundRequest(BaseModel):
+class ExperimentScoreRoundRequest(WorkspaceBoundRequest):
     experiment_id: str
     round: str
     stage: ExperimentScoreRoundStage
-    store_root: str = ".numereng"
 
 
 class ExperimentScoreRoundResponse(BaseModel):
@@ -330,11 +338,10 @@ class ExperimentScoreRoundResponse(BaseModel):
     run_ids: list[str] = Field(default_factory=list)
 
 
-class ExperimentPromoteRequest(BaseModel):
+class ExperimentPromoteRequest(WorkspaceBoundRequest):
     experiment_id: str
     run_id: str | None = None
     metric: str = "bmc_last_200_eras.mean"
-    store_root: str = ".numereng"
 
 
 class ExperimentPromoteResponse(BaseModel):
@@ -345,11 +352,10 @@ class ExperimentPromoteResponse(BaseModel):
     auto_selected: bool
 
 
-class ExperimentReportRequest(BaseModel):
+class ExperimentReportRequest(WorkspaceBoundRequest):
     experiment_id: str
     metric: str = "bmc_last_200_eras.mean"
     limit: int = Field(default=10, ge=1)
-    store_root: str = ".numereng"
 
 
 class ExperimentReportRowResponse(BaseModel):
@@ -373,9 +379,8 @@ class ExperimentReportResponse(BaseModel):
     rows: list[ExperimentReportRowResponse]
 
 
-class ExperimentPackRequest(BaseModel):
+class ExperimentPackRequest(WorkspaceBoundRequest):
     experiment_id: str
-    store_root: str = ".numereng"
 
 
 class ExperimentPackResponse(BaseModel):
@@ -424,7 +429,7 @@ class ResearchProgramCatalogEntryResponse(BaseModel):
     source_path: str | None = None
 
 
-class ResearchProgramListRequest(BaseModel):
+class ResearchProgramListRequest(WorkspaceBoundRequest):
     pass
 
 
@@ -432,7 +437,7 @@ class ResearchProgramListResponse(BaseModel):
     programs: list[ResearchProgramCatalogEntryResponse]
 
 
-class ResearchProgramShowRequest(BaseModel):
+class ResearchProgramShowRequest(WorkspaceBoundRequest):
     program_id: str = Field(min_length=1)
 
 
@@ -452,11 +457,10 @@ class ResearchProgramShowResponse(BaseModel):
     raw_markdown: str
 
 
-class ResearchInitRequest(BaseModel):
+class ResearchInitRequest(WorkspaceBoundRequest):
     experiment_id: str
     program_id: str = Field(min_length=1)
     improvement_threshold: float | None = Field(default=None, gt=0.0)
-    store_root: str = ".numereng"
 
 
 class ResearchBestRunResponse(BaseModel):
@@ -517,9 +521,8 @@ class ResearchInitResponse(BaseModel):
     session_program_path: str = ""
 
 
-class ResearchStatusRequest(BaseModel):
+class ResearchStatusRequest(WorkspaceBoundRequest):
     experiment_id: str
-    store_root: str = ".numereng"
 
 
 class ResearchStatusResponse(BaseModel):
@@ -543,11 +546,10 @@ class ResearchStatusResponse(BaseModel):
     session_program_path: str = ""
 
 
-class ResearchRunRequest(BaseModel):
+class ResearchRunRequest(WorkspaceBoundRequest):
     experiment_id: str
     max_rounds: int | None = Field(default=None, ge=1)
     max_paths: int | None = Field(default=None, ge=1)
-    store_root: str = ".numereng"
 
 
 class ResearchRunResponse(BaseModel):

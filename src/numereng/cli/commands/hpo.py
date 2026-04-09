@@ -88,7 +88,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
     if args[0] == "list":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--experiment-id", "--status", "--limit", "--offset", "--format", "--store-root"},
+            value_flags={"--experiment-id", "--status", "--limit", "--offset", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -132,7 +132,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
                     status=values.get("--status"),
                     limit=limit,
                     offset=offset,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -152,7 +152,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
     if args[0] == "details":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--study-id", "--format", "--store-root"},
+            value_flags={"--study-id", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -181,7 +181,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
             study_payload = api.hpo_get(
                 api.HpoStudyGetRequest(
                     study_id=study_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:
@@ -201,7 +201,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
     if args[0] == "trials":
         values, _, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--study-id", "--format", "--store-root"},
+            value_flags={"--study-id", "--format", "--workspace"},
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -230,7 +230,7 @@ def handle_hpo_command(args: Sequence[str]) -> int:
             trials_payload = api.hpo_trials(
                 api.HpoStudyTrialsRequest(
                     study_id=study_id,
-                    store_root=values.get("--store-root", ".numereng"),
+                    workspace_root=values.get("--workspace", "."),
                 )
             )
         except ValidationError as exc:

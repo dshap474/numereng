@@ -8,9 +8,9 @@
 
 ## First checks
 
-1. Inspect `.numereng/experiments/<id>/agentic_research/program.json`.
-2. Inspect `.numereng/experiments/<id>/agentic_research/lineage.json`.
-3. Inspect `.numereng/experiments/<id>/agentic_research/llm_trace.jsonl` and `llm_trace.md`.
+1. Inspect `experiments/<id>/agentic_research/program.json`.
+2. Inspect `experiments/<id>/agentic_research/lineage.json`.
+3. Inspect `experiments/<id>/agentic_research/llm_trace.jsonl` and `llm_trace.md`.
 4. Inspect the most recent `rounds/rN/round.json` and `round.md`.
 
 ## Contract reminders

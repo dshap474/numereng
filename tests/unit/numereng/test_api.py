@@ -67,12 +67,12 @@ from numereng.api import (
     RemoteVizBootstrapResponse,
     ResearchInitRequest,
     ResearchInitResponse,
-    ResearchRunRequest,
-    ResearchRunResponse,
     ResearchProgramListRequest,
     ResearchProgramListResponse,
     ResearchProgramShowRequest,
     ResearchProgramShowResponse,
+    ResearchRunRequest,
+    ResearchRunResponse,
     ResearchStatusRequest,
     ResearchStatusResponse,
     RunCancelRequest,
@@ -89,10 +89,10 @@ from numereng.api import (
     StoreInitResponse,
     StoreMaterializeVizArtifactsRequest,
     StoreMaterializeVizArtifactsResponse,
-    StoreRunExecutionBackfillRequest,
-    StoreRunExecutionBackfillResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
+    StoreRunExecutionBackfillRequest,
+    StoreRunExecutionBackfillResponse,
     StoreRunLifecycleRepairRequest,
     StoreRunLifecycleRepairResponse,
     SubmissionRequest,
@@ -129,8 +129,8 @@ from numereng.api import (
     run_bootstrap_check,
     run_training,
     score_run,
-    store_doctor,
     store_backfill_run_execution,
+    store_doctor,
     store_index_run,
     store_init,
     store_materialize_viz_artifacts,
@@ -193,7 +193,13 @@ from numereng.features.submission import (
 )
 from numereng.features.telemetry import get_launch_metadata
 from numereng.features.telemetry.contracts import RunCancelResult, RunLifecycleRecord, RunLifecycleRepairResult
-from numereng.features.training import ScoreRunResult, TrainingDataError, TrainingError, TrainingModelError, TrainingRunResult
+from numereng.features.training import (
+    ScoreRunResult,
+    TrainingDataError,
+    TrainingError,
+    TrainingModelError,
+    TrainingRunResult,
+)
 from numereng.platform.errors import ForumScraperError, NumeraiClientError
 
 CloudApiFunc = Callable[[Any], CloudEc2Response]
@@ -1518,7 +1524,9 @@ def test_run_training_passes_unlabeled_target_training_data_error_through(
 
     monkeypatch.setattr(api_module, "run_training_pipeline", fake_run_training_pipeline)
 
-    with pytest.raises(PackageError, match="training_target_rows_all_unlabeled:split=train:target=target_jeremy_20:fold=0"):
+    with pytest.raises(
+        PackageError, match="training_target_rows_all_unlabeled:split=train:target=target_jeremy_20:fold=0"
+    ):
         run_training(TrainRunRequest(config_path="configs/run.json"))
 
 
@@ -1679,7 +1687,7 @@ def test_experiment_create_success(monkeypatch: pytest.MonkeyPatch) -> None:
             champion_run_id=None,
             runs=(),
             metadata={},
-            manifest_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json"),
+            manifest_path=Path("/tmp/experiments/2026-02-22_test-exp/experiment.json"),
         )
 
     monkeypatch.setattr(api_module, "create_experiment_record", fake_create_experiment)
@@ -1712,7 +1720,7 @@ def test_experiment_list_success(monkeypatch: pytest.MonkeyPatch) -> None:
                 champion_run_id="run-1",
                 runs=("run-1", "run-2"),
                 metadata={"foo": "bar"},
-                manifest_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json"),
+                manifest_path=Path("/tmp/experiments/2026-02-22_test-exp/experiment.json"),
             ),
         )
 
@@ -1730,7 +1738,7 @@ def test_experiment_archive_and_unarchive_success(monkeypatch: pytest.MonkeyPatc
         return ExperimentArchiveResult(
             experiment_id=experiment_id,
             status="archived",
-            manifest_path=Path("/tmp/.numereng/experiments/_archive/2026-02-22_test-exp/experiment.json"),
+            manifest_path=Path("/tmp/experiments/_archive/2026-02-22_test-exp/experiment.json"),
             archived=True,
         )
 
@@ -1740,7 +1748,7 @@ def test_experiment_archive_and_unarchive_success(monkeypatch: pytest.MonkeyPatc
         return ExperimentArchiveResult(
             experiment_id=experiment_id,
             status="active",
-            manifest_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/experiment.json"),
+            manifest_path=Path("/tmp/experiments/2026-02-22_test-exp/experiment.json"),
             archived=False,
         )
 
@@ -1993,9 +2001,9 @@ def test_experiment_pack_success(monkeypatch: pytest.MonkeyPatch) -> None:
         assert experiment_id == "2026-02-22_test-exp"
         return ExperimentPackResult(
             experiment_id=experiment_id,
-            output_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md"),
-            experiment_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp"),
-            source_markdown_path=Path("/tmp/.numereng/experiments/2026-02-22_test-exp/EXPERIMENT.md"),
+            output_path=Path("/tmp/experiments/2026-02-22_test-exp/EXPERIMENT.pack.md"),
+            experiment_path=Path("/tmp/experiments/2026-02-22_test-exp"),
+            source_markdown_path=Path("/tmp/experiments/2026-02-22_test-exp/EXPERIMENT.md"),
             run_count=2,
             packed_at="2026-02-22T00:05:00+00:00",
         )
@@ -2165,7 +2173,7 @@ def test_research_program_catalog_api_success(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         api_module,
         "list_research_program_records",
-        lambda: (
+        lambda user_programs_dir=None: (
             ResearchProgramCatalogEntry(
                 program_id="numerai-experiment-loop",
                 title="Numerai Experiment Loop",
@@ -2180,7 +2188,7 @@ def test_research_program_catalog_api_success(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(
         api_module,
         "get_research_program_record",
-        lambda program_id: ResearchProgramDetails(
+        lambda program_id, user_programs_dir=None: ResearchProgramDetails(
             definition=ResearchProgramDefinition(
                 program_id=program_id,
                 title="Numerai Experiment Loop",
@@ -2208,7 +2216,9 @@ def test_research_program_catalog_api_success(monkeypatch: pytest.MonkeyPatch) -
                 prompt_template="Context:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n",
                 source_path="/tmp/numerai-experiment-loop.md",
             ),
-            raw_markdown="---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n",
+            raw_markdown=(
+                "---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n"
+            ),
         ),
     )
 
@@ -2336,7 +2346,9 @@ def test_store_doctor_fix_strays_flag_passes_to_service(monkeypatch: pytest.Monk
 
 
 def test_store_backfill_run_execution_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_backfill_run_execution(*, store_root: str, run_id: str | None, all_runs: bool) -> StoreRunExecutionBackfillResult:
+    def fake_backfill_run_execution(
+        *, store_root: str, run_id: str | None, all_runs: bool
+    ) -> StoreRunExecutionBackfillResult:
         assert store_root == ".numereng"
         assert run_id is None
         assert all_runs is True

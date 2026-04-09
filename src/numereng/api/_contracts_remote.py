@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from numereng.api._contracts_base import PostTrainingScoringPolicy, TrainingProfile
+from numereng.api._contracts_base import PostTrainingScoringPolicy, TrainingProfile, WorkspaceBoundRequest
 
 
 class RemoteTargetListRequest(BaseModel):
@@ -45,8 +45,8 @@ class RemoteDoctorResponse(BaseModel):
     issues: list[str] = Field(default_factory=list)
 
 
-class RemoteVizBootstrapRequest(BaseModel):
-    store_root: str = ".numereng"
+class RemoteVizBootstrapRequest(WorkspaceBoundRequest):
+    pass
 
 
 class RemoteVizBootstrapTargetResponse(BaseModel):
@@ -69,9 +69,8 @@ class RemoteVizBootstrapResponse(BaseModel):
     targets: list[RemoteVizBootstrapTargetResponse] = Field(default_factory=list)
 
 
-class RemoteRepoSyncRequest(BaseModel):
+class RemoteRepoSyncRequest(WorkspaceBoundRequest):
     target_id: str
-    store_root: str = ".numereng"
 
 
 class RemoteRepoSyncResponse(BaseModel):
@@ -87,10 +86,9 @@ class RemoteRepoSyncResponse(BaseModel):
     remote_marker_path: str
 
 
-class RemoteExperimentSyncRequest(BaseModel):
+class RemoteExperimentSyncRequest(WorkspaceBoundRequest):
     target_id: str
     experiment_id: str
-    store_root: str = ".numereng"
 
 
 class RemoteExperimentSyncResponse(BaseModel):
@@ -105,10 +103,9 @@ class RemoteExperimentSyncResponse(BaseModel):
     remote_marker_path: str
 
 
-class RemoteExperimentPullRequest(BaseModel):
+class RemoteExperimentPullRequest(WorkspaceBoundRequest):
     target_id: str
     experiment_id: str
-    store_root: str = ".numereng"
 
 
 class RemoteExperimentPullFailureResponse(BaseModel):
@@ -130,10 +127,9 @@ class RemoteExperimentPullResponse(BaseModel):
     failures: list[RemoteExperimentPullFailureResponse] = Field(default_factory=list)
 
 
-class RemoteConfigPushRequest(BaseModel):
+class RemoteConfigPushRequest(WorkspaceBoundRequest):
     target_id: str
     config_path: str
-    store_root: str = ".numereng"
 
 
 class RemoteConfigPushResponse(BaseModel):
@@ -143,14 +139,13 @@ class RemoteConfigPushResponse(BaseModel):
     synced_at: str
 
 
-class RemoteTrainLaunchRequest(BaseModel):
+class RemoteTrainLaunchRequest(WorkspaceBoundRequest):
     target_id: str
     config_path: str
     experiment_id: str | None = None
     sync_repo: Literal["auto", "always", "never"] = "auto"
     profile: TrainingProfile | None = None
     post_training_scoring: PostTrainingScoringPolicy | None = None
-    store_root: str = ".numereng"
 
 
 class RemoteTrainLaunchResponse(BaseModel):

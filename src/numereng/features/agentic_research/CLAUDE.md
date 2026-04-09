@@ -14,9 +14,9 @@ instead of replacing it.
 
 ## Persisted artifacts
 
-- `.numereng/experiments/<root>/agentic_research/program.json`
-- `.numereng/experiments/<root>/agentic_research/lineage.json`
-- `.numereng/experiments/<root>/agentic_research/rounds/rN/*`
+- `experiments/<root>/agentic_research/program.json`
+- `experiments/<root>/agentic_research/lineage.json`
+- `experiments/<root>/agentic_research/rounds/rN/*`
 
 Round folders persist the prompt, Codex response, planned config filenames, report snapshot, and
 round summary so resume/debugging does not depend on volatile process state.

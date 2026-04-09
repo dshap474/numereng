@@ -888,6 +888,7 @@ def increment_phase_round_count(current_phase: ResearchPhaseState | None) -> Res
         updated_at=utc_now_iso(),
     )
 
+
 def planner_schema(definition: ResearchProgramDefinition) -> dict[str, object]:
     properties: dict[str, object] = {
         "experiment_question": {"type": "string"},
@@ -1018,7 +1019,6 @@ def _mutation_winner_criteria(definition: ResearchProgramDefinition) -> str:
         f"Improve {definition.metric_policy.primary}, use {definition.metric_policy.tie_break} as the tie-break, "
         f"and sanity-check {sanity_checks}."
     )
-
 
 
 def next_round_label(round_number: int) -> str:

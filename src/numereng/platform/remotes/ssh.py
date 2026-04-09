@@ -113,11 +113,11 @@ def build_monitor_snapshot_command(target: SshRemoteTargetProfile) -> str:
 
     if target.shell == "powershell":
         command = (
-            f"{target.runner_cmd} monitor snapshot --store-root '{powershell_single_quote(target.store_root)}' --json"
+            f"{target.runner_cmd} monitor snapshot --workspace '{powershell_single_quote(target.repo_root)}' --json"
         )
         return build_remote_shell_command(target, command, cwd=target.repo_root)
 
-    command = f"{target.runner_cmd} monitor snapshot --store-root {shlex.quote(target.store_root)} --json"
+    command = f"{target.runner_cmd} monitor snapshot --workspace {shlex.quote(target.repo_root)} --json"
     return build_remote_shell_command(target, command, cwd=target.repo_root)
 
 

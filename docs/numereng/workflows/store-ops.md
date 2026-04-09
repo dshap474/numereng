@@ -66,6 +66,6 @@ If the store DB is missing or unreadable, tmp remote-config cleanup is skipped r
 
 ## High-Risk Gotchas
 
-- keep `--store-root` consistent across train, experiment, HPO, ensemble, and store commands
+- keep `--workspace` consistent across train, experiment, HPO, ensemble, and store commands
 - do not assume SQLite is the source of truth; canonical artifacts live on disk
 - use rebuild when you need full reconciliation, not repeated one-off indexing

@@ -72,7 +72,7 @@ def test_create_experiment_writes_manifest_and_indexes_db(tmp_path: Path) -> Non
         tags=["quick", "baseline"],
     )
 
-    manifest_path = store_root / "experiments" / "2026-02-22_test-exp" / "experiment.json"
+    manifest_path = store_root.parent / "experiments" / "2026-02-22_test-exp" / "experiment.json"
     experiment_dir = manifest_path.parent
     assert manifest_path.is_file()
     assert (experiment_dir / "configs").is_dir()
@@ -120,10 +120,10 @@ def test_create_experiment_fails_when_existing(tmp_path: Path) -> None:
 
 
 def test_create_experiment_generated_launcher_supports_external_store_root(tmp_path: Path) -> None:
-    store_root = tmp_path / "external-store"
+    store_root = tmp_path / "external-workspace" / ".numereng"
     service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_test-exp")
 
-    launcher_path = store_root / "experiments" / "2026-02-22_test-exp" / "run_scripts" / "launch_all.py"
+    launcher_path = store_root.parent / "experiments" / "2026-02-22_test-exp" / "run_scripts" / "launch_all.py"
     repo_root = Path(__file__).resolve().parents[5]
     result = subprocess.run(
         ["uv", "run", "python", str(launcher_path), "--help"],
@@ -193,7 +193,7 @@ def test_train_experiment_appends_run_and_sets_active(
     assert result.experiment_id == "2026-02-22_test-exp"
     assert result.run_id == "run-123"
 
-    manifest = json.loads((store_root / "experiments" / "2026-02-22_test-exp" / "experiment.json").read_text())
+    manifest = json.loads((store_root.parent / "experiments" / "2026-02-22_test-exp" / "experiment.json").read_text())
     assert manifest["status"] == "active"
     assert manifest["runs"] == ["run-123"]
     assert indexed["store_root"] == store_root
@@ -252,7 +252,7 @@ def test_train_experiment_round_post_training_scoring_triggers_round_batch(
     store_root = tmp_path / ".numereng"
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
-    config_path = store_root / "experiments" / experiment_id / "configs" / "r2_target_a_seed42.json"
+    config_path = store_root.parent / "experiments" / experiment_id / "configs" / "r2_target_a_seed42.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(
@@ -327,7 +327,7 @@ def test_train_experiment_round_batch_failure_is_recorded_and_training_succeeds(
     store_root = tmp_path / ".numereng"
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
-    config_path = store_root / "experiments" / experiment_id / "configs" / "r1_target_a_seed42.json"
+    config_path = store_root.parent / "experiments" / experiment_id / "configs" / "r1_target_a_seed42.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         json.dumps(
@@ -421,7 +421,7 @@ def test_score_experiment_round_resolves_round_run_ids(
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir = store_root.parent / "experiments" / experiment_id
     (experiment_dir / "run_plan.csv").write_text(
         "\n".join(
             [
@@ -496,7 +496,7 @@ def test_score_experiment_round_skips_failed_and_missing_prediction_runs(
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir = store_root.parent / "experiments" / experiment_id
     for name in ("r1_target_a_seed42.json", "r1_target_b_seed43.json", "r1_target_c_seed44.json"):
         (experiment_dir / "configs" / name).write_text("{}", encoding="utf-8")
     (experiment_dir / "run_plan.csv").write_text(
@@ -560,7 +560,7 @@ def test_score_experiment_round_prefers_latest_finished_run_for_duplicate_config
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir = store_root.parent / "experiments" / experiment_id
     config_path = experiment_dir / "configs" / "r1_target_a_seed42.json"
     config_path.write_text("{}", encoding="utf-8")
     (experiment_dir / "run_plan.csv").write_text(
@@ -614,7 +614,7 @@ def test_promote_experiment_selects_best_metric(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    exp_manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    exp_manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
     manifest = json.loads(exp_manifest_path.read_text())
     manifest["runs"] = ["run-a", "run-b"]
     exp_manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
@@ -642,7 +642,7 @@ def test_promote_experiment_validates_explicit_run(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    exp_manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    exp_manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
     manifest = json.loads(exp_manifest_path.read_text())
     manifest["runs"] = ["run-a"]
     exp_manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
@@ -660,7 +660,7 @@ def test_report_experiment_ranks_rows(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    exp_manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    exp_manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
     manifest = json.loads(exp_manifest_path.read_text())
     manifest["runs"] = ["run-a", "run-b"]
     manifest["champion_run_id"] = "run-b"
@@ -709,7 +709,7 @@ def test_pack_experiment_writes_markdown_summary(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id, name="Packed Experiment")
 
-    exp_dir = store_root / "experiments" / experiment_id
+    exp_dir = store_root.parent / "experiments" / experiment_id
     manifest_path = exp_dir / "experiment.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["status"] = "complete"
@@ -779,7 +779,7 @@ def test_pack_experiment_supports_archived_experiments(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["runs"] = ["run-a"]
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
@@ -805,7 +805,7 @@ def test_pack_experiment_requires_experiment_doc(tmp_path: Path) -> None:
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    exp_doc = store_root / "experiments" / experiment_id / "EXPERIMENT.md"
+    exp_doc = store_root.parent / "experiments" / experiment_id / "EXPERIMENT.md"
     exp_doc.unlink()
 
     with pytest.raises(ExperimentValidationError, match="experiment_doc_missing"):
@@ -828,7 +828,7 @@ def test_pack_experiment_requires_run_artifacts(
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
 
-    manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
+    manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["runs"] = ["run-a"]
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
@@ -881,7 +881,7 @@ def test_archive_and_unarchive_experiment_round_trip(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id, name="Alpha")
-    exp_dir = store_root / "experiments" / experiment_id
+    exp_dir = store_root.parent / "experiments" / experiment_id
     (exp_dir / "configs" / "base.json").write_text("{}")
     (exp_dir / "run_plan.csv").write_text("target,horizon,seed,config_path\n")
     manifest_path = exp_dir / "experiment.json"
@@ -892,7 +892,7 @@ def test_archive_and_unarchive_experiment_round_trip(tmp_path: Path) -> None:
     service_module._index_experiment_manifest(store_root, manifest)
 
     archived = service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
-    archived_dir = store_root / "experiments" / "_archive" / experiment_id
+    archived_dir = store_root.parent / "experiments" / "_archive" / experiment_id
     assert archived.archived is True
     assert archived.status == "archived"
     assert archived_dir.is_dir()
@@ -926,8 +926,8 @@ def test_archive_destination_conflict_does_not_mutate_live_manifest(tmp_path: Pa
     store_root = tmp_path / ".numereng"
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
-    live_manifest_path = store_root / "experiments" / experiment_id / "experiment.json"
-    archive_dir = store_root / "experiments" / "_archive" / experiment_id
+    live_manifest_path = store_root.parent / "experiments" / experiment_id / "experiment.json"
+    archive_dir = store_root.parent / "experiments" / "_archive" / experiment_id
     archive_dir.mkdir(parents=True)
     (archive_dir / "placeholder.txt").write_text("occupied")
 
@@ -944,8 +944,8 @@ def test_unarchive_destination_conflict_does_not_mutate_archived_manifest(tmp_pa
     experiment_id = "2026-02-22_test-exp"
     service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
     service_module.archive_experiment(store_root=store_root, experiment_id=experiment_id)
-    archived_manifest_path = store_root / "experiments" / "_archive" / experiment_id / "experiment.json"
-    live_dir = store_root / "experiments" / experiment_id
+    archived_manifest_path = store_root.parent / "experiments" / "_archive" / experiment_id / "experiment.json"
+    live_dir = store_root.parent / "experiments" / experiment_id
     live_dir.mkdir(parents=True)
     (live_dir / "placeholder.txt").write_text("occupied")
 
@@ -1008,7 +1008,7 @@ def test_list_experiments_excludes_archived_by_default(tmp_path: Path) -> None:
 def test_list_experiments_ignores_bad_archived_manifest_by_default(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     service_module.create_experiment(store_root=store_root, experiment_id="2026-02-22_alpha")
-    archived_dir = store_root / "experiments" / "_archive" / "2026-02-22_beta"
+    archived_dir = store_root.parent / "experiments" / "_archive" / "2026-02-22_beta"
     archived_dir.mkdir(parents=True)
     (archived_dir / "experiment.json").write_text("{not-json")
 

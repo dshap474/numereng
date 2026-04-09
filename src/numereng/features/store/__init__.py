@@ -1,5 +1,13 @@
 """Public surface for store bootstrap and indexing services."""
 
+from numereng.features.store.layout import (
+    CANONICAL_STORE_DIRNAME,
+    CANONICAL_WORKSPACE_TOP_LEVEL_DIRS,
+    WorkspaceLayout,
+    resolve_workspace_layout,
+    resolve_workspace_layout_from_store_root,
+    resolve_workspace_root,
+)
 from numereng.features.store.service import (
     StoreCloudJobUpsert,
     StoreDoctorResult,
@@ -51,6 +59,8 @@ from numereng.features.store.service import (
 )
 
 __all__ = [
+    "CANONICAL_STORE_DIRNAME",
+    "CANONICAL_WORKSPACE_TOP_LEVEL_DIRS",
     "StoreCloudJobUpsert",
     "StoreDoctorResult",
     "StoreEnsembleComponentRecord",
@@ -93,6 +103,10 @@ __all__ = [
     "replace_ensemble_components",
     "replace_ensemble_metrics",
     "resolve_store_root",
+    "WorkspaceLayout",
+    "resolve_workspace_layout",
+    "resolve_workspace_layout_from_store_root",
+    "resolve_workspace_root",
     "upsert_ensemble",
     "upsert_experiment",
     "upsert_hpo_study",
