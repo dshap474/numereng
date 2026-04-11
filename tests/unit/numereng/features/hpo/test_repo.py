@@ -21,8 +21,7 @@ def _insert_raw_study_row(
     store_root: Path,
     study_id: str,
     status: str = "completed",
-    direction: str = "maximize",
-    sampler: str = "tpe",
+    stop_reason: str | None = None,
 ) -> None:
     init_result = init_store_db(store_root=store_root)
     stamp = datetime.now(UTC).isoformat()
@@ -31,9 +30,9 @@ def _insert_raw_study_row(
             """
             INSERT INTO hpo_studies (
                 study_id, experiment_id, study_name, status, metric, direction, n_trials, sampler,
-                seed, best_trial_number, best_value, best_run_id, config_json, storage_path,
-                error_message, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                seed, best_trial_number, best_value, best_run_id, config_json, attempted_trials,
+                completed_trials, failed_trials, stop_reason, storage_path, error_message, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 study_id,
@@ -41,15 +40,19 @@ def _insert_raw_study_row(
                 "study-a",
                 status,
                 "bmc_last_200_eras.mean",
-                direction,
+                "maximize",
                 2,
-                sampler,
+                "tpe",
                 1337,
                 1,
                 0.12,
                 "run-1",
-                "{}",
-                str(store_root / "experiments" / "exp-1" / "hpo" / study_id),
+                '{"study_id":"study-a","study_name":"study-a","config_path":"configs/base.json","experiment_id":"exp-1","objective":{"metric":"bmc_last_200_eras.mean","direction":"maximize","neutralization":{"enabled":false,"neutralizer_path":null,"proportion":0.5,"mode":"era","neutralizer_cols":null,"rank_output":true}},"search_space":{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.1,"step":null,"log":false,"choices":null}},"sampler":{"kind":"tpe","seed":1337,"n_startup_trials":10,"multivariate":true,"group":false},"stopping":{"max_trials":2,"max_completed_trials":null,"timeout_seconds":null,"plateau":{"enabled":false,"min_completed_trials":15,"patience_completed_trials":10,"min_improvement_abs":0.00025}}}',  # noqa: E501
+                2,
+                1,
+                1,
+                stop_reason,
+                str(store_root.parent / "experiments" / "exp-1" / "hpo" / study_id),
                 None,
                 stamp,
                 stamp,
@@ -66,11 +69,11 @@ def test_get_study_raises_for_invalid_persisted_status(tmp_path: Path) -> None:
         repo_module.get_study(store_root=store_root, study_id="study-invalid-status")
 
 
-def test_list_studies_raises_for_invalid_persisted_direction(tmp_path: Path) -> None:
+def test_list_studies_raises_for_invalid_stop_reason(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    _insert_raw_study_row(store_root=store_root, study_id="study-invalid-direction", direction="sideways")
+    _insert_raw_study_row(store_root=store_root, study_id="study-invalid-stop-reason", stop_reason="mystery")
 
-    with pytest.raises(ValueError, match="hpo_direction_invalid"):
+    with pytest.raises(ValueError, match="hpo_stop_reason_invalid"):
         repo_module.list_studies(store_root=store_root)
 
 
@@ -92,7 +95,10 @@ def test_list_trials_raises_for_invalid_trial_status(tmp_path: Path) -> None:
             best_value=0.1,
             best_run_id="run-1",
             config_json="{}",
-            storage_path=str(store_root / "experiments" / "exp-1" / "hpo" / "study-valid"),
+            attempted_trials=1,
+            completed_trials=1,
+            failed_trials=0,
+            storage_path=str(store_root.parent / "experiments" / "exp-1" / "hpo" / "study-valid"),
         ),
     )
     upsert_hpo_trial(

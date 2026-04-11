@@ -66,7 +66,11 @@ def _write_fake_backend_module(
 
 
 def _custom_model_path(model_name: str) -> Path:
-    return model_factory._resolve_custom_models_root() / f"{model_name}.py"
+    return Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models" / f"{model_name}.py"
+
+
+def _repo_custom_models_root() -> Path:
+    return Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models"
 
 
 def test_build_model_uses_builtin_model_registry() -> None:
@@ -229,6 +233,7 @@ def test_build_model_xgboost_from_explicit_module_path(monkeypatch: pytest.Monke
 
 def test_build_model_xgboost_from_custom_root(monkeypatch: pytest.MonkeyPatch) -> None:
     _write_fake_backend_module(monkeypatch, "xgboost", "XGBRegressor", True)
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", _repo_custom_models_root)
 
     model = model_factory.build_model("XGBoostRegressor", {"n_estimators": 200}, {})
     assert model.__class__.__name__ == "XGBoostRegressor"
@@ -261,9 +266,23 @@ def test_build_model_catboost_from_explicit_module_path(monkeypatch: pytest.Monk
 
 def test_build_model_catboost_from_custom_root(monkeypatch: pytest.MonkeyPatch) -> None:
     _write_fake_backend_module(monkeypatch, "catboost", "CatBoostRegressor", True)
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", _repo_custom_models_root)
 
     model = model_factory.build_model("CatBoostRegressor", {"iterations": 200}, {})
     assert model.__class__.__name__ == "CatBoostRegressor"
+
+
+def test_build_model_does_not_fall_back_to_packaged_repo_custom_models(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    empty_root = tmp_path / "custom_models"
+    empty_root.mkdir()
+    _write_fake_backend_module(monkeypatch, "xgboost", "XGBRegressor", True)
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: empty_root)
+
+    with pytest.raises(TrainingModelError, match="training_model_type_not_supported"):
+        model_factory.build_model("XGBoostRegressor", {"n_estimators": 200}, {})
 
 
 def test_build_model_catboost_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:

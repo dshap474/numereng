@@ -1458,13 +1458,14 @@ def _infer_experiment_id_from_config_path(config_path: str, *, store_root: str) 
         path = (workspace_root / path).resolve()
     else:
         path = path.resolve()
-    try:
-        relative = path.relative_to(workspace_root)
-    except ValueError:
-        return None
-    parts = list(relative.parts)
-    if len(parts) >= 4 and parts[0] == "experiments" and parts[2] == "configs":
-        return parts[1]
+    for base in (store_root_path, workspace_root):
+        try:
+            relative = path.relative_to(base)
+        except ValueError:
+            continue
+        parts = list(relative.parts)
+        if len(parts) >= 4 and parts[0] == "experiments" and parts[2] == "configs":
+            return parts[1]
     return None
 
 

@@ -88,6 +88,22 @@ def _print_experiment_report_table(payload: api.ExperimentReportResponse) -> Non
         )
 
 
+def _print_experiment_run_plan_table(payload: api.ExperimentRunPlanResponse) -> None:
+    print(f"experiment_id: {payload.experiment_id}")
+    print(f"phase: {payload.phase}")
+    print(f"window: {payload.window.start_index}..{payload.window.end_index} of {payload.window.total_rows}")
+    print(f"score_stage: {payload.requested_score_stage}")
+    print(f"last_completed_row_index: {payload.last_completed_row_index or 'none'}")
+    print(f"current_index: {payload.current_index or 'none'}")
+    print(f"current_round: {payload.current_round or 'none'}")
+    print(f"current_config_path: {payload.current_config_path or 'none'}")
+    print(f"current_run_id: {payload.current_run_id or 'none'}")
+    print(f"supervisor_pid: {payload.supervisor_pid or 'none'}")
+    print(f"failure_classifier: {payload.failure_classifier or 'none'}")
+    print(f"terminal_error: {payload.terminal_error or 'none'}")
+    print(f"state_path: {payload.state_path}")
+
+
 def handle_experiment_command(args: Sequence[str]) -> int:
     if not args:
         print(USAGE)
@@ -226,6 +242,63 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             print(details_payload.model_dump_json())
         else:
             _print_experiment_details_table(details_payload)
+        return 0
+
+    if args[0] == "run-plan":
+        values, toggles, parse_error = _parse_simple_options(
+            args[1:],
+            value_flags={"--id", "--start-index", "--end-index", "--score-stage", "--format", "--workspace"},
+            bool_flags={"--resume"},
+        )
+        if parse_error == "__help__":
+            print(USAGE)
+            return 0
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        experiment_id = values.get("--id")
+        if experiment_id is None:
+            print("missing required argument: --id", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        output_format = values.get("--format", "table")
+        if output_format not in {"table", "json"}:
+            print("invalid value for --format: expected table|json", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        start_index, end_index, parse_error = _parse_index_window(values)
+        if parse_error is not None:
+            print(parse_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        score_stage = values.get("--score-stage", "post_training_core")
+        if score_stage not in {"post_training_core", "post_training_full"}:
+            print("invalid value for --score-stage: expected post_training_core|post_training_full", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        try:
+            payload = api.experiment_run_plan(
+                api.ExperimentRunPlanRequest(
+                    experiment_id=experiment_id,
+                    start_index=start_index,
+                    end_index=end_index,
+                    score_stage=score_stage,
+                    resume="--resume" in toggles,
+                    workspace_root=values.get("--workspace", "."),
+                )
+            )
+        except ValidationError as exc:
+            print(_validation_error_message(exc), file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        except PackageError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if output_format == "json":
+            print(payload.model_dump_json())
+        else:
+            _print_experiment_run_plan_table(payload)
         return 0
 
     if args[0] in {"archive", "unarchive"}:
@@ -531,6 +604,20 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     print(f"unknown arguments: experiment {' '.join(args)}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2
+
+
+def _parse_index_window(values: dict[str, str]) -> tuple[int, int | None, str | None]:
+    start_index = 1
+    end_index: int | None = None
+    if "--start-index" in values:
+        start_index, error = _parse_int_value(values["--start-index"], flag="--start-index", minimum=1)
+        if error is not None or start_index is None:
+            return 1, None, error or "invalid --start-index"
+    if "--end-index" in values:
+        end_index, error = _parse_int_value(values["--end-index"], flag="--end-index", minimum=1)
+        if error is not None:
+            return start_index, None, error
+    return start_index, end_index, None
 
 
 __all__ = ["handle_experiment_command"]

@@ -104,3 +104,36 @@ class ExperimentPackResult:
     source_markdown_path: Path
     run_count: int
     packed_at: str
+
+
+@dataclass(frozen=True)
+class ExperimentRunPlanWindow:
+    """One persisted run-plan window selection."""
+
+    start_index: int
+    end_index: int
+    total_rows: int
+
+
+@dataclass(frozen=True)
+class ExperimentRunPlanResult:
+    """Terminal or in-flight state for one source-owned run-plan execution."""
+
+    experiment_id: str
+    state_path: Path
+    window: ExperimentRunPlanWindow
+    phase: Literal["training", "round_scoring", "complete", "failed", "stopped"]
+    requested_score_stage: Literal["post_training_core", "post_training_full"]
+    completed_score_stages: tuple[str, ...]
+    current_index: int | None
+    current_round: str | None
+    current_config_path: Path | None
+    current_run_id: str | None
+    last_completed_row_index: int | None
+    supervisor_pid: int | None
+    active_worker_pid: int | None
+    last_successful_heartbeat_at: str | None
+    failure_classifier: str | None
+    retry_count: int
+    terminal_error: str | None
+    updated_at: str

@@ -410,7 +410,7 @@ def test_build_ensemble_cleans_new_artifacts_when_save_fails(
             ),
         )
 
-    artifacts_path = store_root / "experiments" / "exp-1" / "ensembles" / "ens-save-fail"
+    artifacts_path = store_root.parent / "experiments" / "exp-1" / "ensembles" / "ens-save-fail"
     assert not artifacts_path.exists()
 
 

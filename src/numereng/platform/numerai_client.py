@@ -90,6 +90,42 @@ class NumeraiClient:
             raise NumeraiClientError("numerai_upload_predictions_failed") from exc
         return str(submission_id)
 
+    def model_upload(
+        self,
+        *,
+        file_path: str,
+        model_id: str,
+        data_version: str | None = None,
+        docker_image: str | None = None,
+    ) -> str:
+        """Upload a Numerai model pickle and return the upload id."""
+        try:
+            upload_id = self._client.model_upload(
+                file_path=file_path,
+                model_id=model_id,
+                data_version=data_version,
+                docker_image=docker_image,
+            )
+        except Exception as exc:  # pragma: no cover - error mapping exercised in tests
+            raise NumeraiClientError("numerai_model_upload_failed") from exc
+        return str(upload_id)
+
+    def model_upload_data_versions(self) -> list[str]:
+        """Return available Numerai model-upload data versions."""
+        try:
+            values = self._client.model_upload_data_versions()
+        except Exception as exc:  # pragma: no cover - error mapping exercised in tests
+            raise NumeraiClientError("numerai_model_upload_data_versions_failed") from exc
+        return [str(item) for item in values]
+
+    def model_upload_docker_images(self) -> list[str]:
+        """Return available Numerai model-upload docker images."""
+        try:
+            values = self._client.model_upload_docker_images()
+        except Exception as exc:  # pragma: no cover - error mapping exercised in tests
+            raise NumeraiClientError("numerai_model_upload_docker_images_failed") from exc
+        return [str(item) for item in values]
+
     def get_current_round(self) -> int | None:
         """Return current round number when available."""
         try:

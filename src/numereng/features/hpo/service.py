@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from contextlib import nullcontext
@@ -11,6 +12,7 @@ from typing import Any
 
 import pandas as pd
 
+from numereng.config.hpo.contracts import canonicalize_hpo_sampler_payload, canonicalize_hpo_study_payload
 from numereng.config.training import TrainingConfigLoaderError, ensure_json_config_path, load_training_config_json
 from numereng.features.feature_neutralization import (
     NeutralizationDataError,
@@ -20,14 +22,18 @@ from numereng.features.feature_neutralization import (
     neutralize_predictions_file,
 )
 from numereng.features.hpo.artifacts import (
-    build_study_id,
+    ensure_safe_study_id,
+    read_study_spec,
     resolve_study_storage_path,
+    write_study_spec,
+    write_study_summary,
     write_trial_config,
     write_trials_table,
 )
 from numereng.features.hpo.contracts import (
     HpoDirection,
     HpoStatus,
+    HpoStopReason,
     HpoStudyCreateRequest,
     HpoStudyRecord,
     HpoStudyResult,
@@ -35,18 +41,17 @@ from numereng.features.hpo.contracts import (
     HpoTrialResult,
 )
 from numereng.features.hpo.repo import get_study, list_studies, list_trials, save_study, save_trial
-from numereng.features.hpo.runner_optuna import HpoOptunaError, run_optuna_study
+from numereng.features.hpo.runner_optuna import HpoOptunaError, HpoOptunaStudyResult, run_optuna_study
 from numereng.features.hpo.search_space import HpoSearchSpaceError, apply_param_overrides, resolve_search_space
-from numereng.features.scoring.metrics import (
-    DEFAULT_META_MODEL_COL,
-)
+from numereng.features.scoring.metrics import DEFAULT_META_MODEL_COL
 from numereng.features.scoring.models import PostTrainingScoringRequest
 from numereng.features.scoring.service import run_post_training_scoring
 from numereng.features.store import StoreError, index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
-from numereng.features.training import TrainingRunResult, run_training
+from numereng.features.training import TrainingRunPreview, TrainingRunResult, preview_training_run, run_training
 from numereng.features.training.client import TrainingDataClient, create_training_data_client
 from numereng.features.training.repo import DEFAULT_DATASETS_DIR
+from numereng.features.training.run_lock import RUN_LOCK_FILENAME
 from numereng.features.training.service import resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
@@ -80,20 +85,9 @@ def create_study(
     store_root: str | Path = ".numereng",
     request: HpoStudyCreateRequest,
 ) -> HpoStudyResult:
-    """Create and execute one Optuna-backed HPO study."""
+    """Create or resume one Optuna-backed HPO study."""
 
-    if not request.study_name.strip():
-        raise HpoValidationError("hpo_study_name_invalid")
-    if request.n_trials < 1:
-        raise HpoValidationError("hpo_n_trials_invalid")
-    if request.neutralization_proportion < 0.0 or request.neutralization_proportion > 1.0:
-        raise HpoValidationError("hpo_neutralization_proportion_invalid")
-    if request.neutralization_mode not in {"era", "global"}:
-        raise HpoValidationError("hpo_neutralization_mode_invalid")
-    if request.neutralize and request.neutralizer_path is None:
-        raise HpoValidationError("hpo_neutralizer_path_required")
-    if request.experiment_id is not None and not _SAFE_ID.match(request.experiment_id):
-        raise HpoValidationError(f"hpo_experiment_id_invalid:{request.experiment_id}")
+    _validate_create_request(request)
 
     try:
         _ = ensure_json_config_path(str(request.config_path), field_name="config_path")
@@ -110,81 +104,115 @@ def create_study(
         raise HpoValidationError(str(exc)) from exc
 
     try:
-        param_specs = resolve_search_space(base_config=base_config, raw_search_space=request.search_space)
+        param_specs = resolve_search_space(raw_search_space=request.search_space)
     except HpoSearchSpaceError as exc:
         raise HpoValidationError(str(exc)) from exc
 
-    resolved_neutralizer_cols: tuple[str, ...] | None = None
-    if request.neutralize:
-        if request.neutralizer_path is None:  # pragma: no cover - guarded by validation
-            raise HpoValidationError("hpo_neutralizer_path_required")
-        try:
-            _, resolved_neutralizer_cols = load_neutralizer_table(
-                neutralizer_path=request.neutralizer_path,
-                neutralizer_cols=request.neutralizer_cols,
-            )
-        except (NeutralizationValidationError, NeutralizationDataError) as exc:
-            raise HpoValidationError(str(exc)) from exc
-
+    resolved_neutralizer_cols = _resolve_neutralization_cols(request)
     resolved_root = resolve_store_root(store_root)
-    study_id = build_study_id(study_name=request.study_name, experiment_id=request.experiment_id)
     storage_path = resolve_study_storage_path(
         store_root=resolved_root,
         experiment_id=request.experiment_id,
-        study_id=study_id,
+        study_id=request.study_id,
     )
 
-    initial_time = _utc_now_iso()
-    result_snapshot = HpoStudyResult(
-        study_id=study_id,
-        study_name=request.study_name,
-        experiment_id=request.experiment_id,
-        status="running",
-        metric=request.metric,
-        direction=request.direction,
-        n_trials=request.n_trials,
-        sampler=request.sampler,
-        seed=request.seed,
-        best_trial_number=None,
-        best_value=None,
-        best_run_id=None,
+    full_spec = canonicalize_hpo_study_payload(
+        _study_spec_payload(
+            request=request,
+            resolved_config_path=config_path,
+            resolved_neutralizer_cols=resolved_neutralizer_cols,
+        )
+    )
+    immutable_spec = _immutable_study_spec(
+        full_spec=full_spec,
+        base_config_hash=_hash_payload(base_config),
+    )
+    existing_immutable_spec = read_study_spec(storage_path=storage_path)
+    if existing_immutable_spec is None:
+        write_study_spec(storage_path=storage_path, payload=immutable_spec)
+    else:
+        existing_immutable_spec = canonicalize_hpo_study_payload(existing_immutable_spec)
+        write_study_spec(storage_path=storage_path, payload=existing_immutable_spec)
+        _validate_resume_spec(
+            study_id=request.study_id,
+            existing_immutable_spec=existing_immutable_spec,
+            expected_immutable_spec=immutable_spec,
+        )
+
+    existing_record = get_study(store_root=resolved_root, study_id=request.study_id)
+    existing_trials = list_trials(store_root=resolved_root, study_id=request.study_id)
+    trial_results = [_trial_result_from_record(record) for record in existing_trials]
+    trial_rows = [_trial_row_payload(record) for record in existing_trials]
+    created_at = existing_record.created_at if existing_record is not None else _utc_now_iso()
+
+    entry_stop_reason = _budget_stop_reason(
+        trials=trial_results,
+        direction=request.objective.direction,
+        max_trials=request.stopping.max_trials,
+        max_completed_trials=request.stopping.max_completed_trials,
+        plateau_enabled=request.stopping.plateau.enabled,
+        min_completed_trials=request.stopping.plateau.min_completed_trials,
+        patience_completed_trials=request.stopping.plateau.patience_completed_trials,
+        min_improvement_abs=request.stopping.plateau.min_improvement_abs,
+    )
+    if entry_stop_reason is not None:
+        terminal_snapshot = _study_snapshot(
+            request=request,
+            spec=full_spec,
+            storage_path=storage_path,
+            trials=trial_results,
+            status="failed" if entry_stop_reason == "all_trials_failed" else "completed",
+            stop_reason=entry_stop_reason,
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+            error_message="hpo_trials_all_failed" if entry_stop_reason == "all_trials_failed" else None,
+        )
+        _persist_study_snapshot(
+            store_root=resolved_root,
+            storage_path=storage_path,
+            snapshot=terminal_snapshot,
+            trial_rows=trial_rows,
+        )
+        return terminal_snapshot
+
+    running_snapshot = _study_snapshot(
+        request=request,
+        spec=full_spec,
         storage_path=storage_path,
-        config={
-            "config_path": str(config_path),
-            "search_space": [
-                {
-                    "path": spec.path,
-                    "kind": spec.kind,
-                    "low": spec.low,
-                    "high": spec.high,
-                    "step": spec.step,
-                    "log": spec.log,
-                    "choices": list(spec.choices),
-                }
-                for spec in param_specs
-            ],
-            "neutralization": {
-                "enabled": request.neutralize,
-                "neutralizer_path": str(request.neutralizer_path) if request.neutralizer_path else None,
-                "proportion": request.neutralization_proportion,
-                "mode": request.neutralization_mode,
-                "neutralizer_cols": (
-                    list(resolved_neutralizer_cols)
-                    if resolved_neutralizer_cols is not None
-                    else (list(request.neutralizer_cols) if request.neutralizer_cols is not None else None)
-                ),
-                "rank_output": request.neutralization_rank_output,
-            },
-        },
-        trials=(),
-        created_at=initial_time,
-        updated_at=initial_time,
+        trials=trial_results,
+        status="running",
+        stop_reason=None,
+        created_at=created_at,
+        updated_at=_utc_now_iso(),
+        error_message=None,
     )
-    save_study(store_root=resolved_root, payload=result_snapshot)
+    _persist_study_snapshot(
+        store_root=resolved_root,
+        storage_path=storage_path,
+        snapshot=running_snapshot,
+        trial_rows=trial_rows,
+    )
 
-    trial_rows: list[dict[str, Any]] = []
-    trial_results: list[HpoTrialResult] = []
-    neutralized_metric_client = create_training_data_client() if request.neutralize else None
+    neutralized_metric_client = create_training_data_client() if request.objective.neutralization.enabled else None
+
+    def persist_running_snapshot() -> None:
+        snapshot = _study_snapshot(
+            request=request,
+            spec=full_spec,
+            storage_path=storage_path,
+            trials=trial_results,
+            status="running",
+            stop_reason=None,
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+            error_message=None,
+        )
+        _persist_study_snapshot(
+            store_root=resolved_root,
+            storage_path=storage_path,
+            snapshot=snapshot,
+            trial_rows=trial_rows,
+        )
 
     def objective_callback(trial_number: int, params: dict[str, Any]) -> float:
         started_at = _utc_now_iso()
@@ -197,6 +225,70 @@ def create_study(
         training_result: TrainingRunResult | None = None
 
         try:
+            reused_trial = _find_completed_trial_for_params(trials=trial_results, params=params)
+            if reused_trial is not None:
+                if reused_trial.value is None:
+                    raise HpoExecutionError(
+                        f"hpo_trial_reuse_value_missing:{request.study_id}:{reused_trial.trial_number}"
+                    )
+                trial_payload = HpoTrialResult(
+                    study_id=request.study_id,
+                    trial_number=trial_number,
+                    status="completed",
+                    params=params,
+                    value=float(reused_trial.value),
+                    run_id=reused_trial.run_id,
+                    config_path=trial_config_path,
+                    started_at=started_at,
+                    finished_at=_utc_now_iso(),
+                    error_message=None,
+                )
+                _record_trial_result(
+                    store_root=resolved_root,
+                    trial_results=trial_results,
+                    trial_rows=trial_rows,
+                    trial_payload=trial_payload,
+                )
+                persist_running_snapshot()
+                return float(reused_trial.value)
+
+            preview = preview_training_run(
+                config_path=trial_config_path,
+                output_dir=resolved_root,
+                experiment_id=request.experiment_id,
+            )
+            reused_existing_run = _maybe_reuse_existing_run(
+                request=request,
+                params=params,
+                resolved_neutralizer_cols=resolved_neutralizer_cols,
+                neutralized_metric_client=neutralized_metric_client,
+                trial_config_path=trial_config_path,
+                store_root=resolved_root,
+                preview=preview,
+            )
+            if reused_existing_run is not None:
+                reused_run_id, metric_value = reused_existing_run
+                trial_payload = HpoTrialResult(
+                    study_id=request.study_id,
+                    trial_number=trial_number,
+                    status="completed",
+                    params=params,
+                    value=metric_value,
+                    run_id=reused_run_id,
+                    config_path=trial_config_path,
+                    started_at=started_at,
+                    finished_at=_utc_now_iso(),
+                    error_message=None,
+                )
+                _record_trial_result(
+                    store_root=resolved_root,
+                    trial_results=trial_results,
+                    trial_rows=trial_rows,
+                    trial_payload=trial_payload,
+                )
+                persist_running_snapshot()
+                return metric_value
+
             launch_scope = (
                 nullcontext()
                 if get_launch_metadata() is not None
@@ -209,39 +301,16 @@ def create_study(
                     experiment_id=request.experiment_id,
                 )
             index_run(store_root=resolved_root, run_id=training_result.run_id)
-            if request.neutralize:
-                if request.neutralizer_path is None:
-                    raise HpoValidationError("hpo_neutralizer_path_required")
-                neutralized_result = neutralize_predictions_file(
-                    request=NeutralizePredictionsRequest(
-                        predictions_path=training_result.predictions_path,
-                        neutralizer_path=request.neutralizer_path,
-                        proportion=request.neutralization_proportion,
-                        mode=request.neutralization_mode,
-                        neutralizer_cols=request.neutralizer_cols,
-                        rank_output=request.neutralization_rank_output,
-                    ),
-                    run_id=training_result.run_id,
-                )
-                if neutralized_metric_client is None:  # pragma: no cover - defensive gate
-                    raise HpoExecutionError("hpo_neutralization_client_missing")
-                metric_value = _extract_metric_value_from_predictions(
-                    predictions_path=neutralized_result.output_path,
-                    trial_config_path=trial_config_path,
-                    metric=request.metric,
-                    scoring_client=neutralized_metric_client,
-                )
-            elif request.metric == _DEFAULT_HPO_METRIC:
-                metric_value = _extract_post_fold_objective_value(
-                    store_root=resolved_root,
-                    run_id=training_result.run_id,
-                    results_path=training_result.results_path,
-                )
-            else:
-                metric_value = _extract_metric_value(results_path=training_result.results_path, metric=request.metric)
-            finished_at = _utc_now_iso()
+            metric_value = _resolve_trial_metric(
+                request=request,
+                resolved_neutralizer_cols=resolved_neutralizer_cols,
+                neutralized_metric_client=neutralized_metric_client,
+                trial_config_path=trial_config_path,
+                training_result=training_result,
+                store_root=resolved_root,
+            )
             trial_payload = HpoTrialResult(
-                study_id=study_id,
+                study_id=request.study_id,
                 trial_number=trial_number,
                 status="completed",
                 params=params,
@@ -249,27 +318,21 @@ def create_study(
                 run_id=training_result.run_id,
                 config_path=trial_config_path,
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=_utc_now_iso(),
                 error_message=None,
             )
-            save_trial(store_root=resolved_root, payload=trial_payload)
-            trial_results.append(trial_payload)
-            trial_rows.append(
-                {
-                    "trial_number": trial_number,
-                    "status": "completed",
-                    "value": metric_value,
-                    "run_id": training_result.run_id,
-                    "params": json.dumps(params, sort_keys=True, ensure_ascii=True),
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                }
+            _record_trial_result(
+                store_root=resolved_root,
+                trial_results=trial_results,
+                trial_rows=trial_rows,
+                trial_payload=trial_payload,
             )
+            persist_running_snapshot()
             return metric_value
         except StoreError as exc:
-            finished_at = _utc_now_iso()
+            error_message = f"hpo_trial_index_failed:{trial_number}"
             trial_payload = HpoTrialResult(
-                study_id=study_id,
+                study_id=request.study_id,
                 trial_number=trial_number,
                 status="failed",
                 params=params,
@@ -277,28 +340,20 @@ def create_study(
                 run_id=training_result.run_id if training_result is not None else None,
                 config_path=trial_config_path,
                 started_at=started_at,
-                finished_at=finished_at,
-                error_message=f"hpo_trial_index_failed:{trial_number}",
+                finished_at=_utc_now_iso(),
+                error_message=error_message,
             )
-            save_trial(store_root=resolved_root, payload=trial_payload)
-            trial_results.append(trial_payload)
-            trial_rows.append(
-                {
-                    "trial_number": trial_number,
-                    "status": "failed",
-                    "value": None,
-                    "run_id": training_result.run_id if training_result is not None else None,
-                    "params": json.dumps(params, sort_keys=True, ensure_ascii=True),
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "error_message": f"hpo_trial_index_failed:{trial_number}",
-                }
+            _record_trial_result(
+                store_root=resolved_root,
+                trial_results=trial_results,
+                trial_rows=trial_rows,
+                trial_payload=trial_payload,
             )
-            raise HpoExecutionError(f"hpo_trial_index_failed:{trial_number}") from exc
+            persist_running_snapshot()
+            raise HpoExecutionError(error_message) from exc
         except Exception as exc:
-            finished_at = _utc_now_iso()
             trial_payload = HpoTrialResult(
-                study_id=study_id,
+                study_id=request.study_id,
                 trial_number=trial_number,
                 status="failed",
                 params=params,
@@ -306,103 +361,89 @@ def create_study(
                 run_id=training_result.run_id if training_result is not None else None,
                 config_path=trial_config_path,
                 started_at=started_at,
-                finished_at=finished_at,
+                finished_at=_utc_now_iso(),
                 error_message=str(exc),
             )
-            save_trial(store_root=resolved_root, payload=trial_payload)
-            trial_results.append(trial_payload)
-            trial_rows.append(
-                {
-                    "trial_number": trial_number,
-                    "status": "failed",
-                    "value": None,
-                    "run_id": training_result.run_id if training_result is not None else None,
-                    "params": json.dumps(params, sort_keys=True, ensure_ascii=True),
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "error_message": str(exc),
-                }
+            _record_trial_result(
+                store_root=resolved_root,
+                trial_results=trial_results,
+                trial_rows=trial_rows,
+                trial_payload=trial_payload,
             )
+            persist_running_snapshot()
             raise
 
     try:
-        best_trial_number, best_value = run_optuna_study(
-            direction=request.direction,
-            n_trials=request.n_trials,
+        run_result = run_optuna_study(
+            study_id=request.study_id,
+            storage_path=storage_path,
+            direction=request.objective.direction,
             sampler=request.sampler,
-            seed=request.seed,
+            stopping=request.stopping,
             specs=param_specs,
             objective_callback=objective_callback,
+            summary_callback=persist_running_snapshot,
         )
     except HpoOptunaError as exc:
-        failed_time = _utc_now_iso()
-        failed_result = HpoStudyResult(
-            study_id=study_id,
-            study_name=request.study_name,
-            experiment_id=request.experiment_id,
-            status="failed",
-            metric=request.metric,
-            direction=request.direction,
-            n_trials=request.n_trials,
-            sampler=request.sampler,
-            seed=request.seed,
-            best_trial_number=None,
-            best_value=None,
-            best_run_id=None,
+        failed_snapshot = _study_snapshot(
+            request=request,
+            spec=full_spec,
             storage_path=storage_path,
-            config=result_snapshot.config,
-            trials=tuple(trial_results),
-            created_at=initial_time,
-            updated_at=failed_time,
+            trials=trial_results,
+            status="failed",
+            stop_reason=_budget_stop_reason(
+                trials=trial_results,
+                direction=request.objective.direction,
+                max_trials=request.stopping.max_trials,
+                max_completed_trials=request.stopping.max_completed_trials,
+                plateau_enabled=request.stopping.plateau.enabled,
+                min_completed_trials=request.stopping.plateau.min_completed_trials,
+                patience_completed_trials=request.stopping.plateau.patience_completed_trials,
+                min_improvement_abs=request.stopping.plateau.min_improvement_abs,
+            ),
+            created_at=created_at,
+            updated_at=_utc_now_iso(),
+            error_message=str(exc),
         )
-        save_study(store_root=resolved_root, payload=failed_result, error_message=str(exc))
-        write_trials_table(storage_path=storage_path, trials=trial_rows)
+        _persist_study_snapshot(
+            store_root=resolved_root,
+            storage_path=storage_path,
+            snapshot=failed_snapshot,
+            trial_rows=trial_rows,
+        )
         raise HpoDependencyError(str(exc)) from exc
 
-    completed_trials = [trial for trial in trial_results if trial.status == "completed" and trial.value is not None]
-    status: HpoStatus
-    if best_trial_number is None or best_value is None:
-        if not completed_trials:
-            status = "failed"
-            best_run_id = None
-            error_message = "hpo_trials_all_failed"
-        else:
-            winner = _best_trial_from_trials(completed_trials, direction=request.direction)
-            best_trial_number = winner.trial_number
-            best_value = winner.value
-            best_run_id = winner.run_id
-            status = "completed"
-            error_message = None
-    else:
-        matched_winner = next((trial for trial in completed_trials if trial.trial_number == best_trial_number), None)
-        best_run_id = matched_winner.run_id if matched_winner else None
-        status = "completed"
-        error_message = None
-
-    updated_at = _utc_now_iso()
-    final_result = HpoStudyResult(
-        study_id=study_id,
-        study_name=request.study_name,
-        experiment_id=request.experiment_id,
-        status=status,
-        metric=request.metric,
-        direction=request.direction,
-        n_trials=request.n_trials,
-        sampler=request.sampler,
-        seed=request.seed,
-        best_trial_number=best_trial_number,
-        best_value=best_value,
-        best_run_id=best_run_id,
+    final_stop_reason = run_result.stop_reason
+    if final_stop_reason is None:
+        final_stop_reason = _budget_stop_reason(
+            trials=trial_results,
+            direction=request.objective.direction,
+            max_trials=request.stopping.max_trials,
+            max_completed_trials=request.stopping.max_completed_trials,
+            plateau_enabled=request.stopping.plateau.enabled,
+            min_completed_trials=request.stopping.plateau.min_completed_trials,
+            patience_completed_trials=request.stopping.plateau.patience_completed_trials,
+            min_improvement_abs=request.stopping.plateau.min_improvement_abs,
+        )
+    final_snapshot = _study_snapshot(
+        request=request,
+        spec=full_spec,
         storage_path=storage_path,
-        config=result_snapshot.config,
-        trials=tuple(trial_results),
-        created_at=initial_time,
-        updated_at=updated_at,
+        trials=trial_results,
+        status="failed" if final_stop_reason == "all_trials_failed" else "completed",
+        stop_reason=final_stop_reason,
+        created_at=created_at,
+        updated_at=_utc_now_iso(),
+        error_message="hpo_trials_all_failed" if final_stop_reason == "all_trials_failed" else None,
+        runner_result=run_result,
     )
-    save_study(store_root=resolved_root, payload=final_result, error_message=error_message)
-    write_trials_table(storage_path=storage_path, trials=trial_rows)
-
-    return final_result
+    _persist_study_snapshot(
+        store_root=resolved_root,
+        storage_path=storage_path,
+        snapshot=final_snapshot,
+        trial_rows=trial_rows,
+    )
+    return final_snapshot
 
 
 def list_studies_view(
@@ -440,10 +481,486 @@ def get_study_trials_view(*, store_root: str | Path = ".numereng", study_id: str
     return list_trials(store_root=store_root, study_id=study_id)
 
 
+def _validate_create_request(request: HpoStudyCreateRequest) -> None:
+    if not request.study_name.strip():
+        raise HpoValidationError("hpo_study_name_invalid")
+    try:
+        _ = ensure_safe_study_id(request.study_id)
+    except ValueError as exc:
+        raise HpoValidationError("hpo_study_id_invalid") from exc
+    if request.experiment_id is not None and not _SAFE_ID.match(request.experiment_id):
+        raise HpoValidationError(f"hpo_experiment_id_invalid:{request.experiment_id}")
+    if not request.objective.metric.strip():
+        raise HpoValidationError("hpo_metric_invalid")
+    if request.stopping.max_trials < 1:
+        raise HpoValidationError("hpo_max_trials_invalid")
+    if request.stopping.max_completed_trials is not None and request.stopping.max_completed_trials < 1:
+        raise HpoValidationError("hpo_max_completed_trials_invalid")
+    if request.stopping.timeout_seconds is not None and request.stopping.timeout_seconds < 1:
+        raise HpoValidationError("hpo_timeout_seconds_invalid")
+    if request.objective.neutralization.enabled and request.objective.neutralization.neutralizer_path is None:
+        raise HpoValidationError("hpo_neutralizer_path_required")
+
+
+def _resolve_neutralization_cols(request: HpoStudyCreateRequest) -> tuple[str, ...] | None:
+    neutralization = request.objective.neutralization
+    if not neutralization.enabled:
+        return None
+    if neutralization.neutralizer_path is None:
+        raise HpoValidationError("hpo_neutralizer_path_required")
+    try:
+        _, resolved_cols = load_neutralizer_table(
+            neutralizer_path=neutralization.neutralizer_path,
+            neutralizer_cols=neutralization.neutralizer_cols,
+        )
+    except (NeutralizationValidationError, NeutralizationDataError) as exc:
+        raise HpoValidationError(str(exc)) from exc
+    return resolved_cols
+
+
+def _study_spec_payload(
+    *,
+    request: HpoStudyCreateRequest,
+    resolved_config_path: Path,
+    resolved_neutralizer_cols: tuple[str, ...] | None,
+) -> dict[str, Any]:
+    neutralization = request.objective.neutralization
+    search_space = request.search_space or {}
+    return {
+        "study_id": request.study_id,
+        "study_name": request.study_name,
+        "config_path": str(resolved_config_path),
+        "experiment_id": request.experiment_id,
+        "objective": {
+            "metric": request.objective.metric,
+            "direction": request.objective.direction,
+            "neutralization": {
+                "enabled": neutralization.enabled,
+                "neutralizer_path": str(neutralization.neutralizer_path) if neutralization.neutralizer_path else None,
+                "proportion": neutralization.proportion,
+                "mode": neutralization.mode,
+                "neutralizer_cols": list(resolved_neutralizer_cols) if resolved_neutralizer_cols is not None else None,
+                "rank_output": neutralization.rank_output,
+            },
+        },
+        "search_space": json.loads(json.dumps(search_space, sort_keys=True)),
+        "sampler": canonicalize_hpo_sampler_payload(
+            {
+                "kind": request.sampler.kind,
+                "seed": request.sampler.seed,
+                "n_startup_trials": request.sampler.n_startup_trials,
+                "multivariate": request.sampler.multivariate,
+                "group": request.sampler.group,
+            }
+        ),
+        "stopping": {
+            "max_trials": request.stopping.max_trials,
+            "max_completed_trials": request.stopping.max_completed_trials,
+            "timeout_seconds": request.stopping.timeout_seconds,
+            "plateau": {
+                "enabled": request.stopping.plateau.enabled,
+                "min_completed_trials": request.stopping.plateau.min_completed_trials,
+                "patience_completed_trials": request.stopping.plateau.patience_completed_trials,
+                "min_improvement_abs": request.stopping.plateau.min_improvement_abs,
+            },
+        },
+    }
+
+
+def _immutable_study_spec(*, full_spec: dict[str, Any], base_config_hash: str) -> dict[str, Any]:
+    return {
+        "study_id": full_spec["study_id"],
+        "study_name": full_spec["study_name"],
+        "config_path": full_spec["config_path"],
+        "experiment_id": full_spec["experiment_id"],
+        "base_config_hash": base_config_hash,
+        "objective": full_spec["objective"],
+        "search_space": full_spec["search_space"],
+        "sampler": full_spec["sampler"],
+    }
+
+
+def _validate_resume_spec(
+    *,
+    study_id: str,
+    existing_immutable_spec: dict[str, Any],
+    expected_immutable_spec: dict[str, Any],
+) -> None:
+    if existing_immutable_spec != expected_immutable_spec:
+        raise HpoValidationError(f"hpo_study_spec_mismatch:{study_id}")
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _record_trial_result(
+    *,
+    store_root: Path,
+    trial_results: list[HpoTrialResult],
+    trial_rows: list[dict[str, Any]],
+    trial_payload: HpoTrialResult,
+) -> None:
+    save_trial(store_root=store_root, payload=trial_payload)
+    _upsert_trial_result(trial_results, trial_payload)
+    _upsert_trial_row(trial_rows, trial_payload)
+
+
+def _upsert_trial_result(trial_results: list[HpoTrialResult], trial_payload: HpoTrialResult) -> None:
+    for index, item in enumerate(trial_results):
+        if item.trial_number == trial_payload.trial_number:
+            trial_results[index] = trial_payload
+            return
+    trial_results.append(trial_payload)
+    trial_results.sort(key=lambda item: item.trial_number)
+
+
+def _upsert_trial_row(trial_rows: list[dict[str, Any]], trial_payload: HpoTrialResult) -> None:
+    row = {
+        "trial_number": trial_payload.trial_number,
+        "status": trial_payload.status,
+        "value": trial_payload.value,
+        "run_id": trial_payload.run_id,
+        "config_path": str(trial_payload.config_path),
+        "params": json.dumps(trial_payload.params, sort_keys=True, ensure_ascii=True),
+        "started_at": trial_payload.started_at,
+        "finished_at": trial_payload.finished_at,
+        "error_message": trial_payload.error_message,
+    }
+    for index, item in enumerate(trial_rows):
+        if int(item.get("trial_number", -1)) == trial_payload.trial_number:
+            trial_rows[index] = row
+            return
+    trial_rows.append(row)
+    trial_rows.sort(key=lambda item: int(item["trial_number"]))
+
+
+def _study_snapshot(
+    *,
+    request: HpoStudyCreateRequest,
+    spec: dict[str, Any],
+    storage_path: Path,
+    trials: list[HpoTrialResult],
+    status: HpoStatus,
+    stop_reason: HpoStopReason | None,
+    created_at: str,
+    updated_at: str,
+    error_message: str | None,
+    runner_result: HpoOptunaStudyResult | None = None,
+) -> HpoStudyResult:
+    attempted_trials = runner_result.attempted_trials if runner_result is not None else len(trials)
+    completed_trials = (
+        runner_result.completed_trials
+        if runner_result is not None
+        else sum(1 for item in trials if item.status == "completed" and item.value is not None)
+    )
+    failed_trials = (
+        runner_result.failed_trials
+        if runner_result is not None
+        else sum(1 for item in trials if item.status == "failed")
+    )
+    best_trial_number, best_value, best_run_id = _best_trial_fields(
+        trials=trials,
+        direction=request.objective.direction,
+        fallback_trial_number=runner_result.best_trial_number if runner_result is not None else None,
+        fallback_value=runner_result.best_value if runner_result is not None else None,
+    )
+    return HpoStudyResult(
+        study_id=request.study_id,
+        study_name=request.study_name,
+        experiment_id=request.experiment_id,
+        status=status,
+        best_trial_number=best_trial_number,
+        best_value=best_value,
+        best_run_id=best_run_id,
+        spec=spec,
+        attempted_trials=attempted_trials,
+        completed_trials=completed_trials,
+        failed_trials=failed_trials,
+        stop_reason=stop_reason,
+        storage_path=storage_path,
+        trials=tuple(sorted(trials, key=lambda item: item.trial_number)),
+        created_at=created_at,
+        updated_at=updated_at,
+        error_message=error_message,
+    )
+
+
+def _persist_study_snapshot(
+    *,
+    store_root: Path,
+    storage_path: Path,
+    snapshot: HpoStudyResult,
+    trial_rows: list[dict[str, Any]],
+) -> None:
+    save_study(store_root=store_root, payload=snapshot)
+    write_study_summary(storage_path=storage_path, payload=_study_summary_payload(snapshot))
+    write_trials_table(storage_path=storage_path, trials=trial_rows)
+
+
+def _study_summary_payload(snapshot: HpoStudyResult) -> dict[str, Any]:
+    return {
+        "study_id": snapshot.study_id,
+        "study_name": snapshot.study_name,
+        "experiment_id": snapshot.experiment_id,
+        "status": snapshot.status,
+        "best_trial_number": snapshot.best_trial_number,
+        "best_value": snapshot.best_value,
+        "best_run_id": snapshot.best_run_id,
+        "spec": snapshot.spec,
+        "attempted_trials": snapshot.attempted_trials,
+        "completed_trials": snapshot.completed_trials,
+        "failed_trials": snapshot.failed_trials,
+        "stop_reason": snapshot.stop_reason,
+        "storage_path": str(snapshot.storage_path),
+        "error_message": snapshot.error_message,
+        "created_at": snapshot.created_at,
+        "updated_at": snapshot.updated_at,
+    }
+
+
+def _trial_result_from_record(record: HpoTrialRecord) -> HpoTrialResult:
+    config_path = (
+        record.config_path if record.config_path is not None else Path(f"trial_{record.trial_number:04d}.json")
+    )
+    return HpoTrialResult(
+        study_id=record.study_id,
+        trial_number=record.trial_number,
+        status=record.status,
+        params=record.params,
+        value=record.value,
+        run_id=record.run_id,
+        config_path=config_path,
+        started_at=record.started_at or record.updated_at,
+        finished_at=record.finished_at,
+        error_message=record.error_message,
+    )
+
+
+def _trial_row_payload(record: HpoTrialRecord) -> dict[str, Any]:
+    return {
+        "trial_number": record.trial_number,
+        "status": record.status,
+        "value": record.value,
+        "run_id": record.run_id,
+        "config_path": str(record.config_path) if record.config_path else None,
+        "params": json.dumps(record.params, sort_keys=True, ensure_ascii=True),
+        "started_at": record.started_at,
+        "finished_at": record.finished_at,
+        "error_message": record.error_message,
+    }
+
+
+def _best_trial_fields(
+    *,
+    trials: list[HpoTrialResult],
+    direction: HpoDirection,
+    fallback_trial_number: int | None,
+    fallback_value: float | None,
+) -> tuple[int | None, float | None, str | None]:
+    completed_trials = [trial for trial in trials if trial.status == "completed" and trial.value is not None]
+    if not completed_trials:
+        return None, None, None
+    if fallback_trial_number is not None and fallback_value is not None:
+        matched = next((trial for trial in completed_trials if trial.trial_number == fallback_trial_number), None)
+        if matched is not None:
+            return matched.trial_number, matched.value, matched.run_id
+    winner = _best_trial_from_trials(completed_trials, direction=direction)
+    return winner.trial_number, winner.value, winner.run_id
+
+
+def _budget_stop_reason(
+    *,
+    trials: list[HpoTrialResult],
+    direction: HpoDirection,
+    max_trials: int,
+    max_completed_trials: int | None,
+    plateau_enabled: bool,
+    min_completed_trials: int,
+    patience_completed_trials: int,
+    min_improvement_abs: float,
+) -> HpoStopReason | None:
+    attempted_trials = len(trials)
+    completed_values = [float(item.value) for item in trials if item.status == "completed" and item.value is not None]
+    failed_trials = sum(1 for item in trials if item.status == "failed")
+
+    if (
+        attempted_trials > 0
+        and not completed_values
+        and failed_trials == attempted_trials
+        and attempted_trials >= max_trials
+    ):
+        return "all_trials_failed"
+    if plateau_enabled and _plateau_reached(
+        completed_values=completed_values,
+        direction=direction,
+        min_completed_trials=min_completed_trials,
+        patience_completed_trials=patience_completed_trials,
+        min_improvement_abs=min_improvement_abs,
+    ):
+        return "plateau_reached"
+    if max_completed_trials is not None and len(completed_values) >= max_completed_trials:
+        return "max_completed_trials_reached"
+    if attempted_trials >= max_trials:
+        return "max_trials_reached"
+    return None
+
+
+def _plateau_reached(
+    *,
+    completed_values: list[float],
+    direction: HpoDirection,
+    min_completed_trials: int,
+    patience_completed_trials: int,
+    min_improvement_abs: float,
+) -> bool:
+    if len(completed_values) < min_completed_trials:
+        return False
+    best_value: float | None = None
+    last_improvement_index = 0
+    for index, value in enumerate(completed_values, start=1):
+        if best_value is None:
+            best_value = value
+            last_improvement_index = index
+            continue
+        if direction == "minimize":
+            improved = value < (best_value - min_improvement_abs)
+        else:
+            improved = value > (best_value + min_improvement_abs)
+        if improved:
+            best_value = value
+            last_improvement_index = index
+    return len(completed_values) - last_improvement_index >= patience_completed_trials
+
+
 def _best_trial_from_trials(trials: list[HpoTrialResult], *, direction: HpoDirection) -> HpoTrialResult:
     if direction == "minimize":
         return min(trials, key=lambda item: float(item.value if item.value is not None else float("inf")))
     return max(trials, key=lambda item: float(item.value if item.value is not None else float("-inf")))
+
+
+def _find_completed_trial_for_params(
+    *,
+    trials: list[HpoTrialResult],
+    params: dict[str, Any],
+) -> HpoTrialResult | None:
+    params_key = _canonical_params_key(params)
+    for trial in trials:
+        if trial.status != "completed" or trial.value is None or trial.run_id is None:
+            continue
+        if _canonical_params_key(trial.params) == params_key:
+            return trial
+    return None
+
+
+def _canonical_params_key(params: dict[str, Any]) -> str:
+    return json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _maybe_reuse_existing_run(
+    *,
+    request: HpoStudyCreateRequest,
+    params: dict[str, Any],
+    resolved_neutralizer_cols: tuple[str, ...] | None,
+    neutralized_metric_client: TrainingDataClient | None,
+    trial_config_path: Path,
+    store_root: Path,
+    preview: TrainingRunPreview,
+) -> tuple[str, float] | None:
+    run_dir = preview.run_dir
+    if not run_dir.exists():
+        return None
+    preexisting_entries = _run_dir_entries_without_lock(run_dir)
+    if not preexisting_entries:
+        return None
+
+    manifest = _load_existing_run_manifest(preview.run_manifest_path)
+    if manifest is None:
+        raise HpoExecutionError(f"hpo_trial_existing_run_not_reusable:{preview.run_id}:manifest_missing:reset_required")
+    status = str(manifest.get("status", "")).strip().upper() or "UNKNOWN"
+    if status != "FINISHED":
+        raise HpoExecutionError(
+            f"hpo_trial_existing_run_not_reusable:{preview.run_id}:status={status.lower()}:reset_required"
+        )
+
+    try:
+        index_run(store_root=store_root, run_id=preview.run_id)
+        metric_value = _resolve_trial_metric(
+            request=request,
+            resolved_neutralizer_cols=resolved_neutralizer_cols,
+            neutralized_metric_client=neutralized_metric_client,
+            trial_config_path=trial_config_path,
+            training_result=TrainingRunResult(
+                run_id=preview.run_id,
+                predictions_path=preview.predictions_path,
+                results_path=preview.results_path,
+            ),
+            store_root=store_root,
+        )
+    except (StoreError, HpoExecutionError) as exc:
+        raise HpoExecutionError(f"hpo_trial_existing_run_not_reusable:{preview.run_id}:{exc}:reset_required") from exc
+
+    return preview.run_id, metric_value
+
+
+def _run_dir_entries_without_lock(run_dir: Path) -> list[str]:
+    entries = [entry.name for entry in run_dir.iterdir() if entry.name != RUN_LOCK_FILENAME]
+    entries.sort()
+    return entries
+
+
+def _load_existing_run_manifest(manifest_path: Path) -> dict[str, Any] | None:
+    if not manifest_path.is_file():
+        return None
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _resolve_trial_metric(
+    *,
+    request: HpoStudyCreateRequest,
+    resolved_neutralizer_cols: tuple[str, ...] | None,
+    neutralized_metric_client: TrainingDataClient | None,
+    trial_config_path: Path,
+    training_result: TrainingRunResult,
+    store_root: Path,
+) -> float:
+    neutralization = request.objective.neutralization
+    if neutralization.enabled:
+        if neutralization.neutralizer_path is None:
+            raise HpoValidationError("hpo_neutralizer_path_required")
+        neutralized_result = neutralize_predictions_file(
+            request=NeutralizePredictionsRequest(
+                predictions_path=training_result.predictions_path,
+                neutralizer_path=neutralization.neutralizer_path,
+                proportion=neutralization.proportion,
+                mode=neutralization.mode,
+                neutralizer_cols=resolved_neutralizer_cols,
+                rank_output=neutralization.rank_output,
+            ),
+            run_id=training_result.run_id,
+        )
+        if neutralized_metric_client is None:  # pragma: no cover - defensive gate
+            raise HpoExecutionError("hpo_neutralization_client_missing")
+        return _extract_metric_value_from_predictions(
+            predictions_path=neutralized_result.output_path,
+            trial_config_path=trial_config_path,
+            metric=request.objective.metric,
+            scoring_client=neutralized_metric_client,
+        )
+    if request.objective.metric == _DEFAULT_HPO_METRIC:
+        return _extract_post_fold_objective_value(
+            store_root=store_root,
+            run_id=training_result.run_id,
+            results_path=training_result.results_path,
+        )
+    return _extract_metric_value(results_path=training_result.results_path, metric=request.objective.metric)
 
 
 def _extract_metric_value(*, results_path: Path, metric: str) -> float:
@@ -470,27 +987,35 @@ def _extract_post_fold_objective_value(
     results_path: Path | None = None,
 ) -> float:
     snapshot_path = store_root / "runs" / run_id / "artifacts" / "scoring" / "post_fold_snapshots.parquet"
-    if not snapshot_path.exists():
-        if results_path is None:
-            raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
-        return _extract_default_hpo_metric_from_results(results_path=results_path)
-    try:
-        snapshot = pd.read_parquet(snapshot_path)
-    except Exception as exc:
-        raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
-    if snapshot.empty:
-        raise HpoExecutionError(f"hpo_post_fold_snapshots_empty:{snapshot_path}")
-    if "corr_ender20_fold_mean" not in snapshot.columns:
-        raise HpoExecutionError("hpo_post_fold_metric_missing:corr_ender20_fold_mean")
-    bmc_column = "bmc_fold_mean" if "bmc_fold_mean" in snapshot.columns else "bmc_ender20_fold_mean"
-    if bmc_column not in snapshot.columns:
-        raise HpoExecutionError("hpo_post_fold_metric_missing:bmc_fold_mean,bmc_ender20_fold_mean")
-
-    corr_mean = float(pd.Series(snapshot["corr_ender20_fold_mean"], dtype="float64").dropna().mean())
-    bmc_mean = float(pd.Series(snapshot[bmc_column], dtype="float64").dropna().mean())
-    if pd.isna(corr_mean) or pd.isna(bmc_mean):
-        raise HpoExecutionError("hpo_post_fold_metric_nan")
-    return (_POST_FOLD_CORR_WEIGHT * corr_mean) + (_POST_FOLD_BMC_WEIGHT * bmc_mean)
+    if snapshot_path.exists():
+        try:
+            snapshot = pd.read_parquet(snapshot_path)
+            if snapshot.empty:
+                raise HpoExecutionError(f"hpo_post_fold_snapshots_empty:{snapshot_path}")
+            corr_mean = _snapshot_metric_mean(
+                snapshot=snapshot,
+                columns=("corr_ender20_fold_mean", "corr_native_fold_mean"),
+            )
+            bmc_mean = _snapshot_metric_mean(
+                snapshot=snapshot,
+                columns=("bmc_fold_mean", "bmc_ender20_fold_mean"),
+            )
+            objective_value = _combine_default_hpo_metric(corr_value=corr_mean, bmc_value=bmc_mean)
+            if objective_value is not None:
+                return objective_value
+            raise HpoExecutionError(
+                "hpo_post_fold_metric_missing:"
+                "corr_ender20_fold_mean,corr_native_fold_mean,bmc_fold_mean,bmc_ender20_fold_mean"
+            )
+        except HpoExecutionError:
+            if results_path is None:
+                raise
+        except Exception as exc:
+            if results_path is None:
+                raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
+    if results_path is None:
+        raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
+    return _extract_default_hpo_metric_from_results(results_path=results_path)
 
 
 def _extract_metric_value_from_predictions(
@@ -600,6 +1125,20 @@ def _default_hpo_metric_from_payload(metrics_payload: dict[str, Any]) -> float |
     if bmc_value is None:
         bmc_value = _metric_lookup(payload, _aliased_metric_path(metrics_payload, "bmc"))
 
+    return _combine_default_hpo_metric(corr_value=corr_value, bmc_value=bmc_value)
+
+
+def _snapshot_metric_mean(*, snapshot: pd.DataFrame, columns: tuple[str, ...]) -> float | None:
+    for column in columns:
+        if column not in snapshot.columns:
+            continue
+        value = float(pd.Series(snapshot[column], dtype="float64").dropna().mean())
+        if not pd.isna(value):
+            return value
+    return None
+
+
+def _combine_default_hpo_metric(*, corr_value: float | None, bmc_value: float | None) -> float | None:
     if corr_value is None and bmc_value is None:
         return None
     if corr_value is None:

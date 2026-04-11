@@ -39,4 +39,3 @@ def get_sagemaker_runtime_image(runtime_profile: str) -> SageMakerRuntimeImage:
     if image is None:
         raise ValueError(f"unknown_sagemaker_runtime_profile:{runtime_profile}")
     return image
-

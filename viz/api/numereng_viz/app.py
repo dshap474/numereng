@@ -9,8 +9,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
+from numereng.assets import viz_static_root
 from numereng_viz.routes import create_router
 from numereng_viz.services import VizService
 from numereng_viz.store_adapter import VizStoreAdapter, VizStoreConfig
@@ -20,13 +21,15 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     *,
+    workspace_root: str | Path | None = None,
     store_root: str | Path | None = None,
 ) -> FastAPI:
     """Create configured FastAPI app for the dashboard backend."""
 
-    config = VizStoreConfig.from_env(store_root=store_root)
+    config = VizStoreConfig.from_env(workspace_root=workspace_root, store_root=store_root)
     adapter = VizStoreAdapter(config)
     service = VizService(adapter)
+    frontend_root = viz_static_root()
 
     app = FastAPI(title="Numereng Viz API", version="0.3.0")
     app.state.viz_service = service
@@ -57,21 +60,42 @@ def create_app(
             {
                 "status": "ok",
                 "service": "numereng-viz-api",
+                "workspace_root": str(config.workspace_root),
                 "store_root": str(config.store_root),
                 "db_exists": adapter.db_path.exists(),
                 "read_only": True,
             }
         )
 
-    @app.get("/")
-    def root() -> JSONResponse:
-        return JSONResponse(
-            {
-                "service": "numereng-viz-api",
-                "health": "/healthz",
-                "api": "/api",
-            }
-        )
-
     app.include_router(create_router(service))
+
+    if frontend_root.is_dir():
+
+        @app.get("/{path:path}")
+        def serve_frontend(path: str) -> Response:
+            normalized = path.strip("/")
+            if not normalized:
+                return FileResponse(frontend_root / "index.html")
+
+            candidate = (frontend_root / normalized).resolve()
+            try:
+                candidate.relative_to(frontend_root.resolve())
+            except ValueError:
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(frontend_root / "index.html")
+
+    else:
+
+        @app.get("/")
+        def root() -> JSONResponse:
+            return JSONResponse(
+                {
+                    "service": "numereng-viz-api",
+                    "health": "/healthz",
+                    "api": "/api",
+                }
+            )
+
     return app

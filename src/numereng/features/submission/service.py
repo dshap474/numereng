@@ -71,6 +71,14 @@ class SubmissionLiveUniverseUnavailableError(Exception):
     """Raised when the classic live universe cannot be loaded for validation."""
 
 
+class SubmissionModelUploadFileNotFoundError(Exception):
+    """Raised when a model-upload pickle path does not exist."""
+
+
+class SubmissionModelUploadFormatUnsupportedError(Exception):
+    """Raised when a model-upload source is not a pickle file."""
+
+
 @dataclass(frozen=True)
 class SubmissionResult:
     """Submission result returned by the feature service."""
@@ -80,6 +88,18 @@ class SubmissionResult:
     model_id: str
     predictions_path: Path
     run_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelUploadResult:
+    """Model upload result returned by the feature service."""
+
+    upload_id: str
+    model_name: str
+    model_id: str
+    pickle_path: Path
+    data_version: str | None = None
+    docker_image: str | None = None
 
 
 def _resolve_model_id(*, model_name: str, client: SubmissionClient) -> str:
@@ -96,6 +116,15 @@ def _resolve_predictions_path(predictions_path: str | Path) -> Path:
         raise SubmissionPredictionsFileNotFoundError(str(path))
     if path.suffix.lower() != ".parquet":
         raise SubmissionPredictionsFormatUnsupportedError("submission_predictions_format_unsupported")
+    return path.resolve()
+
+
+def _resolve_pickle_path(pickle_path: str | Path) -> Path:
+    path = Path(pickle_path)
+    if not path.is_file():
+        raise SubmissionModelUploadFileNotFoundError(str(path))
+    if path.suffix.lower() != ".pkl":
+        raise SubmissionModelUploadFormatUnsupportedError("submission_model_upload_format_unsupported")
     return path.resolve()
 
 
@@ -352,10 +381,43 @@ def submit_run_predictions(
     )
 
 
+def upload_model_pickle_file(
+    *,
+    pickle_path: str | Path,
+    model_name: str,
+    tournament: NumeraiTournament = "classic",
+    client: SubmissionClient | None = None,
+    data_version: str | None = None,
+    docker_image: str | None = None,
+) -> ModelUploadResult:
+    """Upload one Numerai model pickle for hosted inference."""
+
+    submission_client = create_submission_client(tournament=tournament) if client is None else client
+    resolved_pickle_path = _resolve_pickle_path(pickle_path)
+    model_id = _resolve_model_id(model_name=model_name, client=submission_client)
+    upload_id = submission_client.model_upload(
+        file_path=str(resolved_pickle_path),
+        model_id=model_id,
+        data_version=data_version,
+        docker_image=docker_image,
+    )
+    return ModelUploadResult(
+        upload_id=str(upload_id),
+        model_name=model_name,
+        model_id=model_id,
+        pickle_path=resolved_pickle_path,
+        data_version=data_version,
+        docker_image=docker_image,
+    )
+
+
 __all__ = [
     "SubmissionModelNotFoundError",
+    "SubmissionModelUploadFileNotFoundError",
+    "SubmissionModelUploadFormatUnsupportedError",
     "SubmissionPredictionsFileNotFoundError",
     "SubmissionPredictionsReadError",
+    "ModelUploadResult",
     "SubmissionResult",
     "SubmissionRunIdInvalidError",
     "SubmissionRunNotFoundError",
@@ -365,4 +427,5 @@ __all__ = [
     "SubmissionLiveUniverseUnavailableError",
     "submit_predictions_file",
     "submit_run_predictions",
+    "upload_model_pickle_file",
 ]

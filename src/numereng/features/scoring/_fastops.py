@@ -140,7 +140,8 @@ def pearson_corr_matrix_vs_vector(values: FloatArray, target: FloatArray) -> Flo
     x_std = np.std(x_centered, axis=0, ddof=1)
     numer = x_centered.T @ y_centered
     denom = (n - 1) * x_std * y_std
-    out = numer / denom
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = numer / denom
     out[~np.isfinite(out)] = np.nan
     return cast(FloatArray, out.astype(np.float64, copy=False))
 

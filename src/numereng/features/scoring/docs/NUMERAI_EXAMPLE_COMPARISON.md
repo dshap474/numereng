@@ -52,4 +52,4 @@ Differences are primarily in:
 
 This file is not the canonical scoring contract. The source of truth is:
 
-- [SCORING_CONTRACT.md](/path/to/numereng/src/numereng/features/scoring/docs/SCORING_CONTRACT.md)
+- `SCORING_CONTRACT.md`

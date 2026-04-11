@@ -7,9 +7,17 @@ from numereng.features.experiments.contracts import (
     ExperimentRecord,
     ExperimentReport,
     ExperimentReportRow,
+    ExperimentRunPlanResult,
+    ExperimentRunPlanWindow,
     ExperimentScoreRoundResult,
     ExperimentStatus,
     ExperimentTrainResult,
+)
+from numereng.features.experiments.run_plan import (
+    get_experiment_run_plan_state,
+    resolve_experiment_run_plan_state_path,
+    run_experiment_plan,
+    stop_experiment_run_plan,
 )
 from numereng.features.experiments.service import (
     ExperimentAlreadyExistsError,
@@ -39,6 +47,8 @@ __all__ = [
     "ExperimentRecord",
     "ExperimentReport",
     "ExperimentReportRow",
+    "ExperimentRunPlanResult",
+    "ExperimentRunPlanWindow",
     "ExperimentScoreRoundResult",
     "ExperimentRunNotFoundError",
     "ExperimentStatus",
@@ -51,7 +61,11 @@ __all__ = [
     "pack_experiment",
     "promote_experiment",
     "report_experiment",
+    "resolve_experiment_run_plan_state_path",
+    "get_experiment_run_plan_state",
+    "run_experiment_plan",
     "score_experiment_round",
+    "stop_experiment_run_plan",
     "train_experiment",
     "unarchive_experiment",
 ]

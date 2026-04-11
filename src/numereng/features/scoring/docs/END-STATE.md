@@ -12,7 +12,7 @@ exists today:
 
 The canonical contract lives in:
 
-- [SCORING_CONTRACT.md](/path/to/numereng/src/numereng/features/scoring/docs/SCORING_CONTRACT.md)
+- `SCORING_CONTRACT.md`
 
 This file is the design-level summary of that contract.
 

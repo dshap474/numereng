@@ -1,0 +1,8 @@
+query ListTournaments {
+  tournaments {
+    id
+    name
+    tournament
+    active
+  }
+}

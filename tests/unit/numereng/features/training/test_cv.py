@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -7,6 +8,7 @@ import pandas as pd
 import pytest
 
 import numereng.features.training.cv as cv_module
+from numereng.features.training import model_factory
 from numereng.features.training.errors import TrainingConfigError, TrainingDataError
 from numereng.features.training.models import build_model_data_loader
 
@@ -332,7 +334,9 @@ def test_build_oof_predictions_raises_when_validation_fold_has_no_labeled_rows(m
         id_col="id",
     )
 
-    with pytest.raises(TrainingDataError, match="training_target_rows_all_unlabeled:split=validation:target=target:fold=0"):
+    with pytest.raises(
+        TrainingDataError, match="training_target_rows_all_unlabeled:split=validation:target=target:fold=0"
+    ):
         cv_module.build_oof_predictions(
             eras=full["era"],
             data_loader=loader,
@@ -391,8 +395,17 @@ def test_build_full_history_predictions_filters_unlabeled_rows(monkeypatch) -> N
     assert cast(list[dict[str, object]], meta["folds"])[0]["train_rows_unlabeled_dropped"] == 1
 
 
-def test_build_oof_predictions_xgboost_trains_after_unlabeled_rows_are_filtered() -> None:
+def test_build_oof_predictions_xgboost_trains_after_unlabeled_rows_are_filtered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pytest.importorskip("xgboost")
+
+    custom_models_root = tmp_path / "custom_models"
+    custom_models_root.mkdir()
+    source_module = Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models" / "xgboost_model.py"
+    (custom_models_root / "xgboost_model.py").write_text(source_module.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: custom_models_root)
 
     full = pd.DataFrame(
         {

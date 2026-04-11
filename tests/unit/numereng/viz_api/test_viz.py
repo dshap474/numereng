@@ -1566,7 +1566,7 @@ def test_remote_snapshot_coordinator_builds_posix_ssh_command() -> None:
     coordinator = RemoteSnapshotCoordinator()
     command = coordinator._ssh_command(target)
 
-    assert command[-1] == ("cd /srv/numereng && uv run numereng monitor snapshot --workspace /srv/numereng --json")
+    assert command[-1] == ("cd /srv/numereng && uv run numereng monitor snapshot --json")
 
 
 def test_remote_snapshot_coordinator_builds_powershell_ssh_command() -> None:
@@ -1588,7 +1588,7 @@ def test_remote_snapshot_coordinator_builds_powershell_ssh_command() -> None:
     assert command[-1] == (
         'powershell -NoProfile -Command "'
         r"Set-Location 'C:\Users\<you>\remote-access\numereng'; "
-        r"uv run numereng monitor snapshot --workspace 'C:\Users\<you>\remote-access\numereng' --json"
+        r"uv run numereng monitor snapshot --json"
         '"'
     )
 

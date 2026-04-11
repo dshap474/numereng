@@ -10,19 +10,24 @@ from numereng.api.contracts import (
     HpoStudyListRequest,
     HpoStudyListResponse,
     HpoStudyResponse,
+    HpoStudySpecResponse,
     HpoStudyTrialsRequest,
     HpoStudyTrialsResponse,
     HpoTrialResponse,
 )
+from numereng.config.hpo.contracts import canonicalize_hpo_study_payload
 from numereng.features.hpo import (
     HpoDependencyError,
     HpoError,
+    HpoNeutralizationSpec,
     HpoNotFoundError,
+    HpoObjectiveSpec,
+    HpoPlateauSpec,
+    HpoSamplerSpec,
+    HpoStoppingSpec,
     HpoValidationError,
 )
-from numereng.features.hpo import (
-    HpoStudyCreateRequest as FeatureHpoStudyCreateRequest,
-)
+from numereng.features.hpo import HpoStudyCreateRequest as FeatureHpoStudyCreateRequest
 from numereng.platform.errors import PackageError
 
 
@@ -34,45 +39,55 @@ def hpo_create(request: HpoStudyCreateRequest) -> HpoStudyResponse:
         result = api_module.hpo_create_study(
             store_root=request.store_root,
             request=FeatureHpoStudyCreateRequest(
+                study_id=request.study_id,
                 study_name=request.study_name,
                 config_path=Path(request.config_path),
                 experiment_id=request.experiment_id,
-                metric=request.metric,
-                direction=request.direction,
-                n_trials=request.n_trials,
-                sampler=request.sampler,
-                seed=request.seed,
-                search_space=request.search_space,
-                neutralize=request.neutralize,
-                neutralizer_path=Path(request.neutralizer_path) if request.neutralizer_path else None,
-                neutralization_proportion=request.neutralization_proportion,
-                neutralization_mode=request.neutralization_mode,
-                neutralizer_cols=None if request.neutralizer_cols is None else tuple(request.neutralizer_cols),
-                neutralization_rank_output=request.neutralization_rank_output,
+                objective=HpoObjectiveSpec(
+                    metric=request.objective.metric,
+                    direction=request.objective.direction,
+                    neutralization=HpoNeutralizationSpec(
+                        enabled=request.objective.neutralization.enabled,
+                        neutralizer_path=(
+                            Path(request.objective.neutralization.neutralizer_path)
+                            if request.objective.neutralization.neutralizer_path
+                            else None
+                        ),
+                        proportion=request.objective.neutralization.proportion,
+                        mode=request.objective.neutralization.mode,
+                        neutralizer_cols=(
+                            tuple(request.objective.neutralization.neutralizer_cols)
+                            if request.objective.neutralization.neutralizer_cols is not None
+                            else None
+                        ),
+                        rank_output=request.objective.neutralization.rank_output,
+                    ),
+                ),
+                search_space={path: spec.model_dump(mode="python") for path, spec in request.search_space.items()},
+                sampler=HpoSamplerSpec(
+                    kind=request.sampler.kind,
+                    seed=request.sampler.seed,
+                    n_startup_trials=request.sampler.n_startup_trials,
+                    multivariate=request.sampler.multivariate,
+                    group=request.sampler.group,
+                ),
+                stopping=HpoStoppingSpec(
+                    max_trials=request.stopping.max_trials,
+                    max_completed_trials=request.stopping.max_completed_trials,
+                    timeout_seconds=request.stopping.timeout_seconds,
+                    plateau=HpoPlateauSpec(
+                        enabled=request.stopping.plateau.enabled,
+                        min_completed_trials=request.stopping.plateau.min_completed_trials,
+                        patience_completed_trials=request.stopping.plateau.patience_completed_trials,
+                        min_improvement_abs=request.stopping.plateau.min_improvement_abs,
+                    ),
+                ),
             ),
         )
     except (HpoValidationError, HpoDependencyError, HpoError) as exc:
         raise PackageError(str(exc)) from exc
 
-    return HpoStudyResponse(
-        study_id=result.study_id,
-        experiment_id=result.experiment_id,
-        study_name=result.study_name,
-        status=result.status,
-        metric=result.metric,
-        direction=result.direction,
-        n_trials=result.n_trials,
-        sampler=result.sampler,
-        seed=result.seed,
-        best_trial_number=result.best_trial_number,
-        best_value=result.best_value,
-        best_run_id=result.best_run_id,
-        config=result.config,
-        storage_path=str(result.storage_path),
-        error_message=None,
-        created_at=result.created_at,
-        updated_at=result.updated_at,
-    )
+    return _study_response_from_result(result)
 
 
 def hpo_list(request: HpoStudyListRequest | None = None) -> HpoStudyListResponse:
@@ -91,30 +106,7 @@ def hpo_list(request: HpoStudyListRequest | None = None) -> HpoStudyListResponse
     except HpoError as exc:
         raise PackageError(str(exc)) from exc
 
-    return HpoStudyListResponse(
-        studies=[
-            HpoStudyResponse(
-                study_id=record.study_id,
-                experiment_id=record.experiment_id,
-                study_name=record.study_name,
-                status=record.status,
-                metric=record.metric,
-                direction=record.direction,
-                n_trials=record.n_trials,
-                sampler=record.sampler,
-                seed=record.seed,
-                best_trial_number=record.best_trial_number,
-                best_value=record.best_value,
-                best_run_id=record.best_run_id,
-                config=record.config,
-                storage_path=str(record.storage_path) if record.storage_path else None,
-                error_message=record.error_message,
-                created_at=record.created_at,
-                updated_at=record.updated_at,
-            )
-            for record in records
-        ]
-    )
+    return HpoStudyListResponse(studies=[_study_response_from_result(record) for record in records])
 
 
 def hpo_get(request: HpoStudyGetRequest) -> HpoStudyResponse:
@@ -129,25 +121,7 @@ def hpo_get(request: HpoStudyGetRequest) -> HpoStudyResponse:
     except (HpoNotFoundError, HpoValidationError, HpoError) as exc:
         raise PackageError(str(exc)) from exc
 
-    return HpoStudyResponse(
-        study_id=record.study_id,
-        experiment_id=record.experiment_id,
-        study_name=record.study_name,
-        status=record.status,
-        metric=record.metric,
-        direction=record.direction,
-        n_trials=record.n_trials,
-        sampler=record.sampler,
-        seed=record.seed,
-        best_trial_number=record.best_trial_number,
-        best_value=record.best_value,
-        best_run_id=record.best_run_id,
-        config=record.config,
-        storage_path=str(record.storage_path) if record.storage_path else None,
-        error_message=record.error_message,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-    )
+    return _study_response_from_result(record)
 
 
 def hpo_trials(request: HpoStudyTrialsRequest) -> HpoStudyTrialsResponse:
@@ -180,6 +154,28 @@ def hpo_trials(request: HpoStudyTrialsRequest) -> HpoStudyTrialsResponse:
             )
             for row in rows
         ],
+    )
+
+
+def _study_response_from_result(result: object) -> HpoStudyResponse:
+    spec = HpoStudySpecResponse.model_validate(canonicalize_hpo_study_payload(getattr(result, "spec")))
+    return HpoStudyResponse(
+        study_id=getattr(result, "study_id"),
+        experiment_id=getattr(result, "experiment_id"),
+        study_name=getattr(result, "study_name"),
+        status=getattr(result, "status"),
+        best_trial_number=getattr(result, "best_trial_number"),
+        best_value=getattr(result, "best_value"),
+        best_run_id=getattr(result, "best_run_id"),
+        spec=spec,
+        attempted_trials=getattr(result, "attempted_trials"),
+        completed_trials=getattr(result, "completed_trials"),
+        failed_trials=getattr(result, "failed_trials"),
+        stop_reason=getattr(result, "stop_reason"),
+        storage_path=str(getattr(result, "storage_path")) if getattr(result, "storage_path") else None,
+        error_message=getattr(result, "error_message"),
+        created_at=getattr(result, "created_at"),
+        updated_at=getattr(result, "updated_at"),
     )
 
 

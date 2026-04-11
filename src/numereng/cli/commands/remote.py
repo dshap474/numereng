@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pydantic import ValidationError
 
 from numereng import api
-from numereng.cli.common import _parse_simple_options, _validation_error_message
+from numereng.cli.common import _parse_int_value, _parse_simple_options, _validation_error_message
 from numereng.cli.usage import USAGE
 from numereng.platform.errors import PackageError
 
@@ -29,6 +29,14 @@ def handle_remote_command(args: Sequence[str]) -> int:
         return _handle_remote_doctor(args[1:])
     if args[0] == "repo" and len(args) >= 2 and args[1] == "sync":
         return _handle_remote_repo_sync(args[2:])
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "launch":
+        return _handle_remote_experiment_launch(args[2:])
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "status":
+        return _handle_remote_experiment_status(args[2:])
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "maintain":
+        return _handle_remote_experiment_maintain(args[2:])
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "stop":
+        return _handle_remote_experiment_stop(args[2:])
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "sync":
         return _handle_remote_experiment_sync(args[2:])
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "pull":
@@ -188,6 +196,135 @@ def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
         return 1
     print(payload.model_dump_json())
     return 0
+
+
+def _handle_remote_experiment_launch(args: Sequence[str]) -> int:
+    values, _, parse_error = _parse_simple_options(
+        args,
+        value_flags={
+            "--target",
+            "--experiment-id",
+            "--start-index",
+            "--end-index",
+            "--score-stage",
+            "--sync-repo",
+            "--workspace",
+        },
+    )
+    if parse_error == "__help__":
+        print(USAGE)
+        return 0
+    if parse_error is not None:
+        print(parse_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    target_id = values.get("--target")
+    experiment_id = values.get("--experiment-id")
+    if target_id is None or experiment_id is None:
+        print("missing required argument: --target/--experiment-id", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    start_index, end_index, window_error = _parse_index_window(values)
+    if window_error is not None:
+        print(window_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    score_stage = values.get("--score-stage", "post_training_core")
+    try:
+        payload = api.remote_experiment_launch(
+            api.RemoteExperimentLaunchRequest(
+                target_id=target_id,
+                experiment_id=experiment_id,
+                start_index=start_index,
+                end_index=end_index,
+                score_stage=score_stage,
+                sync_repo=values.get("--sync-repo", "auto"),
+                workspace_root=values.get("--workspace", "."),
+            )
+        )
+    except ValidationError as exc:
+        print(_validation_error_message(exc), file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(payload.model_dump_json())
+    return 0
+
+
+def _handle_remote_experiment_status(args: Sequence[str]) -> int:
+    return _handle_remote_experiment_state_command(args, command="status")
+
+
+def _handle_remote_experiment_maintain(args: Sequence[str]) -> int:
+    return _handle_remote_experiment_state_command(args, command="maintain")
+
+
+def _handle_remote_experiment_stop(args: Sequence[str]) -> int:
+    return _handle_remote_experiment_state_command(args, command="stop")
+
+
+def _handle_remote_experiment_state_command(args: Sequence[str], *, command: str) -> int:
+    values, _, parse_error = _parse_simple_options(
+        args,
+        value_flags={"--target", "--experiment-id", "--start-index", "--end-index", "--workspace"},
+    )
+    if parse_error == "__help__":
+        print(USAGE)
+        return 0
+    if parse_error is not None:
+        print(parse_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    target_id = values.get("--target")
+    experiment_id = values.get("--experiment-id")
+    if target_id is None or experiment_id is None:
+        print("missing required argument: --target/--experiment-id", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    start_index, end_index, window_error = _parse_index_window(values)
+    if window_error is not None:
+        print(window_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    request_kwargs = {
+        "target_id": target_id,
+        "experiment_id": experiment_id,
+        "start_index": start_index,
+        "end_index": end_index,
+        "workspace_root": values.get("--workspace", "."),
+    }
+    try:
+        if command == "status":
+            payload = api.remote_experiment_status(api.RemoteExperimentStatusRequest(**request_kwargs))
+        elif command == "maintain":
+            payload = api.remote_experiment_maintain(api.RemoteExperimentMaintainRequest(**request_kwargs))
+        else:
+            payload = api.remote_experiment_stop(api.RemoteExperimentStopRequest(**request_kwargs))
+    except ValidationError as exc:
+        print(_validation_error_message(exc), file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(payload.model_dump_json())
+    return 0
+
+
+def _parse_index_window(values: dict[str, str]) -> tuple[int, int | None, str | None]:
+    start_index = 1
+    end_index: int | None = None
+    if "--start-index" in values:
+        start_index, error = _parse_int_value(values["--start-index"], flag="--start-index", minimum=1)
+        if error is not None or start_index is None:
+            return 1, None, error or "invalid --start-index"
+    if "--end-index" in values:
+        end_index, error = _parse_int_value(values["--end-index"], flag="--end-index", minimum=1)
+        if error is not None:
+            return start_index, None, error
+    return start_index, end_index, None
 
 
 def _handle_remote_experiment_pull(args: Sequence[str]) -> int:

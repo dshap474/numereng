@@ -1,0 +1,7 @@
+query ListDatasets($round: Int, $tournament: Int) {
+  listDatasets(round: $round, tournament: $tournament)
+}
+
+query DatasetUrl($filename: String!, $round: Int, $tournament: Int) {
+  dataset(filename: $filename, round: $round, tournament: $tournament)
+}

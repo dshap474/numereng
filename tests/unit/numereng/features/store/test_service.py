@@ -173,7 +173,7 @@ def test_upsert_hpo_study_and_trials_roundtrip(tmp_path: Path) -> None:
             sampler="tpe",
             seed=42,
             config_json='{"search_space":{}}',
-            storage_path=str(store_root / "experiments" / "exp-1" / "hpo" / "study-1"),
+            storage_path=str(store_root.parent / "experiments" / "exp-1" / "hpo" / "study-1"),
         ),
     )
     upsert_hpo_trial(
@@ -234,7 +234,7 @@ def test_upsert_ensemble_roundtrip(tmp_path: Path) -> None:
             metric="corr_sharpe",
             status="completed",
             config_json='{"run_ids":["run-a","run-b"]}',
-            artifacts_path=str(store_root / "experiments" / "exp-1" / "ensembles" / "ens-1"),
+            artifacts_path=str(store_root.parent / "experiments" / "exp-1" / "ensembles" / "ens-1"),
         ),
     )
     replace_ensemble_components(

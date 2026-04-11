@@ -19,6 +19,9 @@ test:
 test-all:
     make test-all
 
+hpo-smoke:
+    make hpo-smoke
+
 readiness:
     make readiness
 

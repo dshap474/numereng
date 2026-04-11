@@ -10,6 +10,7 @@ import pytest
 
 import numereng.api as api_module
 import numereng.features.hpo.service as hpo_service_module
+from numereng.features.hpo.runner_optuna import HpoOptunaStudyResult
 from numereng.features.training import TrainingRunResult
 
 
@@ -34,9 +35,7 @@ def _write_base_config(path: Path) -> None:
                 },
                 "training": {
                     "engine": {
-                        "mode": "custom",
-                        "window_size_eras": 156,
-                        "embargo_eras": 8,
+                        "profile": "purged_walk_forward",
                     }
                 },
             },
@@ -103,14 +102,16 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     def fake_run_optuna_study(
         *,
+        study_id: str,
+        storage_path: Path,
         direction: str,
-        n_trials: int,
-        sampler: str,
-        seed: int | None,
+        sampler: object,
+        stopping: object,
         specs: tuple[object, ...],
         objective_callback: Callable[[int, dict[str, Any]], float],
-    ) -> tuple[int | None, float | None]:
-        _ = (direction, sampler, seed, specs)
+        summary_callback: object | None = None,
+    ) -> HpoOptunaStudyResult:
+        _ = (study_id, storage_path, direction, sampler, stopping, specs, summary_callback)
         best_trial = None
         best_value = None
         for idx in range(n_trials):
@@ -118,7 +119,14 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
             if best_value is None or value > best_value:
                 best_value = value
                 best_trial = idx
-        return best_trial, best_value
+        return HpoOptunaStudyResult(
+            best_trial_number=best_trial,
+            best_value=best_value,
+            attempted_trials=n_trials,
+            completed_trials=n_trials,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
 
     monkeypatch.setattr(hpo_service_module, "run_training", fake_run_training)
     monkeypatch.setattr(hpo_service_module, "run_optuna_study", fake_run_optuna_study)
@@ -126,17 +134,20 @@ def test_hpo_slow_high_trial_count_smoke(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     created = api_module.hpo_create(
         api_module.HpoStudyCreateRequest(
+            study_id="slow-integration",
             study_name="slow-integration",
             config_path=str(config_path),
             experiment_id="exp-slow",
-            n_trials=n_trials,
+            objective=api_module.HpoObjectiveRequest(
+                metric="post_fold_champion_objective",
+                direction="maximize",
+                neutralization=api_module.HpoNeutralizationRequest(),
+            ),
             search_space={
-                "model.params.learning_rate": {
-                    "type": "float",
-                    "low": 0.001,
-                    "high": 0.2,
-                }
+                "model.params.learning_rate": api_module.HpoSearchSpaceSpecRequest(type="float", low=0.001, high=0.2)
             },
+            sampler=api_module.HpoSamplerRequest(kind="tpe", seed=1337),
+            stopping=api_module.HpoStoppingRequest(max_trials=n_trials),
             workspace_root=str(store_root.parent),
         )
     )

@@ -6,13 +6,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.34",
+    "cloudpickle>=3.1",
     "fastapi>=0.115",
+    "lightgbm>=4.0",
     "numba>=0.61",
     "numpy>=2.0",
     "numerapi>=2.19",
+    "numerai-tools>=0.5.3",
     "pandas>=2.2",
     "pydantic>=2.8",
+    "pyarrow>=15.0",
     "pyyaml>=6.0",
+    "scikit-learn>=1.8",
+    "scipy>=1.12",
     "uvicorn>=0.30",
 ]
 
@@ -61,6 +67,7 @@ training = [
     "pytorch-tabnet>=4.1",
     "quantile-forest>=1.4",
     "scikit-learn>=1.8",
+    "scipy>=1.12",
     "tabpfn>=2.0",
     "torch>=2.7",
     "xgboost>=2.1",
@@ -78,12 +85,20 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/numereng", "viz/api/numereng_viz"]
+exclude = [
+    "src/numereng/features/scoring/docs/**",
+    "src/numereng/features/models/CLAUDE.md",
+    "src/numereng/features/models/CUSTOM_MODELS.md",
+    "src/numereng/features/models/custom_models/_OVERVIEW.md",
+    "src/numereng/features/models/custom_models/model-implements.md",
+    "src/numereng/features/models/custom_models/note.md",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_functions = "test_*"
-addopts = "--strict-markers --tb=short"
+addopts = "--strict-markers --tb=short --import-mode=importlib"
 markers = [
     "integration: Integration smoke tests for cross-boundary behavior",
     "e2e: End-to-end behavior tests",
@@ -117,7 +132,9 @@ include = [
     "src/numereng/platform",
     "src/numereng/features/telemetry",
     "src/numereng/features/submission",
+    "src/numereng/features/serving",
     "src/numereng/api/contracts.py",
+    "src/numereng/api/_serving.py",
     "src/numereng/api/pipeline.py",
     "src/numereng/api/_health.py",
     "tests/unit/numereng/config/test_training.py",

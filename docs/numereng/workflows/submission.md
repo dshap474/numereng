@@ -2,6 +2,8 @@
 
 Submit predictions to Numerai from a run ID or an explicit predictions file.
 
+If you need numereng to rebuild a live blend or create a Numerai model-upload pickle first, use [Serving And Model Uploads](serving.md).
+
 ## Submit By Run ID
 
 ```bash

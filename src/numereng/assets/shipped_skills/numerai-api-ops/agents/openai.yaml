@@ -1,0 +1,8 @@
+name: "skill:NumeraiApiOps"
+
+interface:
+  display_name: "skill:NumeraiApiOps"
+  default_prompt: "Use the numerai-api-ops skill for API-only Numerai operations via vendored numerapi and direct GraphQL parity helpers."
+
+policy:
+  allow_implicit_invocation: true

@@ -20,7 +20,7 @@
 
 
 # Numerai
-- `/path/to/numereng/vendor/_howto-notebooks`:
+- `vendor/_howto-notebooks`:
   - `CORR`
   - `CORR20V2`
   - `MMC`
@@ -33,7 +33,7 @@
   - `max_drawdown`
   - `delta`
 
-- `/path/to/numereng/vendor/example-scripts/numerai`:
+- `vendor/example-scripts/numerai`:
   - `CORR`
   - `CORR20V2`
   - `MMC`
@@ -52,7 +52,7 @@
   - `bmc_mean`
   - `bmc_sharpe`
 
-- `/path/to/numereng/vendor/numerai-tools`:
+- `vendor/numerai-tools`:
   - `correlation`
   - `tie_broken_rank_correlation`
   - `spearman_correlation`

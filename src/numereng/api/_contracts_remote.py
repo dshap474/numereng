@@ -127,6 +127,88 @@ class RemoteExperimentPullResponse(BaseModel):
     failures: list[RemoteExperimentPullFailureResponse] = Field(default_factory=list)
 
 
+class RemoteExperimentLaunchRequest(WorkspaceBoundRequest):
+    target_id: str
+    experiment_id: str
+    start_index: int = Field(default=1, ge=1)
+    end_index: int | None = Field(default=None, ge=1)
+    score_stage: Literal["post_training_core", "post_training_full"] = "post_training_core"
+    sync_repo: Literal["auto", "always", "never"] = "auto"
+
+
+class RemoteExperimentLaunchResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    state_path: str
+    launch_id: str
+    remote_log_path: str
+    remote_metadata_path: str
+    remote_pid: int
+    launched_at: str
+    repo_synced: bool
+    experiment_synced: bool
+
+
+class RemoteExperimentStatusRequest(WorkspaceBoundRequest):
+    target_id: str
+    experiment_id: str
+    start_index: int = Field(default=1, ge=1)
+    end_index: int | None = Field(default=None, ge=1)
+
+
+class RemoteExperimentStatusResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    state_path: str
+    exists: bool
+    phase: str | None = None
+    current_index: int | None = None
+    current_run_id: str | None = None
+    current_config_path: str | None = None
+    last_completed_row_index: int | None = None
+    supervisor_pid: int | None = None
+    supervisor_alive: bool
+    active_worker_pid: int | None = None
+    last_successful_heartbeat_at: str | None = None
+    retry_count: int = 0
+    failure_classifier: str | None = None
+    terminal_error: str | None = None
+    raw_state: dict[str, object] = Field(default_factory=dict)
+
+
+class RemoteExperimentStopRequest(WorkspaceBoundRequest):
+    target_id: str
+    experiment_id: str
+    start_index: int = Field(default=1, ge=1)
+    end_index: int | None = Field(default=None, ge=1)
+
+
+class RemoteExperimentStopResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    state_path: str
+    stopped: bool
+    supervisor_pid: int | None = None
+    note: str | None = None
+
+
+class RemoteExperimentMaintainRequest(WorkspaceBoundRequest):
+    target_id: str
+    experiment_id: str
+    start_index: int = Field(default=1, ge=1)
+    end_index: int | None = Field(default=None, ge=1)
+
+
+class RemoteExperimentMaintainResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    state_path: str
+    action: Literal["noop", "restarted", "terminal"]
+    phase: str | None = None
+    supervisor_pid: int | None = None
+    note: str | None = None
+
+
 class RemoteConfigPushRequest(WorkspaceBoundRequest):
     target_id: str
     config_path: str
@@ -166,9 +248,17 @@ __all__ = [
     "RemoteConfigPushResponse",
     "RemoteDoctorRequest",
     "RemoteDoctorResponse",
+    "RemoteExperimentLaunchRequest",
+    "RemoteExperimentLaunchResponse",
+    "RemoteExperimentMaintainRequest",
+    "RemoteExperimentMaintainResponse",
     "RemoteExperimentPullFailureResponse",
     "RemoteExperimentPullRequest",
     "RemoteExperimentPullResponse",
+    "RemoteExperimentStatusRequest",
+    "RemoteExperimentStatusResponse",
+    "RemoteExperimentStopRequest",
+    "RemoteExperimentStopResponse",
     "RemoteExperimentSyncRequest",
     "RemoteExperimentSyncResponse",
     "RemoteRepoSyncRequest",

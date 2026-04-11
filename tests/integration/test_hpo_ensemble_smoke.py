@@ -11,6 +11,7 @@ import pytest
 import numereng.api as api_module
 import numereng.features.hpo.service as hpo_service_module
 from numereng.features.feature_neutralization import NeutralizationResult
+from numereng.features.hpo.runner_optuna import HpoOptunaStudyResult
 from numereng.features.training import TrainingRunResult
 
 
@@ -35,9 +36,7 @@ def _write_base_config(path: Path) -> None:
                 },
                 "training": {
                     "engine": {
-                        "mode": "custom",
-                        "window_size_eras": 156,
-                        "embargo_eras": 8,
+                        "profile": "purged_walk_forward",
                     }
                 },
             },
@@ -113,18 +112,26 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     def fake_run_optuna_study(
         *,
+        study_id: str,
+        storage_path: Path,
         direction: str,
-        n_trials: int,
-        sampler: str,
-        seed: int | None,
+        sampler: object,
+        stopping: object,
         specs: tuple[object, ...],
         objective_callback: Callable[[int, dict[str, Any]], float],
-    ) -> tuple[int | None, float | None]:
-        _ = (direction, sampler, seed, specs)
+        summary_callback: object | None = None,
+    ) -> HpoOptunaStudyResult:
+        _ = (study_id, storage_path, direction, sampler, stopping, specs, summary_callback)
         _ = objective_callback(0, {"model.params.learning_rate": 0.01})
         value_1 = objective_callback(1, {"model.params.learning_rate": 0.02})
-        assert n_trials == 2
-        return 1, value_1
+        return HpoOptunaStudyResult(
+            best_trial_number=1,
+            best_value=value_1,
+            attempted_trials=2,
+            completed_trials=2,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
 
     monkeypatch.setattr(hpo_service_module, "run_training", fake_run_training)
     monkeypatch.setattr(hpo_service_module, "run_optuna_study", fake_run_optuna_study)
@@ -132,17 +139,20 @@ def test_hpo_api_roundtrip_smoke(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 
     created = api_module.hpo_create(
         api_module.HpoStudyCreateRequest(
+            study_id="integration-smoke",
             study_name="integration-smoke",
             config_path=str(config_path),
             experiment_id="exp-smoke",
-            n_trials=2,
+            objective=api_module.HpoObjectiveRequest(
+                metric="post_fold_champion_objective",
+                direction="maximize",
+                neutralization=api_module.HpoNeutralizationRequest(),
+            ),
             search_space={
-                "model.params.learning_rate": {
-                    "type": "float",
-                    "low": 0.001,
-                    "high": 0.1,
-                }
+                "model.params.learning_rate": api_module.HpoSearchSpaceSpecRequest(type="float", low=0.001, high=0.1)
             },
+            sampler=api_module.HpoSamplerRequest(kind="tpe", seed=1337),
+            stopping=api_module.HpoStoppingRequest(max_trials=2),
             workspace_root=str(store_root.parent),
         )
     )
@@ -226,18 +236,26 @@ def test_hpo_api_roundtrip_with_neutralization_smoke(monkeypatch: pytest.MonkeyP
 
     def fake_run_optuna_study(
         *,
+        study_id: str,
+        storage_path: Path,
         direction: str,
-        n_trials: int,
-        sampler: str,
-        seed: int | None,
+        sampler: object,
+        stopping: object,
         specs: tuple[object, ...],
         objective_callback: Callable[[int, dict[str, Any]], float],
-    ) -> tuple[int | None, float | None]:
-        _ = (direction, sampler, seed, specs)
+        summary_callback: object | None = None,
+    ) -> HpoOptunaStudyResult:
+        _ = (study_id, storage_path, direction, sampler, stopping, specs, summary_callback)
         value_0 = objective_callback(0, {"model.params.learning_rate": 0.01})
         value_1 = objective_callback(1, {"model.params.learning_rate": 0.02})
-        assert n_trials == 2
-        return 1, max(value_0, value_1)
+        return HpoOptunaStudyResult(
+            best_trial_number=1,
+            best_value=max(value_0, value_1),
+            attempted_trials=2,
+            completed_trials=2,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
 
     def fake_neutralize_predictions_file(*, request: object, run_id: str | None = None) -> NeutralizationResult:
         output_path = tmp_path / f"{run_id or 'file'}.neutralized.parquet"
@@ -285,19 +303,23 @@ def test_hpo_api_roundtrip_with_neutralization_smoke(monkeypatch: pytest.MonkeyP
 
     created = api_module.hpo_create(
         api_module.HpoStudyCreateRequest(
+            study_id="integration-smoke-neut",
             study_name="integration-smoke-neut",
             config_path=str(config_path),
             experiment_id="exp-smoke",
-            n_trials=2,
-            neutralize=True,
-            neutralizer_path=str(neutralizer_path),
+            objective=api_module.HpoObjectiveRequest(
+                metric="post_fold_champion_objective",
+                direction="maximize",
+                neutralization=api_module.HpoNeutralizationRequest(
+                    enabled=True,
+                    neutralizer_path=str(neutralizer_path),
+                ),
+            ),
             search_space={
-                "model.params.learning_rate": {
-                    "type": "float",
-                    "low": 0.001,
-                    "high": 0.1,
-                }
+                "model.params.learning_rate": api_module.HpoSearchSpaceSpecRequest(type="float", low=0.001, high=0.1)
             },
+            sampler=api_module.HpoSamplerRequest(kind="tpe", seed=1337),
+            stopping=api_module.HpoStoppingRequest(max_trials=2),
             workspace_root=str(store_root.parent),
         )
     )

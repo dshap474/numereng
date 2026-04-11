@@ -7,6 +7,17 @@ from numereng.features.ensemble.contracts import (
     EnsembleNeutralizationMode,
     EnsembleRecord,
     EnsembleResult,
+    EnsembleSelectionRequest,
+    EnsembleSelectionResult,
+    EnsembleSelectionSelectionMode,
+    EnsembleSelectionSourceRule,
+    EnsembleSelectionVariantName,
+)
+from numereng.features.ensemble.selection import (
+    EnsembleSelectionError,
+    EnsembleSelectionExecutionError,
+    EnsembleSelectionValidationError,
+    select_ensemble,
 )
 from numereng.features.ensemble.service import (
     EnsembleError,
@@ -28,8 +39,17 @@ __all__ = [
     "EnsembleNotFoundError",
     "EnsembleRecord",
     "EnsembleResult",
+    "EnsembleSelectionError",
+    "EnsembleSelectionExecutionError",
+    "EnsembleSelectionRequest",
+    "EnsembleSelectionResult",
+    "EnsembleSelectionSelectionMode",
+    "EnsembleSelectionSourceRule",
+    "EnsembleSelectionValidationError",
+    "EnsembleSelectionVariantName",
     "EnsembleValidationError",
     "build_ensemble",
     "get_ensemble_view",
     "list_ensembles_view",
+    "select_ensemble",
 ]

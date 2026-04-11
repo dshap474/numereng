@@ -47,16 +47,40 @@ Notes:
 
 ## `hpo`
 
-- `numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]`
+- `numereng hpo create (--study-config <path.json> | (--study-id <id> --study-name <name> --config <path.json> --search-space <json|path>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--timeout-seconds <n>] [--max-completed-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]`
 - `numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]`
 - `numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]`
 - `numereng hpo trials --study-id <id> [--format <table|json>] [--workspace <path>]`
+
+Notes:
+
+- HPO v2 is a strict nested contract. Inline CLI flags only cover the core study fields; advanced sampler and plateau settings live in `--study-config`.
+- Studies resume by explicit `study_id`; rerunning `hpo create` with the same `study_id` reuses the existing Optuna journal when the immutable study spec matches.
+- `--timeout-seconds` applies to the current `hpo create` invocation only; it is not a cumulative cross-resume budget.
+- `--sampler random` only accepts `kind=random` plus `seed`; TPE-only fields remain invalid in HPO study JSON.
 
 ## `ensemble`
 
 - `numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--workspace <path>]`
 - `numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]`
 - `numereng ensemble details --ensemble-id <id> [--format <table|json>] [--workspace <path>]`
+
+## `serve`
+
+- `numereng serve package create --experiment-id <id> --package-id <id> --components <json|path> [--data-version <v>] [--blend-rule <json|path>] [--neutralization <json|path>] [--workspace <path>]`
+- `numereng serve package inspect --experiment-id <id> --package-id <id> [--workspace <path>]`
+- `numereng serve package list [--experiment-id <id>] [--format <table|json>] [--workspace <path>]`
+- `numereng serve live build --experiment-id <id> --package-id <id> [--workspace <path>]`
+- `numereng serve live submit --experiment-id <id> --package-id <id> --model-name <name> [--workspace <path>]`
+- `numereng serve pickle build --experiment-id <id> --package-id <id> [--workspace <path>]`
+- `numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--workspace <path>]`
+
+Notes:
+
+- `serve package inspect` is the compatibility gate for both local live builds and Numerai-hosted model uploads
+- local live build and model upload compatibility are classified separately
+- hosted model-upload support is intentionally conservative; local-only packages are valid and expected
+- `serve pickle upload` validates the requested data version and docker image against the Numerai API before upload
 
 ## `neutralize`
 

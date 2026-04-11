@@ -61,6 +61,107 @@
       "title": "HpoNeutralizationConfig",
       "type": "object"
     },
+    "HpoObjectiveConfig": {
+      "additionalProperties": false,
+      "description": "Objective block for one HPO study.",
+      "properties": {
+        "direction": {
+          "default": "maximize",
+          "enum": [
+            "maximize",
+            "minimize"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "metric": {
+          "default": "post_fold_champion_objective",
+          "title": "Metric",
+          "type": "string"
+        },
+        "neutralization": {
+          "$ref": "#/$defs/HpoNeutralizationConfig"
+        }
+      },
+      "title": "HpoObjectiveConfig",
+      "type": "object"
+    },
+    "HpoPlateauConfig": {
+      "additionalProperties": false,
+      "description": "Study-level plateau stopping controls.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "min_completed_trials": {
+          "default": 15,
+          "minimum": 1,
+          "title": "Min Completed Trials",
+          "type": "integer"
+        },
+        "min_improvement_abs": {
+          "default": 0.00025,
+          "minimum": 0.0,
+          "title": "Min Improvement Abs",
+          "type": "number"
+        },
+        "patience_completed_trials": {
+          "default": 10,
+          "minimum": 1,
+          "title": "Patience Completed Trials",
+          "type": "integer"
+        }
+      },
+      "title": "HpoPlateauConfig",
+      "type": "object"
+    },
+    "HpoSamplerConfig": {
+      "additionalProperties": false,
+      "description": "Sampler block for one HPO study.",
+      "properties": {
+        "group": {
+          "default": false,
+          "title": "Group",
+          "type": "boolean"
+        },
+        "kind": {
+          "default": "tpe",
+          "enum": [
+            "tpe",
+            "random"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "multivariate": {
+          "default": true,
+          "title": "Multivariate",
+          "type": "boolean"
+        },
+        "n_startup_trials": {
+          "default": 10,
+          "minimum": 1,
+          "title": "N Startup Trials",
+          "type": "integer"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 1337,
+          "title": "Seed"
+        }
+      },
+      "title": "HpoSamplerConfig",
+      "type": "object"
+    },
     "HpoSearchSpaceSpec": {
       "additionalProperties": false,
       "description": "Typed spec for one search-space parameter path.",
@@ -155,22 +256,56 @@
       ],
       "title": "HpoSearchSpaceSpec",
       "type": "object"
+    },
+    "HpoStoppingConfig": {
+      "additionalProperties": false,
+      "description": "Study-level stop controls.",
+      "properties": {
+        "max_completed_trials": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Completed Trials"
+        },
+        "max_trials": {
+          "default": 100,
+          "minimum": 1,
+          "title": "Max Trials",
+          "type": "integer"
+        },
+        "plateau": {
+          "$ref": "#/$defs/HpoPlateauConfig"
+        },
+        "timeout_seconds": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeout Seconds"
+        }
+      },
+      "title": "HpoStoppingConfig",
+      "type": "object"
     }
   },
   "additionalProperties": false,
-  "description": "Canonical HPO study config contract.",
+  "description": "Canonical v2 HPO study config contract.",
   "properties": {
     "config_path": {
       "title": "Config Path",
-      "type": "string"
-    },
-    "direction": {
-      "default": "maximize",
-      "enum": [
-        "maximize",
-        "minimize"
-      ],
-      "title": "Direction",
       "type": "string"
     },
     "experiment_id": {
@@ -185,55 +320,25 @@
       "default": null,
       "title": "Experiment Id"
     },
-    "metric": {
-      "default": "post_fold_champion_objective",
-      "title": "Metric",
-      "type": "string"
-    },
-    "n_trials": {
-      "default": 100,
-      "minimum": 1,
-      "title": "N Trials",
-      "type": "integer"
-    },
-    "neutralization": {
-      "$ref": "#/$defs/HpoNeutralizationConfig"
+    "objective": {
+      "$ref": "#/$defs/HpoObjectiveConfig"
     },
     "sampler": {
-      "default": "tpe",
-      "enum": [
-        "tpe",
-        "random"
-      ],
-      "title": "Sampler",
-      "type": "string"
+      "$ref": "#/$defs/HpoSamplerConfig"
     },
     "search_space": {
-      "anyOf": [
-        {
-          "additionalProperties": {
-            "$ref": "#/$defs/HpoSearchSpaceSpec"
-          },
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Search Space"
+      "additionalProperties": {
+        "$ref": "#/$defs/HpoSearchSpaceSpec"
+      },
+      "title": "Search Space",
+      "type": "object"
     },
-    "seed": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": 1337,
-      "title": "Seed"
+    "stopping": {
+      "$ref": "#/$defs/HpoStoppingConfig"
+    },
+    "study_id": {
+      "title": "Study Id",
+      "type": "string"
     },
     "study_name": {
       "title": "Study Name",
@@ -241,8 +346,13 @@
     }
   },
   "required": [
+    "study_id",
     "study_name",
-    "config_path"
+    "config_path",
+    "objective",
+    "search_space",
+    "sampler",
+    "stopping"
   ],
   "title": "HpoStudyConfig",
   "type": "object"

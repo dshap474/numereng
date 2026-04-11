@@ -2,6 +2,8 @@
 
 Thanks for contributing.
 
+This file is contributor-facing. End users should install `numereng`, initialize a workspace, and work from that workspace without cloning the repo.
+
 ## Prerequisites
 
 - Python 3.12+

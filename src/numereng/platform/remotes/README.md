@@ -29,19 +29,19 @@ Those profile files are gitignored so each clone stays clean for OSS users.
 2. Fill in your SSH host alias or explicit host
 3. Set any referenced env vars for username/key path if needed
 4. Make sure the remote machine can run:
-   - `uv run numereng monitor snapshot --workspace <store_root> --json`
+   - `numereng monitor snapshot --workspace <workspace_root> --json`
 
 ## Remote ops
 
 The tracked remote inventory is also used by the public remote ops surface:
 
-- `uv run numereng remote list`
-- `uv run numereng remote bootstrap-viz`
-- `uv run numereng remote doctor --target <id>`
-- `uv run numereng remote repo sync --target <id>`
-- `uv run numereng remote experiment sync --target <id> --experiment-id <id>`
-- `uv run numereng remote config push --target <id> --config <path.json>`
-- `uv run numereng remote run train --target <id> --config <path.json>`
+- `numereng remote list`
+- `numereng remote bootstrap-viz`
+- `numereng remote doctor --target <id>`
+- `numereng remote repo sync --target <id>`
+- `numereng remote experiment sync --target <id> --experiment-id <id>`
+- `numereng remote config push --target <id> --config <path.json>`
+- `numereng remote run train --target <id> --config <path.json>`
 
 Sync rules:
 
@@ -53,8 +53,8 @@ Sync rules:
 ## Viz bootstrap
 
 - `enabled: true` means the remote participates in both monitoring and viz bootstrap.
-- `uv run numereng remote bootstrap-viz` runs repo sync in auto mode and then `remote doctor` for every enabled target.
-- `make viz` runs that bootstrap step before starting the local FastAPI + Vite stack.
+- `numereng remote bootstrap-viz` runs repo sync in auto mode and then `remote doctor` for every enabled target.
+- Installed workspaces launch the dashboard with `numereng viz`.
 - Remotes stay read-only from the dashboard point of view: no remote viz server is started on the target host.
 - If one remote is unreachable, local viz still starts and mission control marks that source as unavailable/degraded.
 

@@ -1,0 +1,6 @@
+interface:
+  display_name: "skill:ExperimentDesign"
+  default_prompt: "Use the experiment-design skill for numereng experiment planning, round design, plateau decisions, reporting guidance, and champion selection."
+
+policy:
+  allow_implicit_invocation: true

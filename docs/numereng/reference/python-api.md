@@ -59,11 +59,31 @@ print(response.results_path)
 - `hpo_get(HpoStudyGetRequest)`
 - `hpo_trials(HpoStudyTrialsRequest)`
 
+HPO v2 requests are nested:
+
+- `study_id`, `study_name`, `config_path`, optional `experiment_id`
+- `objective`
+- explicit `search_space`
+- `sampler`
+- `stopping`
+
+`HpoStudyResponse` now returns the full nested `spec` plus summary fields such as `attempted_trials`, `completed_trials`, `failed_trials`, and `stop_reason`.
+
 ### Ensembles
 
 - `ensemble_build(EnsembleBuildRequest)`
 - `ensemble_list(EnsembleListRequest | None = None)`
 - `ensemble_get(EnsembleGetRequest)`
+
+### Serving
+
+- `serve_package_create(ServePackageCreateRequest)`
+- `serve_package_inspect(ServePackageInspectRequest)`
+- `serve_package_list(ServePackageListRequest | None = None)`
+- `serve_live_build(ServeLiveBuildRequest)`
+- `serve_live_submit(ServeLiveSubmitRequest)`
+- `serve_pickle_build(ServePickleBuildRequest)`
+- `serve_pickle_upload(ServePickleUploadRequest)`
 
 ### Neutralization And Store
 
@@ -107,6 +127,10 @@ Examples:
 - `ExperimentCreateRequest`
 - `HpoStudyCreateRequest`
 - `EnsembleBuildRequest`
+- `ServePackageCreateRequest`
+- `ServePackageInspectRequest`
+- `ServeLiveBuildRequest`
+- `ServePickleBuildRequest`
 - `NeutralizeRequest`
 - `SubmissionRequest`
 

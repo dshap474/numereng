@@ -28,15 +28,13 @@ def _print_studies_table(payload: api.HpoStudyListResponse) -> None:
         print("No HPO studies found")
         return
 
-    header = f"{'Study ID':<44} {'Status':<10} {'Trials':<6} {'Best Run':<14} {'Best Value':>10}"
+    header = f"{'Study ID':<32} {'Status':<10} {'Done':<11} {'Stop Reason':<28} {'Best Value':>10}"
     print(header)
     print("-" * len(header))
     for item in payload.studies:
         best_value = "n/a" if item.best_value is None else f"{item.best_value:.6f}"
-        print(
-            f"{item.study_id:<44} {item.status:<10} {item.n_trials:<6} "
-            f"{(item.best_run_id or '-'): <14} {best_value:>10}"
-        )
+        done = f"{item.completed_trials}/{item.spec.stopping.max_trials}"
+        print(f"{item.study_id:<32} {item.status:<10} {done:<11} {(item.stop_reason or '-'): <28} {best_value:>10}")
 
 
 def _print_study_details_table(payload: api.HpoStudyResponse) -> None:
@@ -44,11 +42,17 @@ def _print_study_details_table(payload: api.HpoStudyResponse) -> None:
     print(f"study_name: {payload.study_name}")
     print(f"experiment_id: {payload.experiment_id or 'none'}")
     print(f"status: {payload.status}")
-    print(f"metric: {payload.metric}")
-    print(f"direction: {payload.direction}")
-    print(f"trials: {payload.n_trials}")
-    print(f"sampler: {payload.sampler}")
-    print(f"seed: {payload.seed}")
+    print(f"metric: {payload.spec.objective.metric}")
+    print(f"direction: {payload.spec.objective.direction}")
+    print(f"sampler: {payload.spec.sampler.kind}")
+    print(f"seed: {payload.spec.sampler.seed}")
+    print(f"max_trials: {payload.spec.stopping.max_trials}")
+    print(f"max_completed_trials: {payload.spec.stopping.max_completed_trials}")
+    print(f"timeout_seconds: {payload.spec.stopping.timeout_seconds}")
+    print(f"attempted_trials: {payload.attempted_trials}")
+    print(f"completed_trials: {payload.completed_trials}")
+    print(f"failed_trials: {payload.failed_trials}")
+    print(f"stop_reason: {payload.stop_reason}")
     print(f"best_trial_number: {payload.best_trial_number}")
     print(f"best_value: {payload.best_value}")
     print(f"best_run_id: {payload.best_run_id}")

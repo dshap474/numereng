@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import json
 import shlex
@@ -12,14 +13,24 @@ import subprocess
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from numereng.features.experiments import resolve_experiment_run_plan_state_path
+from numereng.features.remote_ops.bootstrap_state import (
+    load_viz_bootstrap_state,
+    remote_viz_bootstrap_state_path,
+    write_viz_bootstrap_state,
+)
 from numereng.features.remote_ops.contracts import (
     RemoteBootstrapStatus,
     RemoteConfigPushResult,
     RemoteDoctorResult,
+    RemoteExperimentLaunchResult,
+    RemoteExperimentMaintainResult,
     RemoteExperimentPullFailure,
     RemoteExperimentPullResult,
+    RemoteExperimentStatusResult,
+    RemoteExperimentStopResult,
     RemoteExperimentSyncResult,
     RemoteRepoSyncResult,
     RemoteSyncPolicy,
@@ -50,7 +61,9 @@ from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 from numereng.platform.remotes.ssh import (
     build_monitor_snapshot_command,
     build_remote_python_command,
+    build_remote_shell_command,
     build_ssh_command,
+    powershell_single_quote,
     remote_path_join,
     scp_base_command,
     ssh_destination,
@@ -58,8 +71,6 @@ from numereng.platform.remotes.ssh import (
 from numereng.platform.run_execution import build_run_execution, serialize_run_execution
 
 _SYNC_TIMEOUT_SECONDS = 180
-_REMOTE_BOOTSTRAP_DIR = ("remote_ops", "bootstrap")
-_REMOTE_VIZ_BOOTSTRAP_FILE = "viz.json"
 _REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS = 10.0
 _REMOTE_WINDOWS_STARTUP_POLL_SECONDS = 0.25
 _REMOTE_PULL_STAGING_DIR = ("tmp", "remote_ops", "pulls")
@@ -155,74 +166,8 @@ def bootstrap_viz_remotes(
         degraded_count=sum(1 for item in results if item.bootstrap_status == "degraded"),
         targets=tuple(results),
     )
-    _write_viz_bootstrap_state(payload)
+    write_viz_bootstrap_state(payload)
     return payload
-
-
-def load_viz_bootstrap_state(
-    *,
-    store_root: str | Path = ".numereng",
-) -> RemoteVizBootstrapResult | None:
-    """Load the last persisted viz bootstrap result for enabled remote sources."""
-
-    resolved_store_root = resolve_store_root(store_root)
-    state_path = remote_viz_bootstrap_state_path(store_root=resolved_store_root)
-    if not state_path.is_file():
-        return None
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    targets_payload = payload.get("targets")
-    if not isinstance(targets_payload, list):
-        targets_payload = []
-    targets: list[RemoteVizBootstrapTargetResult] = []
-    for item in targets_payload:
-        if not isinstance(item, dict):
-            continue
-        target_payload = item.get("target")
-        if not isinstance(target_payload, dict):
-            continue
-        try:
-            targets.append(
-                RemoteVizBootstrapTargetResult(
-                    target=RemoteTargetRecord(
-                        id=str(target_payload["id"]),
-                        label=str(target_payload["label"]),
-                        kind=str(target_payload["kind"]),
-                        shell=str(target_payload["shell"]),
-                        repo_root=str(target_payload["repo_root"]),
-                        store_root=str(target_payload["store_root"]),
-                        runner_cmd=str(target_payload["runner_cmd"]),
-                        python_cmd=str(target_payload["python_cmd"]),
-                        tags=tuple(str(tag) for tag in target_payload.get("tags", [])),
-                    ),
-                    bootstrap_status=_bootstrap_status_value(item.get("bootstrap_status")),
-                    last_bootstrap_at=str(item.get("last_bootstrap_at") or payload.get("bootstrapped_at") or ""),
-                    last_bootstrap_error=_json_optional_str(item.get("last_bootstrap_error")),
-                    repo_synced=bool(item.get("repo_synced")),
-                    repo_sync_skipped=bool(item.get("repo_sync_skipped")),
-                    doctor_ok=bool(item.get("doctor_ok")),
-                    issues=tuple(str(issue) for issue in item.get("issues", []) if isinstance(issue, str)),
-                )
-            )
-        except KeyError:
-            continue
-    return RemoteVizBootstrapResult(
-        store_root=resolved_store_root,
-        state_path=state_path,
-        bootstrapped_at=str(payload.get("bootstrapped_at") or ""),
-        ready_count=int(payload.get("ready_count") or 0),
-        degraded_count=int(payload.get("degraded_count") or 0),
-        targets=tuple(targets),
-    )
-
-
-def remote_viz_bootstrap_state_path(*, store_root: str | Path) -> Path:
-    """Return the local viz bootstrap state path under the numereng store root."""
-
-    resolved_store_root = resolve_store_root(store_root)
-    return resolved_store_root / _REMOTE_BOOTSTRAP_DIR[0] / _REMOTE_BOOTSTRAP_DIR[1] / _REMOTE_VIZ_BOOTSTRAP_FILE
 
 
 def doctor_remote_target(*, target_id: str) -> RemoteDoctorResult:
@@ -304,6 +249,11 @@ def sync_remote_experiment(
 
     target = _get_target(target_id)
     resolved_store_root = resolve_store_root(store_root)
+    _ensure_remote_experiment_created(
+        target=target,
+        experiment_id=experiment_id,
+        store_root=resolved_store_root,
+    )
     entries = _experiment_sync_entries(resolved_store_root, experiment_id=experiment_id)
     local_marker_path, _ = build_experiment_marker_paths(
         store_root=resolved_store_root,
@@ -329,7 +279,7 @@ def sync_remote_experiment(
     return RemoteExperimentSyncResult(
         target_id=target.id,
         experiment_id=experiment_id,
-        remote_experiment_dir=remote_path_join(target, target.repo_root, "experiments", experiment_id),
+        remote_experiment_dir=remote_path_join(target, target.store_root, "experiments", experiment_id),
         manifest_hash=outcome.manifest_hash,
         synced_files=outcome.synced_files,
         deleted_files=outcome.deleted_files,
@@ -580,6 +530,226 @@ def remote_run_train(
     )
 
 
+def remote_launch_experiment(
+    *,
+    target_id: str,
+    experiment_id: str,
+    start_index: int = 1,
+    end_index: int | None = None,
+    score_stage: Literal["post_training_core", "post_training_full"] = "post_training_core",
+    sync_repo: RemoteSyncPolicy = "auto",
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentLaunchResult:
+    """Launch one detached remote experiment run-plan window."""
+
+    target = _get_target(target_id)
+    resolved_store_root = resolve_store_root(store_root)
+    resolved_end_index = _resolve_effective_end_index(
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        end_index=end_index,
+    )
+
+    repo_synced = False
+    if sync_repo == "always" or (sync_repo == "auto" and _should_sync_repo(target.id, resolved_store_root)):
+        sync_remote_repo(target_id=target.id, store_root=resolved_store_root)
+        repo_synced = True
+    sync_remote_experiment(target_id=target.id, experiment_id=experiment_id, store_root=resolved_store_root)
+
+    state_path = _remote_run_plan_state_path(
+        target=target,
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=resolved_end_index,
+    )
+    launch = _launch_remote_experiment_window(
+        target=target,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=resolved_end_index,
+        score_stage=score_stage,
+        resume=False,
+    )
+
+    return RemoteExperimentLaunchResult(
+        target_id=target.id,
+        experiment_id=experiment_id,
+        state_path=state_path,
+        launch_id=launch["launch_id"],
+        remote_log_path=launch["remote_log_path"],
+        remote_metadata_path=launch["remote_metadata_path"],
+        remote_pid=launch["pid"],
+        launched_at=launch["launched_at"],
+        repo_synced=repo_synced,
+        experiment_synced=True,
+    )
+
+
+def remote_experiment_status(
+    *,
+    target_id: str,
+    experiment_id: str,
+    start_index: int = 1,
+    end_index: int | None = None,
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentStatusResult:
+    """Read one remote experiment run-plan state."""
+
+    target = _get_target(target_id)
+    resolved_store_root = resolve_store_root(store_root)
+    resolved_end_index = _resolve_effective_end_index(
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        end_index=end_index,
+    )
+    state_path = _remote_run_plan_state_path(
+        target=target,
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=resolved_end_index,
+    )
+    payload = _run_remote_python(target, _remote_experiment_status_python_script(), args=[state_path])
+    if payload is None:
+        raise RemoteExecutionError("remote_experiment_status_failed")
+    raw_state = payload.get("state")
+    raw_state_dict = raw_state if isinstance(raw_state, dict) else {}
+    return RemoteExperimentStatusResult(
+        target_id=target.id,
+        experiment_id=experiment_id,
+        state_path=state_path,
+        exists=bool(payload.get("exists")),
+        phase=_to_non_empty_str(payload.get("phase")),
+        current_index=payload.get("current_index") if isinstance(payload.get("current_index"), int) else None,
+        current_run_id=_to_non_empty_str(payload.get("current_run_id")),
+        current_config_path=_to_non_empty_str(payload.get("current_config_path")),
+        last_completed_row_index=(
+            payload.get("last_completed_row_index")
+            if isinstance(payload.get("last_completed_row_index"), int)
+            else None
+        ),
+        supervisor_pid=payload.get("supervisor_pid") if isinstance(payload.get("supervisor_pid"), int) else None,
+        supervisor_alive=bool(payload.get("supervisor_alive")),
+        active_worker_pid=payload.get("active_worker_pid")
+        if isinstance(payload.get("active_worker_pid"), int)
+        else None,
+        last_successful_heartbeat_at=_to_non_empty_str(payload.get("last_successful_heartbeat_at")),
+        retry_count=int(payload.get("retry_count") or 0),
+        failure_classifier=_to_non_empty_str(payload.get("failure_classifier")),
+        terminal_error=_to_non_empty_str(payload.get("terminal_error")),
+        raw_state=raw_state_dict,
+    )
+
+
+def remote_maintain_experiment(
+    *,
+    target_id: str,
+    experiment_id: str,
+    start_index: int = 1,
+    end_index: int | None = None,
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentMaintainResult:
+    """Restart one dead nonterminal remote experiment run-plan window."""
+
+    status = remote_experiment_status(
+        target_id=target_id,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=end_index,
+        store_root=store_root,
+    )
+    if not status.exists:
+        raise RemoteExecutionError(f"remote_experiment_state_not_found:{experiment_id}")
+    if status.phase in {"complete", "failed", "stopped"}:
+        return RemoteExperimentMaintainResult(
+            target_id=status.target_id,
+            experiment_id=status.experiment_id,
+            state_path=status.state_path,
+            action="terminal",
+            phase=status.phase,
+            supervisor_pid=status.supervisor_pid,
+            note="terminal_state",
+        )
+    if status.supervisor_alive:
+        return RemoteExperimentMaintainResult(
+            target_id=status.target_id,
+            experiment_id=status.experiment_id,
+            state_path=status.state_path,
+            action="noop",
+            phase=status.phase,
+            supervisor_pid=status.supervisor_pid,
+            note="supervisor_alive",
+        )
+
+    target = _get_target(target_id)
+    window = status.raw_state.get("window") if isinstance(status.raw_state.get("window"), dict) else {}
+    resume_start_index = int(window.get("start_index") or start_index)
+    resume_end_index = int(
+        window.get("end_index")
+        or _resolve_effective_end_index(
+            store_root=resolve_store_root(store_root),
+            experiment_id=experiment_id,
+            end_index=end_index,
+        )
+    )
+    requested_score_stage = _to_non_empty_str(status.raw_state.get("requested_score_stage")) or "post_training_core"
+    launch = _launch_remote_experiment_window(
+        target=target,
+        experiment_id=experiment_id,
+        start_index=resume_start_index,
+        end_index=resume_end_index,
+        score_stage=requested_score_stage,
+        resume=True,
+    )
+    return RemoteExperimentMaintainResult(
+        target_id=status.target_id,
+        experiment_id=status.experiment_id,
+        state_path=status.state_path,
+        action="restarted",
+        phase=status.phase,
+        supervisor_pid=launch["pid"],
+        note="supervisor_restarted",
+    )
+
+
+def remote_stop_experiment(
+    *,
+    target_id: str,
+    experiment_id: str,
+    start_index: int = 1,
+    end_index: int | None = None,
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentStopResult:
+    """Stop one remote experiment run-plan supervisor."""
+
+    target = _get_target(target_id)
+    resolved_store_root = resolve_store_root(store_root)
+    resolved_end_index = _resolve_effective_end_index(
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        end_index=end_index,
+    )
+    state_path = _remote_run_plan_state_path(
+        target=target,
+        store_root=resolved_store_root,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=resolved_end_index,
+    )
+    payload = _run_remote_python(target, _remote_experiment_stop_python_script(), args=[state_path])
+    if payload is None:
+        raise RemoteExecutionError("remote_experiment_stop_failed")
+    return RemoteExperimentStopResult(
+        target_id=target.id,
+        experiment_id=experiment_id,
+        state_path=state_path,
+        stopped=bool(payload.get("stopped")),
+        supervisor_pid=payload.get("supervisor_pid") if isinstance(payload.get("supervisor_pid"), int) else None,
+        note=_to_non_empty_str(payload.get("note")),
+    )
+
+
 def _get_target(target_id: str) -> SshRemoteTargetProfile:
     targets = {target.id: target for target in load_remote_targets(strict=True)}
     target = targets.get(target_id)
@@ -645,7 +815,7 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
         raise RemoteValidationError(f"experiment_not_found:{experiment_id}")
 
     entries: list[SyncEntry] = []
-    for file_name in ("experiment.json", "EXPERIMENT.md", "run_plan.csv"):
+    for file_name in ("EXPERIMENT.md", "run_plan.csv"):
         path = experiment_root / file_name
         if path.is_file():
             entries.append(
@@ -669,6 +839,51 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
                 )
             )
     return entries
+
+
+def _ensure_remote_experiment_created(
+    *,
+    target: SshRemoteTargetProfile,
+    experiment_id: str,
+    store_root: Path,
+) -> None:
+    if _remote_experiment_exists(target=target, experiment_id=experiment_id):
+        return
+    experiment_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id
+    manifest = _read_json_dict(experiment_dir / "experiment.json")
+    command = [
+        *_split_target_command(target.runner_cmd, shell=target.shell),
+        "experiment",
+        "create",
+        "--id",
+        experiment_id,
+        "--workspace",
+        target.repo_root,
+    ]
+    name = _to_non_empty_str(manifest.get("name"))
+    hypothesis = _to_non_empty_str(manifest.get("hypothesis"))
+    tags = manifest.get("tags")
+    if name is not None:
+        command.extend(["--name", name])
+    if hypothesis is not None:
+        command.extend(["--hypothesis", hypothesis])
+    if isinstance(tags, list):
+        normalized_tags = [str(tag).strip() for tag in tags if isinstance(tag, str) and str(tag).strip()]
+        if normalized_tags:
+            command.extend(["--tags", ",".join(normalized_tags)])
+    result = _run_remote_command(target, command=command, cwd=target.repo_root)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "remote_experiment_create_failed"
+        raise RemoteExecutionError(f"remote_experiment_create_failed:{detail}")
+
+
+def _remote_experiment_exists(*, target: SshRemoteTargetProfile, experiment_id: str) -> bool:
+    payload = _run_remote_python(
+        target,
+        _experiment_exists_python_script(),
+        args=[experiment_id, target.store_root],
+    )
+    return bool(payload and payload.get("exists"))
 
 
 def _remote_pull_staging_dir(store_root: Path, *, experiment_id: str) -> Path:
@@ -703,23 +918,32 @@ def _reconcile_local_experiment_manifest(
         merged["tags"] = [str(tag) for tag in remote_tags]
 
     merged["created_at"] = (
-        _to_non_empty_str(local_manifest.get("created_at"))
-        or _to_non_empty_str(remote_manifest.get("created_at"))
+        _to_non_empty_str(remote_manifest.get("created_at"))
+        or _to_non_empty_str(local_manifest.get("created_at"))
         or pulled_at
     )
-    merged["updated_at"] = pulled_at
+    merged["updated_at"] = (
+        _to_non_empty_str(remote_manifest.get("updated_at"))
+        or _to_non_empty_str(local_manifest.get("updated_at"))
+        or pulled_at
+    )
 
     local_runs = local_manifest.get("runs")
     remote_runs = remote_manifest.get("runs")
-    merged["runs"] = sorted(
-        {
-            str(run_id)
-            for payload in (local_runs, remote_runs)
-            if isinstance(payload, list)
-            for run_id in payload
-            if isinstance(run_id, str) and run_id.strip()
-        }
-    )
+    merged_runs: list[str] = []
+    seen_runs: set[str] = set()
+    for payload in (remote_runs, local_runs, list(materialized_run_ids)):
+        if not isinstance(payload, list):
+            continue
+        for run_id in payload:
+            if not isinstance(run_id, str):
+                continue
+            stripped = run_id.strip()
+            if not stripped or stripped in seen_runs:
+                continue
+            seen_runs.add(stripped)
+            merged_runs.append(stripped)
+    merged["runs"] = merged_runs
 
     metadata: dict[str, Any] = {}
     local_metadata = local_manifest.get("metadata")
@@ -750,7 +974,7 @@ def _reconcile_local_experiment_manifest(
         store_root=store_root,
         experiment_id=experiment_id,
         name=_to_non_empty_str(merged.get("name")) or experiment_id,
-        status=_to_non_empty_str(merged.get("status")) or "active",
+        status=_to_non_empty_str(remote_manifest.get("status")) or _to_non_empty_str(merged.get("status")) or "active",
         created_at=str(merged["created_at"]),
         updated_at=str(merged["updated_at"]),
         metadata=metadata,
@@ -805,25 +1029,25 @@ def _should_sync_repo(target_id: str, store_root: Path) -> bool:
 
 
 def _infer_experiment_id(config_path: Path, store_root: Path) -> str | None:
-    workspace_root = resolve_workspace_layout_from_store_root(store_root).workspace_root
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
     try:
-        relative = config_path.relative_to(workspace_root)
+        relative = config_path.relative_to(experiments_root)
     except ValueError:
         return None
     parts = relative.parts
-    if len(parts) >= 3 and parts[0] == "experiments" and parts[2] == "configs":
-        return parts[1]
+    if len(parts) >= 2 and parts[1] == "configs":
+        return parts[0]
     return None
 
 
 def _is_experiment_config(config_path: Path, store_root: Path, experiment_id: str) -> bool:
-    workspace_root = resolve_workspace_layout_from_store_root(store_root).workspace_root
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
     try:
-        relative = config_path.relative_to(workspace_root)
+        relative = config_path.relative_to(experiments_root)
     except ValueError:
         return False
     parts = relative.parts
-    return len(parts) >= 4 and parts[0] == "experiments" and parts[1] == experiment_id and parts[2] == "configs"
+    return len(parts) >= 3 and parts[0] == experiment_id and parts[1] == "configs"
 
 
 def _remote_store_relative_path(target: SshRemoteTargetProfile, store_root: Path, config_path: Path) -> str:
@@ -1113,6 +1337,156 @@ def _split_target_command(command: str, *, shell: str) -> list[str]:
     return shlex.split(command, posix=shell != "powershell")
 
 
+def _quote_remote_arg(target: SshRemoteTargetProfile, value: str) -> str:
+    if target.shell == "powershell":
+        return f"'{powershell_single_quote(value)}'"
+    return shlex.quote(value)
+
+
+def _run_remote_command(
+    target: SshRemoteTargetProfile,
+    *,
+    command: list[str],
+    cwd: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    rendered = " ".join(_quote_remote_arg(target, item) for item in command)
+    if target.shell == "powershell":
+        rendered = f"& {rendered}"
+    ssh_command = build_ssh_command(target, build_remote_shell_command(target, rendered, cwd=cwd))
+    return subprocess.run(
+        ssh_command,
+        capture_output=True,
+        text=True,
+        timeout=target.command_timeout_seconds,
+        check=False,
+    )
+
+
+def _resolve_effective_end_index(*, store_root: Path, experiment_id: str, end_index: int | None) -> int:
+    if end_index is not None:
+        return end_index
+    experiment_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id
+    run_plan_path = experiment_dir / "run_plan.csv"
+    if not run_plan_path.is_file():
+        raise RemoteValidationError(f"experiment_run_plan_missing:{experiment_id}")
+    with run_plan_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        count = sum(1 for _ in reader)
+    if count < 1:
+        raise RemoteValidationError(f"experiment_run_plan_empty:{experiment_id}")
+    return count
+
+
+def _launch_remote_experiment_window(
+    *,
+    target: SshRemoteTargetProfile,
+    experiment_id: str,
+    start_index: int,
+    end_index: int,
+    score_stage: str,
+    resume: bool,
+) -> dict[str, str | int]:
+    launch_prefix = (
+        f"{_safe_name(experiment_id)}-resume" if resume else f"{_safe_name(experiment_id)}-{start_index}-{end_index}"
+    )
+    launch_id = f"{launch_prefix}-{_timestamp_token()}"
+    remote_log_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.log")
+    remote_metadata_path = remote_path_join(target, target.store_root, "remote_ops", "launches", f"{launch_id}.json")
+    launch_payload = _run_remote_python(
+        target,
+        _launch_python_script(),
+        args=[
+            base64.b64encode(
+                json.dumps(
+                    _remote_experiment_run_plan_command(
+                        target=target,
+                        experiment_id=experiment_id,
+                        start_index=start_index,
+                        end_index=end_index,
+                        score_stage=score_stage,
+                        resume=resume,
+                    )
+                ).encode("utf-8")
+            ).decode("ascii"),
+            target.repo_root,
+            remote_log_path,
+            remote_metadata_path,
+            launch_id,
+            base64.b64encode(_remote_execution_payload(target).encode("utf-8")).decode("ascii"),
+        ],
+    )
+    error_code = "remote_experiment_maintain_launch_failed" if resume else "remote_experiment_launch_failed"
+    if launch_payload is None:
+        raise RemoteExecutionError(error_code)
+    if not bool(launch_payload.get("ok", True)):
+        raise RemoteExecutionError(_remote_launch_error_message(launch_payload))
+    return {
+        "launch_id": launch_id,
+        "remote_log_path": remote_log_path,
+        "remote_metadata_path": remote_metadata_path,
+        "pid": int(launch_payload["pid"]),
+        "launched_at": str(launch_payload["launched_at"]),
+    }
+
+
+def _remote_experiment_run_plan_command(
+    *,
+    target: SshRemoteTargetProfile,
+    experiment_id: str,
+    start_index: int,
+    end_index: int,
+    score_stage: str,
+    resume: bool,
+) -> list[str]:
+    command = [
+        *_split_target_command(target.runner_cmd, shell=target.shell),
+        "experiment",
+        "run-plan",
+        "--id",
+        experiment_id,
+        "--start-index",
+        str(start_index),
+        "--end-index",
+        str(end_index),
+        "--score-stage",
+        score_stage,
+        "--workspace",
+        target.repo_root,
+    ]
+    if resume:
+        command.append("--resume")
+    return command
+
+
+def _remote_execution_payload(target: SshRemoteTargetProfile) -> str:
+    return serialize_run_execution(
+        build_run_execution(
+            kind="remote_host",
+            provider="ssh",
+            backend="remote_pc",
+            target_id=target.id,
+            host=target.label,
+        )
+    )
+
+
+def _remote_run_plan_state_path(
+    *,
+    target: SshRemoteTargetProfile,
+    store_root: Path,
+    experiment_id: str,
+    start_index: int,
+    end_index: int,
+) -> str:
+    local_state_path = resolve_experiment_run_plan_state_path(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        start_index=start_index,
+        end_index=end_index,
+    )
+    return remote_path_join(target, target.store_root, "remote_ops", "experiment_run_plan", local_state_path.name)
+
+
 def _launch_id_for_config(config_path: Path) -> str:
     digest = hashlib.sha256(str(config_path).encode("utf-8")).hexdigest()[:8]
     return f"{_timestamp_token()}-{digest}"
@@ -1126,55 +1500,10 @@ def _remote_launch_error_message(payload: dict[str, Any]) -> str:
     return error
 
 
-def _write_viz_bootstrap_state(result: RemoteVizBootstrapResult) -> None:
-    result.state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "version": 1,
-        "bootstrapped_at": result.bootstrapped_at,
-        "ready_count": result.ready_count,
-        "degraded_count": result.degraded_count,
-        "targets": [
-            {
-                "target": {
-                    "id": item.target.id,
-                    "label": item.target.label,
-                    "kind": item.target.kind,
-                    "shell": item.target.shell,
-                    "repo_root": item.target.repo_root,
-                    "store_root": item.target.store_root,
-                    "runner_cmd": item.target.runner_cmd,
-                    "python_cmd": item.target.python_cmd,
-                    "tags": list(item.target.tags),
-                },
-                "bootstrap_status": item.bootstrap_status,
-                "last_bootstrap_at": item.last_bootstrap_at,
-                "last_bootstrap_error": item.last_bootstrap_error,
-                "repo_synced": item.repo_synced,
-                "repo_sync_skipped": item.repo_sync_skipped,
-                "doctor_ok": item.doctor_ok,
-                "issues": list(item.issues),
-            }
-            for item in result.targets
-        ],
-    }
-    result.state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _bootstrap_status_value(value: Any) -> RemoteBootstrapStatus:
-    return "degraded" if str(value or "").strip().lower() == "degraded" else "ready"
-
-
 def _doctor_failure_message(issues: tuple[str, ...]) -> str:
     if not issues:
         return "remote_doctor_failed"
     return f"remote_doctor_failed:{','.join(issues)}"
-
-
-def _json_optional_str(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 def _doctor_python_script() -> str:
@@ -1366,8 +1695,7 @@ def main() -> None:
         raise SystemExit("remote_pull_preflight_arguments_invalid")
     experiment_id = sys.argv[1]
     store_root = Path(sys.argv[2]).expanduser()
-    workspace_root = store_root.parent
-    experiments_root = workspace_root / "experiments"
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
 
     experiment_dir = experiments_root / experiment_id
     archived_dir = experiments_root / "_archive" / experiment_id
@@ -1449,6 +1777,178 @@ if __name__ == "__main__":
 """.strip()
 
 
+def _experiment_exists_python_script() -> str:
+    return """
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("remote_experiment_exists_arguments_invalid")
+    experiment_id = sys.argv[1]
+    store_root = Path(sys.argv[2]).expanduser()
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
+    experiment_dir = experiments_root / experiment_id
+    archived_dir = experiments_root / "_archive" / experiment_id
+    exists = (experiment_dir / "experiment.json").is_file() or (archived_dir / "experiment.json").is_file()
+    print(json.dumps({"exists": exists}, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
+def _remote_experiment_status_python_script() -> str:
+    return """
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    process_query_limited_information = 0x1000
+    still_active = 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if handle == 0:
+        return ctypes.get_last_error() == 5
+    try:
+        exit_code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)) == 0:
+            return True
+        return exit_code.value == still_active
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        raise SystemExit("remote_experiment_status_arguments_invalid")
+    state_path = Path(sys.argv[1]).expanduser()
+    if not state_path.is_file():
+        print(json.dumps({"exists": False, "state_path": str(state_path)}, sort_keys=True))
+        return
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        print(json.dumps({"exists": False, "state_path": str(state_path), "error": "state_invalid"}, sort_keys=True))
+        return
+    if not isinstance(state, dict):
+        print(json.dumps({"exists": False, "state_path": str(state_path), "error": "state_invalid"}, sort_keys=True))
+        return
+    supervisor_pid = state.get("supervisor_pid")
+    supervisor_alive = isinstance(supervisor_pid, int) and _pid_alive(supervisor_pid)
+    payload = {
+        "exists": True,
+        "state_path": str(state_path),
+        "phase": state.get("phase"),
+        "current_index": state.get("current_index"),
+        "current_run_id": state.get("current_run_id"),
+        "current_config_path": state.get("current_config_path"),
+        "last_completed_row_index": state.get("last_completed_row_index"),
+        "supervisor_pid": supervisor_pid if isinstance(supervisor_pid, int) else None,
+        "supervisor_alive": supervisor_alive,
+        "active_worker_pid": state.get("active_worker_pid"),
+        "last_successful_heartbeat_at": state.get("last_successful_heartbeat_at"),
+        "retry_count": state.get("retry_count"),
+        "failure_classifier": state.get("failure_classifier"),
+        "terminal_error": state.get("terminal_error"),
+        "state": state,
+    }
+    print(json.dumps(payload, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
+def _remote_experiment_stop_python_script() -> str:
+    return """
+import json
+import os
+import signal
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _stop_pid(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except OSError:
+        return False
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        raise SystemExit("remote_experiment_stop_arguments_invalid")
+    state_path = Path(sys.argv[1]).expanduser()
+    if not state_path.is_file():
+        print(json.dumps({"stopped": False, "note": "state_missing", "state_path": str(state_path)}, sort_keys=True))
+        return
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        print(json.dumps({"stopped": False, "note": "state_invalid", "state_path": str(state_path)}, sort_keys=True))
+        return
+    if not isinstance(state, dict):
+        print(json.dumps({"stopped": False, "note": "state_invalid", "state_path": str(state_path)}, sort_keys=True))
+        return
+    supervisor_pid = state.get("supervisor_pid")
+    stopped = _stop_pid(supervisor_pid) if isinstance(supervisor_pid, int) else False
+    state["phase"] = "stopped"
+    state["updated_at"] = _utc_now_iso()
+    state["supervisor_pid"] = None
+    state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                "stopped": stopped,
+                "supervisor_pid": supervisor_pid if isinstance(supervisor_pid, int) else None,
+                "state_path": str(state_path),
+                "note": "stopped" if stopped else "supervisor_not_running",
+            },
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
 __all__ = [
     "RemoteExecutionError",
     "RemoteOpsError",
@@ -1458,9 +1958,13 @@ __all__ = [
     "doctor_remote_target",
     "load_viz_bootstrap_state",
     "list_remote_targets",
+    "remote_experiment_status",
+    "remote_launch_experiment",
+    "remote_maintain_experiment",
     "pull_remote_experiment",
     "push_remote_config",
     "remote_run_train",
+    "remote_stop_experiment",
     "remote_viz_bootstrap_state_path",
     "sync_remote_experiment",
     "sync_remote_repo",

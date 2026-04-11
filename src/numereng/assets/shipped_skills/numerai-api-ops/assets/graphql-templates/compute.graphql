@@ -1,0 +1,49 @@
+query ListComputePickles($modelId: ID, $unassigned: Boolean!) {
+  computePickles(modelId: $modelId, unassigned: $unassigned) {
+    id
+    filename
+    modelId
+    assignedModelSlots
+    validationStatus
+    diagnosticsStatus
+    triggerStatus
+    insertedAt
+    updatedAt
+  }
+}
+
+mutation AssignPickleToModel($modelId: String, $pickleId: ID) {
+  assignPickleToModel(modelId: $modelId, pickleId: $pickleId)
+}
+
+mutation TriggerComputePickleUpload(
+  $modelId: ID,
+  $pickleId: ID,
+  $triggerValidation: Boolean
+) {
+  triggerComputePickleUpload(
+    modelId: $modelId,
+    pickleId: $pickleId,
+    triggerValidation: $triggerValidation
+  ) {
+    id
+    modelId
+    triggerStatus
+    diagnosticsStatus
+    updatedAt
+  }
+}
+
+query TriggerLogs($triggerId: ID!) {
+  triggerLogs(triggerId: $triggerId) {
+    timestamp
+    message
+  }
+}
+
+query DiagnosticsTriggerLogs($pickleId: ID!) {
+  diagnosticsTriggerLogs(pickleId: $pickleId) {
+    timestamp
+    message
+  }
+}

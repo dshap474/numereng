@@ -2,7 +2,7 @@
 
 # numereng
 
-`numereng` is a package-first Numerai agentic development engine for training, scoring, submissions, experiments, HPO, ensembles, cloud execution, and read-only monitoring.
+`numereng` is a package-first agentic development environment for Numerai. It gives you one installed runtime plus one workspace layout for experiments, notes, custom models, research programs, shipped agent skills, and the read-only dashboard.
 
 Stable public interfaces:
 
@@ -10,196 +10,130 @@ Stable public interfaces:
 - Python facade: `import numereng.api`
 - Workflow facade: `import numereng.api.pipeline`
 
-## Quick Start
+## Install
 
 Requires Python `3.12+`.
 
-Install [`just`](https://github.com/casey/just) if you want to use the repo wrapper commands shown below.
+```bash
+uv tool install numereng
+```
+
+Alternative:
+
+```bash
+pip install numereng
+```
+
+The base install includes the public Python API, CLI, monitor stack, and the core local training/scoring runtime.
+
+Optional extras:
+
+- `pip install "numereng[training]"` for additional model backends and HPO tooling beyond the core local stack
+- `pip install "numereng[mlops]"`
+
+## Quick Start
+
+Create a fresh workspace anywhere:
+
+```bash
+mkdir numerai-dev
+cd numerai-dev
+numereng init
+```
+
+That creates the canonical workspace layout:
+
+```text
+numerai-dev/
+  experiments/
+  notes/
+  custom_models/
+  research_programs/
+  .agents/skills/
+  .numereng/
+```
+
+Then work from that directory:
+
+```bash
+numereng --help
+numereng experiment list
+numereng viz
+```
+
+Default dashboard endpoint:
+
+- [http://127.0.0.1:8502](http://127.0.0.1:8502)
+
+## Workspace Model
+
+Visible workspace roots:
+
+- `experiments/`
+- `notes/`
+- `custom_models/`
+- `research_programs/`
+- `.agents/skills/`
+
+Hidden numereng-managed runtime state:
+
+- `.numereng/numereng.db`
+- `.numereng/runs/`
+- `.numereng/datasets/`
+- `.numereng/cache/`
+- `.numereng/tmp/`
+- `.numereng/remote_ops/`
+
+`numereng init` is idempotent and does not overwrite existing user-authored files.
+
+## Core Workflows
+
+- Train runs from strict JSON configs: `numereng run train --help`
+- Re-score an existing run: `numereng run score --help`
+- Submit predictions or run outputs: `numereng run submit --help`
+- Manage experiments and experiment reports: `numereng experiment --help`
+- Run agentic research campaigns: `numereng research --help`
+- Run HPO studies: `numereng hpo --help`
+- Build ensembles: `numereng ensemble --help`
+- Build production submission packages and model uploads: `numereng serve --help`
+- Neutralize predictions: `numereng neutralize --help`
+- Maintain datasets and runtime state: `numereng dataset-tools --help`, `numereng store --help`
+- Launch read-only monitoring: `numereng viz`
+- Launch cloud jobs: `numereng cloud --help`
+- Query Numerai APIs and forum data: `numereng numerai --help`
+
+Python users can call the same flows through typed request/response contracts in `numereng.api.contracts`.
+
+## Docs
+
+- Product docs: [`docs/numereng`](docs/numereng)
+- Agent entrypoint: [`docs/llms.txt`](docs/llms.txt)
+- Architecture map: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+
+Start here:
+
+- [`docs/numereng/getting-started/installation.md`](docs/numereng/getting-started/installation.md)
+- [`docs/numereng/getting-started/project-layout.md`](docs/numereng/getting-started/project-layout.md)
+- [`docs/numereng/reference/custom-models.md`](docs/numereng/reference/custom-models.md)
+- [`docs/numereng/workflows/dashboard.md`](docs/numereng/workflows/dashboard.md)
+- [`docs/numereng/workflows/serving.md`](docs/numereng/workflows/serving.md)
+
+## Contributors
+
+The repo remains the source of truth for implementation, tests, docs, and packaged assets.
+End users do not need this checkout; they only need an installed `numereng` runtime plus a workspace.
+
+Contributor setup:
 
 ```bash
 uv sync --extra dev
-just fmt
-uv run numereng --help
-make oss-preflight
 just test
 just build
 ```
 
-Optional extras:
+Contributor/deep-system docs:
 
-- `uv sync --extra training`
-- `uv sync --extra mlops`
-
-Default runtime state lives under `.numereng/`.
-
-## Development Tooling
-
-The canonical local toolchain is `uv` for environment management, Ruff for linting and formatting,
-`ty` for the repo's enforced type gate, and `pytest` for tests.
-
-```bash
-just fmt
-just test
-just test-all
-```
-
-`ty` adoption is intentionally staged in `pyproject.toml` through a scoped
-`[tool.ty.src].include` list. The first enforced surface covers `config`,
-`platform`, `features/submission`, a small public API subset, and mirrored smoke/unit tests while
-backlog-heavy areas remain out of scope for this initial baseline.
-
-## Core Workflows
-
-- Train runs from strict JSON configs: `uv run numereng run train --help`
-- Re-score an existing run: `uv run numereng run score --help`
-- Submit predictions or run outputs: `uv run numereng run submit --help`
-- Build or promote shared benchmark baselines from existing runs: `uv run numereng baseline --help`
-- Manage experiments and pack experiment summaries: `uv run numereng experiment --help`
-- Run agentic research campaigns rooted at one experiment: `uv run numereng research --help`
-- Run HPO studies: `uv run numereng hpo --help`
-- Build ensembles: `uv run numereng ensemble --help`
-- Neutralize predictions: `uv run numereng neutralize --help`
-- Manage datasets, store state, and backfill viz artifacts for historical runs: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
-- Build normalized read-only monitor snapshots for local or remote-backed stores: `uv run numereng monitor --help`
-- Launch cloud jobs: `uv run numereng cloud --help`
-- Query Numerai APIs and forum data: `uv run numereng numerai --help`
-
-The CLI command families are:
-
-- `run`
-- `experiment`
-- `baseline`
-- `research`
-- `hpo`
-- `ensemble`
-- `neutralize`
-- `dataset-tools`
-- `store`
-- `monitor`
-- `cloud`
-- `numerai`
-
-Python users can call the same flows through typed request/response contracts in `numereng.api.contracts`.
-
-Agentic research defaults to a headless `codex exec` planner. To use OpenRouter instead, switch `ACTIVE_MODEL_SOURCE` in `src/numereng/config/openrouter/active-model.py` to `openrouter`.
-Agentic research now centers on saved research programs: each session binds to one markdown program file, snapshots it into the experiment, and then runs against that persisted snapshot. The default tracked `numerai-experiment-loop` program is config-centric: each autonomous iteration picks one parent config, asks the planner for a small validated mutation, materializes one child config, and trains that single child run. Additional custom programs can be dropped into `src/numereng/features/agentic_research/programs/` and are ignored by git by default.
-
-## Architecture
-
-The codebase follows a strict dependency direction:
-
-```text
-config -> platform -> features -> api -> cli
-```
-
-High-level layout:
-
-- `src/numereng/config/`: strict training and HPO config contracts/loaders
-- `src/numereng/platform/`: Numerai adapters, forum scraping, shared boundary errors, remote monitor profile loading
-- `src/numereng/features/`: business logic by slice
-- `src/numereng/api/`: stable Python facade and workflow entrypoints
-- `src/numereng/cli/`: CLI parsing and command dispatch
-- `viz/api/numereng_viz/`: read-only dashboard backend package and monitor snapshot composition
-- `src/numereng/features/viz/`: compatibility shim for the public viz boundary
-- `viz/web/`: dashboard frontend
-
-Core feature slices include:
-
-- training
-- scoring
-- submission
-- baseline
-- experiments
-- agentic research
-- hpo
-- ensemble
-- dataset tools
-- feature neutralization
-- store
-- telemetry
-- cloud (`aws`, `modal`)
-- viz
-
-## Runtime Layout
-
-The default store root is `.numereng/`. Common artifacts include:
-
-```text
-.numereng/
-  numereng.db
-  runs/<run_id>/
-    run.json
-    runtime.json
-    resolved.json
-    results.json
-    metrics.json
-    score_provenance.json
-    artifacts/predictions/*.parquet
-  datasets/
-    baselines/<name>/
-      baseline.json
-      pred_<name>.parquet
-  experiments/<experiment_id>/
-    experiment.json
-    EXPERIMENT.md
-    EXPERIMENT.pack.md
-    configs/*.json
-    agentic_research/
-      program.json
-      session_program.md
-      lineage.json
-      rounds/rN/
-        round.json
-        round.md
-        llm_trace.jsonl
-        llm_trace.md
-  cache/
-  datasets/
-  cloud/
-  notes/
-```
-
-## AWS Setup
-
-To use the AWS cloud commands, first configure standard AWS credentials locally and create a local SSH keypair for EC2 access/debugging.
-
-```bash
-aws configure
-ssh-keygen -t ed25519 -f ~/.ssh/numereng-aws
-```
-
-Use shared AWS credentials, `AWS_PROFILE`, or direct AWS credential env vars for auth. Then use `uv run numereng cloud --help` to supply the AWS-specific flags needed for your EC2 or managed AWS flow.
-
-## Dashboard
-
-Run the dashboard API and web app:
-
-```bash
-just viz
-```
-
-- Requires Node.js 20+ and `npm` for the web app.
-- API: `http://127.0.0.1:8502`
-- Web: `http://127.0.0.1:5173`
-- Stop servers: `just kill-viz`
-- `make viz` is deprecated and forwards to `just viz`
-
-The dashboard is monitor-only. Launch and control operations still happen through the CLI or Python API.
-Training and `run score` persist the canonical scoring-artifact bundle used by run-detail charts, including the per-era and cumulative metric series. Older runs can be backfilled with `uv run numereng store materialize-viz-artifacts --kind scoring-artifacts ...` (`per-era-corr` remains as a deprecated alias).
-
-## Docs
-
-- Agent entrypoint: `docs/llms.txt`
-- Deep architecture map: `docs/ARCHITECTURE.md`
-- CLI reference: `docs/numereng/reference/cli.md`
-- Training workflow: `docs/numereng/workflows/training.md`
-- Experiments workflow: `docs/numereng/workflows/experiments.md`
-- Ensembles workflow: `docs/numereng/workflows/ensembles.md`
-- Cloud training workflow: `docs/numereng/workflows/cloud-training.md`
-
-## Contributing and Support
-
-- Contribution guide: `CONTRIBUTING.md`
-- Support policy: `SUPPORT.md`
-- Security policy: `SECURITY.md`
-- Code of conduct: `CODE_OF_CONDUCT.md`
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`docs/llms.txt`](docs/llms.txt)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`SECURITY.md`](SECURITY.md)
