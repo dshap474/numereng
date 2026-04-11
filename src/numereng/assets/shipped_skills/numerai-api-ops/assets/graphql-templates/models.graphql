@@ -1,0 +1,45 @@
+query AccountModels {
+  account {
+    models {
+      id
+      name
+      tournament
+    }
+  }
+}
+
+query ModelById($modelId: ID!) {
+  model(modelId: $modelId) {
+    id
+    name
+    tournament
+    computeEnabled
+    submissionWebhook
+    archived
+    username
+  }
+}
+
+query AccountProfileByUsername($username: String!, $tournament: Int) {
+  accountProfile(username: $username, tournament: $tournament) {
+    username
+    displayName
+    tournament
+    totalStake
+    models {
+      id
+      displayName
+      tournament
+      username
+      stake
+    }
+  }
+}
+
+mutation AddModel($name: String!, $tournament: Int!) {
+  addModel(name: $name, tournament: $tournament) {
+    id
+    name
+    tournament
+  }
+}

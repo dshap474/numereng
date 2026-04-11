@@ -7,7 +7,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from numereng.config.hpo.contracts import HpoStudyConfig
+from numereng.config.hpo.contracts import HpoStudyConfig, canonicalize_hpo_study_payload
 
 _JSON_EXTENSION = ".json"
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema" / "hpo_study_config.schema.json"
@@ -50,7 +50,7 @@ def load_hpo_study_config_json(config_path: Path) -> dict[str, object]:
         raise HpoConfigLoaderError(f"hpo_study_config_schema_invalid:{detail}") from exc
 
     dumped = validated.model_dump(mode="python")
-    return {str(key): value for key, value in dumped.items()}
+    return canonicalize_hpo_study_payload(dumped)
 
 
 def export_hpo_study_config_schema(path: Path) -> None:

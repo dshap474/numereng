@@ -1,5 +1,7 @@
 # numereng
 
+This file is contributor-facing repo guidance. Installed users should work from a numereng workspace; contributors work from this source checkout.
+
 Read order:
 1. `docs/llms.txt` (agent entrypoint)
 2. `docs/ARCHITECTURE.md` (deep system map)
@@ -49,11 +51,11 @@ Read order:
 - Training requires successful pre-finalization `index_run`; if it fails, command fails.
 - Training writes `post_fold` during CV and automatically refreshes `post_training_core`; training/rescore scoring metadata is rebuilt from the persisted scoring manifest, and `post_training_full` is marked `not_requested` until that fuller stage is requested.
 - `experiment train` enforces `output_dir == store_root` (or omit output dir).
-- `experiment pack` writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
+- `experiment pack` writes `experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
 - Telemetry is fail-open and opt-in via launch metadata binding.
 - Launch metadata precedence: explicit outer binding first (CLI/API caller), API defaults only when unbound.
 - `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
-- If `experiment_id` is omitted, telemetry infers it when config path is under `.numereng/experiments/<id>/configs/*`.
+- If `experiment_id` is omitted, telemetry infers it when config path is under `experiments/<id>/configs/*`.
 - `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
 - `research init` requires `--program`; initialized sessions persist the selected program in `agentic_research/program.json` and `session_program.md`.
 - Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
@@ -61,7 +63,8 @@ Read order:
 - Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` remains as a deprecated alias. Viz otherwise uses a bounded read-only fallback on first miss.
-- Canonical store roots: `runs`, `datasets`, `cloud`, `experiments`, `notes`, `cache`.
+- Canonical workspace roots: `experiments`, `notes`, `custom_models`, `research_programs`, `.agents/skills`.
+- Canonical hidden runtime roots under `.numereng`: `runs`, `datasets`, `cloud`, `cache`, `tmp`, `remote_ops`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.
 - `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.

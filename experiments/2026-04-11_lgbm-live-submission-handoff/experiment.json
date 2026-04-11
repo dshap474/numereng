@@ -1,0 +1,18 @@
+{
+  "champion_run_id": null,
+  "created_at": "2026-04-11T17:31:59.640077+00:00",
+  "experiment_id": "2026-04-11_lgbm-live-submission-handoff",
+  "hypothesis": "Final-fit the April 8 winning LGBM blend components and prepare a live submission handoff artifact set.",
+  "metadata": {},
+  "name": "LGBM Live Submission Handoff",
+  "runs": [],
+  "schema_version": "1",
+  "status": "draft",
+  "tags": [
+    "submission",
+    "handoff",
+    "lgbm",
+    "live"
+  ],
+  "updated_at": "2026-04-11T17:31:59.640077+00:00"
+}

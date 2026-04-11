@@ -36,7 +36,7 @@ def _insert_raw_ensemble_row(
                 "corr_sharpe",
                 status,
                 "{}",
-                str(store_root / "experiments" / "exp-1" / "ensembles" / ensemble_id),
+                str(store_root.parent / "experiments" / "exp-1" / "ensembles" / ensemble_id),
                 stamp,
                 stamp,
             ),

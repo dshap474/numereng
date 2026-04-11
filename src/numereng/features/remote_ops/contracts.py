@@ -123,6 +123,70 @@ class RemoteTrainLaunchResult:
 
 
 @dataclass(frozen=True)
+class RemoteExperimentLaunchResult:
+    """Detached remote experiment-window launch metadata."""
+
+    target_id: str
+    experiment_id: str
+    state_path: str
+    launch_id: str
+    remote_log_path: str
+    remote_metadata_path: str
+    remote_pid: int
+    launched_at: str
+    repo_synced: bool
+    experiment_synced: bool
+
+
+@dataclass(frozen=True)
+class RemoteExperimentStatusResult:
+    """Current remote experiment-window supervisor status."""
+
+    target_id: str
+    experiment_id: str
+    state_path: str
+    exists: bool
+    phase: str | None
+    current_index: int | None
+    current_run_id: str | None
+    current_config_path: str | None
+    last_completed_row_index: int | None
+    supervisor_pid: int | None
+    supervisor_alive: bool
+    active_worker_pid: int | None
+    last_successful_heartbeat_at: str | None
+    retry_count: int
+    failure_classifier: str | None
+    terminal_error: str | None
+    raw_state: dict[str, object]
+
+
+@dataclass(frozen=True)
+class RemoteExperimentStopResult:
+    """Result of stopping one remote experiment-window supervisor."""
+
+    target_id: str
+    experiment_id: str
+    state_path: str
+    stopped: bool
+    supervisor_pid: int | None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class RemoteExperimentMaintainResult:
+    """Result of maintaining one remote experiment-window supervisor."""
+
+    target_id: str
+    experiment_id: str
+    state_path: str
+    action: Literal["noop", "restarted", "terminal"]
+    phase: str | None
+    supervisor_pid: int | None
+    note: str | None = None
+
+
+@dataclass(frozen=True)
 class RemoteVizBootstrapTargetResult:
     """Bootstrap state for one enabled remote source."""
 
@@ -154,6 +218,10 @@ __all__ = [
     "RemoteDoctorResult",
     "RemoteExperimentPullFailure",
     "RemoteExperimentPullResult",
+    "RemoteExperimentLaunchResult",
+    "RemoteExperimentMaintainResult",
+    "RemoteExperimentStatusResult",
+    "RemoteExperimentStopResult",
     "RemoteExperimentSyncResult",
     "RemoteRepoSyncResult",
     "RemoteSyncPolicy",

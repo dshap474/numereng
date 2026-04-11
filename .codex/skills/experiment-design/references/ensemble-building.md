@@ -5,9 +5,9 @@ Use this reference when combining multiple runs into a blended prediction strate
 ### Current Contract
 
 The current numereng CLI provides:
-- `uv run numereng ensemble build ...`
-- `uv run numereng ensemble list ...`
-- `uv run numereng ensemble details ...`
+- `numereng ensemble build ...`
+- `numereng ensemble list ...`
+- `numereng ensemble details ...`
 
 `ensemble build` currently supports `--method rank_avg` only.
 
@@ -18,7 +18,7 @@ Key behavior:
 - `--optimize-weights` uses a suffix-based objective; prefer `corr20v2_mean`, `corr20v2_sharpe`, or `max_drawdown`.
 
 Artifacts are written under:
-- `.numereng/experiments/<experiment_id>/ensembles/<ensemble_id>/` when `--experiment-id` is set
+- `experiments/<experiment_id>/ensembles/<ensemble_id>/` when `--experiment-id` is set
 - `.numereng/ensembles/<ensemble_id>/` when no experiment ID is set
 
 Artifact contract:
@@ -48,7 +48,7 @@ If a tier fails to improve results, revert to the strongest simpler blend.
 1. Select candidates from experiment report:
 
 ```bash
-uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --limit 20 --format table
+numereng experiment report --id <id> --metric bmc_last_200_eras.mean --limit 20 --format table
 ```
 
 2. Build a candidate worksheet using:
@@ -57,7 +57,7 @@ uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --li
 3. Build a blend with the CLI:
 
 ```bash
-uv run numereng ensemble build \
+numereng ensemble build \
   --experiment-id <id> \
   --run-ids <run_a,run_b,run_c> \
   --method rank_avg \
@@ -72,7 +72,7 @@ uv run numereng ensemble build \
 Optional heavy diagnostics and final neutralization:
 
 ```bash
-uv run numereng ensemble build \
+numereng ensemble build \
   --experiment-id <id> \
   --run-ids <run_a,run_b,run_c> \
   --method rank_avg \
@@ -90,14 +90,14 @@ uv run numereng ensemble build \
 4. Inspect blend records:
 
 ```bash
-uv run numereng ensemble list --experiment-id <id> --format table
-uv run numereng ensemble details --ensemble-id <ensemble_id> --format json
+numereng ensemble list --experiment-id <id> --format table
+numereng ensemble details --ensemble-id <ensemble_id> --format json
 ```
 
 5. If blended predictions are produced externally, submit them:
 
 ```bash
-uv run numereng run submit --model-name <numerai_model> --predictions <predictions.csv>
+numereng run submit --model-name <numerai_model> --predictions <predictions.csv>
 ```
 
 ### Champion Tracking
@@ -105,7 +105,7 @@ uv run numereng run submit --model-name <numerai_model> --predictions <predictio
 Even for blend workflows, keep a champion run in the manifest:
 
 ```bash
-uv run numereng experiment promote --id <id> --run <run_id>
+numereng experiment promote --id <id> --run <run_id>
 ```
 
 Use the run closest to the production blend inputs or the strongest standalone fallback.

@@ -1,0 +1,53 @@
+{
+  "data": {
+    "data_version": "v5.2",
+    "dataset_scope": "train_plus_validation",
+    "dataset_variant": "non_downsampled",
+    "era_col": "era",
+    "feature_set": "small",
+    "id_col": "id",
+    "target_col": "target_jasper_60",
+    "target_horizon": "60d"
+  },
+  "model": {
+    "params": {
+      "colsample_bytree": 0.1,
+      "learning_rate": 0.01,
+      "max_depth": 6,
+      "min_child_samples": 1000,
+      "n_estimators": 3000,
+      "num_leaves": 64,
+      "random_state": 42
+    },
+    "type": "LGBMRegressor",
+    "x_groups": [
+      "features"
+    ]
+  },
+  "output": {
+    "predictions_name": "pred_target_jasper_60_small_fhr_s42"
+  },
+  "preprocessing": {
+    "missing_value": 2.0,
+    "nan_missing_all_twos": false
+  },
+  "training": {
+    "cache": {
+      "cache_features": true,
+      "cache_fold_matrices": false,
+      "cache_fold_specs": true,
+      "cache_labels": true,
+      "mode": "deterministic"
+    },
+    "engine": {
+      "profile": "full_history_refit"
+    },
+    "resources": {
+      "max_threads_per_worker": 10,
+      "memmap_enabled": true,
+      "parallel_backend": "joblib",
+      "parallel_folds": 1,
+      "sklearn_working_memory_mib": null
+    }
+  }
+}

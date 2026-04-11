@@ -22,7 +22,7 @@ Planning helper:
 - `assets/hpo-study-template.json` (canonical shape for `numereng hpo create --study-config ...`)
 
 Optional HPO run command:
-- `uv run numereng hpo create --study-config <path.json>`
+- `numereng hpo create --study-config <path.json>`
 
 ### Sweep Selection by Research Type
 
@@ -39,15 +39,15 @@ Do not run broad unfocused sweeps. Each round should answer one concrete questio
 
 ```bash
 # Train variants
-uv run numereng experiment train --id <id> --config <variant_a>.json
-uv run numereng experiment train --id <id> --config <variant_b>.json
-uv run numereng experiment train --id <id> --config <variant_c>.json
+numereng experiment train --id <id> --config <variant_a>.json
+numereng experiment train --id <id> --config <variant_b>.json
+numereng experiment train --id <id> --config <variant_c>.json
 
 # Rank with fixed metric
-uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --limit 20 --format table
+numereng experiment report --id <id> --metric bmc_last_200_eras.mean --limit 20 --format table
 
 # Inspect detailed experiment state
-uv run numereng experiment details --id <id> --format json
+numereng experiment details --id <id> --format json
 ```
 
 ### Suggested Sweep Dimensions

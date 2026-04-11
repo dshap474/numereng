@@ -1,8 +1,11 @@
 """Public surface for submission feature services."""
 
 from numereng.features.submission.service import (
+    ModelUploadResult,
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
+    SubmissionModelUploadFileNotFoundError,
+    SubmissionModelUploadFormatUnsupportedError,
     SubmissionPredictionsFileNotFoundError,
     SubmissionPredictionsFormatUnsupportedError,
     SubmissionPredictionsReadError,
@@ -14,10 +17,14 @@ from numereng.features.submission.service import (
     SubmissionRunPredictionsPathUnsafeError,
     submit_predictions_file,
     submit_run_predictions,
+    upload_model_pickle_file,
 )
 
 __all__ = [
+    "ModelUploadResult",
     "SubmissionModelNotFoundError",
+    "SubmissionModelUploadFileNotFoundError",
+    "SubmissionModelUploadFormatUnsupportedError",
     "SubmissionPredictionsFileNotFoundError",
     "SubmissionPredictionsFormatUnsupportedError",
     "SubmissionPredictionsReadError",
@@ -30,4 +37,5 @@ __all__ = [
     "SubmissionLiveUniverseUnavailableError",
     "submit_predictions_file",
     "submit_run_predictions",
+    "upload_model_pickle_file",
 ]

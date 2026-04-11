@@ -19,7 +19,7 @@ If that shared artifact has not been seeded yet, prefer an explicit
 
 ## Minimal Config
 
-Training configs are strict JSON and validated against `src/numereng/config/training/contracts.py`.
+Training configs are strict JSON and validated against the live numereng training contract.
 
 ```json
 {
@@ -56,7 +56,7 @@ Training configs are strict JSON and validated against `src/numereng/config/trai
 ## Run Training
 
 ```bash
-uv run numereng run train --config configs/run.json
+numereng run train --config configs/run.json
 ```
 
 Optional overrides:

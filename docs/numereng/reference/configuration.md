@@ -4,8 +4,8 @@ Numereng is config-driven. Training and HPO use strict JSON contracts and reject
 
 ## Source Of Truth
 
-- training contract: `src/numereng/config/training/contracts.py`
-- HPO contract: `src/numereng/config/hpo/contracts.py`
+- training configs are validated by the live numereng training contract
+- HPO study configs are validated by the live numereng HPO contract
 
 Generated or copied templates must stay aligned with those contracts.
 
@@ -115,7 +115,7 @@ Optional:
 Current model notes:
 
 - built-in model type: `LGBMRegressor`
-- plugin models can be loaded from `src/numereng/features/models/custom_models/`
+- plugin models can be loaded from `custom_models/`
 - `module_path` is optional if the requested plugin type can be discovered in `custom_models/`
 
 ## `training`
@@ -202,27 +202,60 @@ HPO study configs are also JSON-only. The canonical model is `HpoStudyConfig`.
 
 Important fields:
 
+- `study_id`
 - `study_name`
 - `config_path`
 - `experiment_id`
-- `metric`
-- `direction`
-- `n_trials`
-- `sampler`
-- `seed`
+- `objective`
 - `search_space`
-- `neutralization`
+- `sampler`
+- `stopping`
 
 Minimal example:
 
 ```json
 {
+  "study_id": "ender20_lgbm_gpu_v1",
   "study_name": "lgbm-sweep",
   "config_path": "configs/run.json",
-  "metric": "bmc_last_200_eras.mean",
-  "direction": "maximize",
-  "n_trials": 50,
-  "sampler": "tpe"
+  "objective": {
+    "metric": "post_fold_champion_objective",
+    "direction": "maximize",
+    "neutralization": {
+      "enabled": false,
+      "neutralizer_path": null,
+      "proportion": 0.5,
+      "mode": "era",
+      "neutralizer_cols": null,
+      "rank_output": true
+    }
+  },
+  "search_space": {
+    "model.params.learning_rate": {
+      "type": "float",
+      "low": 0.001,
+      "high": 0.05,
+      "log": true
+    }
+  },
+  "sampler": {
+    "kind": "tpe",
+    "seed": 1337,
+    "n_startup_trials": 10,
+    "multivariate": true,
+    "group": false
+  },
+  "stopping": {
+    "max_trials": 50,
+    "max_completed_trials": null,
+    "timeout_seconds": null,
+    "plateau": {
+      "enabled": false,
+      "min_completed_trials": 15,
+      "patience_completed_trials": 10,
+      "min_improvement_abs": 0.00025
+    }
+  }
 }
 ```
 
@@ -237,4 +270,10 @@ Minimal example:
 - `round_core` and `round_full` require `experiment train` with an `rN_*` config stem
 - canonical FNC neutralizes to `fncv3_features` and then correlates against the scoring target being evaluated
 - benchmark and meta-model joins require strict era alignment
-- if `neutralization.enabled=true` in an HPO config, `neutralizer_path` is required
+- if `objective.neutralization.enabled=true` in an HPO config, `neutralizer_path` is required
+- `search_space` is required; numereng no longer infers HPO spaces from base model params
+- HPO v2 config is a clean break from the old flat study config shape
+- `sampler.kind=random` only allows `kind` and `seed`; TPE-only fields are invalid
+- `stopping.timeout_seconds` is a per-`hpo create` invocation budget; resumed studies do not accumulate prior wall-clock time
+- `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first with `corr_ender20_fold_mean -> corr_native_fold_mean` and `bmc_fold_mean -> bmc_ender20_fold_mean` fallback, then falls back to `results.json`
+- repeated identical HPO params reuse a completed trial value or a finished deterministic run when the scoring artifacts are intact; pre-existing non-finished run dirs fail loudly and are not reset automatically

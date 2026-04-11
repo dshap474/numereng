@@ -1,12 +1,20 @@
 {
+  "study_id": "example-lgbm-hpo-v1",
   "study_name": "example-lgbm-hpo",
-  "config_path": ".numereng/experiments/2026-02-22_example/configs/base.json",
+  "config_path": "experiments/2026-02-22_example/configs/base.json",
   "experiment_id": "2026-02-22_example",
-  "metric": "bmc_last_200_eras.mean",
-  "direction": "maximize",
-  "n_trials": 25,
-  "sampler": "tpe",
-  "seed": 1337,
+  "objective": {
+    "metric": "post_fold_champion_objective",
+    "direction": "maximize",
+    "neutralization": {
+      "enabled": false,
+      "neutralizer_path": null,
+      "proportion": 0.5,
+      "mode": "era",
+      "neutralizer_cols": null,
+      "rank_output": true
+    }
+  },
   "search_space": {
     "model.params.learning_rate": {
       "type": "float",
@@ -33,12 +41,22 @@
       ]
     }
   },
-  "neutralization": {
-    "enabled": false,
-    "neutralizer_path": null,
-    "proportion": 0.5,
-    "mode": "era",
-    "neutralizer_cols": null,
-    "rank_output": true
+  "sampler": {
+    "kind": "tpe",
+    "seed": 1337,
+    "n_startup_trials": 10,
+    "multivariate": true,
+    "group": false
+  },
+  "stopping": {
+    "max_trials": 25,
+    "max_completed_trials": null,
+    "timeout_seconds": null,
+    "plateau": {
+      "enabled": false,
+      "min_completed_trials": 15,
+      "patience_completed_trials": 10,
+      "min_improvement_abs": 0.00025
+    }
   }
 }

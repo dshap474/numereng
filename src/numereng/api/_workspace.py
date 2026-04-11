@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from numereng.api.contracts import WorkspaceInitRequest, WorkspaceInitResponse
+from numereng.api._contracts_ops import WorkspaceInitRequest, WorkspaceInitResponse
 from numereng.features.workspace import init_workspace as init_workspace_record
 from numereng.platform.errors import PackageError
 

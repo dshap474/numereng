@@ -118,7 +118,7 @@ def test_build_monitor_snapshot_command_uses_posix_shell() -> None:
 
     command = build_monitor_snapshot_command(target)
 
-    assert command == "cd /srv/numereng && uv run numereng monitor snapshot --workspace /srv/numereng --json"
+    assert command == "cd /srv/numereng && uv run numereng monitor snapshot --json"
 
 
 def test_build_remote_python_command_uses_powershell_shell() -> None:

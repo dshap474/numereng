@@ -22,18 +22,6 @@ from numereng.features.feature_neutralization import (
     NeutralizationValidationError,
 )
 from numereng.features.store import StoreError
-from numereng.features.submission import (
-    SubmissionLiveUniverseUnavailableError,
-    SubmissionModelNotFoundError,
-    SubmissionPredictionsFileNotFoundError,
-    SubmissionPredictionsFormatUnsupportedError,
-    SubmissionPredictionsReadError,
-    SubmissionRunIdInvalidError,
-    SubmissionRunNotFoundError,
-    SubmissionRunPredictionsNotFoundError,
-    SubmissionRunPredictionsNotLiveEligibleError,
-    SubmissionRunPredictionsPathUnsafeError,
-)
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
 from numereng.features.training import (
     TrainingCanceledError,
@@ -50,12 +38,35 @@ def _map_training_data_error(exc: TrainingDataError) -> str:
     message = str(exc)
     if message.startswith("training_target_rows_all_unlabeled:"):
         return message
-    return "training_data_load_failed"
+    return f"training_data_load_failed:{message}"
+
+
+def _map_training_error_detail(exc: TrainingError) -> str:
+    message = str(exc)
+    if message == "training_launch_metadata_missing":
+        return message
+    if message.startswith("training_lifecycle_bootstrap_failed:"):
+        return message
+    if message.startswith("training_run_failed:"):
+        return message
+    return f"training_run_failed:{message}"
 
 
 def submit_predictions(request: SubmissionRequest) -> SubmissionResponse:
     """Submit predictions by file path or run-id artifact lookup."""
     from numereng import api as api_module
+    from numereng.features.submission import (
+        SubmissionLiveUniverseUnavailableError,
+        SubmissionModelNotFoundError,
+        SubmissionPredictionsFileNotFoundError,
+        SubmissionPredictionsFormatUnsupportedError,
+        SubmissionPredictionsReadError,
+        SubmissionRunIdInvalidError,
+        SubmissionRunNotFoundError,
+        SubmissionRunPredictionsNotFoundError,
+        SubmissionRunPredictionsNotLiveEligibleError,
+        SubmissionRunPredictionsPathUnsafeError,
+    )
 
     try:
         if request.run_id is not None:
@@ -160,29 +171,25 @@ def run_training(request: TrainRunRequest) -> TrainRunResponse:
                     experiment_id=request.experiment_id,
                 )
     except TrainingConfigError as exc:
-        raise PackageError("training_config_invalid") from exc
+        raise PackageError(str(exc)) from exc
     except TrainingDataError as exc:
         raise PackageError(_map_training_data_error(exc)) from exc
     except TrainingModelError as exc:
         message = str(exc)
         if "training_model_backend_missing_lightgbm" in message:
             raise PackageError("training_model_backend_missing") from exc
-        raise PackageError("training_model_failed") from exc
+        raise PackageError(f"training_model_failed:{message}") from exc
     except TrainingMetricsError as exc:
-        raise PackageError("training_metrics_failed") from exc
+        raise PackageError(f"training_metrics_failed:{exc}") from exc
     except TrainingCanceledError as exc:
         raise PackageError("training_run_canceled") from exc
     except TrainingError as exc:
-        message = str(exc)
-        if message == "training_launch_metadata_missing":
-            raise PackageError(message) from exc
-        if message.startswith("training_lifecycle_bootstrap_failed:"):
-            raise PackageError("training_lifecycle_bootstrap_failed") from exc
+        message = _map_training_error_detail(exc)
         if message == "training_post_training_scoring_round_requires_experiment_workflow":
             raise PackageError(message) from exc
-        raise PackageError("training_run_failed") from exc
+        raise PackageError(message) from exc
     except ValueError as exc:
-        raise PackageError("training_config_invalid") from exc
+        raise PackageError(f"training_config_invalid:{exc}") from exc
     except NumeraiClientError as exc:
         raise PackageError(str(exc)) from exc
     except Exception as exc:
@@ -215,11 +222,11 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
                 stage=request.stage,
             )
     except TrainingConfigError as exc:
-        raise PackageError("training_score_config_invalid") from exc
+        raise PackageError(f"training_score_config_invalid:{exc}") from exc
     except TrainingDataError as exc:
-        raise PackageError("training_score_data_load_failed") from exc
+        raise PackageError(f"training_score_data_load_failed:{exc}") from exc
     except TrainingMetricsError as exc:
-        raise PackageError("training_score_metrics_failed") from exc
+        raise PackageError(f"training_score_metrics_failed:{exc}") from exc
     except TrainingError as exc:
         message = str(exc)
         if message.startswith("training_score_run_not_found:"):
@@ -230,9 +237,9 @@ def score_run(request: ScoreRunRequest) -> ScoreRunResponse:
             raise PackageError("training_score_predictions_not_found") from exc
         if message.startswith("training_score_store_index_failed:"):
             raise PackageError("training_score_store_index_failed") from exc
-        raise PackageError("training_score_failed") from exc
+        raise PackageError(message) from exc
     except ValueError as exc:
-        raise PackageError("training_score_config_invalid") from exc
+        raise PackageError(f"training_score_config_invalid:{exc}") from exc
     except NumeraiClientError as exc:
         raise PackageError(str(exc)) from exc
     except Exception as exc:

@@ -716,9 +716,7 @@ class VizService:
         if "scoring_dashboard" in requested_sections:
             tasks["scoring_dashboard"] = asyncio.to_thread(
                 lambda: (
-                    scoring_dashboard
-                    if scoring_dashboard is not None
-                    else self.adapter.get_scoring_dashboard(run_id)
+                    scoring_dashboard if scoring_dashboard is not None else self.adapter.get_scoring_dashboard(run_id)
                 )
             )
         if "trials" in requested_sections:
@@ -976,11 +974,7 @@ class VizService:
         remote_source: dict[str, str],
     ) -> list[dict[str, Any]]:
         merged: list[dict[str, Any]] = [dict(item) for item in local_payload]
-        seen_run_ids = {
-            str(item.get("run_id"))
-            for item in merged
-            if isinstance(item.get("run_id"), str)
-        }
+        seen_run_ids = {str(item.get("run_id")) for item in merged if isinstance(item.get("run_id"), str)}
         for item in remote_payload:
             if not isinstance(item, dict):
                 continue
@@ -1037,8 +1031,7 @@ class VizService:
                 and any(isinstance(item, dict) and item.get("run_id") == run_id for item in experiment.get("runs", []))
                 for experiment in snapshot.get("live_experiments", [])
             ) or any(
-                isinstance(item, dict) and item.get("run_id") == run_id
-                for item in snapshot.get("recent_activity", [])
+                isinstance(item, dict) and item.get("run_id") == run_id for item in snapshot.get("recent_activity", [])
             )
             if has_run:
                 matches[(source_kind, source_id)] = {

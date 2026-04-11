@@ -2,107 +2,71 @@
 
 Numereng has two layouts you need to keep straight:
 
-- the repository layout under the repo root
-- the runtime/store layout under `.numereng/`
+- the user-facing workspace root
+- the hidden runtime store under `.numereng/`
 
-## Repository Layout
+## Workspace Root
 
-Important top-level areas:
+These are the directories you are expected to read and edit directly:
 
-- `src/numereng/config/`: training and HPO contracts/loaders
-- `src/numereng/platform/`: Numerai client, forum scraper, boundary errors
-- `src/numereng/features/`: business logic slices such as training, scoring, experiments, ensemble, store, cloud, viz
-- `src/numereng/api/`: stable Python facade and workflow entrypoints
-- `src/numereng/cli/`: CLI parsing and command dispatch
-- `src/numereng/features/models/custom_models/`: custom model plugin path
-- `docs/numereng/`: user-facing docs set
-- `docs/numerai/forum/`: forum scrape output, when used
-- `viz/web/`: dashboard frontend
+- `experiments/`: experiment manifests, notes, configs, launcher scripts, HPO and ensemble outputs
+- `notes/`: general workspace notes plus `__RESEARCH_MEMORY__/`
+- `custom_models/`: user-authored model plugins
+- `research_programs/`: user-authored research program markdown
+- `.agents/skills/`: numereng-owned shipped skills plus any local skill additions
 
-## Runtime Layout
+## Runtime Store
 
-Default store root: `.numereng`
+Numereng-owned runtime state lives under `.numereng/`:
 
 ```text
 .numereng/
   numereng.db
   numereng.db-shm
   numereng.db-wal
-
   runs/
-    <run_id>/
-      run.json
-      run.log
-      resolved.json
-      results.json
-      metrics.json
-      score_provenance.json
-      artifacts/
-        predictions/
-
-  experiments/
-    <experiment_id>/
-      experiment.json
-      EXPERIMENT.md
-      configs/
-      hpo/
-      ensembles/
-
-  hpo/
-    <study_id>/
-
-  ensembles/
-    <ensemble_id>/
-
   datasets/
-  cloud/
-  notes/
   cache/
-    derived_datasets/
     tabpfn/
   tmp/
     remote-configs/
-    lifecycle_smoke/
   remote_ops/
 ```
 
+## Experiment Layout
+
+Experiments live under `experiments/<experiment_id>/`:
+
+```text
+experiments/<experiment_id>/
+  experiment.json
+  EXPERIMENT.md
+  EXPERIMENT.pack.md
+  configs/*.json
+  run_scripts/
+  agentic_research/
+  hpo/
+  ensembles/
+```
+
+Archived experiments live under `experiments/_archive/<experiment_id>/`.
+
 ## Run Artifacts
 
-For a scored local run, the canonical minimum set is:
+For a scored run, the canonical runtime artifacts live under `.numereng/runs/<run_id>/`:
 
 - `run.json`
+- `runtime.json`
 - `resolved.json`
 - `results.json`
 - `metrics.json`
 - `score_provenance.json`
 - `artifacts/predictions/*.parquet`
 
-`run score` refreshes the scoring-side artifacts from saved predictions and reindexes the run.
-
-## Experiment Artifacts
-
-Experiments live under `experiments/<experiment_id>/` and typically contain:
-
-- `experiment.json`: manifest and run linkage
-- `EXPERIMENT.md`: experiment notes/reporting
-- `configs/*.json`: planned configs for the sweep
-- `hpo/` and `ensembles/`: experiment-scoped derived work when present
-
-## Store Commands
-
-```bash
-uv run numereng store init
-uv run numereng store index --run-id <run_id>
-uv run numereng store rebuild
-uv run numereng store doctor
-```
-
-Use `store doctor --fix-strays` only when you explicitly want cleanup of detected stray store paths and aged tmp remote-config staging files.
-
 ## Path Rules
 
+- Use `--workspace` when you need to target a workspace other than the current directory.
 - Training and HPO configs are JSON-only.
-- Runtime defaults target `.numereng` unless `--workspace` overrides it.
-- Managed cloud state paths should live under `.numereng/cloud/*.json`.
-- Store-owned scratch space lives under `.numereng/tmp/`; ad hoc remote config staging uses `.numereng/tmp/remote-configs/`.
-- Custom model discovery defaults to `src/numereng/features/models/custom_models/`.
+- `custom_models/` is the canonical runtime discovery root for custom model plugins.
+- `research_programs/` is resolved before packaged built-ins.
+- Managed runtime scratch state stays under `.numereng/`, not the workspace root.

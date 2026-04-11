@@ -25,3 +25,6 @@ jobs:
 
       - name: Run CI gate
         run: make ci
+
+      - name: Run HPO smoke
+        run: make hpo-smoke

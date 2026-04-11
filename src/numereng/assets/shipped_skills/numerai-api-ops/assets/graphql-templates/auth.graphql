@@ -1,0 +1,15 @@
+query ApiTokenInfo {
+  apiTokenInfo {
+    accountUsername
+    name
+    publicId
+    scopes
+  }
+}
+
+query ApiTokenScopes {
+  apiTokenScopes {
+    name
+    description
+  }
+}

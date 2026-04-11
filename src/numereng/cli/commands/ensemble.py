@@ -9,6 +9,7 @@ from typing import Literal, cast
 from pydantic import ValidationError
 
 from numereng import api
+from numereng.cli.commands.ensemble_select import handle_ensemble_select
 from numereng.cli.common import _parse_int_value, _parse_simple_options, _validation_error_message
 from numereng.cli.usage import USAGE
 from numereng.platform.errors import PackageError
@@ -113,6 +114,9 @@ def handle_ensemble_command(args: Sequence[str]) -> int:
     if args[0] in {"-h", "--help"}:
         print(USAGE)
         return 0
+
+    if args[0] == "select":
+        return handle_ensemble_select(args[1:])
 
     if args[0] == "build":
         values, toggles, parse_error = _parse_simple_options(

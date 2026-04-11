@@ -5,25 +5,29 @@ from pathlib import Path
 
 import pytest
 
-from numereng.config.hpo import (
-    HpoConfigLoaderError,
-    ensure_json_config_path,
-    load_hpo_study_config_json,
-)
+from numereng.config.hpo import HpoConfigLoaderError, ensure_json_config_path, load_hpo_study_config_json
 
 
 def _write_valid_config(path: Path) -> None:
     path.write_text(
         json.dumps(
             {
-                "study_name": "lgbm-sweep",
+                "study_id": "ender20_lgbm_gpu_v1",
+                "study_name": "Ender20 LGBM GPU v1",
                 "config_path": "configs/base.json",
-                "experiment_id": "2026-02-22_exp",
-                "metric": "bmc_last_200_eras.mean",
-                "direction": "maximize",
-                "n_trials": 20,
-                "sampler": "tpe",
-                "seed": 1337,
+                "experiment_id": "2026-04-11_ender20_hpo",
+                "objective": {
+                    "metric": "post_fold_champion_objective",
+                    "direction": "maximize",
+                    "neutralization": {
+                        "enabled": True,
+                        "neutralizer_path": "neutralizers.parquet",
+                        "proportion": 0.5,
+                        "mode": "era",
+                        "neutralizer_cols": ["feature_a", "feature_b"],
+                        "rank_output": True,
+                    },
+                },
                 "search_space": {
                     "model.params.learning_rate": {
                         "type": "float",
@@ -38,13 +42,23 @@ def _write_valid_config(path: Path) -> None:
                         "step": 8,
                     },
                 },
-                "neutralization": {
-                    "enabled": True,
-                    "neutralizer_path": "neutralizers.parquet",
-                    "proportion": 0.5,
-                    "mode": "era",
-                    "neutralizer_cols": ["feature_a", "feature_b"],
-                    "rank_output": True,
+                "sampler": {
+                    "kind": "tpe",
+                    "seed": 1337,
+                    "n_startup_trials": 10,
+                    "multivariate": True,
+                    "group": False,
+                },
+                "stopping": {
+                    "max_trials": 20,
+                    "max_completed_trials": 15,
+                    "timeout_seconds": 3600,
+                    "plateau": {
+                        "enabled": True,
+                        "min_completed_trials": 10,
+                        "patience_completed_trials": 5,
+                        "min_improvement_abs": 0.0001,
+                    },
                 },
             }
         ),
@@ -57,15 +71,12 @@ def test_load_hpo_study_config_json_accepts_canonical_payload(tmp_path: Path) ->
     _write_valid_config(config_path)
 
     payload = load_hpo_study_config_json(config_path)
-    assert payload["study_name"] == "lgbm-sweep"
+    assert payload["study_id"] == "ender20_lgbm_gpu_v1"
     assert payload["config_path"] == "configs/base.json"
-    assert payload["n_trials"] == 20
+    assert payload["sampler"]["kind"] == "tpe"
+    assert payload["stopping"]["max_trials"] == 20
     assert isinstance(payload["search_space"], dict)
-
-    neutralization = payload["neutralization"]
-    assert isinstance(neutralization, dict)
-    assert neutralization["enabled"] is True
-    assert neutralization["neutralizer_path"] == "neutralizers.parquet"
+    assert payload["objective"]["neutralization"]["neutralizer_path"] == "neutralizers.parquet"
 
 
 def test_load_hpo_study_config_json_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -101,9 +112,53 @@ def test_load_hpo_study_config_json_preserves_null_seed(tmp_path: Path) -> None:
     config_path = tmp_path / "study.json"
     _write_valid_config(config_path)
     payload = json.loads(config_path.read_text(encoding="utf-8"))
-    payload["seed"] = None
+    payload["sampler"]["seed"] = None
     config_path.write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = load_hpo_study_config_json(config_path)
-    assert "seed" in loaded
-    assert loaded["seed"] is None
+    assert loaded["sampler"]["seed"] is None
+
+
+def test_load_hpo_study_config_json_canonicalizes_random_sampler_shape(tmp_path: Path) -> None:
+    config_path = tmp_path / "study.json"
+    _write_valid_config(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["sampler"] = {
+        "kind": "random",
+        "seed": 17,
+    }
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = load_hpo_study_config_json(config_path)
+
+    assert loaded["sampler"] == {
+        "kind": "random",
+        "seed": 17,
+    }
+
+
+def test_load_hpo_study_config_json_rejects_group_without_multivariate(tmp_path: Path) -> None:
+    config_path = tmp_path / "study.json"
+    _write_valid_config(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["sampler"]["group"] = True
+    payload["sampler"]["multivariate"] = False
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(HpoConfigLoaderError, match="hpo_study_config_schema_invalid"):
+        load_hpo_study_config_json(config_path)
+
+
+def test_shipped_hpo_study_templates_validate_and_match() -> None:
+    source_template = Path(".codex/skills/numereng-experiment-ops/assets/hpo-study-template.json")
+    packaged_template = Path(
+        "src/numereng/assets/shipped_skills/numereng-experiment-ops/assets/hpo-study-template.json"
+    )
+
+    source_payload = load_hpo_study_config_json(source_template)
+    packaged_payload = load_hpo_study_config_json(packaged_template)
+
+    assert source_payload == packaged_payload
+    assert source_payload["study_id"] == "example-lgbm-hpo-v1"
+    assert source_payload["sampler"]["kind"] == "tpe"
+    assert source_payload["stopping"]["max_trials"] == 25

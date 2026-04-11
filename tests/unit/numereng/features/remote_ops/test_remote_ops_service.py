@@ -137,6 +137,7 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
         )
 
     monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(remote_service, "_ensure_remote_experiment_created", lambda **kwargs: None)
     monkeypatch.setattr(remote_service, "sync_entries_to_remote", fake_sync_entries_to_remote)
     monkeypatch.setattr(remote_service, "_repository_root", lambda: tmp_path / "repo")
     monkeypatch.setattr(remote_service, "_git_head_sha", lambda repo_root: "abc")
@@ -145,13 +146,12 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
     result = remote_service.sync_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
 
     assert captured["paths"] == [
-        "experiments/exp-1/experiment.json",
         "experiments/exp-1/EXPERIMENT.md",
         "experiments/exp-1/run_plan.csv",
         "experiments/exp-1/configs/base.json",
         "experiments/exp-1/run_scripts/launch.ps1",
     ]
-    assert result.remote_experiment_dir.endswith(r"experiments\exp-1")
+    assert result.remote_experiment_dir.endswith(r".numereng\experiments\exp-1")
 
 
 def test_remote_run_train_syncs_repo_and_experiment_for_experiment_config(

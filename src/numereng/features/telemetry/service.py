@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from numereng.features.store import init_store_db
+from numereng.features.store import init_store_db, resolve_workspace_layout_from_store_root
 from numereng.features.telemetry.contracts import (
     LocalResourceSampler,
     LocalRunTelemetrySession,
@@ -949,25 +949,32 @@ def is_cancel_requested(session: LocalRunTelemetrySession) -> bool:
 
 
 def _resolve_config_identity(config_path: Path, store_root: Path) -> tuple[str, str]:
+    layout = resolve_workspace_layout_from_store_root(store_root)
     try:
         relative = config_path.relative_to(store_root).as_posix()
+        return relative, "store"
     except ValueError:
+        pass
+    try:
+        relative = config_path.relative_to(layout.experiments_root.parent).as_posix()
+    except ValueError:
+        return str(config_path), "external"
+    if not relative.startswith("experiments/"):
         return str(config_path), "external"
     return relative, "store"
 
 
 def _infer_experiment_id_from_config_path(*, config_path: Path, store_root: Path) -> str | None:
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
     try:
-        relative_parts = config_path.relative_to(store_root).parts
+        relative_parts = config_path.relative_to(experiments_root).parts
     except ValueError:
         return None
-    if len(relative_parts) < 4:
+    if len(relative_parts) < 3:
         return None
-    if relative_parts[0] != "experiments":
+    if relative_parts[1] != "configs":
         return None
-    if relative_parts[2] != "configs":
-        return None
-    experiment_id = relative_parts[1].strip()
+    experiment_id = relative_parts[0].strip()
     return experiment_id or None
 
 

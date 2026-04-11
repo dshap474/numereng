@@ -47,8 +47,6 @@ def _parse_search_space(value: str) -> tuple[dict[str, dict[str, object]] | None
         payload = json.loads(raw)
     except json.JSONDecodeError:
         return None, "invalid JSON for --search-space"
-    if payload is None:
-        return None, None
     if not isinstance(payload, dict):
         return None, "invalid value for --search-space: expected JSON object"
 
@@ -56,7 +54,7 @@ def _parse_search_space(value: str) -> tuple[dict[str, dict[str, object]] | None
     for key, spec in payload.items():
         if not isinstance(key, str) or not isinstance(spec, dict):
             return None, "invalid value for --search-space: expected {path: spec} mapping"
-        normalized[key] = spec
+        normalized[key] = {str(spec_key): spec_value for spec_key, spec_value in spec.items()}
     return normalized, None
 
 
@@ -90,11 +88,8 @@ def _as_mapping(value: object) -> dict[str, object]:
 
 
 def _as_search_space(value: object) -> dict[str, dict[str, object]] | None:
-    if value is None:
-        return None
     if not isinstance(value, dict):
         return None
-
     parsed: dict[str, dict[str, object]] = {}
     for key, spec in value.items():
         if not isinstance(key, str) or not isinstance(spec, dict):
@@ -110,12 +105,15 @@ def handle_hpo_create(args: Sequence[str]) -> int:
         args,
         value_flags={
             "--study-config",
-            "--experiment-id",
+            "--study-id",
             "--study-name",
             "--config",
+            "--experiment-id",
             "--metric",
             "--direction",
             "--n-trials",
+            "--timeout-seconds",
+            "--max-completed-trials",
             "--sampler",
             "--seed",
             "--search-space",
@@ -144,55 +142,55 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
 
-    study_name = values.get("--study-name")
-    if study_name is None:
-        resolved_study_name = study_config.get("study_name")
-        if isinstance(resolved_study_name, str):
-            study_name = resolved_study_name
+    objective_config = _as_mapping(study_config.get("objective"))
+    sampler_config = _as_mapping(study_config.get("sampler"))
+    stopping_config = _as_mapping(study_config.get("stopping"))
+    plateau_config = _as_mapping(stopping_config.get("plateau"))
+    neutralization_config = _as_mapping(objective_config.get("neutralization"))
 
-    config_path = values.get("--config")
-    if config_path is None:
-        resolved_config_path = study_config.get("config_path")
-        if isinstance(resolved_config_path, str):
-            config_path = resolved_config_path
+    study_id = values.get("--study-id") or study_config.get("study_id")
+    study_name = values.get("--study-name") or study_config.get("study_name")
+    config_path = values.get("--config") or study_config.get("config_path")
 
-    if study_name is None:
+    if not isinstance(study_id, str):
+        print("missing required argument: --study-id", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    if not isinstance(study_name, str):
         print("missing required argument: --study-name", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
-    if config_path is None:
+    if not isinstance(config_path, str):
         print("missing required argument: --config", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
 
     direction: HpoDirectionValue = "maximize"
-    if "--direction" not in values:
-        configured_direction = study_config.get("direction")
-        if isinstance(configured_direction, str):
-            parsed_default_direction, default_direction_err = _parse_direction(configured_direction)
-            if parsed_default_direction is None or default_direction_err is not None:
-                print(default_direction_err or "invalid value for --direction", file=sys.stderr)
-                print(USAGE, file=sys.stderr)
-                return 2
-            direction = parsed_default_direction
-    if "--direction" in values:
-        parsed, err = _parse_direction(values["--direction"])
-        if parsed is None or err is not None:
-            print(err or "invalid value for --direction", file=sys.stderr)
+    configured_direction = objective_config.get("direction")
+    if isinstance(configured_direction, str):
+        parsed_direction, direction_err = _parse_direction(configured_direction)
+        if parsed_direction is None or direction_err is not None:
+            print(direction_err or "invalid value for --direction", file=sys.stderr)
             print(USAGE, file=sys.stderr)
             return 2
-        direction = parsed
+        direction = parsed_direction
+    if "--direction" in values:
+        parsed_direction, direction_err = _parse_direction(values["--direction"])
+        if parsed_direction is None or direction_err is not None:
+            print(direction_err or "invalid value for --direction", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        direction = parsed_direction
 
     sampler: HpoSamplerValue = "tpe"
-    if "--sampler" not in values:
-        configured_sampler = study_config.get("sampler")
-        if isinstance(configured_sampler, str):
-            parsed_default_sampler, default_sampler_err = _parse_sampler(configured_sampler)
-            if parsed_default_sampler is None or default_sampler_err is not None:
-                print(default_sampler_err or "invalid value for --sampler", file=sys.stderr)
-                print(USAGE, file=sys.stderr)
-                return 2
-            sampler = parsed_default_sampler
+    configured_sampler = sampler_config.get("kind")
+    if isinstance(configured_sampler, str):
+        parsed_sampler, sampler_err = _parse_sampler(configured_sampler)
+        if parsed_sampler is None or sampler_err is not None:
+            print(sampler_err or "invalid value for --sampler", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        sampler = parsed_sampler
     if "--sampler" in values:
         parsed_sampler, sampler_err = _parse_sampler(values["--sampler"])
         if parsed_sampler is None or sampler_err is not None:
@@ -201,21 +199,58 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             return 2
         sampler = parsed_sampler
 
-    n_trials = 100
-    configured_n_trials = study_config.get("n_trials")
-    if isinstance(configured_n_trials, int) and not isinstance(configured_n_trials, bool):
-        n_trials = configured_n_trials
+    metric = objective_config.get("metric")
+    if not isinstance(metric, str):
+        metric = "post_fold_champion_objective"
+    if "--metric" in values:
+        metric = values["--metric"]
+
+    max_trials = 100
+    configured_max_trials = stopping_config.get("max_trials")
+    if isinstance(configured_max_trials, int) and not isinstance(configured_max_trials, bool):
+        max_trials = configured_max_trials
     if "--n-trials" in values:
         parsed_n_trials, n_trials_err = _parse_int_value(values["--n-trials"], flag="--n-trials")
         if parsed_n_trials is None or n_trials_err is not None:
             print(n_trials_err or "invalid integer for --n-trials", file=sys.stderr)
             print(USAGE, file=sys.stderr)
             return 2
-        n_trials = parsed_n_trials
+        max_trials = parsed_n_trials
+
+    timeout_seconds: int | None = None
+    configured_timeout = stopping_config.get("timeout_seconds")
+    if isinstance(configured_timeout, int) and not isinstance(configured_timeout, bool):
+        timeout_seconds = configured_timeout
+    elif configured_timeout is None:
+        timeout_seconds = None
+    if "--timeout-seconds" in values:
+        parsed_timeout, timeout_err = _parse_int_value(values["--timeout-seconds"], flag="--timeout-seconds")
+        if parsed_timeout is None or timeout_err is not None:
+            print(timeout_err or "invalid integer for --timeout-seconds", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        timeout_seconds = parsed_timeout
+
+    max_completed_trials: int | None = None
+    configured_max_completed = stopping_config.get("max_completed_trials")
+    if isinstance(configured_max_completed, int) and not isinstance(configured_max_completed, bool):
+        max_completed_trials = configured_max_completed
+    elif configured_max_completed is None:
+        max_completed_trials = None
+    if "--max-completed-trials" in values:
+        parsed_max_completed, max_completed_err = _parse_int_value(
+            values["--max-completed-trials"],
+            flag="--max-completed-trials",
+        )
+        if parsed_max_completed is None or max_completed_err is not None:
+            print(max_completed_err or "invalid integer for --max-completed-trials", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        max_completed_trials = parsed_max_completed
 
     seed: int | None = 1337
-    if "seed" in study_config:
-        configured_seed = study_config.get("seed")
+    if "seed" in sampler_config:
+        configured_seed = sampler_config.get("seed")
         if configured_seed is None:
             seed = None
         elif isinstance(configured_seed, int) and not isinstance(configured_seed, bool):
@@ -228,7 +263,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             return 2
         seed = parsed_seed
 
-    search_space: dict[str, dict[str, object]] | None = _as_search_space(study_config.get("search_space"))
+    search_space = _as_search_space(study_config.get("search_space"))
     if "--search-space" in values:
         parsed_space, space_err = _parse_search_space(values["--search-space"])
         if space_err is not None:
@@ -236,10 +271,23 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         search_space = parsed_space
+    if search_space is None:
+        print("missing required argument: --search-space or --study-config", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+
+    neutralization_enabled = bool(neutralization_config.get("enabled", False))
+    if "--neutralize" in toggles:
+        neutralization_enabled = True
+
+    neutralizer_path = neutralization_config.get("neutralizer_path")
+    if not isinstance(neutralizer_path, str):
+        neutralizer_path = None
+    if "--neutralizer-path" in values:
+        neutralizer_path = values["--neutralizer-path"]
 
     neutralization_proportion = 0.5
-    configured_neutralization = _as_mapping(study_config.get("neutralization"))
-    configured_proportion = configured_neutralization.get("proportion")
+    configured_proportion = neutralization_config.get("proportion")
     if isinstance(configured_proportion, (int, float)) and not isinstance(configured_proportion, bool):
         neutralization_proportion = float(configured_proportion)
     if "--neutralization-proportion" in values:
@@ -251,14 +299,14 @@ def handle_hpo_create(args: Sequence[str]) -> int:
         neutralization_proportion = parsed_proportion
 
     neutralization_mode: NeutralizationModeValue = "era"
-    configured_mode = configured_neutralization.get("mode")
+    configured_mode = neutralization_config.get("mode")
     if isinstance(configured_mode, str):
-        parsed_default_mode, default_mode_err = _parse_neutralization_mode(configured_mode)
-        if parsed_default_mode is None or default_mode_err is not None:
-            print(default_mode_err or "invalid value for --neutralization-mode", file=sys.stderr)
+        parsed_mode, mode_err = _parse_neutralization_mode(configured_mode)
+        if parsed_mode is None or mode_err is not None:
+            print(mode_err or "invalid value for --neutralization-mode", file=sys.stderr)
             print(USAGE, file=sys.stderr)
             return 2
-        neutralization_mode = parsed_default_mode
+        neutralization_mode = parsed_mode
     if "--neutralization-mode" in values:
         parsed_mode, mode_err = _parse_neutralization_mode(values["--neutralization-mode"])
         if parsed_mode is None or mode_err is not None:
@@ -267,10 +315,9 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             return 2
         neutralization_mode = parsed_mode
 
-    neutralizer_cols: list[str] | None = None
-    configured_cols = configured_neutralization.get("neutralizer_cols")
-    if isinstance(configured_cols, list) and all(isinstance(item, str) for item in configured_cols):
-        neutralizer_cols = [item.strip() for item in configured_cols]
+    neutralizer_cols = neutralization_config.get("neutralizer_cols")
+    if not isinstance(neutralizer_cols, list):
+        neutralizer_cols = None
     if "--neutralizer-cols" in values:
         parsed_cols, cols_err = _parse_neutralizer_cols(values["--neutralizer-cols"])
         if parsed_cols is None or cols_err is not None:
@@ -279,69 +326,73 @@ def handle_hpo_create(args: Sequence[str]) -> int:
             return 2
         neutralizer_cols = parsed_cols
 
-    neutralize = False
-    if isinstance(configured_neutralization.get("enabled"), bool):
-        neutralize = bool(configured_neutralization["enabled"])
-    if "--neutralize" in toggles:
-        neutralize = True
-
-    neutralizer_path = values.get("--neutralizer-path")
-    if neutralizer_path is None:
-        configured_path = configured_neutralization.get("neutralizer_path")
-        if isinstance(configured_path, str):
-            neutralizer_path = configured_path
-
-    neutralization_rank_output = True
-    if isinstance(configured_neutralization.get("rank_output"), bool):
-        neutralization_rank_output = bool(configured_neutralization["rank_output"])
+    rank_output = bool(neutralization_config.get("rank_output", True))
     if "--no-neutralization-rank" in toggles:
-        neutralization_rank_output = False
-
-    experiment_id = values.get("--experiment-id")
-    if experiment_id is None:
-        configured_experiment_id = study_config.get("experiment_id")
-        if isinstance(configured_experiment_id, str):
-            experiment_id = configured_experiment_id
-
-    metric = values.get("--metric")
-    if metric is None:
-        configured_metric = study_config.get("metric")
-        if isinstance(configured_metric, str):
-            metric = configured_metric
-        else:
-            metric = "post_fold_champion_objective"
+        rank_output = False
 
     try:
-        create_payload = api.hpo_create(
-            api.HpoStudyCreateRequest(
-                study_name=study_name,
-                config_path=config_path,
-                experiment_id=experiment_id,
+        sampler_payload: dict[str, object] = {
+            "kind": sampler,
+            "seed": seed,
+        }
+        if sampler == "tpe":
+            sampler_payload["n_startup_trials"] = (
+                int(sampler_config.get("n_startup_trials", 10))
+                if isinstance(sampler_config.get("n_startup_trials", 10), int)
+                else 10
+            )
+            sampler_payload["multivariate"] = bool(sampler_config.get("multivariate", True))
+            sampler_payload["group"] = bool(sampler_config.get("group", False))
+        request = api.HpoStudyCreateRequest(
+            study_id=study_id,
+            study_name=study_name,
+            config_path=config_path,
+            experiment_id=values.get("--experiment-id") or study_config.get("experiment_id"),
+            objective=api.HpoObjectiveRequest(
                 metric=metric,
                 direction=direction,
-                n_trials=n_trials,
-                sampler=sampler,
-                seed=seed,
-                search_space=search_space,
-                neutralize=neutralize,
-                neutralizer_path=neutralizer_path,
-                neutralization_proportion=neutralization_proportion,
-                neutralization_mode=neutralization_mode,
-                neutralizer_cols=neutralizer_cols,
-                neutralization_rank_output=neutralization_rank_output,
-                workspace_root=values.get("--workspace", "."),
-            )
+                neutralization=api.HpoNeutralizationRequest(
+                    enabled=neutralization_enabled,
+                    neutralizer_path=neutralizer_path,
+                    proportion=neutralization_proportion,
+                    mode=neutralization_mode,
+                    neutralizer_cols=neutralizer_cols,
+                    rank_output=rank_output,
+                ),
+            ),
+            search_space={
+                path: api.HpoSearchSpaceSpecRequest.model_validate(spec) for path, spec in search_space.items()
+            },
+            sampler=api.HpoSamplerRequest(**sampler_payload),
+            stopping=api.HpoStoppingRequest(
+                max_trials=max_trials,
+                max_completed_trials=max_completed_trials,
+                timeout_seconds=timeout_seconds,
+                plateau=api.HpoPlateauRequest(
+                    enabled=bool(plateau_config.get("enabled", False)),
+                    min_completed_trials=int(plateau_config.get("min_completed_trials", 15))
+                    if isinstance(plateau_config.get("min_completed_trials", 15), int)
+                    else 15,
+                    patience_completed_trials=int(plateau_config.get("patience_completed_trials", 10))
+                    if isinstance(plateau_config.get("patience_completed_trials", 10), int)
+                    else 10,
+                    min_improvement_abs=float(plateau_config.get("min_improvement_abs", 0.00025))
+                    if isinstance(plateau_config.get("min_improvement_abs", 0.00025), (int, float))
+                    else 0.00025,
+                ),
+            ),
+            workspace_root=values.get("--workspace", "."),
         )
     except ValidationError as exc:
         print(_validation_error_message(exc), file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
+
+    try:
+        payload = api.hpo_create(request)
     except PackageError as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
-    print(create_payload.model_dump_json())
+    print(payload.model_dump_json())
     return 0
-
-
-__all__ = ["handle_hpo_create"]

@@ -9,7 +9,6 @@ import numereng.features.hpo.search_space as search_space_module
 
 def test_resolve_search_space_from_explicit_specs() -> None:
     specs = search_space_module.resolve_search_space(
-        base_config={},
         raw_search_space={
             "model.params.learning_rate": {
                 "type": "float",
@@ -27,7 +26,7 @@ def test_resolve_search_space_from_explicit_specs() -> None:
                 "type": "categorical",
                 "choices": [0.5, 0.75, 1.0],
             },
-        },
+        }
     )
 
     by_path = {item.path: item for item in specs}
@@ -39,38 +38,16 @@ def test_resolve_search_space_from_explicit_specs() -> None:
     assert by_path["model.params.feature_fraction"].choices == (0.5, 0.75, 1.0)
 
 
-def test_resolve_search_space_infers_from_model_params() -> None:
-    specs = search_space_module.resolve_search_space(
-        base_config={
-            "model": {
-                "params": {
-                    "learning_rate": 0.01,
-                    "num_leaves": 64,
-                    "use_extra_trees": True,
-                }
-            }
-        },
-        raw_search_space=None,
-    )
-
-    by_path = {item.path: item for item in specs}
-    assert "model.params.use_extra_trees" not in by_path
-    assert by_path["model.params.num_leaves"].kind == "int"
-    assert by_path["model.params.learning_rate"].kind == "float"
-    assert by_path["model.params.learning_rate"].log is True
+def test_resolve_search_space_requires_explicit_mapping() -> None:
+    with pytest.raises(search_space_module.HpoSearchSpaceError, match="hpo_search_space_required"):
+        search_space_module.resolve_search_space(raw_search_space=None)
 
 
 def test_resolve_search_space_rejects_invalid_spec_type() -> None:
     with pytest.raises(search_space_module.HpoSearchSpaceError, match="hpo_search_space_type_invalid"):
         search_space_module.resolve_search_space(
-            base_config={},
             raw_search_space={"model.params.learning_rate": {"type": "unsupported"}},
         )
-
-
-def test_resolve_search_space_rejects_empty_space() -> None:
-    with pytest.raises(search_space_module.HpoSearchSpaceError, match="hpo_search_space_empty"):
-        search_space_module.resolve_search_space(base_config={}, raw_search_space=None)
 
 
 def test_apply_param_overrides_updates_copy_and_rejects_conflicting_path() -> None:

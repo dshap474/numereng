@@ -67,4 +67,7 @@ class LGBMRegressor:
         return X[feature_cols]
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._model, name)
+        model = self.__dict__.get("_model")
+        if model is None:
+            raise AttributeError(name)
+        return getattr(model, name)

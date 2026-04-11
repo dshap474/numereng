@@ -37,6 +37,7 @@ _SCHEMA_MIGRATIONS = (
     "2026_02_store_index_v5_hpo_ensemble",
     "2026_02_store_index_v6_run_ops_telemetry",
     "2026_03_store_index_v7_run_lifecycles",
+    "2026_04_store_index_v8_hpo_v2",
 )
 _SCHEMA_MIGRATION_NAME = _SCHEMA_MIGRATIONS[-1]
 
@@ -331,6 +332,10 @@ _SCHEMA_STATEMENTS = (
         best_value REAL,
         best_run_id TEXT,
         config_json TEXT,
+        attempted_trials INTEGER NOT NULL DEFAULT 0,
+        completed_trials INTEGER NOT NULL DEFAULT 0,
+        failed_trials INTEGER NOT NULL DEFAULT 0,
+        stop_reason TEXT,
         storage_path TEXT,
         error_message TEXT,
         created_at TEXT NOT NULL,
@@ -590,6 +595,10 @@ class StoreHpoStudyUpsert:
     best_value: float | None = None
     best_run_id: str | None = None
     config_json: str | None = None
+    attempted_trials: int = 0
+    completed_trials: int = 0
+    failed_trials: int = 0
+    stop_reason: str | None = None
     storage_path: str | None = None
     error_message: str | None = None
 
@@ -611,6 +620,10 @@ class StoreHpoStudyRecord:
     best_value: float | None
     best_run_id: str | None
     config_json: str | None
+    attempted_trials: int
+    completed_trials: int
+    failed_trials: int
+    stop_reason: str | None
     storage_path: str | None
     error_message: str | None
     created_at: str
@@ -1501,6 +1514,12 @@ def upsert_hpo_study(
         raise StoreError("store_hpo_study_n_trials_invalid")
     if not study.sampler.strip():
         raise StoreError("store_hpo_study_sampler_invalid")
+    if study.attempted_trials < 0:
+        raise StoreError("store_hpo_study_attempted_trials_invalid")
+    if study.completed_trials < 0:
+        raise StoreError("store_hpo_study_completed_trials_invalid")
+    if study.failed_trials < 0:
+        raise StoreError("store_hpo_study_failed_trials_invalid")
     safe_best_run_id = _ensure_safe_run_id(study.best_run_id) if study.best_run_id else None
 
     init_result = init_store_db(store_root=store_root)
@@ -1523,11 +1542,15 @@ def upsert_hpo_study(
                 best_value,
                 best_run_id,
                 config_json,
+                attempted_trials,
+                completed_trials,
+                failed_trials,
+                stop_reason,
                 storage_path,
                 error_message,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(study_id) DO UPDATE SET
                 experiment_id = excluded.experiment_id,
                 study_name = excluded.study_name,
@@ -1541,6 +1564,10 @@ def upsert_hpo_study(
                 best_value = excluded.best_value,
                 best_run_id = excluded.best_run_id,
                 config_json = excluded.config_json,
+                attempted_trials = excluded.attempted_trials,
+                completed_trials = excluded.completed_trials,
+                failed_trials = excluded.failed_trials,
+                stop_reason = excluded.stop_reason,
                 storage_path = excluded.storage_path,
                 error_message = excluded.error_message,
                 updated_at = excluded.updated_at
@@ -1559,6 +1586,10 @@ def upsert_hpo_study(
                 study.best_value,
                 safe_best_run_id,
                 study.config_json,
+                study.attempted_trials,
+                study.completed_trials,
+                study.failed_trials,
+                study.stop_reason,
                 study.storage_path,
                 study.error_message,
                 now,
@@ -1596,6 +1627,10 @@ def get_hpo_study(
                 best_value,
                 best_run_id,
                 config_json,
+                attempted_trials,
+                completed_trials,
+                failed_trials,
+                stop_reason,
                 storage_path,
                 error_message,
                 created_at,
@@ -1623,6 +1658,10 @@ def get_hpo_study(
         best_value=float(row["best_value"]) if row["best_value"] is not None else None,
         best_run_id=_as_nonempty_str(row["best_run_id"]),
         config_json=_as_nonempty_str(row["config_json"]),
+        attempted_trials=int(row["attempted_trials"]) if row["attempted_trials"] is not None else 0,
+        completed_trials=int(row["completed_trials"]) if row["completed_trials"] is not None else 0,
+        failed_trials=int(row["failed_trials"]) if row["failed_trials"] is not None else 0,
+        stop_reason=_as_nonempty_str(row["stop_reason"]),
         storage_path=_as_nonempty_str(row["storage_path"]),
         error_message=_as_nonempty_str(row["error_message"]),
         created_at=str(row["created_at"]),
@@ -1673,6 +1712,10 @@ def list_hpo_studies(
             best_value,
             best_run_id,
             config_json,
+            attempted_trials,
+            completed_trials,
+            failed_trials,
+            stop_reason,
             storage_path,
             error_message,
             created_at,
@@ -1702,6 +1745,10 @@ def list_hpo_studies(
             best_value=float(row["best_value"]) if row["best_value"] is not None else None,
             best_run_id=_as_nonempty_str(row["best_run_id"]),
             config_json=_as_nonempty_str(row["config_json"]),
+            attempted_trials=int(row["attempted_trials"]) if row["attempted_trials"] is not None else 0,
+            completed_trials=int(row["completed_trials"]) if row["completed_trials"] is not None else 0,
+            failed_trials=int(row["failed_trials"]) if row["failed_trials"] is not None else 0,
+            stop_reason=_as_nonempty_str(row["stop_reason"]),
             storage_path=_as_nonempty_str(row["storage_path"]),
             error_message=_as_nonempty_str(row["error_message"]),
             created_at=str(row["created_at"]),
@@ -2998,6 +3045,16 @@ def _ensure_lifecycle_columns(conn: sqlite3.Connection) -> None:
     _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_label", column_def="TEXT")
     _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_current", column_def="INTEGER")
     _ensure_column_exists(conn, table_name="run_lifecycles", column_name="progress_total", column_def="INTEGER")
+    _ensure_column_exists(
+        conn, table_name="hpo_studies", column_name="attempted_trials", column_def="INTEGER NOT NULL DEFAULT 0"
+    )
+    _ensure_column_exists(
+        conn, table_name="hpo_studies", column_name="completed_trials", column_def="INTEGER NOT NULL DEFAULT 0"
+    )
+    _ensure_column_exists(
+        conn, table_name="hpo_studies", column_name="failed_trials", column_def="INTEGER NOT NULL DEFAULT 0"
+    )
+    _ensure_column_exists(conn, table_name="hpo_studies", column_name="stop_reason", column_def="TEXT")
 
 
 def _ensure_column_exists(

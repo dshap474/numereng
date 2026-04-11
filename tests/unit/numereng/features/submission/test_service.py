@@ -9,6 +9,8 @@ import pytest
 from numereng.features.submission.service import (
     SubmissionLiveUniverseUnavailableError,
     SubmissionModelNotFoundError,
+    SubmissionModelUploadFileNotFoundError,
+    SubmissionModelUploadFormatUnsupportedError,
     SubmissionPredictionsFileNotFoundError,
     SubmissionPredictionsFormatUnsupportedError,
     SubmissionPredictionsReadError,
@@ -19,6 +21,7 @@ from numereng.features.submission.service import (
     SubmissionRunPredictionsPathUnsafeError,
     submit_predictions_file,
     submit_run_predictions,
+    upload_model_pickle_file,
 )
 
 
@@ -60,6 +63,24 @@ class _FakeSubmissionClient:
     def upload_predictions(self, *, file_path: str, model_id: str) -> str:
         self.upload_calls.append((file_path, model_id))
         return self._submission_id
+
+    def model_upload(
+        self,
+        *,
+        file_path: str,
+        model_id: str,
+        data_version: str | None = None,
+        docker_image: str | None = None,
+    ) -> str:
+        self.upload_calls.append((file_path, model_id))
+        _ = (data_version, docker_image)
+        return "pickle-1"
+
+    def model_upload_data_versions(self) -> list[str]:
+        return ["v5.2"]
+
+    def model_upload_docker_images(self) -> list[str]:
+        return ["ghcr.io/numerai/numerai-inference:py3.11"]
 
 
 def _write_predictions_file(
@@ -122,6 +143,48 @@ def test_submit_predictions_file_missing_model(tmp_path: Path) -> None:
     with pytest.raises(SubmissionModelNotFoundError):
         submit_predictions_file(
             predictions_path=predictions_path,
+            model_name="main",
+            client=client,
+        )
+
+
+def test_upload_model_pickle_file_success(tmp_path: Path) -> None:
+    pickle_path = tmp_path / "model.pkl"
+    pickle_path.write_bytes(b"pickle")
+    client = _FakeSubmissionClient(models={"main": "model-1"})
+
+    result = upload_model_pickle_file(
+        pickle_path=pickle_path,
+        model_name="main",
+        client=client,
+        data_version="v5.2",
+    )
+
+    assert result.upload_id == "pickle-1"
+    assert result.model_id == "model-1"
+    assert result.model_name == "main"
+    assert result.data_version == "v5.2"
+
+
+def test_upload_model_pickle_file_missing_path(tmp_path: Path) -> None:
+    client = _FakeSubmissionClient(models={"main": "model-1"})
+
+    with pytest.raises(SubmissionModelUploadFileNotFoundError):
+        upload_model_pickle_file(
+            pickle_path=tmp_path / "missing.pkl",
+            model_name="main",
+            client=client,
+        )
+
+
+def test_upload_model_pickle_file_rejects_non_pickle(tmp_path: Path) -> None:
+    bad_path = tmp_path / "model.bin"
+    bad_path.write_bytes(b"nope")
+    client = _FakeSubmissionClient(models={"main": "model-1"})
+
+    with pytest.raises(SubmissionModelUploadFormatUnsupportedError):
+        upload_model_pickle_file(
+            pickle_path=bad_path,
             model_name="main",
             client=client,
         )

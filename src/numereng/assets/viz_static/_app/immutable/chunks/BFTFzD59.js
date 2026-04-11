@@ -1,0 +1,1 @@
+import{I as t,u,J as o,q as a,o as c}from"./CDHe2jm6.js";function f(e){o===null&&t(),a&&o.l!==null?l(o).m.push(e):u(()=>{const n=c(e);if(typeof n=="function")return n})}function l(e){var n=e.l;return n.u??(n.u={a:[],b:[],m:[]})}export{f as o};

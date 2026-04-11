@@ -4,27 +4,27 @@ Numereng supports plugin model adapters through `MODEL_REGISTRY` modules loaded 
 
 ## Golden Path
 
-Start with the tracked template:
+Start from the workspace template created by `numereng init`:
 
-1. copy `src/numereng/features/models/custom_models/template_model.py`
+1. copy `custom_models/template_model.py`
 2. rename the class and `MODEL_REGISTRY` key
 3. implement `fit` and `predict`
 4. reference the model from config with `model.type`
 5. add `model.module_path` only when you need explicit resolution
-6. smoke test with `uv run numereng run train --config <config.json>`
-
-`template_model.py` is the canonical onboarding example.
+6. smoke test with `numereng run train --config <config.json>`
 
 ## Plugin Location
 
 Custom model modules live under:
 
-- `src/numereng/features/models/custom_models/`
+- `custom_models/`
 
 Discovery works in two modes:
 
 - explicit `model.module_path`
 - automatic scan of `custom_models/**/*.py` when `module_path` is omitted
+
+Workspace-local models are the canonical runtime discovery source. Numereng does not auto-discover packaged repo custom-model wrappers.
 
 ## Required Module Shape
 
@@ -41,12 +41,6 @@ Each registered class must:
 - implement `predict`
 - filter `X` by `feature_cols` when it is provided
 
-Backend-specific path handling may also live in numereng. For example,
-`TabPFNRegressor` uses the project-local cache root
-`.numereng/cache/tabpfn`. A bare checkpoint filename in
-`model.params.model_path` is treated as a cache-managed model name there
-instead of a path relative to the current working directory.
-
 ## Config Example
 
 ```json
@@ -59,7 +53,7 @@ instead of a path relative to the current working directory.
   },
   "model": {
     "type": "YourModelType",
-    "module_path": "src/numereng/features/models/custom_models/your_model.py",
+    "module_path": "custom_models/your_model.py",
     "params": {}
   },
   "training": {
@@ -72,27 +66,17 @@ instead of a path relative to the current working directory.
 
 If the file is discoverable under `custom_models/` and the type is unique, `module_path` can be omitted.
 
-## Tracked Vs Local Files
+## Built-In Behavior
 
-- `template_model.py` is intentionally tracked
-- user-specific custom model files remain local by default because the directory is gitignored
-- commit a custom model file only when it is meant to become shared repo behavior
-
-## Built-In Model
-
-The built-in shipped model type is:
-
-- `LGBMRegressor`
-
-Custom models are the extension path for everything else.
+- `LGBMRegressor` is the built-in shipped model type.
+- `TabPFNRegressor` resolves bare checkpoint names under `.numereng/cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
 
 ## Validation Path
 
 Recommended checks:
 
 ```bash
-uv run numereng run train --config <config.json>
-uv run pytest tests/unit/numereng/features/training/test_model_factory.py
+numereng run train --config <config.json>
 ```
 
 ## Common Errors

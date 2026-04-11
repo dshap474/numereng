@@ -1,60 +1,43 @@
 # Dashboard
 
-Numereng ships a read-only monitoring stack:
+Numereng ships a packaged read-only monitoring stack.
 
-- backend: `src/numereng/features/viz/`
-- frontend: `viz/web/`
-
-The dashboard reads store state. Launch and control actions still happen through the CLI or Python API.
+The dashboard reads the current workspace and its `.numereng/` runtime state. Launch and control operations still happen through the CLI or Python API.
 
 ## Start
 
-```bash
-just viz
-```
-
-Default local endpoints:
-
-- API: `http://127.0.0.1:8502`
-- web app: `http://127.0.0.1:5173`
-
-Stop both:
+From the workspace root:
 
 ```bash
-just kill-viz
+numereng viz
 ```
 
-## Requirements
+Default local endpoint:
 
-- Node.js 20+
-- `npm`
-- a populated `.numereng/` store for useful data
+- [http://127.0.0.1:8502](http://127.0.0.1:8502)
+
+Optional overrides:
+
+```bash
+numereng viz --workspace /path/to/workspace --host 127.0.0.1 --port 8600
+```
 
 ## What The Dashboard Reads
 
-The viz backend exposes read-only views over:
-
-- experiments and experiment configs
-- run manifests, metrics, events, resources, and resolved configs
-- HPO studies and trials
-- ensembles and ensemble diagnostics
-- docs trees
-- notes
+- `experiments/`
+- `notes/`
+- `.numereng/runs/`
+- `.numereng/numereng.db`
+- packaged product docs
 
 It does not launch jobs or mutate experiment/store state.
 
 ## Backend Contract
 
-The FastAPI app reports:
+The packaged FastAPI app exposes:
 
 - `GET /healthz`
 - `GET /`
 - `GET /api/...` read-only routes for runs, experiments, studies, ensembles, docs, and notes
 
-The backend enables CORS for the local frontend and reports `read_only=true` from its health endpoint.
-
-## Operational Notes
-
-- the dashboard reflects whatever is indexed and present under the current store root
-- if run artifacts are missing or not yet indexed, the dashboard surfaces them as unavailable rather than recomputing them
-- for drift or reindex work, use the [Store Operations](store-ops.md) workflow
+The health endpoint reports the resolved `workspace_root` and `.numereng` `store_root`.

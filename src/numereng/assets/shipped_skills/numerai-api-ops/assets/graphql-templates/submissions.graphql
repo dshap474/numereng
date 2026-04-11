@@ -1,0 +1,76 @@
+query SubmissionUploadAuthClassic($filename: String!, $tournament: Int!, $modelId: ID) {
+  submissionUploadAuth(filename: $filename, tournament: $tournament, modelId: $modelId) {
+    accelerated
+    filename
+    url
+  }
+}
+
+query SubmissionUploadAuthSignals($filename: String!, $tournament: Int, $modelId: ID) {
+  submissionUploadSignalsAuth(filename: $filename, tournament: $tournament, modelId: $modelId) {
+    accelerated
+    filename
+    url
+  }
+}
+
+mutation CreateSubmissionClassic(
+  $filename: String!,
+  $tournament: Int!,
+  $modelId: ID,
+  $triggerId: ID,
+  $dataDatestamp: Int
+) {
+  createSubmission(
+    filename: $filename,
+    tournament: $tournament,
+    modelId: $modelId,
+    triggerId: $triggerId,
+    source: "manual",
+    dataDatestamp: $dataDatestamp
+  ) {
+    id
+    filename
+    insertedAt
+    triggerId
+  }
+}
+
+mutation CreateSubmissionSignals(
+  $filename: String!,
+  $tournament: Int,
+  $modelId: ID,
+  $triggerId: ID,
+  $dataDatestamp: Int
+) {
+  createSignalsSubmission(
+    filename: $filename,
+    tournament: $tournament,
+    modelId: $modelId,
+    triggerId: $triggerId,
+    source: "manual",
+    dataDatestamp: $dataDatestamp
+  ) {
+    id
+    filename
+    insertedAt
+    triggerId
+  }
+}
+
+query ListSubmissions($modelId: ID) {
+  submissions(modelId: $modelId) {
+    id
+    filename
+    insertedAt
+    selected
+    triggerId
+  }
+}
+
+query SubmissionDownloadAuth($id: ID) {
+  submissionDownloadAuth(id: $id) {
+    filename
+    url
+  }
+}

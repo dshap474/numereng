@@ -27,11 +27,12 @@ from urllib.parse import urlsplit
 import pandas as pd
 import yaml
 
+from numereng.assets import docs_assets_root, docs_root
 from numereng.features.scoring.summary_metrics import (
     expand_shared_metric_query_names,
     normalize_shared_run_metrics,
 )
-from numereng.features.store import resolve_workspace_layout_from_store_root
+from numereng.features.store import resolve_workspace_layout, resolve_workspace_layout_from_store_root
 
 logger = logging.getLogger(__name__)
 
@@ -715,11 +716,20 @@ def repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def resolve_store_root(explicit: str | Path | None = None) -> Path:
+def resolve_store_root(
+    explicit: str | Path | None = None,
+    *,
+    workspace_root: str | Path | None = None,
+) -> Path:
     """Resolve store root using explicit value, env, then repo default."""
 
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
+    if workspace_root is not None:
+        return resolve_workspace_layout(workspace_root).store_root
+    env_workspace_root = os.getenv("NUMERENG_WORKSPACE_ROOT")
+    if env_workspace_root:
+        return resolve_workspace_layout(env_workspace_root).store_root
     env_root = os.getenv("NUMERENG_STORE_ROOT")
     if env_root:
         return Path(env_root).expanduser().resolve()
@@ -731,17 +741,53 @@ class VizStoreConfig:
     """Configuration for viz store adapter."""
 
     store_root: Path
-    repo_root: Path
+    workspace_root: Path | None = None
+    repo_root: Path | None = None
+    numerai_docs_root: Path | None = None
+    numereng_docs_root: Path | None = None
+    shared_docs_assets_root: Path | None = None
+
+    def __post_init__(self) -> None:
+        store_root = self.store_root.expanduser().resolve()
+        workspace_root = (
+            self.workspace_root.expanduser().resolve()
+            if self.workspace_root is not None
+            else resolve_workspace_layout_from_store_root(store_root).workspace_root
+        )
+        repo_root = self.repo_root.expanduser().resolve() if self.repo_root is not None else repository_root()
+        repo_docs_root = repo_root / "docs"
+        numerai_root = (
+            self.numerai_docs_root.expanduser().resolve()
+            if self.numerai_docs_root is not None
+            else (repo_docs_root / "numerai" if (repo_docs_root / "numerai").is_dir() else docs_root("numerai"))
+        )
+        numereng_root = (
+            self.numereng_docs_root.expanduser().resolve()
+            if self.numereng_docs_root is not None
+            else (repo_docs_root / "numereng" if (repo_docs_root / "numereng").is_dir() else docs_root("numereng"))
+        )
+        shared_assets_root = (
+            self.shared_docs_assets_root.expanduser().resolve()
+            if self.shared_docs_assets_root is not None
+            else (repo_docs_root / "assets" if (repo_docs_root / "assets").is_dir() else docs_assets_root())
+        )
+        object.__setattr__(self, "store_root", store_root)
+        object.__setattr__(self, "workspace_root", workspace_root)
+        object.__setattr__(self, "repo_root", repo_root)
+        object.__setattr__(self, "numerai_docs_root", numerai_root)
+        object.__setattr__(self, "numereng_docs_root", numereng_root)
+        object.__setattr__(self, "shared_docs_assets_root", shared_assets_root)
 
     @classmethod
     def from_env(
         cls,
         *,
+        workspace_root: str | Path | None = None,
         store_root: str | Path | None = None,
     ) -> VizStoreConfig:
         return cls(
-            store_root=resolve_store_root(store_root),
-            repo_root=repository_root(),
+            store_root=resolve_store_root(store_root, workspace_root=workspace_root),
+            workspace_root=Path(workspace_root).expanduser().resolve() if workspace_root is not None else None,
         )
 
 
@@ -889,8 +935,14 @@ class VizStoreAdapter:
     def _workspace_root(self) -> Path:
         return resolve_workspace_layout_from_store_root(self.store_root).workspace_root
 
+    def _legacy_experiments_root(self) -> Path:
+        return self._workspace_root() / "experiments"
+
     def _archived_experiments_root(self) -> Path:
         return self._experiments_root() / _EXPERIMENT_ARCHIVE_DIRNAME
+
+    def _legacy_archived_experiments_root(self) -> Path:
+        return self._legacy_experiments_root() / _EXPERIMENT_ARCHIVE_DIRNAME
 
     def _remote_pulls_root(self) -> Path:
         return (
@@ -930,37 +982,46 @@ class VizStoreAdapter:
                 return candidate
         return None
 
-    def _experiment_path_candidates(self, experiment_id: str) -> tuple[Path, Path]:
+    def _experiment_path_candidates(self, experiment_id: str) -> tuple[Path, ...]:
         return (
             self._experiments_root() / experiment_id,
             self._archived_experiments_root() / experiment_id,
+            self._legacy_experiments_root() / experiment_id,
+            self._legacy_archived_experiments_root() / experiment_id,
         )
 
     def _resolve_experiment_dir(self, experiment_id: str) -> Path:
         _ensure_safe_id(experiment_id, label="experiment_id")
-        live_dir, archived_dir = self._experiment_path_candidates(experiment_id)
-        live_exists = (live_dir / "experiment.json").is_file()
-        archived_exists = (archived_dir / "experiment.json").is_file()
-        if live_exists and archived_exists:
+        candidates = self._experiment_path_candidates(experiment_id)
+        existing = [path for path in candidates if (path / "experiment.json").is_file()]
+        live_existing = [path for path in existing if _EXPERIMENT_ARCHIVE_DIRNAME not in path.parts]
+        archived_existing = [path for path in existing if _EXPERIMENT_ARCHIVE_DIRNAME in path.parts]
+        if live_existing and archived_existing:
             raise ValueError(f"Experiment path conflict: {experiment_id}")
-        if live_exists:
-            return live_dir
-        if archived_exists:
-            return archived_dir
-        return live_dir
+        if live_existing:
+            return live_existing[0]
+        if archived_existing:
+            return archived_existing[0]
+        existing_dirs = [path for path in candidates if path.is_dir()]
+        if existing_dirs:
+            return existing_dirs[0]
+        return candidates[0]
 
     def _iter_experiment_ids(self, *, include_archived: bool) -> list[str]:
-        experiment_dir = self._experiments_root()
         ids: set[str] = set()
-        if experiment_dir.exists():
+        for experiment_dir in (self._experiments_root(), self._legacy_experiments_root()):
+            if not experiment_dir.exists():
+                continue
             for child in experiment_dir.iterdir():
                 if child.is_dir() and not child.name.startswith(".") and child.name != _EXPERIMENT_ARCHIVE_DIRNAME:
                     ids.add(child.name)
-        archive_dir = self._archived_experiments_root()
-        if include_archived and archive_dir.exists():
-            for child in archive_dir.iterdir():
-                if child.is_dir() and not child.name.startswith("."):
-                    ids.add(child.name)
+        if include_archived:
+            for archive_dir in (self._archived_experiments_root(), self._legacy_archived_experiments_root()):
+                if not archive_dir.exists():
+                    continue
+                for child in archive_dir.iterdir():
+                    if child.is_dir() and not child.name.startswith("."):
+                        ids.add(child.name)
         if self._table_exists("experiments"):
             if include_archived:
                 rows = self._query("SELECT experiment_id FROM experiments")
@@ -3218,13 +3279,13 @@ class VizStoreAdapter:
         }
 
     def _doc_root_numerai(self) -> Path:
-        return self.repo_root / "docs" / "numerai"
+        return self.config.numerai_docs_root
 
     def _doc_root_numereng(self) -> Path:
-        return self.repo_root / "docs" / "numereng"
+        return self.config.numereng_docs_root
 
     def _docs_shared_assets_root(self) -> Path:
-        return self.repo_root / "docs" / "assets"
+        return self.config.shared_docs_assets_root
 
     def _doc_root_for_domain(self, domain: str) -> Path:
         if domain == "numerai":
@@ -3401,7 +3462,7 @@ class VizStoreAdapter:
     def get_doc_asset_path(self, domain: str, path: str) -> Path:
         normalized_path = _normalize_relative_path(path, label="doc asset path")
         domain_root = self._doc_root_for_domain(domain)
-        docs_root = self.repo_root / "docs"
+        docs_root = self._docs_shared_assets_root().parent
         shared_assets_root = self._docs_shared_assets_root()
 
         candidates: list[Path] = [

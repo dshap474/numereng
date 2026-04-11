@@ -293,27 +293,23 @@ def _neutralize_values(
 ) -> np.ndarray:
     if values.ndim != 1:
         raise NeutralizationExecutionError("neutralization_prediction_vector_invalid")
+    if eras.shape[0] != values.shape[0]:
+        raise NeutralizationExecutionError("neutralization_era_count_mismatch")
     if neutralizers.ndim != 2:
         raise NeutralizationExecutionError("neutralization_matrix_invalid")
     if neutralizers.shape[0] != values.shape[0]:
         raise NeutralizationExecutionError("neutralization_row_count_mismatch")
 
-    resolved = np.asarray(values, dtype=float).copy()
+    matrix_values = np.asarray(values, dtype=float).reshape(-1, 1)
+    resolved = _neutralize_matrix_by_mode(
+        values=matrix_values,
+        neutralizers=neutralizers,
+        eras=eras,
+        proportion=proportion,
+        mode=mode,
+    ).reshape(-1)
 
-    if mode == "global":
-        resolved = _neutralize_vector(values=resolved, neutralizers=neutralizers, proportion=proportion)
-    else:
-        era_values = eras.astype(str).to_numpy()
-        for era in pd.unique(era_values):
-            idx = np.where(era_values == era)[0]
-            if idx.size == 0:
-                continue
-            resolved[idx] = _neutralize_vector(
-                values=resolved[idx],
-                neutralizers=neutralizers[idx, :],
-                proportion=proportion,
-            )
-
+    resolved = np.asarray(resolved, dtype=float)
     if rank_output:
         ranked = pd.Series(resolved, dtype=float)
         if mode == "global":
@@ -327,28 +323,72 @@ def _neutralize_values(
     return resolved
 
 
-def _neutralize_vector(
+def _neutralize_matrix_by_mode(
+    *,
+    values: np.ndarray,
+    neutralizers: np.ndarray,
+    eras: pd.Series,
+    proportion: float,
+    mode: NeutralizationMode,
+) -> np.ndarray:
+    if values.ndim != 2:
+        raise NeutralizationExecutionError("neutralization_prediction_matrix_invalid")
+    if neutralizers.ndim != 2:
+        raise NeutralizationExecutionError("neutralization_matrix_invalid")
+    if neutralizers.shape[0] != values.shape[0]:
+        raise NeutralizationExecutionError("neutralization_row_count_mismatch")
+
+    resolved = np.asarray(values, dtype=float).copy()
+    if resolved.size == 0:
+        return resolved
+    if neutralizers.shape[1] == 0:
+        return resolved
+
+    if mode == "global":
+        return _neutralize_matrix(values=resolved, neutralizers=neutralizers, proportion=proportion)
+
+    era_values = eras.astype(str).to_numpy()
+    for era in pd.unique(era_values):
+        idx = np.where(era_values == era)[0]
+        if idx.size == 0:
+            continue
+        resolved[idx, :] = _neutralize_matrix(
+            values=resolved[idx, :],
+            neutralizers=neutralizers[idx, :],
+            proportion=proportion,
+        )
+    return resolved
+
+
+def _neutralize_matrix(
     *,
     values: np.ndarray,
     neutralizers: np.ndarray,
     proportion: float,
 ) -> np.ndarray:
+    if values.ndim != 2:
+        raise NeutralizationExecutionError("neutralization_prediction_matrix_invalid")
+    if neutralizers.ndim != 2:
+        raise NeutralizationExecutionError("neutralization_matrix_invalid")
+    if values.shape[0] != neutralizers.shape[0]:
+        raise NeutralizationExecutionError("neutralization_row_count_mismatch")
     if values.size == 0:
         return values
-
-    if neutralizers.shape[1] == 0 or values.size < 2:
+    if neutralizers.shape[1] == 0:
         return values
 
     matrix = np.nan_to_num(neutralizers.astype(float), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
-    vector = np.nan_to_num(values.astype(float), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    payload = np.nan_to_num(values.astype(float), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+    intercept = np.ones((matrix.shape[0], 1), dtype=float)
+    augmented = np.hstack((matrix, intercept))
 
     try:
-        beta = np.linalg.pinv(matrix) @ vector
-        component = matrix @ beta
+        coefficients = np.linalg.lstsq(augmented, payload, rcond=1e-6)[0]
+        component = augmented @ coefficients
     except np.linalg.LinAlgError as exc:
         raise NeutralizationExecutionError("neutralization_linalg_failed") from exc
 
-    resolved = vector - (proportion * component)
+    resolved = payload - (proportion * component)
     return np.asarray(resolved, dtype=float)
 
 

@@ -8,9 +8,9 @@ Default store root:
 Common paths:
 - `.numereng/numereng.db`
 - `.numereng/runs/<run_id>/`
-- `.numereng/experiments/<experiment_id>/experiment.json`
-- `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
-- `.numereng/experiments/<experiment_id>/configs/*.json`
+- `experiments/<experiment_id>/experiment.json`
+- `experiments/<experiment_id>/EXPERIMENT.md`
+- `experiments/<experiment_id>/configs/*.json`
 
 ## Run Artifact Expectations
 

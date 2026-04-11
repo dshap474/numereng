@@ -91,7 +91,12 @@ class CloudModalService:
         if hasattr(request, "function_name") and hasattr(request, "app_name"):
             app_name = getattr(request, "app_name", None)
             function_name = getattr(request, "function_name", None)
-            if isinstance(app_name, str) and app_name.strip() and isinstance(function_name, str) and function_name.strip():
+            if (
+                isinstance(app_name, str)
+                and app_name.strip()
+                and isinstance(function_name, str)
+                and function_name.strip()
+            ):
                 return f"deploy-{app_name}-{function_name}"
         if hasattr(request, "volume_name"):
             volume_name = getattr(request, "volume_name", None)

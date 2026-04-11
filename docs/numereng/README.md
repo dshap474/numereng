@@ -1,6 +1,6 @@
 # Numereng
 
-`numereng` is a package-first Numerai workflow engine for training, scoring, submissions, experiments, HPO, ensembles, cloud execution, and read-only monitoring.
+`numereng` is an installable Numerai workspace runtime. You install the package once, initialize a workspace, and then do your work from that workspace.
 
 Stable public interfaces:
 
@@ -8,103 +8,57 @@ Stable public interfaces:
 - Python facade: `import numereng.api`
 - Workflow facade: `import numereng.api.pipeline`
 
-## Core Workflows
-
-- Train a run from a strict JSON config: `uv run numereng run train --help`
-- Re-score an existing run from persisted predictions: `uv run numereng run score --help`
-- Submit predictions or run artifacts: `uv run numereng run submit --help`
-- Group work into experiments: `uv run numereng experiment --help`
-- Run Optuna-backed HPO studies: `uv run numereng hpo --help`
-- Build and inspect ensembles: `uv run numereng ensemble --help`
-- Neutralize predictions as a separate stage: `uv run numereng neutralize --help`
-- Build official-style dataset artifacts and maintain store state: `uv run numereng dataset-tools --help`, `uv run numereng store --help`
-- Launch cloud workflows: `uv run numereng cloud --help`
-- Query Numerai datasets/models/rounds and scrape the forum: `uv run numereng numerai --help`
-- Launch the read-only dashboard: `just viz`
-
-Default runtime state lives under `.numereng/`.
-
-## Quick Start
+## Golden Path
 
 ```bash
-uv sync --extra dev
-uv run numereng --help
-uv run numereng run train --config configs/run.json
-uv run numereng experiment list
-just viz
+uv tool install numereng
+mkdir numerai-dev
+cd numerai-dev
+numereng init
+numereng viz
 ```
 
-## Architecture
+## Canonical Workspace Layout
 
-The codebase uses a strict dependency direction:
+Visible user-authored roots:
 
-```text
-config -> platform -> features -> api -> cli
-```
+- `experiments/`
+- `notes/`
+- `custom_models/`
+- `research_programs/`
+- `.agents/skills/`
 
-High-level layout:
+Hidden numereng-managed runtime state:
 
-- `src/numereng/config/`: strict config contracts and loaders
-- `src/numereng/platform/`: Numerai adapters, forum scraper, boundary errors
-- `src/numereng/features/`: training, scoring, submission, experiments, hpo, ensemble, neutralization, dataset-tools, store, telemetry, cloud, viz, models
-- `src/numereng/api/`: stable public Python facade and workflow entrypoints
-- `src/numereng/cli/`: CLI parsing and command dispatch
-- `viz/web/`: dashboard frontend
+- `.numereng/numereng.db`
+- `.numereng/runs/`
+- `.numereng/datasets/`
+- `.numereng/cache/`
+- `.numereng/tmp/`
+- `.numereng/remote_ops/`
 
-## Runtime Layout
+## Core Workflows
 
-Common artifacts under `.numereng/`:
-
-```text
-.numereng/
-  numereng.db
-  numereng.db-shm
-  numereng.db-wal
-  runs/<run_id>/
-    run.json
-    resolved.json
-    results.json
-    metrics.json
-    score_provenance.json
-    artifacts/predictions/*.parquet
-  experiments/<experiment_id>/
-    experiment.json
-    EXPERIMENT.md
-    configs/*.json
-  hpo/
-  ensembles/
-  datasets/
-  cloud/
-  notes/
-  cache/
-  tmp/
-    remote-configs/
-    lifecycle_smoke/
-  remote_ops/
-```
-
-`store doctor --fix-strays` cleans targeted stray store paths and conservatively prunes old `.numereng/tmp/remote-configs/*.json` staging files that are no longer referenced by active runs.
-
-Forum scraping writes outside the store by default:
-
-```text
-docs/numerai/forum/
-  INDEX.md
-  posts/YYYY/MM/*.md
-  .forum_scraper_manifest.json
-  .forum_scraper_state.json
-```
+- Train a run from a strict JSON config: `numereng run train --help`
+- Re-score an existing run from persisted predictions: `numereng run score --help`
+- Submit predictions or run artifacts: `numereng run submit --help`
+- Group work into experiments: `numereng experiment --help`
+- Run Optuna-backed HPO studies: `numereng hpo --help`
+- Build and inspect ensembles: `numereng ensemble --help`
+- Neutralize predictions as a separate stage: `numereng neutralize --help`
+- Maintain datasets and runtime state: `numereng dataset-tools --help`, `numereng store --help`
+- Launch cloud workflows: `numereng cloud --help`
+- Query Numerai datasets/models/rounds and forum data: `numereng numerai --help`
+- Launch the read-only dashboard: `numereng viz`
 
 ## Where To Go Next
 
 - [Installation](getting-started/installation.md)
-- [Train Your First Model](getting-started/first-model.md)
 - [Project Layout](getting-started/project-layout.md)
 - [Training Workflow](workflows/training.md)
 - [Experiments](workflows/experiments.md)
 - [Cloud Training](workflows/cloud-training.md)
 - [Store Operations](workflows/store-ops.md)
-- [Numerai Operations](workflows/numerai-ops.md)
 - [Dashboard](workflows/dashboard.md)
 - [CLI Reference](reference/cli.md)
 - [Python API](reference/python-api.md)

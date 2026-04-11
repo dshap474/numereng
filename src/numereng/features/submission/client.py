@@ -30,6 +30,22 @@ class SubmissionClient(Protocol):
     def upload_predictions(self, *, file_path: str, model_id: str) -> str:
         """Upload predictions and return submission id."""
 
+    def model_upload(
+        self,
+        *,
+        file_path: str,
+        model_id: str,
+        data_version: str | None = None,
+        docker_image: str | None = None,
+    ) -> str:
+        """Upload a Numerai model pickle and return upload id."""
+
+    def model_upload_data_versions(self) -> list[str]:
+        """List supported model-upload data versions."""
+
+    def model_upload_docker_images(self) -> list[str]:
+        """List supported model-upload docker images."""
+
 
 def create_submission_client(*, tournament: NumeraiTournament = "classic") -> SubmissionClient:
     """Create default submission client."""

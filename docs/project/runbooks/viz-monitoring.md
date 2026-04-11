@@ -8,9 +8,9 @@
 
 ## First checks
 
-1. Start the dashboard with `just viz`.
+1. Start the dashboard with `numereng viz` from the workspace root. If you are debugging the source checkout itself, `just viz` remains a contributor wrapper.
 2. Confirm the API health check: `http://127.0.0.1:8502/healthz`.
-3. Inspect `viz/api.log` and `viz/vite.log`.
+3. Inspect the backend stdout/stderr for the running `numereng viz` process. If you launched via `just viz`, inspect `viz/api.log` and `viz/vite.log`.
 4. Confirm the underlying run artifacts exist under `.numereng/runs/<run_id>/`.
 
 ## Contract reminders

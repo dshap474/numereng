@@ -127,6 +127,21 @@ def resolve_run_manifest_path(run_dir: Path) -> Path:
     return run_dir / "run.json"
 
 
+def resolve_model_artifacts_dir(run_dir: Path) -> Path:
+    """Resolve canonical fitted-model artifact directory for one run."""
+    return run_dir / "artifacts" / "model"
+
+
+def resolve_model_artifact_path(run_dir: Path) -> Path:
+    """Resolve canonical fitted-model pickle path for one run."""
+    return resolve_model_artifacts_dir(run_dir) / "model.pkl"
+
+
+def resolve_model_manifest_path(run_dir: Path) -> Path:
+    """Resolve canonical fitted-model manifest path for one run."""
+    return resolve_model_artifacts_dir(run_dir) / "manifest.json"
+
+
 def resolve_resolved_config_path(run_dir: Path) -> Path:
     """Resolve canonical resolved-config path for one run."""
     return run_dir / "resolved.json"

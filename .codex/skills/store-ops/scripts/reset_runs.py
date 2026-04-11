@@ -22,6 +22,7 @@ _SAFE_ID = re.compile(r"^[\w\-.]+$")
 
 @dataclass(frozen=True)
 class StorePaths:
+    workspace_root: Path
     store_root: Path
     db_path: Path
     runs_dir: Path
@@ -45,9 +46,9 @@ class Scope:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Reset one or more run IDs safely.")
     parser.add_argument(
-        "--store-root",
-        default=".numereng",
-        help="Store root path (default: .numereng)",
+        "--workspace",
+        default=".",
+        help="Workspace root path (default: current directory)",
     )
     parser.add_argument(
         "--run-id",
@@ -84,13 +85,15 @@ def ensure_safe_run_id(run_id: str) -> str:
     return candidate
 
 
-def ensure_paths(store_root_raw: str) -> StorePaths:
-    store_root = Path(store_root_raw).expanduser().resolve()
+def ensure_paths(workspace_root_raw: str) -> StorePaths:
+    workspace_root = Path(workspace_root_raw).expanduser().resolve()
+    store_root = workspace_root / ".numereng"
     return StorePaths(
+        workspace_root=workspace_root,
         store_root=store_root,
         db_path=store_root / "numereng.db",
         runs_dir=store_root / "runs",
-        experiments_dir=store_root / "experiments",
+        experiments_dir=workspace_root / "experiments",
     )
 
 
@@ -599,7 +602,7 @@ def make_output(
 
 def main() -> int:
     args = parse_args()
-    paths = ensure_paths(args.store_root)
+    paths = ensure_paths(args.workspace)
 
     try:
         run_ids = sorted({ensure_safe_run_id(value) for value in args.run_id})

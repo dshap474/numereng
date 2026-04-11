@@ -99,8 +99,10 @@ from numereng.api import (
     SubmissionResponse,
     TrainRunRequest,
     TrainRunResponse,
+    VizAppRequest,
     build_monitor_snapshot,
     cancel_run,
+    create_viz_app,
     download_numerai_dataset,
     experiment_archive,
     experiment_create,
@@ -295,6 +297,18 @@ def test_build_monitor_snapshot_returns_public_model(monkeypatch: pytest.MonkeyP
     assert isinstance(response, MonitorSnapshotResponse)
     assert response.source.kind == "local"
     assert response.summary.live_runs == 1
+
+
+def test_create_viz_app_returns_fastapi_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_app = object()
+
+    monkeypatch.setattr(
+        "numereng_viz.create_app", lambda **kwargs: fake_app if kwargs["workspace_root"] == "/tmp/ws" else None
+    )
+
+    response = create_viz_app(VizAppRequest(workspace_root="/tmp/ws"))
+
+    assert response is fake_app
 
 
 def test_remote_list_targets_returns_public_model(monkeypatch: pytest.MonkeyPatch) -> None:

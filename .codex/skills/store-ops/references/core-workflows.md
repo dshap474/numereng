@@ -3,7 +3,7 @@
 ## Workflow 1: Baseline Health Check
 
 ```bash
-uv run numereng store doctor
+numereng store doctor
 ```
 
 If healthy and no requested mutation, stop here.
@@ -11,8 +11,8 @@ If healthy and no requested mutation, stop here.
 ## Workflow 2: Diagnose One Experiment
 
 ```bash
-uv run numereng experiment details --id <experiment_id> --format json
-uv run numereng experiment report --id <experiment_id> --format json
+numereng experiment details --id <experiment_id> --format json
+numereng experiment report --id <experiment_id> --format json
 uv run python .agents/skills/store-ops/scripts/collect_store_impact.py \
   --experiment-id <experiment_id>
 ```
@@ -28,8 +28,8 @@ Outcome:
 Use when one run exists on disk but is missing/stale in SQLite.
 
 ```bash
-uv run numereng store index --run-id <run_id>
-uv run numereng store doctor
+numereng store index --run-id <run_id>
+numereng store doctor
 ```
 
 ## Workflow 4: Full Store Rebuild
@@ -37,8 +37,8 @@ uv run numereng store doctor
 Use when many run rows are stale/missing.
 
 ```bash
-uv run numereng store rebuild
-uv run numereng store doctor
+numereng store rebuild
+numereng store doctor
 ```
 
 ## Workflow 5: Reset Specific Run IDs
@@ -102,9 +102,9 @@ bash .agents/skills/store-ops/assets/bash/verification-checks.sh <experiment_id>
 Or equivalent manual checks:
 
 ```bash
-uv run numereng experiment details --id <experiment_id> --format json
-uv run numereng experiment report --id <experiment_id> --format json
-uv run numereng store doctor
+numereng experiment details --id <experiment_id> --format json
+numereng experiment report --id <experiment_id> --format json
+numereng store doctor
 ```
 
 ## Workflow 8: SQL-First Investigation

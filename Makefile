@@ -1,4 +1,4 @@
-.PHONY: ci fmt test test-all viz viz-start kill-viz oss-preflight security readiness deps-lint arch-lint
+.PHONY: ci fmt test test-all hpo-smoke viz viz-start kill-viz oss-preflight security readiness deps-lint arch-lint
 
 API_PORT ?= 8502
 VITE_PORT ?= 5173
@@ -24,6 +24,9 @@ test-all:
 	uv run ruff check .
 	uv run ty check
 	uv run pytest -q --cov=numereng --cov=numereng_viz --cov-report=term-missing
+
+hpo-smoke:
+	./scripts/hpo_v2_smoke.sh
 
 deps-lint:
 	uv run deptry .

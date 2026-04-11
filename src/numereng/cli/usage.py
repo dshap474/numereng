@@ -4,6 +4,7 @@ USAGE = (
     "usage:\n"
     "  numereng [--fail]\n"
     "  numereng init [--workspace <path>]\n"
+    "  numereng viz [--workspace <path>] [--host <host>] [--port <n>]\n"
     "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--workspace <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
     "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--experiment-id <id>] [--workspace <path>]\n"  # noqa: E501
     "  numereng run cancel --run-id <id> [--workspace <path>]\n"
@@ -15,6 +16,7 @@ USAGE = (
     "  numereng experiment archive --id <id> [--workspace <path>]\n"
     "  numereng experiment unarchive --id <id> [--workspace <path>]\n"
     "  numereng experiment train --id <id> --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng experiment run-plan --id <id> [--start-index <n>] [--end-index <n>] [--score-stage <post_training_core|post_training_full>] [--resume] [--workspace <path>]\n"  # noqa: E501
     "  numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full> [--workspace <path>]\n"  # noqa: E501
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--workspace <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
@@ -24,17 +26,29 @@ USAGE = (
     "  numereng research init --experiment-id <id> --program <id> [--workspace <path>]\n"
     "  numereng research status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
     "  numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--workspace <path>]\n"  # noqa: E501
-    "  numereng hpo create (--study-config <path.json> | (--study-name <name> --config <path.json>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--search-space <json|path>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]\n"  # noqa: E501
+    "  numereng hpo create (--study-config <path.json> | (--study-id <id> --study-name <name> --config <path.json> --search-space <json|path>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--timeout-seconds <n>] [--max-completed-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]\n"
     "  numereng hpo trials --study-id <id> [--format <table|json>] [--workspace <path>]\n"
     "  numereng ensemble build --run-ids <id1,id2,...> [--experiment-id <id>] [--method <rank_avg>] [--metric <metric_key>] [--target <target_col>] [--name <text>] [--ensemble-id <id>] [--weights <w1,w2,...>] [--optimize-weights] [--include-heavy-artifacts] [--selection-note <text>] [--regime-buckets <n>] [--neutralize-members] [--neutralize-final] [--neutralizer-path <path>] [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
+    "  numereng ensemble select --experiment-id <id> --source-experiment-ids <id1,id2,...> --source-rules <json|path> [--selection-id <id>] [--target <target_col>] [--primary-metric <metric.path>] [--tie-break-metric <metric.path>] [--correlation-threshold <0..1>] [--top-weighted-variants <n>] [--weight-step <step>] [--required-seed-count <n>] [--require-full-seed-bundle] [--blend-variants <csv>] [--weighted-promotion-min-gain <value>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng serve package create --experiment-id <id> --package-id <id> --components <json|path> [--data-version <v>] [--blend-rule <json|path>] [--neutralization <json|path>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng serve package inspect --experiment-id <id> --package-id <id> [--workspace <path>]\n"
+    "  numereng serve package list [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"
+    "  numereng serve live build --experiment-id <id> --package-id <id> [--workspace <path>]\n"
+    "  numereng serve live submit --experiment-id <id> --package-id <id> --model-name <name> [--workspace <path>]\n"
+    "  numereng serve pickle build --experiment-id <id> --package-id <id> [--workspace <path>]\n"
+    "  numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--workspace <path>]\n"  # noqa: E501
     "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
     "  numereng monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json]\n"
     "  numereng remote list [--format <table|json>]\n"
     "  numereng remote bootstrap-viz [--workspace <path>]\n"
     "  numereng remote doctor --target <id>\n"
     "  numereng remote repo sync --target <id> [--workspace <path>]\n"
+    "  numereng remote experiment launch --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--score-stage <post_training_core|post_training_full>] [--sync-repo <auto|always|never>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng remote experiment status --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng remote experiment maintain --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng remote experiment stop --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]\n"  # noqa: E501
     "  numereng remote experiment sync --target <id> --experiment-id <id> [--workspace <path>]\n"
     "  numereng remote experiment pull --target <id> --experiment-id <id> [--workspace <path>]\n"
     "  numereng remote config push --target <id> --config <path.json> [--workspace <path>]\n"

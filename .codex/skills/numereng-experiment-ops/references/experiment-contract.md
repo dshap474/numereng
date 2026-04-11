@@ -5,12 +5,12 @@ surface.
 
 ## Canonical Paths
 
-- `.numereng/experiments/<experiment_id>/experiment.json`
-- `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
-- `.numereng/experiments/<experiment_id>/EXPERIMENT.pack.md`
-- `.numereng/experiments/<experiment_id>/configs/*.json`
-- `.numereng/experiments/<experiment_id>/run_plan.csv`
-- `.numereng/experiments/<experiment_id>/run_scripts/*`
+- `experiments/<experiment_id>/experiment.json`
+- `experiments/<experiment_id>/EXPERIMENT.md`
+- `experiments/<experiment_id>/EXPERIMENT.pack.md`
+- `experiments/<experiment_id>/configs/*.json`
+- `experiments/<experiment_id>/run_plan.csv`
+- `experiments/<experiment_id>/run_scripts/*`
 - `.numereng/runs/<run_id>/`
 - `.numereng/numereng.db`
 
@@ -25,18 +25,18 @@ surface.
 
 ## Valid Command Families
 
-- `uv run numereng experiment create|list|details|train|promote|report|pack ...`
-- `uv run numereng run train ...`
-- `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
-- `uv run numereng ensemble build|list|details ...`
-- `uv run numereng hpo create ...`
-- `uv run numereng store init|index|rebuild|doctor ...`
+- `numereng experiment create|list|details|train|promote|report|pack ...`
+- `numereng run train ...`
+- `numereng remote experiment pull --target <target_id> --experiment-id <id>`
+- `numereng ensemble build|list|details ...`
+- `numereng hpo create ...`
+- `numereng store init|index|rebuild|doctor ...`
 
 ## Scripted Sweep Contract
 
 - scripted sweeps must keep `run_plan.csv` at the experiment root
-- scripted sweeps should call `uv run numereng experiment train --post-training-scoring none`
-- scripted sweeps own round scoring and should call `uv run numereng experiment score-round` after the last planned config for each `rN`
+- scripted sweeps should call `numereng experiment train --post-training-scoring none`
+- scripted sweeps own round scoring and should call `numereng experiment score-round` after the last planned config for each `rN`
 - default scripted batch stage is `post_training_core`
 
 ## Run Output Expectations
@@ -64,7 +64,7 @@ canonical run store until they are pulled back explicitly.
 
 Use:
 
-- `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+- `numereng remote experiment pull --target <target_id> --experiment-id <id>`
 
 Contract:
 

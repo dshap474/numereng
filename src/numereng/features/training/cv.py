@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
 
@@ -12,6 +13,15 @@ import pandas as pd
 from numereng.features.training.errors import TrainingConfigError, TrainingDataError
 from numereng.features.training.model_factory import build_model
 from numereng.features.training.models import ModelDataBatch, ModelDataLoaderProtocol
+
+
+@dataclass(frozen=True)
+class FullHistoryFitResult:
+    """Fitted full-history model plus in-sample predictions and metadata."""
+
+    model: object
+    predictions: pd.DataFrame
+    meta: dict[str, object]
 
 
 def _era_sort_key(era: object) -> int | str:
@@ -348,6 +358,35 @@ def build_full_history_predictions(
     feature_cols: list[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """Train one model on all eras and return in-sample predictions."""
+    result = fit_full_history_model(
+        eras=eras,
+        data_loader=data_loader,
+        model_type=model_type,
+        model_params=model_params,
+        model_config=model_config,
+        id_col=id_col,
+        era_col=era_col,
+        target_col=target_col,
+        store_root=store_root,
+        feature_cols=feature_cols,
+    )
+    return result.predictions, result.meta
+
+
+def fit_full_history_model(
+    *,
+    eras: Iterable[object],
+    data_loader: ModelDataLoaderProtocol | Callable[[Sequence[object]], ModelDataBatch],
+    model_type: str,
+    model_params: dict[str, object],
+    model_config: dict[str, object],
+    id_col: str | None,
+    era_col: str,
+    target_col: str,
+    store_root: Path | None = None,
+    feature_cols: list[str] | None = None,
+) -> FullHistoryFitResult:
+    """Train one model on all eras and retain the fitted estimator."""
     all_eras = _sorted_unique_eras(eras)
     full_data = _load_data(data_loader, all_eras)
     raw_total_rows = _data_length(full_data)
@@ -396,7 +435,7 @@ def build_full_history_predictions(
             }
         ],
     }
-    return predictions, meta
+    return FullHistoryFitResult(model=model, predictions=predictions, meta=meta)
 
 
 def _load_data(

@@ -4,7 +4,7 @@ Use this reference when the task is about the numereng training config contract.
 
 ## Source Of Truth
 
-Primary schema and loader paths:
+Repo-internal schema and loader paths, only if you are editing numereng itself:
 
 - `src/numereng/config/training/CLAUDE.md`
 - `src/numereng/config/training/contracts.py`
@@ -19,7 +19,7 @@ Primary schema and loader paths:
 
 ## Authoring Rules
 
-- keep configs under `.numereng/experiments/<experiment_id>/configs/`
+- keep configs under `experiments/<experiment_id>/configs/`
 - make file names reflect the changed variable
 - change one variable at a time within a research round unless the round is intentionally testing an interaction
 - keep dataset variant, feature scope, and benchmark reference explicit in the config

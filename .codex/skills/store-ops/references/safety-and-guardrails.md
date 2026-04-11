@@ -66,6 +66,6 @@ After mutation:
 - target run directories removed as expected
 - target experiment manifests reflect expected status
 - target DB row counts are zero (or expected value)
-- `uv run numereng store doctor` reports `ok: true`
+- `numereng store doctor` reports `ok: true`
 
 If postconditions fail, stop and report residual artifacts/rows.

@@ -12,6 +12,8 @@ from numereng.features.ensemble import (
     EnsembleNotFoundError,
     EnsembleRecord,
     EnsembleResult,
+    EnsembleSelectionResult,
+    EnsembleSelectionSourceRule,
     EnsembleValidationError,
 )
 from numereng.features.hpo import (
@@ -32,16 +34,60 @@ def _study_result() -> HpoStudyResult:
         study_name="study-a",
         experiment_id="exp-1",
         status="completed",
-        metric="bmc_last_200_eras.mean",
-        direction="maximize",
-        n_trials=2,
-        sampler="tpe",
-        seed=1337,
         best_trial_number=1,
         best_value=0.2,
         best_run_id="run-1",
         storage_path=Path("/tmp/study-1"),
-        config={"search_space": []},
+        spec={
+            "study_id": "study-1",
+            "study_name": "study-a",
+            "config_path": "configs/base.json",
+            "experiment_id": "exp-1",
+            "objective": {
+                "metric": "bmc_last_200_eras.mean",
+                "direction": "maximize",
+                "neutralization": {
+                    "enabled": False,
+                    "neutralizer_path": None,
+                    "proportion": 0.5,
+                    "mode": "era",
+                    "neutralizer_cols": None,
+                    "rank_output": True,
+                },
+            },
+            "search_space": {
+                "model.params.learning_rate": {
+                    "type": "float",
+                    "low": 0.001,
+                    "high": 0.1,
+                    "step": None,
+                    "log": True,
+                    "choices": None,
+                }
+            },
+            "sampler": {
+                "kind": "tpe",
+                "seed": 1337,
+                "n_startup_trials": 10,
+                "multivariate": True,
+                "group": False,
+            },
+            "stopping": {
+                "max_trials": 2,
+                "max_completed_trials": None,
+                "timeout_seconds": None,
+                "plateau": {
+                    "enabled": False,
+                    "min_completed_trials": 15,
+                    "patience_completed_trials": 10,
+                    "min_improvement_abs": 0.00025,
+                },
+            },
+        },
+        attempted_trials=2,
+        completed_trials=2,
+        failed_trials=0,
+        stop_reason="max_trials_reached",
         trials=(),
         created_at="2026-02-22T00:00:00+00:00",
         updated_at="2026-02-22T00:00:00+00:00",
@@ -54,15 +100,14 @@ def _study_record() -> HpoStudyRecord:
         experiment_id="exp-1",
         study_name="study-a",
         status="completed",
-        metric="bmc_last_200_eras.mean",
-        direction="maximize",
-        n_trials=2,
-        sampler="tpe",
-        seed=1337,
         best_trial_number=1,
         best_value=0.2,
         best_run_id="run-1",
-        config={"search_space": []},
+        spec=_study_result().spec,
+        attempted_trials=2,
+        completed_trials=2,
+        failed_trials=0,
+        stop_reason="max_trials_reached",
         storage_path=Path("/tmp/study-1"),
         error_message=None,
         created_at="2026-02-22T00:00:00+00:00",
@@ -83,6 +128,30 @@ def _trial_record() -> HpoTrialRecord:
         started_at="2026-02-22T00:00:00+00:00",
         finished_at="2026-02-22T00:01:00+00:00",
         updated_at="2026-02-22T00:01:00+00:00",
+    )
+
+
+def _study_create_request() -> api_module.HpoStudyCreateRequest:
+    return api_module.HpoStudyCreateRequest(
+        study_id="study-a",
+        study_name="study-a",
+        config_path="configs/base.json",
+        experiment_id="exp-1",
+        objective=api_module.HpoObjectiveRequest(
+            metric="post_fold_champion_objective",
+            direction="maximize",
+            neutralization=api_module.HpoNeutralizationRequest(),
+        ),
+        search_space={
+            "model.params.learning_rate": api_module.HpoSearchSpaceSpecRequest(
+                type="float",
+                low=0.001,
+                high=0.1,
+                log=True,
+            )
+        },
+        sampler=api_module.HpoSamplerRequest(kind="tpe", seed=1337),
+        stopping=api_module.HpoStoppingRequest(max_trials=2),
     )
 
 
@@ -126,6 +195,29 @@ def _ensemble_record() -> EnsembleRecord:
     )
 
 
+def _ensemble_selection_result() -> EnsembleSelectionResult:
+    return EnsembleSelectionResult(
+        selection_id="selection-1",
+        experiment_id="exp-1",
+        target="target_ender_20",
+        primary_metric="bmc_last_200_eras.mean",
+        tie_break_metric="bmc.mean",
+        status="completed",
+        artifacts_path=Path("/tmp/selection-1"),
+        frozen_candidate_count=8,
+        surviving_candidate_count=6,
+        equal_weight_variant_count=5,
+        weighted_candidate_count=1771,
+        winner_blend_id="small_only",
+        winner_selection_mode="equal_weight",
+        winner_component_ids=("small_target_a", "small_target_b"),
+        winner_weights=(0.5, 0.5),
+        winner_metrics={"bmc_last_200_eras.mean": 0.01, "bmc.mean": 0.008, "corr.mean": 0.02},
+        created_at="2026-04-09T00:00:00+00:00",
+        updated_at="2026-04-09T00:00:00+00:00",
+    )
+
+
 def test_hpo_create_delegates_to_feature_and_returns_response(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_create_study(
         *,
@@ -137,14 +229,7 @@ def test_hpo_create_delegates_to_feature_and_returns_response(monkeypatch: pytes
         return _study_result()
 
     monkeypatch.setattr(api_module, "hpo_create_study", fake_create_study)
-    response = api_module.hpo_create(
-        api_module.HpoStudyCreateRequest(
-            study_name="study-a",
-            config_path="configs/base.json",
-            experiment_id="exp-1",
-            n_trials=2,
-        )
-    )
+    response = api_module.hpo_create(_study_create_request())
     assert response.study_id == "study-1"
     assert response.best_run_id == "run-1"
     assert response.storage_path == "/tmp/study-1"
@@ -157,19 +242,38 @@ def test_hpo_create_preserves_explicit_empty_neutralizer_cols(monkeypatch: pytes
         request: object,
     ) -> HpoStudyResult:
         assert store_root == ".numereng"
-        assert getattr(request, "neutralizer_cols") == ()
+        neutralization = getattr(request, "objective").neutralization
+        assert neutralization.neutralizer_cols == ()
         return _study_result()
 
     monkeypatch.setattr(api_module, "hpo_create_study", fake_create_study)
 
-    response = api_module.hpo_create(
-        api_module.HpoStudyCreateRequest(
-            study_name="study-a",
-            config_path="configs/base.json",
-            neutralizer_cols=[],
-        )
-    )
+    request = _study_create_request()
+    request.objective.neutralization.neutralizer_cols = []
+    response = api_module.hpo_create(request)
     assert response.study_id == "study-1"
+
+
+def test_hpo_get_normalizes_random_sampler_spec_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    record = _study_record()
+    record.spec["sampler"] = {
+        "kind": "random",
+        "seed": 21,
+        "n_startup_trials": 10,
+        "multivariate": True,
+        "group": False,
+    }
+
+    monkeypatch.setattr(api_module, "hpo_get_study", lambda **kwargs: record)
+
+    response = api_module.hpo_get(api_module.HpoStudyGetRequest(study_id="study-1"))
+
+    assert response.spec.sampler.kind == "random"
+    assert response.spec.sampler.seed == 21
+    assert response.model_dump()["spec"]["sampler"] == {
+        "kind": "random",
+        "seed": 21,
+    }
 
 
 @pytest.mark.parametrize(
@@ -195,12 +299,7 @@ def test_hpo_create_translates_feature_errors(
     monkeypatch.setattr(api_module, "hpo_create_study", fake_create_study)
 
     with pytest.raises(PackageError, match=str(error)):
-        api_module.hpo_create(
-            api_module.HpoStudyCreateRequest(
-                study_name="study-a",
-                config_path="configs/base.json",
-            )
-        )
+        api_module.hpo_create(_study_create_request())
 
 
 def test_hpo_list_get_and_trials_delegate_and_translate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -274,6 +373,51 @@ def test_ensemble_build_preserves_explicit_empty_weights(monkeypatch: pytest.Mon
         )
     )
     assert response.ensemble_id == "ens-1"
+
+
+def test_ensemble_select_delegates_to_feature_and_returns_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_select_ensemble(
+        *,
+        store_root: str,
+        request: object,
+    ) -> EnsembleSelectionResult:
+        assert store_root == ".numereng"
+        assert getattr(request, "selection_id") == "selection-1"
+        assert getattr(request, "top_weighted_variants") == 3
+        source_rules = getattr(request, "source_rules")
+        assert len(source_rules) == 2
+        assert source_rules[0] == EnsembleSelectionSourceRule(
+            experiment_id="exp-medium",
+            selection_mode="explicit_targets",
+            explicit_targets=("target_alpha_20", "target_charlie_20"),
+            top_n=None,
+        )
+        return _ensemble_selection_result()
+
+    monkeypatch.setattr(api_module, "select_ensemble_record", fake_select_ensemble)
+    response = api_module.ensemble_select(
+        api_module.EnsembleSelectRequest(
+            experiment_id="exp-1",
+            source_experiment_ids=["exp-medium", "exp-small"],
+            source_rules=[
+                api_module.EnsembleSelectionSourceRuleRequest(
+                    experiment_id="exp-medium",
+                    selection_mode="explicit_targets",
+                    explicit_targets=["target_alpha_20", "target_charlie_20"],
+                ),
+                api_module.EnsembleSelectionSourceRuleRequest(
+                    experiment_id="exp-small",
+                    selection_mode="top_n",
+                    top_n=2,
+                ),
+            ],
+            selection_id="selection-1",
+            top_weighted_variants=3,
+        )
+    )
+    assert response.selection_id == "selection-1"
+    assert response.winner.blend_id == "small_only"
+    assert response.artifacts_path == "/tmp/selection-1"
 
 
 def test_ensemble_build_preserves_explicit_empty_neutralizer_cols(monkeypatch: pytest.MonkeyPatch) -> None:

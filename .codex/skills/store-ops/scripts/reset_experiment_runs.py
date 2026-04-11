@@ -24,6 +24,7 @@ HARD_WIPE_EXPERIMENT_DIRS = "hard_wipe_experiment_dirs"
 
 @dataclass(frozen=True)
 class StorePaths:
+    workspace_root: Path
     store_root: Path
     db_path: Path
     runs_dir: Path
@@ -49,9 +50,9 @@ class Scope:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Reset experiment-linked run data safely.")
     parser.add_argument(
-        "--store-root",
-        default=".numereng",
-        help="Store root path (default: .numereng)",
+        "--workspace",
+        default=".",
+        help="Workspace root path (default: current directory)",
     )
     parser.add_argument(
         "--experiment-id",
@@ -122,13 +123,15 @@ def detect_active_writers() -> list[str]:
     return [line.strip() for line in output.splitlines() if pattern.search(line)]
 
 
-def ensure_paths(store_root_raw: str) -> StorePaths:
-    store_root = Path(store_root_raw).expanduser().resolve()
+def ensure_paths(workspace_root_raw: str) -> StorePaths:
+    workspace_root = Path(workspace_root_raw).expanduser().resolve()
+    store_root = workspace_root / ".numereng"
     return StorePaths(
+        workspace_root=workspace_root,
         store_root=store_root,
         db_path=store_root / "numereng.db",
         runs_dir=store_root / "runs",
-        experiments_dir=store_root / "experiments",
+        experiments_dir=workspace_root / "experiments",
     )
 
 
@@ -323,7 +326,9 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
         "by_experiment": {
             "experiments": count_rows(cur, "experiments", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "runs": count_rows(cur, "runs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
-            "run_lifecycles": count_rows(cur, "run_lifecycles", f"experiment_id IN ({placeholders_exp})", experiment_ids),
+            "run_lifecycles": count_rows(
+                cur, "run_lifecycles", f"experiment_id IN ({placeholders_exp})", experiment_ids
+            ),
             "run_jobs": count_rows(cur, "run_jobs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "logical_runs": count_rows(cur, "logical_runs", f"experiment_id IN ({placeholders_exp})", experiment_ids),
             "hpo_studies": count_rows(cur, "hpo_studies", f"experiment_id IN ({placeholders_exp})", experiment_ids),
@@ -336,7 +341,9 @@ def gather_scope(paths: StorePaths, experiment_ids: list[str]) -> Scope:
         db_counts["by_run"] = {
             "metrics": count_rows(cur, "metrics", f"run_id IN ({placeholders_runs})", target_run_ids_list),
             "run_artifacts": count_rows(cur, "run_artifacts", f"run_id IN ({placeholders_runs})", target_run_ids_list),
-            "run_lifecycles": count_rows(cur, "run_lifecycles", f"run_id IN ({placeholders_runs})", target_run_ids_list),
+            "run_lifecycles": count_rows(
+                cur, "run_lifecycles", f"run_id IN ({placeholders_runs})", target_run_ids_list
+            ),
             "run_attempts_canonical": count_rows(
                 cur,
                 "run_attempts",
@@ -698,7 +705,7 @@ def make_output(
 
 def main() -> int:
     args = parse_args()
-    paths = ensure_paths(args.store_root)
+    paths = ensure_paths(args.workspace)
     experiment_ids = sorted({value.strip() for value in args.experiment_id if value.strip()})
     if not experiment_ids:
         raise SystemExit("no_target_experiment_ids")

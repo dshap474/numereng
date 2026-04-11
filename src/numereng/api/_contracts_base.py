@@ -10,9 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from numereng.config.training import ensure_json_config_path
 from numereng.config.training.contracts import PostTrainingScoringPolicy
-from numereng.features.experiments import ExperimentStatus
 from numereng.features.store import WorkspaceLayout, resolve_workspace_layout
-from numereng.features.training import TrainingEngineMode, TrainingProfile
 
 NumeraiTournament = Literal["classic", "signals", "crypto"]
 NeutralizationMode = Literal["era", "global"]
@@ -21,6 +19,9 @@ ExperimentScoreRoundStage = Literal["post_training_core", "post_training_full"]
 ResearchSupervisorStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
 ResearchProgramSource = Literal["builtin", "user", "legacy_builtin"]
 ResearchPlannerContract = Literal["config_mutation", "structured_json"]
+ExperimentStatus = Literal["draft", "active", "complete", "archived"]
+TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
+TrainingEngineMode = Literal["official", "custom", "full_history"]
 
 
 class HealthResponse(BaseModel):
@@ -325,6 +326,41 @@ class ExperimentTrainResponse(BaseModel):
     results_path: str
 
 
+class ExperimentRunPlanRequest(WorkspaceBoundRequest):
+    experiment_id: str
+    start_index: int = Field(default=1, ge=1)
+    end_index: int | None = Field(default=None, ge=1)
+    score_stage: ExperimentScoreRoundStage = "post_training_core"
+    resume: bool = False
+
+
+class ExperimentRunPlanWindowResponse(BaseModel):
+    start_index: int
+    end_index: int
+    total_rows: int
+
+
+class ExperimentRunPlanResponse(BaseModel):
+    experiment_id: str
+    state_path: str
+    window: ExperimentRunPlanWindowResponse
+    phase: Literal["training", "round_scoring", "complete", "failed", "stopped"]
+    requested_score_stage: ExperimentScoreRoundStage
+    completed_score_stages: list[str] = Field(default_factory=list)
+    current_index: int | None = None
+    current_round: str | None = None
+    current_config_path: str | None = None
+    current_run_id: str | None = None
+    last_completed_row_index: int | None = None
+    supervisor_pid: int | None = None
+    active_worker_pid: int | None = None
+    last_successful_heartbeat_at: str | None = None
+    failure_classifier: str | None = None
+    retry_count: int = 0
+    terminal_error: str | None = None
+    updated_at: str
+
+
 class ExperimentScoreRoundRequest(WorkspaceBoundRequest):
     experiment_id: str
     round: str
@@ -577,6 +613,9 @@ __all__ = [
     "ExperimentListResponse",
     "ExperimentPromoteRequest",
     "ExperimentPromoteResponse",
+    "ExperimentRunPlanRequest",
+    "ExperimentRunPlanResponse",
+    "ExperimentRunPlanWindowResponse",
     "ExperimentScoreRoundRequest",
     "ExperimentScoreRoundResponse",
     "ExperimentPackRequest",

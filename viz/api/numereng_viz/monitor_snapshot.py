@@ -13,13 +13,13 @@ from collections import defaultdict
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from numereng.features.cloud.aws import AwsTrainStatusRequest, CloudAwsManagedService
-from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
-from numereng.features.remote_ops import load_viz_bootstrap_state
+from numereng.features.cloud.aws import CloudAwsManagedService
+from numereng.features.remote_ops.bootstrap_state import load_viz_bootstrap_state
 from numereng.features.store.layout import resolve_cloud_run_state_path
 from numereng.features.telemetry import reconcile_run_lifecycles
 from numereng.platform import load_remote_targets
@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 _ACTIVE_MONITOR_STATUSES = {"queued", "starting", "running", "canceling"}
 _TERMINAL_MONITOR_STATUSES = {"completed", "failed", "canceled", "stale"}
 _REMOTE_CACHE_TTL_SECONDS = 5.0
-_CLOUD_STATE_STORE = CloudAwsStateStore()
 _CLOUD_PHASE_PROGRESS = {
     "starting": 8.0,
     "downloading": 22.0,
@@ -46,6 +45,13 @@ _CLOUD_PHASE_PROGRESS = {
     "uploading": 92.0,
     "stopping": 96.0,
 }
+
+
+@lru_cache(maxsize=1)
+def _cloud_state_store() -> Any:
+    from numereng.features.cloud.aws.managed_state_store import CloudAwsStateStore
+
+    return CloudAwsStateStore()
 
 
 def build_monitor_snapshot(
@@ -236,11 +242,7 @@ def _merge_remote_live_runs(
     remote_runs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     merged = [copy.deepcopy(item) for item in local_runs if isinstance(item, dict)]
-    seen_run_ids = {
-        str(item.get("run_id"))
-        for item in merged
-        if isinstance(item.get("run_id"), str)
-    }
+    seen_run_ids = {str(item.get("run_id")) for item in merged if isinstance(item.get("run_id"), str)}
     for item in remote_runs:
         if not isinstance(item, dict):
             continue
@@ -557,6 +559,8 @@ def _normalize_cloud_job_row(
         and _should_refresh_cloud_job_status(existing_canonical_status)
     ):
         try:
+            from numereng.features.cloud.aws import AwsTrainStatusRequest
+
             response = service.train_status(
                 AwsTrainStatusRequest(
                     store_root=str(adapter.store_root),
@@ -819,7 +823,7 @@ def _load_cloud_state_metadata(state_path: Path | None) -> dict[str, Any]:
     if state_path is None:
         return {}
     try:
-        state = _CLOUD_STATE_STORE.load(state_path)
+        state = _cloud_state_store().load(state_path)
     except ValueError:
         return {}
     if state is None:

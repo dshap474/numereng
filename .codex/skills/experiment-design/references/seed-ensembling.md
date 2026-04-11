@@ -32,13 +32,13 @@ High `rho` means diminishing returns from adding more seeds.
 
 ## Suggested Workflow
 
-1. Create per-seed configs under `.numereng/experiments/<id>/configs/`.
+1. Create per-seed configs under `experiments/<id>/configs/`.
 2. Train each seed via `experiment train`.
 3. Record seed-level metrics in `EXPERIMENT.md`.
 4. Build an internal seed blend with `ensemble build` (preferred):
 
 ```bash
-uv run numereng ensemble build \
+numereng ensemble build \
   --experiment-id <id> \
   --run-ids <seed_run_1,seed_run_2,seed_run_3> \
   --method rank_avg \

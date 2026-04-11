@@ -25,7 +25,7 @@ rm -f "$VIZ_DIR/bootstrap.log" "$VIZ_DIR/api.log" "$VIZ_DIR/vite.log"
 
 (
 	cd "$ROOT_DIR"
-	uv run numereng remote bootstrap-viz --store-root "$ROOT_DIR/.numereng" > "$VIZ_DIR/bootstrap.log" 2>&1
+	uv run numereng remote bootstrap-viz --workspace "$ROOT_DIR" > "$VIZ_DIR/bootstrap.log" 2>&1
 )
 cat "$VIZ_DIR/bootstrap.log"
 

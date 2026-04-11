@@ -112,12 +112,10 @@ def build_monitor_snapshot_command(target: SshRemoteTargetProfile) -> str:
     """Build the trusted remote numereng monitor snapshot command."""
 
     if target.shell == "powershell":
-        command = (
-            f"{target.runner_cmd} monitor snapshot --workspace '{powershell_single_quote(target.repo_root)}' --json"
-        )
+        command = f"{target.runner_cmd} monitor snapshot --json"
         return build_remote_shell_command(target, command, cwd=target.repo_root)
 
-    command = f"{target.runner_cmd} monitor snapshot --workspace {shlex.quote(target.repo_root)} --json"
+    command = f"{target.runner_cmd} monitor snapshot --json"
     return build_remote_shell_command(target, command, cwd=target.repo_root)
 
 

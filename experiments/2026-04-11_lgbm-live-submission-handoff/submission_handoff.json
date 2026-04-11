@@ -1,0 +1,79 @@
+{
+  "source_experiment_id": "2026-04-08_lgbm-cross-scope-blend-selection",
+  "source_selection_mode": "weighted",
+  "source_equal_blend_id": "top2_medium_top2_small",
+  "primary_metric": "bmc_last_200_eras.mean",
+  "tie_break_metric": "bmc.mean",
+  "winner_metrics": {
+    "bmc_last_200_eras.mean": 0.0034606039029044665,
+    "bmc.mean": 0.007661520432167643,
+    "corr.mean": 0.017604002144291336
+  },
+  "blend_rule": {
+    "component_ranking": "rank predictions within era using method=average, pct=True",
+    "final_blend": "weighted sum of ranked component predictions",
+    "final_rerank": false
+  },
+  "components": [
+    {
+      "candidate_id": "medium_target_alpha_20",
+      "feature_set": "medium",
+      "target_col": "target_alpha_20",
+      "weight": 0.05,
+      "source_experiment_id": "2026-03-03_medium-lgbm-all-targets-3seed-baseline",
+      "source_run_ids": [
+        "9fe617a169a1",
+        "6adc9d656eb9",
+        "10b892aee8be"
+      ],
+      "selected_source_run_id": "9fe617a169a1",
+      "selected_source_config_path": "experiments/2026-03-03_medium-lgbm-all-targets-3seed-baseline/configs/r1_target_alpha_20_seed42.json",
+      "final_refit_config_path": "experiments/2026-04-11_lgbm-live-submission-handoff/configs/r1_medium_target_alpha_20_seed42_full_history_refit.json"
+    },
+    {
+      "candidate_id": "medium_target_charlie_20",
+      "feature_set": "medium",
+      "target_col": "target_charlie_20",
+      "weight": 0.0,
+      "source_experiment_id": "2026-03-03_medium-lgbm-all-targets-3seed-baseline",
+      "source_run_ids": [
+        "249b774dfb26",
+        "afe98810f466",
+        "0c51b9ab93d4"
+      ],
+      "selected_source_run_id": "afe98810f466",
+      "selected_source_config_path": "experiments/2026-03-03_medium-lgbm-all-targets-3seed-baseline/configs/r1_target_charlie_20_seed43.json",
+      "final_refit_config_path": "experiments/2026-04-11_lgbm-live-submission-handoff/configs/r1_medium_target_charlie_20_seed43_full_history_refit.json"
+    },
+    {
+      "candidate_id": "small_target_jasper_60",
+      "feature_set": "small",
+      "target_col": "target_jasper_60",
+      "weight": 0.65,
+      "source_experiment_id": "2026-03-06_small-lgbm-all-targets-3seed-baseline",
+      "source_run_ids": [
+        "332036364b05",
+        "e05bf56bea0a",
+        "c9301eb2157d"
+      ],
+      "selected_source_run_id": "332036364b05",
+      "selected_source_config_path": "experiments/2026-03-06_small-lgbm-all-targets-3seed-baseline/configs/r1_target_jasper_60_seed42.json",
+      "final_refit_config_path": "experiments/2026-04-11_lgbm-live-submission-handoff/configs/r1_small_target_jasper_60_seed42_full_history_refit.json"
+    },
+    {
+      "candidate_id": "small_target_alpha_20",
+      "feature_set": "small",
+      "target_col": "target_alpha_20",
+      "weight": 0.3,
+      "source_experiment_id": "2026-03-06_small-lgbm-all-targets-3seed-baseline",
+      "source_run_ids": [
+        "0ee24bc7e035",
+        "bd5d28e4f886",
+        "1592e51aacb1"
+      ],
+      "selected_source_run_id": "0ee24bc7e035",
+      "selected_source_config_path": "experiments/2026-03-06_small-lgbm-all-targets-3seed-baseline/configs/r1_target_alpha_20_seed42.json",
+      "final_refit_config_path": "experiments/2026-04-11_lgbm-live-submission-handoff/configs/r1_small_target_alpha_20_seed42_full_history_refit.json"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import sys
 import types
 from typing import Any
 
+import cloudpickle
 import pytest
 
 from numereng.features.models.lgbm import LGBMRegressor
@@ -76,3 +77,13 @@ def test_lgbm_wrapper_raises_cuda_specific_failure(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(TrainingModelError, match="training_model_cuda_fit_failed"):
         model.fit(None, None)  # type: ignore[arg-type]
+
+
+def test_lgbm_wrapper_pickle_roundtrip_preserves_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_fake_lightgbm(monkeypatch)
+
+    model = LGBMRegressor()
+
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    assert restored.predict(None) == [0.0]  # type: ignore[arg-type]

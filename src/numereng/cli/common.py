@@ -7,9 +7,11 @@ from typing import Literal, cast
 
 from pydantic import ValidationError
 
-from numereng import api
+NumeraiTournament = Literal["classic", "signals", "crypto"]
+TrainingProfileValue = Literal["simple", "purged_walk_forward", "full_history_refit"]
+ExperimentStatusValue = Literal["draft", "active", "complete", "archived"]
 
-_TOURNAMENT_MAP: dict[str, api.NumeraiTournament] = {
+_TOURNAMENT_MAP: dict[str, NumeraiTournament] = {
     "classic": "classic",
     "numerai": "classic",
     "signals": "signals",
@@ -20,7 +22,7 @@ _TOURNAMENT_MAP: dict[str, api.NumeraiTournament] = {
 }
 
 _TOURNAMENT_USAGE = "classic|signals|crypto"
-_TRAINING_PROFILE_MAP: dict[str, api.TrainingProfile] = {
+_TRAINING_PROFILE_MAP: dict[str, TrainingProfileValue] = {
     "simple": "simple",
     "purged_walk_forward": "purged_walk_forward",
     "full_history_refit": "full_history_refit",
@@ -46,11 +48,14 @@ def _parse_fail_flag(argv: Sequence[str]) -> tuple[bool, list[str]]:
     return fail, unknown
 
 
-def _parse_int_value(value: str, *, flag: str) -> tuple[int | None, str | None]:
+def _parse_int_value(value: str, *, flag: str, minimum: int | None = None) -> tuple[int | None, str | None]:
     try:
-        return int(value), None
+        parsed = int(value)
     except ValueError:
         return None, f"invalid integer for {flag}: {value}"
+    if minimum is not None and parsed < minimum:
+        return None, f"invalid value for {flag}: expected >= {minimum}"
+    return parsed, None
 
 
 def _parse_simple_options(
@@ -82,7 +87,7 @@ def _parse_simple_options(
     return values, toggles, None
 
 
-def _parse_tournament_value(value: str) -> tuple[api.NumeraiTournament | None, str | None]:
+def _parse_tournament_value(value: str) -> tuple[NumeraiTournament | None, str | None]:
     normalized = value.lower()
     parsed = _TOURNAMENT_MAP.get(normalized)
     if parsed is None:
@@ -90,7 +95,7 @@ def _parse_tournament_value(value: str) -> tuple[api.NumeraiTournament | None, s
     return parsed, None
 
 
-def _parse_training_profile_value(value: str) -> tuple[api.TrainingProfile | None, str | None]:
+def _parse_training_profile_value(value: str) -> tuple[TrainingProfileValue | None, str | None]:
     if value == "submission":
         return None, "invalid value for --profile: submission (renamed to full_history_refit)"
     if value not in _TRAINING_PROFILES:
@@ -104,10 +109,10 @@ def _parse_cloud_backend_value(value: str) -> tuple[CloudAwsBackend | None, str 
     return cast(CloudAwsBackend, value), None
 
 
-def _parse_experiment_status_value(value: str) -> tuple[api.ExperimentStatus | None, str | None]:
+def _parse_experiment_status_value(value: str) -> tuple[ExperimentStatusValue | None, str | None]:
     if value not in _EXPERIMENT_STATUSES:
         return None, "invalid value for --status: expected draft|active|complete|archived"
-    return cast(api.ExperimentStatus, value), None
+    return cast(ExperimentStatusValue, value), None
 
 
 def _validation_error_message(exc: ValidationError) -> str:

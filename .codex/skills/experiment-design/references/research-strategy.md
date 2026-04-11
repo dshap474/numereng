@@ -58,28 +58,28 @@ Before concluding the experiment, run at least one scaled confirmatory round.
 1. Create experiment:
 
 ```bash
-uv run numereng experiment create --id <YYYY-MM-DD_slug> --hypothesis "..." --tags "tag1,tag2"
+numereng experiment create --id <YYYY-MM-DD_slug> --hypothesis "..." --tags "tag1,tag2"
 ```
 
 2. Prepare configs for this round in:
-- `.numereng/experiments/<id>/configs/`
+- `experiments/<id>/configs/`
 
 3. Train each config:
 
 ```bash
-uv run numereng experiment train --id <id> --config <config.json>
+numereng experiment train --id <id> --config <config.json>
 ```
 
 4. Rank results:
 
 ```bash
-uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
+numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
 ```
 
 5. Inspect experiment state:
 
 ```bash
-uv run numereng experiment details --id <id> --format json
+numereng experiment details --id <id> --format json
 ```
 
 6. Update `EXPERIMENT.md` with round outcomes and the next decision.

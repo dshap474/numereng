@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from numereng.features.hpo.contracts import (
-    HpoDirection,
-    HpoSampler,
     HpoStatus,
+    HpoStopReason,
     HpoStudyRecord,
     HpoStudyResult,
     HpoTrialRecord,
@@ -27,9 +26,10 @@ from numereng.features.store import (
 )
 
 
-def save_study(*, store_root: str | Path, payload: HpoStudyResult, error_message: str | None = None) -> None:
+def save_study(*, store_root: str | Path, payload: HpoStudyResult) -> None:
     """Persist one HPO study snapshot."""
 
+    spec_json = json.dumps(payload.spec, sort_keys=True, ensure_ascii=True)
     upsert_hpo_study(
         store_root=store_root,
         study=StoreHpoStudyUpsert(
@@ -37,17 +37,21 @@ def save_study(*, store_root: str | Path, payload: HpoStudyResult, error_message
             experiment_id=payload.experiment_id,
             study_name=payload.study_name,
             status=payload.status,
-            metric=payload.metric,
-            direction=payload.direction,
-            n_trials=payload.n_trials,
-            sampler=payload.sampler,
-            seed=payload.seed,
+            metric=_study_metric(payload.spec),
+            direction=_study_direction(payload.spec),
+            n_trials=_study_max_trials(payload.spec),
+            sampler=_study_sampler(payload.spec),
+            seed=_study_seed(payload.spec),
             best_trial_number=payload.best_trial_number,
             best_value=payload.best_value,
             best_run_id=payload.best_run_id,
-            config_json=json.dumps(payload.config, sort_keys=True, ensure_ascii=True),
+            config_json=spec_json,
+            attempted_trials=payload.attempted_trials,
+            completed_trials=payload.completed_trials,
+            failed_trials=payload.failed_trials,
+            stop_reason=payload.stop_reason,
             storage_path=str(payload.storage_path),
-            error_message=error_message,
+            error_message=payload.error_message,
         ),
     )
 
@@ -78,34 +82,7 @@ def get_study(*, store_root: str | Path, study_id: str) -> HpoStudyRecord | None
     row = get_hpo_study(store_root=store_root, study_id=study_id)
     if row is None:
         return None
-    config: dict[str, Any] = {}
-    if row.config_json:
-        try:
-            parsed = json.loads(row.config_json)
-            if isinstance(parsed, dict):
-                config = parsed
-        except json.JSONDecodeError:
-            config = {}
-    storage_path = Path(row.storage_path) if row.storage_path else None
-    return HpoStudyRecord(
-        study_id=row.study_id,
-        experiment_id=row.experiment_id,
-        study_name=row.study_name,
-        status=_coerce_study_status(row.status),
-        metric=row.metric,
-        direction=_coerce_direction(row.direction),
-        n_trials=row.n_trials,
-        sampler=_coerce_sampler(row.sampler),
-        seed=row.seed,
-        best_trial_number=row.best_trial_number,
-        best_value=row.best_value,
-        best_run_id=row.best_run_id,
-        config=config,
-        storage_path=storage_path,
-        error_message=row.error_message,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-    )
+    return _study_record_from_row(row)
 
 
 def list_studies(
@@ -125,38 +102,7 @@ def list_studies(
         limit=limit,
         offset=offset,
     )
-    records: list[HpoStudyRecord] = []
-    for row in rows:
-        config: dict[str, Any] = {}
-        if row.config_json:
-            try:
-                parsed = json.loads(row.config_json)
-                if isinstance(parsed, dict):
-                    config = parsed
-            except json.JSONDecodeError:
-                config = {}
-        records.append(
-            HpoStudyRecord(
-                study_id=row.study_id,
-                experiment_id=row.experiment_id,
-                study_name=row.study_name,
-                status=_coerce_study_status(row.status),
-                metric=row.metric,
-                direction=_coerce_direction(row.direction),
-                n_trials=row.n_trials,
-                sampler=_coerce_sampler(row.sampler),
-                seed=row.seed,
-                best_trial_number=row.best_trial_number,
-                best_value=row.best_value,
-                best_run_id=row.best_run_id,
-                config=config,
-                storage_path=Path(row.storage_path) if row.storage_path else None,
-                error_message=row.error_message,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
-        )
-    return tuple(records)
+    return tuple(_study_record_from_row(row) for row in rows)
 
 
 def list_trials(*, store_root: str | Path, study_id: str) -> tuple[HpoTrialRecord, ...]:
@@ -165,14 +111,7 @@ def list_trials(*, store_root: str | Path, study_id: str) -> tuple[HpoTrialRecor
     rows = list_hpo_trials(store_root=store_root, study_id=study_id)
     records: list[HpoTrialRecord] = []
     for row in rows:
-        params: dict[str, Any] = {}
-        if row.params_json:
-            try:
-                parsed = json.loads(row.params_json)
-                if isinstance(parsed, dict):
-                    params = parsed
-            except json.JSONDecodeError:
-                params = {}
+        params = _parse_json_object(row.params_json)
         records.append(
             HpoTrialRecord(
                 study_id=row.study_id,
@@ -191,22 +130,106 @@ def list_trials(*, store_root: str | Path, study_id: str) -> tuple[HpoTrialRecor
     return tuple(records)
 
 
+def _study_record_from_row(row: Any) -> HpoStudyRecord:
+    spec = _parse_json_object(row.config_json)
+    storage_path = Path(row.storage_path) if row.storage_path else None
+    return HpoStudyRecord(
+        study_id=row.study_id,
+        experiment_id=row.experiment_id,
+        study_name=row.study_name,
+        status=_coerce_study_status(row.status),
+        best_trial_number=row.best_trial_number,
+        best_value=row.best_value,
+        best_run_id=row.best_run_id,
+        spec=spec,
+        attempted_trials=row.attempted_trials,
+        completed_trials=row.completed_trials,
+        failed_trials=row.failed_trials,
+        stop_reason=_coerce_stop_reason(row.stop_reason),
+        storage_path=storage_path,
+        error_message=row.error_message,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _parse_json_object(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): item for key, item in parsed.items()}
+
+
+def _study_metric(spec: dict[str, Any]) -> str:
+    objective = spec.get("objective")
+    if isinstance(objective, dict):
+        metric = objective.get("metric")
+        if isinstance(metric, str) and metric.strip():
+            return metric.strip()
+    return "post_fold_champion_objective"
+
+
+def _study_direction(spec: dict[str, Any]) -> str:
+    objective = spec.get("objective")
+    if isinstance(objective, dict):
+        direction = objective.get("direction")
+        if direction in {"maximize", "minimize"}:
+            return cast(str, direction)
+    return "maximize"
+
+
+def _study_max_trials(spec: dict[str, Any]) -> int:
+    stopping = spec.get("stopping")
+    if isinstance(stopping, dict):
+        value = stopping.get("max_trials")
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+            return value
+    return 100
+
+
+def _study_sampler(spec: dict[str, Any]) -> str:
+    sampler = spec.get("sampler")
+    if isinstance(sampler, dict):
+        kind = sampler.get("kind")
+        if kind in {"tpe", "random"}:
+            return cast(str, kind)
+    return "tpe"
+
+
+def _study_seed(spec: dict[str, Any]) -> int | None:
+    sampler = spec.get("sampler")
+    if isinstance(sampler, dict):
+        seed = sampler.get("seed")
+        if seed is None:
+            return None
+        if isinstance(seed, int) and not isinstance(seed, bool):
+            return seed
+    return 1337
+
+
 def _coerce_study_status(value: str) -> HpoStatus:
     if value in {"running", "completed", "failed"}:
         return cast(HpoStatus, value)
     raise ValueError(f"hpo_study_status_invalid:{value}")
 
 
-def _coerce_direction(value: str) -> HpoDirection:
-    if value in {"maximize", "minimize"}:
-        return cast(HpoDirection, value)
-    raise ValueError(f"hpo_direction_invalid:{value}")
-
-
-def _coerce_sampler(value: str) -> HpoSampler:
-    if value in {"tpe", "random"}:
-        return cast(HpoSampler, value)
-    raise ValueError(f"hpo_sampler_invalid:{value}")
+def _coerce_stop_reason(value: str | None) -> HpoStopReason | None:
+    if value is None:
+        return None
+    if value in {
+        "max_trials_reached",
+        "max_completed_trials_reached",
+        "timeout_reached",
+        "plateau_reached",
+        "all_trials_failed",
+    }:
+        return cast(HpoStopReason, value)
+    raise ValueError(f"hpo_stop_reason_invalid:{value}")
 
 
 def _coerce_trial_status(value: str) -> HpoTrialStatus:

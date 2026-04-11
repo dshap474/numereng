@@ -7,9 +7,17 @@ from numereng.api.contracts import (
     RemoteConfigPushResponse,
     RemoteDoctorRequest,
     RemoteDoctorResponse,
+    RemoteExperimentLaunchRequest,
+    RemoteExperimentLaunchResponse,
+    RemoteExperimentMaintainRequest,
+    RemoteExperimentMaintainResponse,
     RemoteExperimentPullFailureResponse,
     RemoteExperimentPullRequest,
     RemoteExperimentPullResponse,
+    RemoteExperimentStatusRequest,
+    RemoteExperimentStatusResponse,
+    RemoteExperimentStopRequest,
+    RemoteExperimentStopResponse,
     RemoteExperimentSyncRequest,
     RemoteExperimentSyncResponse,
     RemoteRepoSyncRequest,
@@ -39,7 +47,19 @@ from numereng.features.remote_ops import (
     push_remote_config as push_remote_config_record,
 )
 from numereng.features.remote_ops import (
+    remote_experiment_status as remote_experiment_status_record,
+)
+from numereng.features.remote_ops import (
+    remote_launch_experiment as remote_launch_experiment_record,
+)
+from numereng.features.remote_ops import (
+    remote_maintain_experiment as remote_maintain_experiment_record,
+)
+from numereng.features.remote_ops import (
     remote_run_train as remote_run_train_record,
+)
+from numereng.features.remote_ops import (
+    remote_stop_experiment as remote_stop_experiment_record,
 )
 from numereng.features.remote_ops import (
     sync_remote_experiment as sync_remote_experiment_record,
@@ -210,6 +230,108 @@ def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperi
     )
 
 
+def remote_experiment_launch(request: RemoteExperimentLaunchRequest) -> RemoteExperimentLaunchResponse:
+    try:
+        result = remote_launch_experiment_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            start_index=request.start_index,
+            end_index=request.end_index,
+            score_stage=request.score_stage,
+            sync_repo=request.sync_repo,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentLaunchResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        state_path=result.state_path,
+        launch_id=result.launch_id,
+        remote_log_path=result.remote_log_path,
+        remote_metadata_path=result.remote_metadata_path,
+        remote_pid=result.remote_pid,
+        launched_at=result.launched_at,
+        repo_synced=result.repo_synced,
+        experiment_synced=result.experiment_synced,
+    )
+
+
+def remote_experiment_status(request: RemoteExperimentStatusRequest) -> RemoteExperimentStatusResponse:
+    try:
+        result = remote_experiment_status_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            start_index=request.start_index,
+            end_index=request.end_index,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentStatusResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        state_path=result.state_path,
+        exists=result.exists,
+        phase=result.phase,
+        current_index=result.current_index,
+        current_run_id=result.current_run_id,
+        current_config_path=result.current_config_path,
+        last_completed_row_index=result.last_completed_row_index,
+        supervisor_pid=result.supervisor_pid,
+        supervisor_alive=result.supervisor_alive,
+        active_worker_pid=result.active_worker_pid,
+        last_successful_heartbeat_at=result.last_successful_heartbeat_at,
+        retry_count=result.retry_count,
+        failure_classifier=result.failure_classifier,
+        terminal_error=result.terminal_error,
+        raw_state=result.raw_state,
+    )
+
+
+def remote_experiment_stop(request: RemoteExperimentStopRequest) -> RemoteExperimentStopResponse:
+    try:
+        result = remote_stop_experiment_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            start_index=request.start_index,
+            end_index=request.end_index,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentStopResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        state_path=result.state_path,
+        stopped=result.stopped,
+        supervisor_pid=result.supervisor_pid,
+        note=result.note,
+    )
+
+
+def remote_experiment_maintain(request: RemoteExperimentMaintainRequest) -> RemoteExperimentMaintainResponse:
+    try:
+        result = remote_maintain_experiment_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            start_index=request.start_index,
+            end_index=request.end_index,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentMaintainResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        state_path=result.state_path,
+        action=result.action,
+        phase=result.phase,
+        supervisor_pid=result.supervisor_pid,
+        note=result.note,
+    )
+
+
 def remote_config_push(request: RemoteConfigPushRequest) -> RemoteConfigPushResponse:
     try:
         result = push_remote_config_record(
@@ -255,9 +377,13 @@ def remote_train_launch(request: RemoteTrainLaunchRequest) -> RemoteTrainLaunchR
 
 
 __all__ = [
+    "remote_experiment_launch",
+    "remote_experiment_maintain",
     "remote_config_push",
     "remote_bootstrap_viz",
     "remote_doctor",
+    "remote_experiment_status",
+    "remote_experiment_stop",
     "remote_experiment_pull",
     "remote_experiment_sync",
     "remote_list_targets",

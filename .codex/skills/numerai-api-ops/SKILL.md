@@ -10,7 +10,7 @@ argument-hint: <operation intent> (e.g., "list tournaments", "upload classic pre
 Use this skill when the user wants official Numerai API operations through vendored `numerapi` or direct GraphQL helpers.
 
 Run from:
-- `<repo>`
+- `<workspace>`
 
 ## Use When
 
@@ -205,16 +205,8 @@ uv run python .agents/skills/numerai-api-ops/scripts/introspect_graphql_schema.p
 Run these checks after changing the skill package:
 
 ```bash
-uv run python /Users/daniel/.codex/skills/audit-skill/scripts/inspect_skill_package.py \
-  /Users/daniel/Developer/numereng/.agents/skills/numerai-api-ops
-
-uv run python /Users/daniel/.codex/skills/audit-skill/scripts/validate_skill_frontmatter.py \
-  --check-quoted-fields description \
-  --check-metadata-placement \
-  /Users/daniel/Developer/numereng/.agents/skills/numerai-api-ops
-
-uv run python /Users/daniel/.codex/skills/audit-skill/scripts/validate_skill_routing.py \
-  /Users/daniel/Developer/numereng/.agents/skills/numerai-api-ops
+uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py list
+uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py show list_tournaments
 ```
 
 ## Done Criteria

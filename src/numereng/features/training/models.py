@@ -123,6 +123,22 @@ class TrainingRunResult:
     run_id: str
     predictions_path: Path
     results_path: Path
+    model_artifact_path: Path | None = None
+    model_manifest_path: Path | None = None
+
+
+@dataclass(frozen=True)
+class TrainingRunPreview:
+    """Deterministic preview of one training run before execution starts."""
+
+    run_id: str
+    run_hash: str
+    config_hash: str
+    run_dir: Path
+    predictions_path: Path
+    results_path: Path
+    scoring_dir: Path
+    run_manifest_path: Path
 
 
 @dataclass(frozen=True)

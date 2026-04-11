@@ -47,7 +47,7 @@ Require `--confirm-write`.
 ## Core Commands
 
 ```bash
-uv run python .agents/skills/official-numerai-ops/scripts/numerai_api_ops.py list
-uv run python .agents/skills/official-numerai-ops/scripts/numerai_api_ops.py show <operation>
-uv run python .agents/skills/official-numerai-ops/scripts/numerai_api_ops.py run <operation> --dry-run
+uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py list
+uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py show <operation>
+uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py run <operation> --dry-run
 ```

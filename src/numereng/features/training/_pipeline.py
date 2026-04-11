@@ -34,11 +34,22 @@ from numereng.features.telemetry import (
     stop_local_resource_sampler,
 )
 from numereng.features.training.client import TrainingDataClient, create_training_data_client
-from numereng.features.training.cv import build_full_history_predictions, build_oof_predictions, era_cv_splits
+from numereng.features.training.cv import (
+    build_full_history_predictions,
+    build_oof_predictions,
+    era_cv_splits,
+    fit_full_history_model,
+)
 from numereng.features.training.errors import TrainingCanceledError, TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run
+from numereng.features.training.model_artifacts import (
+    ModelArtifactError,
+    ModelArtifactManifest,
+    save_model_artifact,
+)
 from numereng.features.training.models import (
     ModelDataLoaderProtocol,
+    TrainingRunPreview,
     TrainingRunResult,
     build_model_data_loader,
     build_x_cols,
@@ -54,6 +65,7 @@ from numereng.features.training.repo import (
     load_full_data,
     resolve_metrics_path,
     resolve_output_locations,
+    resolve_predictions_path,
     resolve_resolved_config_path,
     resolve_results_path,
     resolve_run_manifest_path,
@@ -224,6 +236,9 @@ class TrainingPipelineState:
     full: pd.DataFrame | None = None
     baseline: pd.DataFrame | None = None
     baseline_col: str | None = None
+    baseline_name: str | None = None
+    baseline_predictions_path: str | None = None
+    baseline_pred_col: str = "prediction"
     x_cols: list[str] = field(default_factory=list)
     data_loader: ModelDataLoaderProtocol | None = None
     all_eras: list[object] = field(default_factory=list)
@@ -233,6 +248,7 @@ class TrainingPipelineState:
     cv_meta: dict[str, object] = field(default_factory=dict)
     effective_embargo_eras: int = 0
     predictions: pd.DataFrame | None = None
+    fitted_model: object | None = None
     oof_rows: int = 0
     oof_eras: int = 0
     scoring_feature_source_paths: tuple[Path, ...] | None = None
@@ -245,6 +261,8 @@ class TrainingPipelineState:
     train_model_progress_total: int | None = None
     train_model_progress_current: int = 0
     run_execution: dict[str, object] = field(default_factory=dict)
+    model_artifact_path: Path | None = None
+    model_manifest_path: Path | None = None
 
 
 def _stage_progress_payload(
@@ -358,6 +376,143 @@ def prepare_training_run(
             allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
         )
 
+    state = _resolve_training_preview_state(state)
+    output_root = cast(Path, state.output_root)
+    state.run_attempt_id = build_local_attempt_id(state.run_id)
+    state.run_lock = acquire_run_lock(
+        run_dir=output_root,
+        run_id=state.run_id,
+        attempt_id=state.run_attempt_id,
+    )
+
+    _ensure_run_dir_is_fresh(output_root)
+    launch_metadata = get_launch_metadata()
+    if launch_metadata is None:
+        raise TrainingError("training_launch_metadata_missing")
+    state.run_execution = (
+        merge_run_execution(None, launch_metadata.execution)
+        if launch_metadata.execution is not None
+        else build_local_run_execution(source=launch_metadata.source)
+    )
+    state.run_store_root = _resolve_store_root_for_run(output_root)
+    state.telemetry_session = begin_local_training_session(
+        store_root=state.run_store_root,
+        config_path=state.config_path,
+        run_id=state.run_id,
+        run_hash=state.run_hash,
+        config_hash=state.config_hash,
+        run_dir=output_root,
+        runtime_path=cast(Path, state.runtime_path),
+        source=launch_metadata.source,
+        experiment_id=state.experiment_id,
+        operation_type=launch_metadata.operation_type,
+        job_type=launch_metadata.job_type,
+        request_payload={
+            "run_hash": state.run_hash,
+            "engine_mode": state.engine_plan.mode,
+            "data_version": state.data_version,
+            "feature_set": state.feature_set,
+            "target_col": state.target_col,
+        },
+    )
+    if state.telemetry_session is None:
+        raise TrainingError(f"training_lifecycle_bootstrap_failed:{state.run_id}")
+    mark_job_starting(state.telemetry_session, pid=os.getpid(), worker_id="local")
+    mark_job_running(state.telemetry_session)
+    state.telemetry_sampler = start_local_resource_sampler(
+        state.telemetry_session,
+        interval_seconds=5.0,
+    )
+    _record_telemetry_stage(
+        state.telemetry_session,
+        completed_stages=state.completed_stages,
+        stage_name="initializing",
+        message="Training session initialized.",
+        run_log_path=None,
+        attempt_id=state.run_attempt_id,
+        extra_payload=_stage_progress_payload(state, stage_name="initializing"),
+    )
+
+    running_manifest = build_run_manifest(
+        run_id=state.run_id,
+        run_hash=state.run_hash,
+        status="RUNNING",
+        config_path=state.config_path,
+        config_hash=state.config_hash,
+        data_version=state.data_version,
+        feature_set=state.feature_set,
+        target_col=state.target_col,
+        model_type=state.model_type,
+        engine_mode=state.engine_plan.mode,
+        experiment_id=state.experiment_id,
+        artifacts=state.artifacts,
+        training_metadata=state.training_runtime_metadata,
+        execution=state.run_execution,
+    )
+    save_run_manifest(running_manifest, state.run_manifest_path)
+    state.run_manifest_written = True
+    try:
+        initialize_run_log(output_root)
+    except Exception:
+        logger.exception("failed to initialize run-local log for run_id=%s", state.run_id)
+    log_info(
+        state.run_log_path,
+        event="run_started",
+        message=f"run_id={state.run_id} engine_mode={state.engine_plan.mode}",
+        attempt_id=state.run_attempt_id,
+    )
+    save_resolved_config(state.config, state.resolved_snapshot_path)
+    state.created_at = str(running_manifest["created_at"])
+    state.training_client = create_training_data_client() if state.client is None else state.client
+    return state
+
+
+def preview_training_run(
+    *,
+    config_path: str | Path,
+    output_dir: str | Path | None = None,
+    client: TrainingDataClient | None = None,
+    profile: TrainingProfile | None = None,
+    post_training_scoring: PostTrainingScoringPolicy | None = None,
+    engine_mode: str | None = None,
+    window_size_eras: int | None = None,
+    embargo_eras: int | None = None,
+    experiment_id: str | None = None,
+    allow_round_batch_post_training_scoring: bool = False,
+) -> TrainingRunPreview:
+    """Resolve deterministic training run identity and artifact paths without executing."""
+
+    state = TrainingPipelineState(
+        config_path=Path(config_path).expanduser().resolve(),
+        output_dir=Path(output_dir).expanduser() if output_dir is not None else None,
+        client=client,
+        profile=profile,
+        post_training_scoring=post_training_scoring,
+        engine_mode=engine_mode,
+        window_size_eras=window_size_eras,
+        embargo_eras=embargo_eras,
+        experiment_id=experiment_id,
+        allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
+    )
+    state = _resolve_training_preview_state(state)
+    output_root = cast(Path, state.output_root)
+    predictions_dir = cast(Path, state.predictions_dir)
+    results_dir = cast(Path, state.results_dir)
+    return TrainingRunPreview(
+        run_id=state.run_id,
+        run_hash=state.run_hash,
+        config_hash=state.config_hash,
+        run_dir=output_root,
+        predictions_path=resolve_predictions_path(state.config, state.config_path, predictions_dir),
+        results_path=resolve_results_path(state.config, state.config_path, results_dir),
+        scoring_dir=cast(Path, state.scoring_dir),
+        run_manifest_path=cast(Path, state.run_manifest_path),
+    )
+
+
+def _resolve_training_preview_state(state: TrainingPipelineState) -> TrainingPipelineState:
+    """Resolve config, run identity, and artifact paths without side effects."""
+
     state.config = load_config(state.config_path)
     state.data_config = _as_dict(state.config.get("data"))
     state.preprocessing_config = _as_dict(state.config.get("preprocessing"))
@@ -467,92 +622,6 @@ def prepare_training_run(
         "resolved_config": str(state.resolved_snapshot_path.relative_to(output_root)),
         "log": str(state.run_log_path.relative_to(output_root)),
     }
-    state.run_attempt_id = build_local_attempt_id(state.run_id)
-    state.run_lock = acquire_run_lock(
-        run_dir=output_root,
-        run_id=state.run_id,
-        attempt_id=state.run_attempt_id,
-    )
-
-    _ensure_run_dir_is_fresh(output_root)
-    launch_metadata = get_launch_metadata()
-    if launch_metadata is None:
-        raise TrainingError("training_launch_metadata_missing")
-    state.run_execution = (
-        merge_run_execution(None, launch_metadata.execution)
-        if launch_metadata.execution is not None
-        else build_local_run_execution(source=launch_metadata.source)
-    )
-    state.run_store_root = _resolve_store_root_for_run(output_root)
-    state.telemetry_session = begin_local_training_session(
-        store_root=state.run_store_root,
-        config_path=state.config_path,
-        run_id=state.run_id,
-        run_hash=state.run_hash,
-        config_hash=state.config_hash,
-        run_dir=output_root,
-        runtime_path=cast(Path, state.runtime_path),
-        source=launch_metadata.source,
-        experiment_id=state.experiment_id,
-        operation_type=launch_metadata.operation_type,
-        job_type=launch_metadata.job_type,
-        request_payload={
-            "run_hash": state.run_hash,
-            "engine_mode": state.engine_plan.mode,
-            "data_version": state.data_version,
-            "feature_set": state.feature_set,
-            "target_col": state.target_col,
-        },
-    )
-    if state.telemetry_session is None:
-        raise TrainingError(f"training_lifecycle_bootstrap_failed:{state.run_id}")
-    mark_job_starting(state.telemetry_session, pid=os.getpid(), worker_id="local")
-    mark_job_running(state.telemetry_session)
-    state.telemetry_sampler = start_local_resource_sampler(
-        state.telemetry_session,
-        interval_seconds=5.0,
-    )
-    _record_telemetry_stage(
-        state.telemetry_session,
-        completed_stages=state.completed_stages,
-        stage_name="initializing",
-        message="Training session initialized.",
-        run_log_path=None,
-        attempt_id=state.run_attempt_id,
-        extra_payload=_stage_progress_payload(state, stage_name="initializing"),
-    )
-
-    running_manifest = build_run_manifest(
-        run_id=state.run_id,
-        run_hash=state.run_hash,
-        status="RUNNING",
-        config_path=state.config_path,
-        config_hash=state.config_hash,
-        data_version=state.data_version,
-        feature_set=state.feature_set,
-        target_col=state.target_col,
-        model_type=state.model_type,
-        engine_mode=state.engine_plan.mode,
-        experiment_id=state.experiment_id,
-        artifacts=state.artifacts,
-        training_metadata=state.training_runtime_metadata,
-        execution=state.run_execution,
-    )
-    save_run_manifest(running_manifest, state.run_manifest_path)
-    state.run_manifest_written = True
-    try:
-        initialize_run_log(output_root)
-    except Exception:
-        logger.exception("failed to initialize run-local log for run_id=%s", state.run_id)
-    log_info(
-        state.run_log_path,
-        event="run_started",
-        message=f"run_id={state.run_id} engine_mode={state.engine_plan.mode}",
-        attempt_id=state.run_attempt_id,
-    )
-    save_resolved_config(config, state.resolved_snapshot_path)
-    state.created_at = str(running_manifest["created_at"])
-    state.training_client = create_training_data_client() if state.client is None else state.client
     return state
 
 
@@ -606,6 +675,9 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
         if not state.id_col:
             raise TrainingConfigError("training_id_col_required_for_baseline")
         resolved_baseline_path = _resolve_baseline_path(str(baseline_path), cast(Path, state.baselines_dir))
+        state.baseline_name = str(baseline_name)
+        state.baseline_predictions_path = str(resolved_baseline_path)
+        state.baseline_pred_col = pred_col
         state.baseline, state.baseline_col = load_custom_benchmark_predictions(
             resolved_baseline_path,
             str(baseline_name),
@@ -768,18 +840,39 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
         on_fold_start = _on_fold_start
 
     if _is_full_history_refit_profile(engine_plan.mode):
-        state.predictions, state.cv_meta = build_full_history_predictions(
-            state.all_eras,
-            cast(ModelDataLoaderProtocol, state.data_loader),
-            state.model_type,
-            state.model_params,
-            state.model_config,
-            state.id_col,
-            state.era_col,
-            state.target_col,
-            store_root=state.run_store_root or _resolve_store_root_for_run(state.output_root),
-            feature_cols=state.features,
-        )
+        # Preserve the long-standing service-module monkeypatch seam used by
+        # training service tests. Real runs always pass a callable or loader
+        # protocol here and keep the fitted model for artifact persistence.
+        if isinstance(state.data_loader, ModelDataLoaderProtocol) or callable(state.data_loader):
+            full_history_result = fit_full_history_model(
+                eras=state.all_eras,
+                data_loader=cast(ModelDataLoaderProtocol, state.data_loader),
+                model_type=state.model_type,
+                model_params=state.model_params,
+                model_config=state.model_config,
+                id_col=state.id_col,
+                era_col=state.era_col,
+                target_col=state.target_col,
+                store_root=state.run_store_root or _resolve_store_root_for_run(state.output_root),
+                feature_cols=state.features,
+            )
+            state.predictions = full_history_result.predictions
+            state.cv_meta = full_history_result.meta
+            state.fitted_model = full_history_result.model
+        else:
+            state.predictions, state.cv_meta = build_full_history_predictions(
+                state.all_eras,
+                state.data_loader,
+                state.model_type,
+                state.model_params,
+                state.model_config,
+                state.id_col,
+                state.era_col,
+                state.target_col,
+                store_root=state.run_store_root or _resolve_store_root_for_run(state.output_root),
+                feature_cols=state.features,
+            )
+            state.fitted_model = None
     else:
         if not state.cv_enabled:
             raise TrainingConfigError("training_cv_required")
@@ -820,6 +913,8 @@ def train_model(state: TrainingPipelineState) -> TrainingPipelineState:
     state.oof_rows = int(state.predictions.shape[0])
     state.oof_eras = int(state.predictions[state.era_col].nunique())
     state.scoring_feature_source_paths = None
+    if _is_full_history_refit_profile(engine_plan.mode) and state.fitted_model is not None:
+        _persist_full_history_model_artifact(state)
 
     _raise_if_cancel_requested(state.telemetry_session, stage_name="score_predictions")
     _record_telemetry_stage(
@@ -1150,6 +1245,49 @@ def _persist_results_with_current_scoring_state(state: TrainingPipelineState) ->
     save_metrics(state.metrics_payload, state.metrics_path)
 
 
+def _persist_full_history_model_artifact(state: TrainingPipelineState) -> None:
+    if state.output_root is None:
+        raise TrainingError("training_output_paths_uninitialized")
+    if state.fitted_model is None:
+        raise TrainingError("training_model_artifact_missing_fitted_model")
+    if not state.id_col:
+        raise TrainingError("training_model_artifact_missing_id_col")
+    model_upload_compatible = (
+        state.baseline_predictions_path is None
+        and not bool(state.model_config.get("module_path"))
+        and state.model_type == "LGBMRegressor"
+    )
+    manifest = ModelArtifactManifest(
+        run_id=state.run_id,
+        model_type=state.model_type,
+        data_version=state.data_version,
+        dataset_variant=state.dataset_variant,
+        feature_set=state.feature_set,
+        target_col=state.target_col,
+        era_col=state.era_col,
+        id_col=state.id_col,
+        feature_cols=tuple(state.x_cols),
+        baseline_col=state.baseline_col,
+        baseline_name=state.baseline_name,
+        baseline_predictions_path=state.baseline_predictions_path,
+        baseline_pred_col=state.baseline_pred_col,
+        model_upload_compatible=model_upload_compatible,
+        uses_custom_module=bool(state.model_config.get("module_path")) or state.model_type != "LGBMRegressor",
+    )
+    try:
+        artifact_path, manifest_path = save_model_artifact(
+            run_dir=state.output_root,
+            model=state.fitted_model,
+            manifest=manifest,
+        )
+    except ModelArtifactError as exc:
+        raise TrainingError(str(exc)) from exc
+    state.model_artifact_path = artifact_path
+    state.model_manifest_path = manifest_path
+    state.artifacts["model_artifact"] = str(artifact_path.relative_to(state.output_root))
+    state.artifacts["model_manifest"] = str(manifest_path.relative_to(state.output_root))
+
+
 def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
     """Persist final manifest state, refresh index, and return run outputs."""
     _raise_if_cancel_requested(state.telemetry_session, stage_name="finalize_manifest")
@@ -1219,6 +1357,8 @@ def finalize_training_run(state: TrainingPipelineState) -> TrainingRunResult:
         run_id=state.run_id,
         predictions_path=cast(Path, state.predictions_path),
         results_path=cast(Path, state.results_path),
+        model_artifact_path=state.model_artifact_path,
+        model_manifest_path=state.model_manifest_path,
     )
 
 

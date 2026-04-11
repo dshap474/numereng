@@ -22,22 +22,22 @@ class PlanRow:
     round_label: str
 
 
-def find_repo_root(start: Path) -> Path:
+def find_workspace_root(start: Path) -> Path:
     checked: set[Path] = set()
     for root in (start.resolve(), Path.cwd().resolve()):
         for candidate in (root, *root.parents):
             if candidate in checked:
                 continue
             checked.add(candidate)
-            if (candidate / "pyproject.toml").is_file():
+            if (candidate / ".numereng").is_dir() or (candidate / "experiments").is_dir():
                 return candidate
-    raise SystemExit(f"repo_root_not_found_from:{start}")
+    return start.resolve().parents[2]
 
 
 SCRIPT_PATH = Path(__file__).resolve()
 RUN_SCRIPTS_DIR = SCRIPT_PATH.parent
 EXPERIMENT_DIR = RUN_SCRIPTS_DIR.parent
-REPO_ROOT = find_repo_root(RUN_SCRIPTS_DIR)
+WORKSPACE_ROOT = find_workspace_root(RUN_SCRIPTS_DIR)
 RUN_PLAN_PATH = EXPERIMENT_DIR / "run_plan.csv"
 
 
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
 def resolve_config_path(raw_config_path: str) -> Path:
     path = Path(raw_config_path)
     if not path.is_absolute():
-        path = (REPO_ROOT / path).resolve()
+        path = (WORKSPACE_ROOT / path).resolve()
     else:
         path = path.resolve()
     return path
@@ -107,7 +107,7 @@ def load_run_plan() -> list[PlanRow]:
 
 def run_command(command: list[str]) -> None:
     print(f"+ {' '.join(command)}", flush=True)
-    completed = subprocess.run(command, cwd=REPO_ROOT)
+    completed = subprocess.run(command, cwd=WORKSPACE_ROOT)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
@@ -138,8 +138,6 @@ def main() -> int:
         print(f">>> [{row.index}/{total}] Training: {row.config_path}")
         run_command(
             [
-                "uv",
-                "run",
                 "numereng",
                 "experiment",
                 "train",
@@ -155,8 +153,6 @@ def main() -> int:
             print(f">>> [{row.index}/{total}] Batch scoring round {row.round_label}: {args.score_stage}")
             run_command(
                 [
-                    "uv",
-                    "run",
                     "numereng",
                     "experiment",
                     "score-round",

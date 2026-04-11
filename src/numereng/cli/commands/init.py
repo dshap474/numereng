@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Sequence
 
-from pydantic import ValidationError
-
-from numereng import api
-from numereng.cli.common import _parse_simple_options, _validation_error_message
+from numereng.cli.common import _parse_simple_options
 from numereng.cli.usage import USAGE
+from numereng.features.workspace.service import init_workspace
 from numereng.platform.errors import PackageError
 
 
@@ -25,19 +24,25 @@ def handle_init_command(args: Sequence[str]) -> int:
         print(USAGE, file=sys.stderr)
         return 2
     try:
-        payload = api.workspace_init(
-            api.WorkspaceInitRequest(
-                workspace_root=values.get("--workspace", "."),
-            )
-        )
-    except ValidationError as exc:
-        print(_validation_error_message(exc), file=sys.stderr)
-        print(USAGE, file=sys.stderr)
-        return 2
+        payload = init_workspace(workspace_root=values.get("--workspace", "."))
     except PackageError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print(payload.model_dump_json())
+    except OSError as exc:
+        print(f"workspace_init_failed:{exc}", file=sys.stderr)
+        return 1
+
+    print(
+        json.dumps(
+            {
+                "workspace_root": str(payload.workspace_root),
+                "store_root": str(payload.store_root),
+                "created_paths": [str(path) for path in payload.created_paths],
+                "skipped_existing_paths": [str(path) for path in payload.skipped_existing_paths],
+                "installed_skill_ids": list(payload.installed_skill_ids),
+            }
+        )
+    )
     return 0
 
 

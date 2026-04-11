@@ -39,6 +39,7 @@ from numereng.features.training.cv import (
 from numereng.features.training.errors import TrainingCanceledError, TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run  # noqa: F401
 from numereng.features.training.models import (
+    TrainingRunPreview,
     TrainingRunResult,
     build_lazy_parquet_data_loader,  # noqa: F401
     build_model_data_loader,  # noqa: F401
@@ -407,6 +408,36 @@ def run_training(
         setattr(pipeline_module, name, globals()[name])
 
     return pipeline_module.run_training_pipeline(
+        config_path=config_path,
+        output_dir=output_dir,
+        client=client,
+        profile=profile,
+        post_training_scoring=post_training_scoring,
+        engine_mode=engine_mode,
+        window_size_eras=window_size_eras,
+        embargo_eras=embargo_eras,
+        experiment_id=experiment_id,
+        allow_round_batch_post_training_scoring=allow_round_batch_post_training_scoring,
+    )
+
+
+def preview_training_run(
+    *,
+    config_path: str | Path,
+    output_dir: str | Path | None = None,
+    client: TrainingDataClient | None = None,
+    profile: TrainingProfile | None = None,
+    post_training_scoring: PostTrainingScoringPolicy | None = None,
+    engine_mode: str | None = None,
+    window_size_eras: int | None = None,
+    embargo_eras: int | None = None,
+    experiment_id: str | None = None,
+    allow_round_batch_post_training_scoring: bool = False,
+) -> TrainingRunPreview:
+    """Preview deterministic run identity and artifact paths without executing training."""
+    from numereng.features.training import _pipeline as pipeline_module
+
+    return pipeline_module.preview_training_run(
         config_path=config_path,
         output_dir=output_dir,
         client=client,

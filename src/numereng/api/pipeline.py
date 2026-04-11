@@ -14,7 +14,7 @@ from numereng.api._pipeline import (
 )
 from numereng.api.contracts import TrainRunRequest, TrainRunResponse
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
-from numereng.features.training import (
+from numereng.features.training.errors import (
     TrainingCanceledError,
     TrainingConfigError,
     TrainingDataError,
@@ -29,7 +29,18 @@ def _map_training_data_error(exc: TrainingDataError) -> str:
     message = str(exc)
     if message.startswith("training_target_rows_all_unlabeled:"):
         return message
-    return "training_data_load_failed"
+    return f"training_data_load_failed:{message}"
+
+
+def _map_training_error(exc: TrainingError) -> str:
+    message = str(exc)
+    if message == "training_launch_metadata_missing":
+        return message
+    if message.startswith("training_lifecycle_bootstrap_failed:"):
+        return message
+    if message.startswith("training_run_failed:"):
+        return message
+    return f"training_run_failed:{message}"
 
 
 def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
@@ -49,7 +60,7 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
     except TrainingConfigError as exc:
         if state is not None:
             fail_training_run(state, exc)
-        raise PackageError("training_config_invalid") from exc
+        raise PackageError(str(exc)) from exc
     except TrainingDataError as exc:
         if state is not None:
             fail_training_run(state, exc)
@@ -60,11 +71,11 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
         message = str(exc)
         if "training_model_backend_missing_lightgbm" in message:
             raise PackageError("training_model_backend_missing") from exc
-        raise PackageError("training_model_failed") from exc
+        raise PackageError(f"training_model_failed:{message}") from exc
     except TrainingMetricsError as exc:
         if state is not None:
             fail_training_run(state, exc)
-        raise PackageError("training_metrics_failed") from exc
+        raise PackageError(f"training_metrics_failed:{exc}") from exc
     except TrainingCanceledError as exc:
         if state is not None:
             fail_training_run(state, exc)
@@ -72,15 +83,11 @@ def run_training_pipeline(request: TrainRunRequest) -> TrainRunResponse:
     except TrainingError as exc:
         if state is not None:
             fail_training_run(state, exc)
-        if str(exc) == "training_launch_metadata_missing":
-            raise PackageError("training_launch_metadata_missing") from exc
-        if str(exc).startswith("training_lifecycle_bootstrap_failed:"):
-            raise PackageError("training_lifecycle_bootstrap_failed") from exc
-        raise PackageError("training_run_failed") from exc
+        raise PackageError(_map_training_error(exc)) from exc
     except ValueError as exc:
         if state is not None:
             fail_training_run(state, exc)
-        raise PackageError("training_config_invalid") from exc
+        raise PackageError(f"training_config_invalid:{exc}") from exc
     except NumeraiClientError as exc:
         if state is not None:
             fail_training_run(state, exc)

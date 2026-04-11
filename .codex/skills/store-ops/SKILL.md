@@ -10,7 +10,7 @@ argument-hint: "<store operation intent> (e.g., reset experiment runs, diagnose 
 Canonical skill for safe maintenance of numereng local store state.
 
 Run from:
-- `<repo>`
+- `<workspace>`
 
 Use this only after the experiment/runtime contract is clear. For experiment layout, config
 schema, template files, and run artifact expectations, use `numereng-experiment-ops`.
@@ -42,10 +42,10 @@ Out of scope:
 ## Hard Rules
 
 - Prefer package CLI entrypoints and explicit commands:
-  - `uv run numereng store init|index|rebuild|doctor ...`
-  - `uv run numereng experiment details|report ...`
+  - `numereng store init|index|rebuild|doctor ...`
+  - `numereng experiment details|report ...`
 - Archive/unarchive is an experiment lifecycle workflow, not a store-reset workflow.
-- Use `uv run numereng experiment archive|unarchive ...` for archive state changes.
+- Use `numereng experiment archive|unarchive ...` for archive state changes.
 - Use SQLite inspection only when needed to explain or repair index drift.
 - Destructive operations must follow two-step confirmation:
   1. run dry-run impact summary
@@ -97,9 +97,9 @@ Explicit path gates:
 Run this first for any drift/cleanup request:
 
 ```bash
-uv run numereng store doctor
-uv run numereng experiment details --id <experiment_id> --format json
-uv run numereng experiment report --id <experiment_id> --format json
+numereng store doctor
+numereng experiment details --id <experiment_id> --format json
+numereng experiment report --id <experiment_id> --format json
 ```
 
 Then compute impact without mutation:
@@ -114,8 +114,8 @@ uv run python .agents/skills/store-ops/scripts/collect_store_impact.py \
 When one known run is missing from the DB index:
 
 ```bash
-uv run numereng store index --run-id <run_id>
-uv run numereng store doctor
+numereng store index --run-id <run_id>
+numereng store doctor
 ```
 
 ### 3) Single-Run Reset (Delete Run Folder + Indexed State)
@@ -149,8 +149,8 @@ uv run python .agents/skills/store-ops/scripts/reset_runs.py \
 When index drift is broad or uncertain:
 
 ```bash
-uv run numereng store rebuild
-uv run numereng store doctor
+numereng store rebuild
+numereng store doctor
 ```
 
 ### 5) Experiment Run Reset (Default Preserve Policy)
@@ -177,9 +177,9 @@ Optional destructive policies:
 ### 6) Verification
 
 ```bash
-uv run numereng experiment details --id <experiment_id> --format json
-uv run numereng experiment report --id <experiment_id> --format json
-uv run numereng store doctor
+numereng experiment details --id <experiment_id> --format json
+numereng experiment report --id <experiment_id> --format json
+numereng store doctor
 ```
 
 Use `assets/bash/verification-checks.sh` for a bundled check.
@@ -209,5 +209,5 @@ Operation is complete only when all apply:
 - expected manifests updated to requested state
 - target run directories removed (or unchanged for read-only actions)
 - DB row counts for target scope reflect intended result
-- `uv run numereng store doctor` returns `ok: true`
+- `numereng store doctor` returns `ok: true`
 - verification output is shared with user

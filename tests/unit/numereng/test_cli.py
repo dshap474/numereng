@@ -90,6 +90,30 @@ def test_cli_monitor_snapshot_success(
     assert payload["summary"]["live_runs"] == 1
 
 
+def test_cli_viz_launches_packaged_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: dict[str, object] = {}
+    fake_app = object()
+
+    def fake_create_viz_app(request: api_module.VizAppRequest) -> object:
+        assert request.workspace_root == "/tmp/numerai-dev"
+        return fake_app
+
+    def fake_uvicorn_run(app: object, *, host: str, port: int) -> None:
+        launched["app"] = app
+        launched["host"] = host
+        launched["port"] = port
+
+    monkeypatch.setattr("numereng.cli.commands.viz.create_viz_app", fake_create_viz_app)
+    monkeypatch.setattr("numereng.cli.commands.viz.uvicorn.run", fake_uvicorn_run)
+
+    exit_code = cli.main(["viz", "--workspace", "/tmp/numerai-dev", "--host", "0.0.0.0", "--port", "8600"])
+
+    assert exit_code == 0
+    assert launched == {"app": fake_app, "host": "0.0.0.0", "port": 8600}
+
+
 def test_cli_remote_list_json_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -244,6 +268,119 @@ def test_cli_remote_experiment_pull_success(
     assert exit_code == 0
     assert payload["experiment_id"] == "exp-1"
     assert payload["materialized_run_count"] == 2
+
+
+def test_cli_experiment_run_plan_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_experiment_run_plan(
+        request: api_module.ExperimentRunPlanRequest,
+    ) -> api_module.ExperimentRunPlanResponse:
+        assert request.experiment_id == "2026-04-09_exp"
+        assert request.start_index == 3
+        assert request.end_index == 9
+        assert request.score_stage == "post_training_full"
+        assert request.resume is True
+        return api_module.ExperimentRunPlanResponse(
+            experiment_id="2026-04-09_exp",
+            state_path=".numereng/remote_ops/experiment_run_plan/2026-04-09_exp__3_9.json",
+            window=api_module.ExperimentRunPlanWindowResponse(start_index=3, end_index=9, total_rows=120),
+            phase="training",
+            requested_score_stage="post_training_full",
+            completed_score_stages=[],
+            current_index=3,
+            current_round="r1",
+            current_config_path="experiments/2026-04-09_exp/configs/r1_target_alpha_seed42.json",
+            current_run_id=None,
+            last_completed_row_index=2,
+            supervisor_pid=1111,
+            active_worker_pid=None,
+            last_successful_heartbeat_at=None,
+            failure_classifier=None,
+            retry_count=0,
+            terminal_error=None,
+            updated_at="2026-04-09T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(api_module, "experiment_run_plan", fake_experiment_run_plan)
+
+    exit_code = cli.main(
+        [
+            "experiment",
+            "run-plan",
+            "--id",
+            "2026-04-09_exp",
+            "--start-index",
+            "3",
+            "--end-index",
+            "9",
+            "--score-stage",
+            "post_training_full",
+            "--resume",
+            "--format",
+            "json",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["window"]["start_index"] == 3
+    assert payload["phase"] == "training"
+
+
+def test_cli_remote_experiment_launch_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_experiment_launch(
+        request: api_module.RemoteExperimentLaunchRequest,
+    ) -> api_module.RemoteExperimentLaunchResponse:
+        assert request.target_id == "pc"
+        assert request.experiment_id == "2026-04-09_exp"
+        assert request.start_index == 2
+        assert request.end_index == 12
+        assert request.score_stage == "post_training_core"
+        assert request.sync_repo == "always"
+        return api_module.RemoteExperimentLaunchResponse(
+            target_id="pc",
+            experiment_id="2026-04-09_exp",
+            state_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\experiment_run_plan\2026-04-09_exp__2_12.json",
+            launch_id="launch-remote-exp",
+            remote_log_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-remote-exp.log",
+            remote_metadata_path=r"C:\Users\dansh\remote-access\numereng\.numereng\remote_ops\launches\launch-remote-exp.json",
+            remote_pid=4567,
+            launched_at="2026-04-09T00:00:00+00:00",
+            repo_synced=True,
+            experiment_synced=True,
+        )
+
+    monkeypatch.setattr(api_module, "remote_experiment_launch", fake_remote_experiment_launch)
+
+    exit_code = cli.main(
+        [
+            "remote",
+            "experiment",
+            "launch",
+            "--target",
+            "pc",
+            "--experiment-id",
+            "2026-04-09_exp",
+            "--start-index",
+            "2",
+            "--end-index",
+            "12",
+            "--score-stage",
+            "post_training_core",
+            "--sync-repo",
+            "always",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["experiment_id"] == "2026-04-09_exp"
+    assert payload["remote_pid"] == 4567
 
 
 def test_cli_run_submit_success(
@@ -2542,32 +2679,57 @@ def test_cli_cloud_ec2_unknown_subcommands(capsys: pytest.CaptureFixture[str]) -
     assert "unknown arguments: cloud modal data unknown" in modal_data_captured.err
 
 
+def _hpo_response(*, study_id: str, experiment_id: str | None = "exp-1") -> api_module.HpoStudyResponse:
+    return api_module.HpoStudyResponse(
+        study_id=study_id,
+        experiment_id=experiment_id,
+        study_name=study_id,
+        status="completed",
+        best_trial_number=1,
+        best_value=0.12,
+        best_run_id="run-1",
+        spec=api_module.HpoStudySpecResponse(
+            study_id=study_id,
+            study_name=study_id,
+            config_path="configs/base.json",
+            experiment_id=experiment_id,
+            objective=api_module.HpoObjectiveRequest(
+                metric="post_fold_champion_objective",
+                direction="maximize",
+                neutralization=api_module.HpoNeutralizationRequest(),
+            ),
+            search_space={
+                "model.params.learning_rate": api_module.HpoSearchSpaceSpecRequest(
+                    type="float",
+                    low=0.001,
+                    high=0.1,
+                    log=True,
+                )
+            },
+            sampler=api_module.HpoSamplerRequest(kind="tpe", seed=1337),
+            stopping=api_module.HpoStoppingRequest(max_trials=2),
+        ),
+        attempted_trials=2,
+        completed_trials=2,
+        failed_trials=0,
+        stop_reason="max_trials_reached",
+        storage_path=f".numereng/hpo/{study_id}",
+        error_message=None,
+        created_at="2026-02-22T00:00:00+00:00",
+        updated_at="2026-02-22T00:00:00+00:00",
+    )
+
+
 def test_cli_hpo_create_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fake_hpo_create(request: api_module.HpoStudyCreateRequest) -> api_module.HpoStudyResponse:
+        assert request.study_id == "study-a"
         assert request.study_name == "study-a"
-        assert request.n_trials == 2
-        return api_module.HpoStudyResponse(
-            study_id="study-a-1",
-            experiment_id=request.experiment_id,
-            study_name=request.study_name,
-            status="completed",
-            metric=request.metric,
-            direction=request.direction,
-            n_trials=request.n_trials,
-            sampler=request.sampler,
-            seed=request.seed,
-            best_trial_number=1,
-            best_value=0.12,
-            best_run_id="run-1",
-            config={},
-            storage_path="experiments/exp-1/hpo/study-a-1",
-            error_message=None,
-            created_at="2026-02-22T00:00:00+00:00",
-            updated_at="2026-02-22T00:00:00+00:00",
-        )
+        assert request.stopping.max_trials == 2
+        assert request.search_space["model.params.learning_rate"].high == 0.1
+        return _hpo_response(study_id="study-a")
 
     monkeypatch.setattr(api_module, "hpo_create", fake_hpo_create)
 
@@ -2575,6 +2737,8 @@ def test_cli_hpo_create_success(
         [
             "hpo",
             "create",
+            "--study-id",
+            "study-a",
             "--study-name",
             "study-a",
             "--config",
@@ -2583,12 +2747,14 @@ def test_cli_hpo_create_success(
             "exp-1",
             "--n-trials",
             "2",
+            "--search-space",
+            '{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.1,"log":true}}',
         ]
     )
     payload = _parse_stdout_json(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["study_id"] == "study-a-1"
+    assert payload["study_id"] == "study-a"
     assert payload["best_run_id"] == "run-1"
 
 
@@ -2601,14 +2767,22 @@ def test_cli_hpo_create_from_study_config_success(
     study_config_path.write_text(
         json.dumps(
             {
+                "study_id": "study-from-file",
                 "study_name": "study-from-file",
                 "config_path": "configs/base.json",
                 "experiment_id": "exp-file",
-                "metric": "bmc_last_200_eras.mean",
-                "direction": "maximize",
-                "n_trials": 3,
-                "sampler": "tpe",
-                "seed": 7,
+                "objective": {
+                    "metric": "bmc_last_200_eras.mean",
+                    "direction": "maximize",
+                    "neutralization": {
+                        "enabled": True,
+                        "neutralizer_path": "neutralizers.parquet",
+                        "proportion": 0.25,
+                        "mode": "global",
+                        "neutralizer_cols": ["feature_x"],
+                        "rank_output": False,
+                    },
+                },
                 "search_space": {
                     "model.params.learning_rate": {
                         "type": "float",
@@ -2616,13 +2790,23 @@ def test_cli_hpo_create_from_study_config_success(
                         "high": 0.1,
                     }
                 },
-                "neutralization": {
-                    "enabled": True,
-                    "neutralizer_path": "neutralizers.parquet",
-                    "proportion": 0.25,
-                    "mode": "global",
-                    "neutralizer_cols": ["feature_x"],
-                    "rank_output": False,
+                "sampler": {
+                    "kind": "tpe",
+                    "seed": 7,
+                    "n_startup_trials": 12,
+                    "multivariate": True,
+                    "group": False,
+                },
+                "stopping": {
+                    "max_trials": 3,
+                    "max_completed_trials": 2,
+                    "timeout_seconds": 600,
+                    "plateau": {
+                        "enabled": True,
+                        "min_completed_trials": 3,
+                        "patience_completed_trials": 2,
+                        "min_improvement_abs": 0.0001,
+                    },
                 },
             }
         ),
@@ -2630,42 +2814,25 @@ def test_cli_hpo_create_from_study_config_success(
     )
 
     def fake_hpo_create(request: api_module.HpoStudyCreateRequest) -> api_module.HpoStudyResponse:
-        assert request.study_name == "study-from-file"
+        assert request.study_id == "study-from-file"
         assert request.config_path == "configs/base.json"
         assert request.experiment_id == "exp-file"
-        assert request.n_trials == 3
-        assert request.neutralize is True
-        assert request.neutralizer_path == "neutralizers.parquet"
-        assert request.neutralization_proportion == 0.25
-        assert request.neutralization_mode == "global"
-        assert request.neutralizer_cols == ["feature_x"]
-        assert request.neutralization_rank_output is False
-        return api_module.HpoStudyResponse(
-            study_id="study-file-1",
-            experiment_id=request.experiment_id,
-            study_name=request.study_name,
-            status="completed",
-            metric=request.metric,
-            direction=request.direction,
-            n_trials=request.n_trials,
-            sampler=request.sampler,
-            seed=request.seed,
-            best_trial_number=0,
-            best_value=0.1,
-            best_run_id="run-1",
-            config={},
-            storage_path=".numereng/hpo/study-file-1",
-            error_message=None,
-            created_at="2026-02-22T00:00:00+00:00",
-            updated_at="2026-02-22T00:00:00+00:00",
-        )
+        assert request.stopping.max_trials == 3
+        assert request.stopping.max_completed_trials == 2
+        assert request.objective.neutralization.enabled is True
+        assert request.objective.neutralization.neutralizer_path == "neutralizers.parquet"
+        assert request.objective.neutralization.proportion == 0.25
+        assert request.objective.neutralization.mode == "global"
+        assert request.objective.neutralization.neutralizer_cols == ["feature_x"]
+        assert request.objective.neutralization.rank_output is False
+        return _hpo_response(study_id="study-from-file", experiment_id="exp-file")
 
     monkeypatch.setattr(api_module, "hpo_create", fake_hpo_create)
     exit_code = cli.main(["hpo", "create", "--study-config", str(study_config_path)])
     payload = _parse_stdout_json(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["study_id"] == "study-file-1"
+    assert payload["study_id"] == "study-from-file"
 
 
 def test_cli_hpo_create_from_study_config_allows_flag_overrides(
@@ -2677,39 +2844,49 @@ def test_cli_hpo_create_from_study_config_allows_flag_overrides(
     study_config_path.write_text(
         json.dumps(
             {
+                "study_id": "study-from-file",
                 "study_name": "study-from-file",
                 "config_path": "configs/base.json",
-                "n_trials": 3,
-                "neutralization": {"enabled": False},
+                "objective": {
+                    "metric": "post_fold_champion_objective",
+                    "direction": "maximize",
+                    "neutralization": {"enabled": False},
+                },
+                "search_space": {
+                    "model.params.learning_rate": {
+                        "type": "float",
+                        "low": 0.001,
+                        "high": 0.1,
+                    }
+                },
+                "sampler": {
+                    "kind": "tpe",
+                    "seed": 7,
+                    "n_startup_trials": 10,
+                    "multivariate": True,
+                    "group": False,
+                },
+                "stopping": {
+                    "max_trials": 3,
+                    "max_completed_trials": None,
+                    "timeout_seconds": None,
+                    "plateau": {
+                        "enabled": False,
+                        "min_completed_trials": 15,
+                        "patience_completed_trials": 10,
+                        "min_improvement_abs": 0.00025,
+                    },  # noqa: E501
+                },
             }
         ),
         encoding="utf-8",
     )
 
     def fake_hpo_create(request: api_module.HpoStudyCreateRequest) -> api_module.HpoStudyResponse:
-        assert request.study_name == "study-from-file"
-        assert request.n_trials == 9
-        assert request.neutralize is True
-        assert request.neutralizer_path == "neutralizers.parquet"
-        return api_module.HpoStudyResponse(
-            study_id="study-file-2",
-            experiment_id=request.experiment_id,
-            study_name=request.study_name,
-            status="completed",
-            metric=request.metric,
-            direction=request.direction,
-            n_trials=request.n_trials,
-            sampler=request.sampler,
-            seed=request.seed,
-            best_trial_number=0,
-            best_value=0.1,
-            best_run_id="run-1",
-            config={},
-            storage_path=".numereng/hpo/study-file-2",
-            error_message=None,
-            created_at="2026-02-22T00:00:00+00:00",
-            updated_at="2026-02-22T00:00:00+00:00",
-        )
+        assert request.stopping.max_trials == 9
+        assert request.objective.neutralization.enabled is True
+        assert request.objective.neutralization.neutralizer_path == "neutralizers.parquet"
+        return _hpo_response(study_id="study-from-file")
 
     monkeypatch.setattr(api_module, "hpo_create", fake_hpo_create)
     exit_code = cli.main(
@@ -2728,7 +2905,50 @@ def test_cli_hpo_create_from_study_config_allows_flag_overrides(
     payload = _parse_stdout_json(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["study_id"] == "study-file-2"
+    assert payload["study_id"] == "study-from-file"
+
+
+def test_cli_hpo_create_inline_random_sampler_omits_tpe_only_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_hpo_create(request: api_module.HpoStudyCreateRequest) -> api_module.HpoStudyResponse:
+        assert request.sampler.kind == "random"
+        assert request.sampler.model_fields_set == {"kind", "seed"}
+        response = _hpo_response(study_id="study-random")
+        response.spec.sampler = api_module.HpoSamplerRequest(kind="random", seed=9)
+        return response
+
+    monkeypatch.setattr(api_module, "hpo_create", fake_hpo_create)
+
+    exit_code = cli.main(
+        [
+            "hpo",
+            "create",
+            "--study-id",
+            "study-random",
+            "--study-name",
+            "study-random",
+            "--config",
+            "configs/base.json",
+            "--n-trials",
+            "2",
+            "--sampler",
+            "random",
+            "--seed",
+            "9",
+            "--search-space",
+            '{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.1}}',
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["study_id"] == "study-random"
+    assert payload["spec"]["sampler"] == {
+        "kind": "random",
+        "seed": 9,
+    }
 
 
 def test_cli_ensemble_build_success(
@@ -2834,10 +3054,14 @@ def test_cli_hpo_create_rejects_invalid_direction(capsys: pytest.CaptureFixture[
         [
             "hpo",
             "create",
+            "--study-id",
+            "study-a",
             "--study-name",
             "study-a",
             "--config",
             "configs/base.json",
+            "--search-space",
+            '{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.1}}',
             "--direction",
             "bad",
         ]
@@ -2852,6 +3076,8 @@ def test_cli_hpo_create_rejects_invalid_search_space_json(capsys: pytest.Capture
         [
             "hpo",
             "create",
+            "--study-id",
+            "study-a",
             "--study-name",
             "study-a",
             "--config",
@@ -2868,29 +3094,7 @@ def test_cli_hpo_create_rejects_invalid_search_space_json(capsys: pytest.Capture
 def test_cli_hpo_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fake_hpo_list(request: api_module.HpoStudyListRequest) -> api_module.HpoStudyListResponse:
         _ = request
-        return api_module.HpoStudyListResponse(
-            studies=[
-                api_module.HpoStudyResponse(
-                    study_id="study-1",
-                    experiment_id="exp-1",
-                    study_name="study-a",
-                    status="completed",
-                    metric="bmc_last_200_eras.mean",
-                    direction="maximize",
-                    n_trials=2,
-                    sampler="tpe",
-                    seed=1337,
-                    best_trial_number=1,
-                    best_value=0.12,
-                    best_run_id="run-1",
-                    config={},
-                    storage_path="experiments/exp-1/hpo/study-1",
-                    error_message=None,
-                    created_at="2026-02-22T00:00:00+00:00",
-                    updated_at="2026-02-22T00:00:00+00:00",
-                )
-            ]
-        )
+        return api_module.HpoStudyListResponse(studies=[_hpo_response(study_id="study-1")])
 
     monkeypatch.setattr(api_module, "hpo_list", fake_hpo_list)
 
@@ -2903,25 +3107,7 @@ def test_cli_hpo_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytes
 def test_cli_hpo_details_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     def fake_hpo_get(request: api_module.HpoStudyGetRequest) -> api_module.HpoStudyResponse:
         _ = request
-        return api_module.HpoStudyResponse(
-            study_id="study-1",
-            experiment_id="exp-1",
-            study_name="study-a",
-            status="completed",
-            metric="bmc_last_200_eras.mean",
-            direction="maximize",
-            n_trials=2,
-            sampler="tpe",
-            seed=1337,
-            best_trial_number=1,
-            best_value=0.12,
-            best_run_id="run-1",
-            config={},
-            storage_path="experiments/exp-1/hpo/study-1",
-            error_message=None,
-            created_at="2026-02-22T00:00:00+00:00",
-            updated_at="2026-02-22T00:00:00+00:00",
-        )
+        return _hpo_response(study_id="study-1")
 
     monkeypatch.setattr(api_module, "hpo_get", fake_hpo_get)
 
@@ -2929,6 +3115,7 @@ def test_cli_hpo_details_table_output(monkeypatch: pytest.MonkeyPatch, capsys: p
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "study_id: study-1" in captured.out
+    assert "completed_trials: 2" in captured.out
     assert "best_run_id: run-1" in captured.out
 
 
@@ -3094,41 +3281,28 @@ def test_cli_hpo_create_with_neutralization_flags(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fake_hpo_create(request: api_module.HpoStudyCreateRequest) -> api_module.HpoStudyResponse:
-        assert request.neutralize is True
-        assert request.neutralizer_path == "neutralizers.parquet"
-        assert request.neutralization_proportion == 0.5
-        assert request.neutralization_mode == "era"
-        assert request.neutralizer_cols == ["feature_x"]
-        assert request.neutralization_rank_output is False
-        return api_module.HpoStudyResponse(
-            study_id="study-neut-1",
-            experiment_id=request.experiment_id,
-            study_name=request.study_name,
-            status="completed",
-            metric=request.metric,
-            direction=request.direction,
-            n_trials=request.n_trials,
-            sampler=request.sampler,
-            seed=request.seed,
-            best_trial_number=0,
-            best_value=0.12,
-            best_run_id="run-1",
-            config={},
-            storage_path=".numereng/hpo/study-neut-1",
-            error_message=None,
-            created_at="2026-02-22T00:00:00+00:00",
-            updated_at="2026-02-22T00:00:00+00:00",
-        )
+        neutralization = request.objective.neutralization
+        assert neutralization.enabled is True
+        assert neutralization.neutralizer_path == "neutralizers.parquet"
+        assert neutralization.proportion == 0.5
+        assert neutralization.mode == "era"
+        assert neutralization.neutralizer_cols == ["feature_x"]
+        assert neutralization.rank_output is False
+        return _hpo_response(study_id="study-neut-1")
 
     monkeypatch.setattr(api_module, "hpo_create", fake_hpo_create)
     exit_code = cli.main(
         [
             "hpo",
             "create",
+            "--study-id",
+            "study-a",
             "--study-name",
             "study-a",
             "--config",
             "configs/base.json",
+            "--search-space",
+            '{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.1}}',
             "--neutralize",
             "--neutralizer-path",
             "neutralizers.parquet",

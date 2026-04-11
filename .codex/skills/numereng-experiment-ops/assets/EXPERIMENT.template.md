@@ -35,7 +35,7 @@
 - Executed configs:
 - Failed / interrupted configs:
 - Skipped / superseded configs:
-- Launcher path (if used): `.numereng/experiments/<id>/run_scripts/launch_all.sh`
+- Launcher path (if used): `experiments/<id>/run_scripts/launch_all.sh`
 - Verification source of truth: `experiment.json`, `run_plan.csv` (if present), `run.json`, `metrics.json`, `results.json`, `score_provenance.json`
 - Notes on what was actually run versus what remains only planned:
 
@@ -70,7 +70,7 @@
 #### Configs Executed
 | config_path | command | status |
 |---|---|---|
-| `.numereng/experiments/<id>/configs/<config>.json` | `uv run numereng experiment train --id <id> --config <config>.json` | <planned|running|done|failed> |
+| `experiments/<id>/configs/<config>.json` | `numereng experiment train --id <id> --config <config>.json` | <planned|running|done|failed> |
 
 Execution notes:
 - State explicitly if a config was skipped, superseded, deduplicated, or replaced by a recovered canonical run.
@@ -103,7 +103,7 @@ Compact summary table (use one row per executed run or per leading candidate set
 
 | run_id | config_path | round | status | bmc_last_200_eras.mean | bmc.mean | corr.mean | mmc.mean | avg_corr_with_benchmark | notes |
 |---|---|---:|---|---:|---:|---:|---:|---:|---|
-| `<run_id>` | `.numereng/experiments/<id>/configs/<config>.json` | `<N>` | `<FINISHED>` | `<...>` | `<...>` | `<...>` | `<...|n/a>` | `<...|n/a>` | `<trade-off or selection note>` |
+| `<run_id>` | `experiments/<id>/configs/<config>.json` | `<N>` | `<FINISHED>` | `<...>` | `<...>` | `<...>` | `<...|n/a>` | `<...|n/a>` | `<trade-off or selection note>` |
 
 Result interpretation:
 - What pattern actually changed the leaderboard:
@@ -191,12 +191,12 @@ Artifact checklist:
 ## Repro Commands
 
 ```bash
-uv run numereng experiment details --id <id> --format json
-uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
-bash .numereng/experiments/<id>/run_scripts/launch_all.sh
-uv run numereng experiment pack --id <id>
-uv run numereng ensemble details --ensemble-id <ensemble_id> --format json
-uv run numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
+numereng experiment details --id <id> --format json
+numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
+bash experiments/<id>/run_scripts/launch_all.sh
+numereng experiment pack --id <id>
+numereng ensemble details --ensemble-id <ensemble_id> --format json
+numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
 # optional plot / viz command:
 # <plot command here>
 ```

@@ -23,7 +23,7 @@ for that. Do not use this skill for drift repair, reindex, or destructive cleanu
 `store-ops` for that.
 
 Run from:
-- `<repo>`
+- `<workspace>`
 
 ## Scope
 
@@ -49,12 +49,12 @@ Out of scope:
 ## Hard Rules
 
 - Prefer package CLI entrypoints and explicit commands:
-  - `uv run numereng experiment create|list|details|archive|unarchive|train|promote|report|pack ...`
-  - `uv run numereng run train ...`
-  - `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
-  - `uv run numereng ensemble build|list|details ...`
-  - `uv run numereng hpo create ...`
-  - `uv run numereng store init|index|rebuild|doctor ...`
+  - `numereng experiment create|list|details|archive|unarchive|train|promote|report|pack ...`
+  - `numereng run train ...`
+  - `numereng remote experiment pull --target <target_id> --experiment-id <id>`
+  - `numereng ensemble build|list|details ...`
+  - `numereng hpo create ...`
+  - `numereng store init|index|rebuild|doctor ...`
 - Do not use removed or unsupported families:
   - `orchestrator ...`
   - `optimize ...`
@@ -80,18 +80,18 @@ If `downsampled` is used, record the reason in `EXPERIMENT.md`.
 
 Experiments live under:
 
-- `.numereng/experiments/<experiment_id>/`
-- `.numereng/experiments/_archive/<experiment_id>/` when archived
+- `experiments/<experiment_id>/`
+- `experiments/_archive/<experiment_id>/` when archived
 
 Canonical experiment files:
 
-- `.numereng/experiments/<experiment_id>/experiment.json`
-- `.numereng/experiments/<experiment_id>/EXPERIMENT.md`
-- `.numereng/experiments/<experiment_id>/EXPERIMENT.pack.md`
-- `.numereng/experiments/<experiment_id>/configs/*.json`
-- `.numereng/experiments/<experiment_id>/run_scripts/*` for launcher and recovery helpers
-- `.numereng/experiments/<experiment_id>/run_plan.csv` when the experiment is using a planned sweep
-- `.numereng/experiments/_archive/<experiment_id>/...` for archived experiment-local files
+- `experiments/<experiment_id>/experiment.json`
+- `experiments/<experiment_id>/EXPERIMENT.md`
+- `experiments/<experiment_id>/EXPERIMENT.pack.md`
+- `experiments/<experiment_id>/configs/*.json`
+- `experiments/<experiment_id>/run_scripts/*` for launcher and recovery helpers
+- `experiments/<experiment_id>/run_plan.csv` when the experiment is using a planned sweep
+- `experiments/_archive/<experiment_id>/...` for archived experiment-local files
 
 Archive semantics:
 
@@ -116,7 +116,7 @@ Example:
 Create experiments with:
 
 ```bash
-uv run numereng experiment create \
+numereng experiment create \
   --id <YYYY-MM-DD_slug> \
   --name "<name>" \
   --hypothesis "<hypothesis>" \
@@ -187,7 +187,7 @@ Completion bar:
 
 Keep training configs under:
 
-- `.numereng/experiments/<experiment_id>/configs/`
+- `experiments/<experiment_id>/configs/`
 
 Config naming should make the changed variable obvious.
 
@@ -221,8 +221,8 @@ Post-training scoring policy:
 Scripted sweep policy:
 
 - experiment-local launchers live under `run_scripts/`
-- scripted sweeps must call `uv run numereng experiment train ... --post-training-scoring none`
-- scripted sweeps own round scoring and must call `uv run numereng experiment score-round --round <rN> --stage <post_training_core|post_training_full>` after the last planned config for each round
+- scripted sweeps must call `numereng experiment train ... --post-training-scoring none`
+- scripted sweeps own round scoring and must call `numereng experiment score-round --round <rN> --stage <post_training_core|post_training_full>` after the last planned config for each round
 - default scripted batch stage is `post_training_core`; use `post_training_full` only when the round needs the heavy feature diagnostics
 - do not combine scripted batch scoring with config-level `round_core` or `round_full`
 
@@ -232,11 +232,9 @@ For HPO study definitions:
 
 ## Schema Source Of Truth
 
-Training config schema lives under:
+Installed users should treat the template asset as the primary starting point and the live CLI/API validation as the runtime contract.
 
-- `src/numereng/config/training/`
-
-Primary sources:
+Repo-internal schema sources, only if you are editing numereng itself:
 
 - `src/numereng/config/training/CLAUDE.md`
 - `src/numereng/config/training/schema/training_config.schema.json`
@@ -256,20 +254,20 @@ If the schema and template disagree:
 Use these current command families:
 
 ```bash
-uv run numereng experiment archive --id <id>
-uv run numereng experiment unarchive --id <id>
-uv run numereng experiment train --id <id> --config <config.json> [--post-training-scoring <none|core|full|round_core|round_full>]
-uv run numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>
-uv run numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
-uv run numereng experiment pack --id <id>
-uv run numereng experiment details --id <id> --format json
-uv run numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
-uv run numereng remote experiment pull --target <target_id> --experiment-id <id>
-uv run numereng ensemble build --experiment-id <id> --run-ids <run_a,run_b,...> --method rank_avg
-uv run numereng hpo create --study-config <path.json>
+numereng experiment archive --id <id>
+numereng experiment unarchive --id <id>
+numereng experiment train --id <id> --config <config.json> [--post-training-scoring <none|core|full|round_core|round_full>]
+numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>
+numereng experiment report --id <id> --metric bmc_last_200_eras.mean --format table
+numereng experiment pack --id <id>
+numereng experiment details --id <id> --format json
+numereng experiment promote --id <id> --metric bmc_last_200_eras.mean
+numereng remote experiment pull --target <target_id> --experiment-id <id>
+numereng ensemble build --experiment-id <id> --run-ids <run_a,run_b,...> --method rank_avg
+numereng hpo create --study-config <path.json>
 ```
 
-Use `uv run numereng run train ...` only when the task is intentionally outside the experiment
+Use `numereng run train ...` only when the task is intentionally outside the experiment
 manifest workflow.
 
 Guardrail:
@@ -278,7 +276,7 @@ Guardrail:
 Recommended scripted sweep layout:
 
 ```text
-.numereng/experiments/<experiment_id>/
+experiments/<experiment_id>/
   experiment.json
   EXPERIMENT.md
   configs/
@@ -293,11 +291,11 @@ Recommended scripted sweep layout:
 Recommended scripted sweep commands:
 
 - default launcher:
-  - `bash .numereng/experiments/<id>/run_scripts/launch_all.sh`
+  - `bash experiments/<id>/run_scripts/launch_all.sh`
 - explicit heavy round scoring:
-  - `bash .numereng/experiments/<id>/run_scripts/launch_all.sh --score-stage post_training_full`
+  - `bash experiments/<id>/run_scripts/launch_all.sh --score-stage post_training_full`
 - manual recovery path:
-  - `uv run numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>`
+  - `numereng experiment score-round --id <id> --round <rN> --stage <post_training_core|post_training_full>`
 
 ## Remote Experiment Pullback
 
@@ -307,7 +305,7 @@ standard post-experiment closeout step.
 Use:
 
 ```bash
-uv run numereng remote experiment pull --target <target_id> --experiment-id <id>
+numereng remote experiment pull --target <target_id> --experiment-id <id>
 ```
 
 Current contract:
@@ -322,7 +320,7 @@ Current contract:
 Default workflow rule:
 
 1. finish the remote experiment or finish the current batch of remote runs
-2. run `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+2. run `numereng remote experiment pull --target <target_id> --experiment-id <id>`
 3. only then treat the experiment as fully available for local viz, reporting, packing, and research-memory ingestion
 
 If the user is working on the remote PC workflow and asks what to do at the end of an
@@ -333,10 +331,10 @@ experiment, explicitly remind them to run the pull command.
 When the user asks to package or pack a completed experiment, run:
 
 ```bash
-uv run numereng experiment pack --id <id>
+numereng experiment pack --id <id>
 ```
 
-This writes `.numereng/experiments/<id>/EXPERIMENT.pack.md` in the experiment folder.
+This writes `experiments/<id>/EXPERIMENT.pack.md` in the experiment folder.
 
 The packed markdown includes:
 - the current `EXPERIMENT.md` body
@@ -370,9 +368,9 @@ When an experiment has a clear winner and the user wants an official Numerai sub
 Current numereng contract:
 
 - numereng supports official submission of a live predictions parquet through:
-  - `uv run numereng run submit --model-name <model_name> --predictions <live_predictions.parquet>`
+  - `numereng run submit --model-name <model_name> --predictions <live_predictions.parquet>`
 - numereng also supports submission by run ID only when the referenced run already contains a live-eligible predictions artifact:
-  - `uv run numereng run submit --model-name <model_name> --run-id <run_id>`
+  - `numereng run submit --model-name <model_name> --run-id <run_id>`
 - numereng does not currently expose a first-class command that downloads `live.parquet`, runs live inference, and writes the submission parquet for you
 - numereng submission is predictions-based, not Numerai Compute pickle upload
 
@@ -398,7 +396,7 @@ Core files expected for completed runs:
 Remote pullback note:
 
 - when runs were trained on a remote target, they do not become part of the local canonical run
-  store until `uv run numereng remote experiment pull --target <target_id> --experiment-id <id>`
+  store until `numereng remote experiment pull --target <target_id> --experiment-id <id>`
   succeeds
 - after pullback, the canonical expectation is the same: `.numereng/runs/<run_id>/` should exist locally
 
@@ -441,15 +439,15 @@ Typical handoff triggers:
 Primary integrity flow:
 
 ```bash
-uv run numereng store doctor
+numereng store doctor
 ```
 
 If `doctor` reports issues:
 
 - one known run missing from the index:
-  - `uv run numereng store index --run-id <run_id>`
+  - `numereng store index --run-id <run_id>`
 - broad drift or suspected corruption:
-  - `uv run numereng store rebuild`
+  - `numereng store rebuild`
 
 Hand off to `store-ops` when the task involves:
 

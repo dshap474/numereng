@@ -75,7 +75,7 @@ If both stages are used, apply lighter proportions and verify net benefit.
 Current ensemble CLI controls:
 
 ```bash
-uv run numereng ensemble build \
+numereng ensemble build \
   --run-ids <run_a,run_b,...> \
   --method rank_avg \
   --neutralize-members \

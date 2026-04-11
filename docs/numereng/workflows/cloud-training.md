@@ -9,7 +9,7 @@ Numereng supports three cloud paths:
 Validate the config locally first:
 
 ```bash
-uv run numereng run train --config configs/run.json
+numereng run train --config configs/run.json
 ```
 
 By default, numereng now writes transient cloud state under `.numereng/cache/cloud/<provider>/...` and keeps durable run provenance under `.numereng/runs/<run_id>/run.json -> execution`. Legacy `.numereng/cloud/*.json` state paths remain read-compatible during migration, but new writes should use the cache-backed layout.

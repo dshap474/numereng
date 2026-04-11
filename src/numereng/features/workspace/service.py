@@ -6,20 +6,8 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from numereng.features.store import resolve_workspace_layout
-
-_SHIPPED_SKILLS: tuple[str, ...] = (
-    "config-schema",
-    "experiment-design",
-    "implement-custom-model",
-    "kaggle-gm-workflow",
-    "numerai-api-ops",
-    "numerai-docs",
-    "numerai-research",
-    "numereng-experiment-ops",
-    "research-memory",
-    "store-ops",
-)
+from numereng.assets import shipped_skill_ids, shipped_skills_root
+from numereng.features.store.layout import resolve_workspace_layout
 
 
 @dataclass(frozen=True)
@@ -62,7 +50,21 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
 
     _write_if_missing(
         layout.workspace_root / ".gitignore",
-        ".numereng/\n.venv/\nnode_modules/\n",
+        "\n".join(
+            [
+                ".numereng/numereng.db",
+                ".numereng/numereng.db-shm",
+                ".numereng/numereng.db-wal",
+                ".numereng/runs/",
+                ".numereng/datasets/",
+                ".numereng/cache/",
+                ".numereng/tmp/",
+                ".numereng/remote_ops/",
+                ".venv/",
+                "node_modules/",
+                "",
+            ]
+        ),
         created=created,
         skipped=skipped,
     )
@@ -72,7 +74,7 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
             [
                 "# numereng workspace",
                 "",
-                "This workspace uses root-level authoring surfaces and a hidden `.numereng/` runtime store.",
+                "This workspace uses visible authoring roots plus a hidden `.numereng/` runtime store.",
                 "",
                 "Visible workspace roots:",
                 "- `experiments/`",
@@ -81,7 +83,7 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
                 "- `research_programs/`",
                 "- `.agents/skills/`",
                 "",
-                "Hidden runtime state:",
+                "Numereng-managed state under `.numereng/`:",
                 "- `.numereng/runs/`",
                 "- `.numereng/datasets/`",
                 "- `.numereng/cache/`",
@@ -102,8 +104,18 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
                 "# numereng workspace",
                 "",
                 "- Treat this directory as the canonical workspace root.",
-                "- Keep user-authored experiment and notes content at workspace root.",
-                "- Keep runtime state under `.numereng/`.",
+                (
+                    "- User-authored workspace surfaces live in `experiments/`, `notes/`, "
+                    "`custom_models/`, `research_programs/`, and `.agents/skills/`."
+                ),
+                "- Keep numereng-managed runtime state under `.numereng/`.",
+                "- `numereng viz` is monitor-only. Launch runs and mutations via the CLI or API, not the dashboard.",
+                "- `research init` requires `--program`.",
+                "- Submission and neutralization each accept exactly one source: `run_id` or `predictions_path`.",
+                "- Training and HPO configs are JSON-only and reject unknown keys.",
+                "- `custom_models/` is the canonical runtime discovery root for custom model plugins.",
+                "- `research_programs/` is resolved before packaged built-ins.",
+                "- Do not assume a `numereng` source checkout is required to use this workspace.",
                 "",
             ]
         )
@@ -112,8 +124,35 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
         skipped=skipped,
     )
     _write_if_missing(
+        layout.workspace_root / ".agents" / "README.md",
+        "Workspace-scoped agent assets live here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.workspace_root / ".agents" / "AGENTS.md",
+        "- Treat `.agents/skills/` as the canonical harness-agnostic skill root.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.skills_root / "AGENTS.md",
+        "- These are packaged numereng-owned skills copied into this workspace.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
         layout.custom_models_root / "README.md",
-        "Place user-authored model plugins here. `numereng` resolves this directory before packaged built-ins.\n",
+        (
+            "Place user-authored model plugins here. `numereng` resolves custom model plugins only "
+            "from this directory by default.\n"
+        ),
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.custom_models_root / "AGENTS.md",
+        "- Add user-authored model plugin modules here.\n",
         created=created,
         skipped=skipped,
     )
@@ -127,8 +166,20 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
         skipped=skipped,
     )
     _write_if_missing(
+        layout.research_programs_root / "AGENTS.md",
+        "- Add user-authored research program markdown here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
         layout.experiments_root / "README.md",
         "Experiment manifests, configs, notes, and launcher scripts live here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.experiments_root / "AGENTS.md",
+        "- Keep experiment manifests, configs, notes, and launchers under `experiments/`.\n",
         created=created,
         skipped=skipped,
     )
@@ -145,8 +196,26 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
         skipped=skipped,
     )
     _write_if_missing(
+        layout.notes_root / "__RESEARCH_MEMORY__" / "CURRENT.md",
+        "# Current Research Frontier\n\nCapture the active synthesis, next action, and open questions here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.notes_root / "__RESEARCH_MEMORY__" / "AGENTS.md",
+        "- Keep rolling research-memory notes here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
         layout.store_root / "README.md",
-        "Hidden numereng runtime state. Do not place user-authored experiments or notes here.\n",
+        "Numereng-managed runtime state lives here.\n",
+        created=created,
+        skipped=skipped,
+    )
+    _write_if_missing(
+        layout.store_root / "AGENTS.md",
+        "- Treat `.numereng/` as the canonical numereng-managed state root.\n",
         created=created,
         skipped=skipped,
     )
@@ -157,20 +226,36 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
         skipped=skipped,
     )
 
-    template_model_path = (
-        _repo_root() / "src" / "numereng" / "features" / "models" / "custom_models" / "template_model.py"
-    )
+    template_model_path = _package_root() / "features" / "models" / "custom_models" / "template_model.py"
     _copy_file_if_missing(
         template_model_path,
         layout.custom_models_root / "template_model.py",
         created=created,
         skipped=skipped,
     )
+    research_program_path = (
+        _package_root() / "features" / "agentic_research" / "programs" / "numerai-experiment-loop.md"
+    )
+    _copy_file_if_missing(
+        research_program_path,
+        layout.research_programs_root / "numerai-experiment-loop.md",
+        created=created,
+        skipped=skipped,
+    )
+
+    for runtime_dir in (
+        layout.store_root / "runs",
+        layout.store_root / "datasets",
+        layout.store_root / "cache",
+        layout.store_root / "tmp",
+        layout.store_root / "remote_ops",
+    ):
+        _write_if_missing(runtime_dir / ".gitkeep", "", created=created, skipped=skipped)
 
     installed_skill_ids: list[str] = []
-    skills_source_root = _repo_root() / ".codex" / "skills"
+    skills_source_root = shipped_skills_root()
     if skills_source_root.is_dir():
-        for skill_id in _SHIPPED_SKILLS:
+        for skill_id in shipped_skill_ids():
             source = skills_source_root / skill_id
             destination = layout.skills_root / skill_id
             if not source.is_dir():
@@ -211,5 +296,5 @@ def _copy_file_if_missing(source: Path, destination: Path, *, created: list[Path
     created.append(destination)
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+def _package_root() -> Path:
+    return Path(__file__).resolve().parents[2]

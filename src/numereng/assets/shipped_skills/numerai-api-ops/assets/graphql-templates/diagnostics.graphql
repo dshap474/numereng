@@ -1,0 +1,40 @@
+query DiagnosticsUploadAuth($filename: String!, $tournament: Int!, $modelId: ID) {
+  diagnosticsUploadAuth(filename: $filename, tournament: $tournament, modelId: $modelId) {
+    filename
+    url
+  }
+}
+
+mutation CreateDiagnostics($filename: String!, $tournament: Int!, $modelId: ID) {
+  createDiagnostics(filename: $filename, tournament: $tournament, modelId: $modelId) {
+    id
+    status
+    insertedAt
+  }
+}
+
+query DiagnosticsById($id: ID!, $modelId: ID) {
+  diagnostics(id: $id, modelId: $modelId) {
+    id
+    status
+    updatedAt
+    validationCorrMean
+    validationMmcMean
+    validationCorrPlusMmcSharpe
+  }
+}
+
+query ListDiagnosticsByModel($modelId: ID!) {
+  diagnostics(modelId: $modelId) {
+    id
+    status
+    updatedAt
+    validationCorrMean
+    validationMmcMean
+    validationCorrPlusMmcSharpe
+  }
+}
+
+mutation DeleteDiagnostics($ids: [String!]!) {
+  deleteDiagnostics(v2DiagnosticsIds: $ids)
+}

@@ -15,6 +15,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class StorePaths:
+    workspace_root: Path
     store_root: Path
     db_path: Path
     runs_dir: Path
@@ -24,9 +25,9 @@ class StorePaths:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect store-impact summary without mutation.")
     parser.add_argument(
-        "--store-root",
-        default=".numereng",
-        help="Store root path (default: .numereng)",
+        "--workspace",
+        default=".",
+        help="Workspace root path (default: current directory)",
     )
     parser.add_argument(
         "--experiment-id",
@@ -82,13 +83,15 @@ def load_json_mapping(path: Path) -> dict[str, Any]:
     return payload
 
 
-def ensure_paths(store_root_raw: str) -> StorePaths:
-    store_root = Path(store_root_raw).expanduser().resolve()
+def ensure_paths(workspace_root_raw: str) -> StorePaths:
+    workspace_root = Path(workspace_root_raw).expanduser().resolve()
+    store_root = workspace_root / ".numereng"
     return StorePaths(
+        workspace_root=workspace_root,
         store_root=store_root,
         db_path=store_root / "numereng.db",
         runs_dir=store_root / "runs",
-        experiments_dir=store_root / "experiments",
+        experiments_dir=workspace_root / "experiments",
     )
 
 
@@ -179,13 +182,14 @@ def gather_manifest_overlaps(
 
 def main() -> int:
     args = parse_args()
-    paths = ensure_paths(args.store_root)
+    paths = ensure_paths(args.workspace)
 
     experiment_ids = sorted({value.strip() for value in args.experiment_id if value.strip()})
     explicit_run_ids = sorted({value.strip() for value in args.run_id if value.strip()})
     active_writers = detect_active_writers()
 
     summary: dict[str, Any] = {
+        "workspace_root": str(paths.workspace_root),
         "store_root": str(paths.store_root),
         "db_path": str(paths.db_path),
         "db_exists": paths.db_path.is_file(),

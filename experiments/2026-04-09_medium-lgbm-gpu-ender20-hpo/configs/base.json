@@ -1,0 +1,54 @@
+{
+  "data": {
+    "data_version": "v5.2",
+    "dataset_scope": "train_plus_validation",
+    "dataset_variant": "non_downsampled",
+    "era_col": "era",
+    "feature_set": "medium",
+    "id_col": "id",
+    "scoring_targets": null,
+    "target_col": "target_ender_20",
+    "target_horizon": "20d"
+  },
+  "model": {
+    "params": {
+      "colsample_bytree": 0.1,
+      "device_type": "gpu",
+      "learning_rate": 0.001,
+      "max_depth": 6,
+      "n_estimators": 20000,
+      "num_leaves": 64,
+      "random_state": 42
+    },
+    "type": "LGBMRegressor",
+    "x_groups": [
+      "features"
+    ]
+  },
+  "output": {
+    "predictions_name": "pred_target_ender_20_medium_lgbm_gpu_hpo_base_s42"
+  },
+  "preprocessing": {
+    "missing_value": 2.0,
+    "nan_missing_all_twos": false
+  },
+  "training": {
+    "cache": {
+      "cache_features": true,
+      "cache_fold_matrices": false,
+      "cache_fold_specs": true,
+      "cache_labels": true,
+      "mode": "deterministic"
+    },
+    "engine": {
+      "profile": "purged_walk_forward"
+    },
+    "resources": {
+      "max_threads_per_worker": 10,
+      "memmap_enabled": true,
+      "parallel_backend": "joblib",
+      "parallel_folds": 1,
+      "sklearn_working_memory_mib": null
+    }
+  }
+}

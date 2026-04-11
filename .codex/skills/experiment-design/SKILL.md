@@ -7,7 +7,7 @@ user-invocable: true
 # Experiment Design
 Use this workflow to plan, run, and report numereng experiments for any model idea.
 
-Note: run commands from `<repo>` with `uv run numereng ...`.
+Note: run commands from `<workspace>` with `numereng ...`.
 
 Use `numereng-experiment-ops` for numereng-specific experiment layout, config templates, schema
 questions, `EXPERIMENT.md` formatting, and run artifact expectations. Use `store-ops` for drift,
@@ -127,7 +127,7 @@ question of whether this idea can produce a model with high BMC.
   the experiment unless the round is intentionally testing a baseline change.
 
 ## Experiment organization
-- Keep related runs under a single, well-named folder in `.numereng/experiments/`.
+- Keep related runs under a single, well-named folder in `experiments/`.
 - One experiment folder = one line of inquiry.
   - `configs/` for configs
   - `EXPERIMENT.md` for summary and decisions
@@ -158,11 +158,11 @@ question of whether this idea can produce a model with high BMC.
   `EXPERIMENT.md`.
 
 ## Useful entry points
-- `uv run numereng experiment create|details|train|report|promote`
-- `uv run numereng ensemble build|list|details`
-- `uv run numereng hpo create`
-- `uv run numereng run train`
-- `uv run numereng store doctor`
+- `numereng experiment create|details|train|report|promote`
+- `numereng ensemble build|list|details`
+- `numereng hpo create`
+- `numereng run train`
+- `numereng store doctor`
 
 ## Deployment (after experiments complete)
 Once you have finalized your best model and have a submission-ready run artifact or predictions

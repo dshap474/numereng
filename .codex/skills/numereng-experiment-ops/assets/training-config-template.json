@@ -592,6 +592,7 @@
     "Only .json training configs are accepted; unknown keys are forbidden (extra=forbid)."
   ],
   "source_of_truth": {
+    "note": "These repo-internal paths are useful only when editing numereng itself.",
     "contracts": "src/numereng/config/training/contracts.py",
     "schema": "src/numereng/config/training/schema/training_config.schema.json",
     "runtime": "src/numereng/features/training"
