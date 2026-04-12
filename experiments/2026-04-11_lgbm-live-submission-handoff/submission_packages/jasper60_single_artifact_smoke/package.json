@@ -1,0 +1,47 @@
+{
+  "artifacts": {
+    "last_pickle_model_id": "281f1f8b-c6d1-43bb-9505-85a9e5dc1683",
+    "last_pickle_model_name": "dshap47",
+    "last_pickle_upload_id": "1d8bbe28-b380-46c4-b562-ea03d1088650",
+    "pickle_component_count": "1",
+    "pickle_path": "/Users/daniel/Developer/numereng/experiments/2026-04-11_lgbm-live-submission-handoff/submission_packages/jasper60_single_artifact_smoke/artifacts/pickle/model.pkl",
+    "pickle_size_bytes": "19905802",
+    "pickle_uses_baseline_inputs": "false",
+    "preflight_artifact_backed": "true",
+    "preflight_artifact_live_ready": "true",
+    "preflight_artifact_ready": "true",
+    "preflight_checked_at": "2026-04-11T23:38:27Z",
+    "preflight_deployment_classification": "pickle_upload_ready",
+    "preflight_local_live_compatible": "true",
+    "preflight_model_upload_compatible": "true",
+    "preflight_pickle_upload_ready": "true",
+    "preflight_report_path": "/Users/daniel/Developer/numereng/experiments/2026-04-11_lgbm-live-submission-handoff/submission_packages/jasper60_single_artifact_smoke/artifacts/preflight/report.json"
+  },
+  "blend_rule": {
+    "final_rerank": false,
+    "per_era_rank": true,
+    "rank_method": "average",
+    "rank_pct": true
+  },
+  "components": [
+    {
+      "component_id": "small_target_jasper_60",
+      "config_path": null,
+      "run_id": "f88715d4459a",
+      "source_label": null,
+      "weight": 1.0
+    }
+  ],
+  "created_at": "2026-04-11T23:38:27Z",
+  "data_version": "v5.2",
+  "experiment_id": "2026-04-11_lgbm-live-submission-handoff",
+  "neutralization": null,
+  "package_id": "jasper60_single_artifact_smoke",
+  "provenance": {
+    "smoke": "artifact_backed_pickle_upload",
+    "source_config_path": "/Users/daniel/Developer/numereng/experiments/2026-04-11_lgbm-live-submission-handoff/configs/r1_small_target_jasper_60_seed42_full_history_refit.json"
+  },
+  "status": "pickle_uploaded",
+  "tournament": "classic",
+  "updated_at": "2026-04-11T23:38:30Z"
+}

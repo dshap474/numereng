@@ -52,7 +52,7 @@ class HpoNeutralizationRequest(BaseModel):
 
 
 class HpoObjectiveRequest(BaseModel):
-    metric: str = "post_fold_champion_objective"
+    metric: str = "bmc_last_200_eras.mean"
     direction: Literal["maximize", "minimize"] = "maximize"
     neutralization: HpoNeutralizationRequest = Field(default_factory=HpoNeutralizationRequest)
 

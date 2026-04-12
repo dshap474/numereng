@@ -295,7 +295,8 @@ Critical invariants:
 - HPO studies resume by `study_id` using `.numereng/hpo/<study_id>/optuna_journal.log` or `experiments/<experiment_id>/hpo/<study_id>/optuna_journal.log`.
 - `sampler.kind=random` only allows `kind` and `seed`; TPE-only fields are invalid.
 - `stopping.max_trials` and `stopping.max_completed_trials` are total-study caps across resumes; `stopping.timeout_seconds` is per `hpo create` invocation.
-- `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first using `corr_ender20_fold_mean -> corr_native_fold_mean` and `bmc_fold_mean -> bmc_ender20_fold_mean` fallback, then falls back to `results.json`.
+- HPO defaults to `bmc_last_200_eras.mean`.
+- Legacy `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first using `corr_ender20_fold_mean -> corr_native_fold_mean` and `bmc_fold_mean -> bmc_ender20_fold_mean` fallback, then falls back to `results.json`.
 - Duplicate deterministic HPO params reuse a completed study trial or a finished deterministic run when its artifacts are intact; nonterminal pre-existing run dirs fail loudly and are never auto-reset.
 - Legacy `data.loading` is removed from the training schema. Config loading hard-fails if it is present, but run hashing strips that removed subtree so historical configs keep the same deterministic run identity.
 - `model.device` is the canonical explicit training-device contract and is allowed only: `cpu|cuda`.

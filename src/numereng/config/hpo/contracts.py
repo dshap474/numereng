@@ -85,7 +85,7 @@ class HpoNeutralizationConfig(_StrictConfigModel):
 class HpoObjectiveConfig(_StrictConfigModel):
     """Objective block for one HPO study."""
 
-    metric: str = "post_fold_champion_objective"
+    metric: str = "bmc_last_200_eras.mean"
     direction: HpoDirection = "maximize"
     neutralization: HpoNeutralizationConfig = Field(default_factory=HpoNeutralizationConfig)
 

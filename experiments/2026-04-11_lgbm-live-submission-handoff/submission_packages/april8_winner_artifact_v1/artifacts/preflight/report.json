@@ -1,0 +1,49 @@
+{
+  "artifact_backed": true,
+  "artifact_blockers": [],
+  "artifact_live_ready": true,
+  "artifact_ready": true,
+  "checked_at": "2026-04-11T23:58:25Z",
+  "components": [
+    {
+      "artifact_backed": true,
+      "artifact_blockers": [],
+      "artifact_ready": true,
+      "component_id": "medium_target_alpha_20",
+      "local_live_blockers": [],
+      "local_live_compatible": true,
+      "model_upload_blockers": [],
+      "model_upload_compatible": true,
+      "warnings": []
+    },
+    {
+      "artifact_backed": true,
+      "artifact_blockers": [],
+      "artifact_ready": true,
+      "component_id": "small_target_jasper_60",
+      "local_live_blockers": [],
+      "local_live_compatible": true,
+      "model_upload_blockers": [],
+      "model_upload_compatible": true,
+      "warnings": []
+    },
+    {
+      "artifact_backed": true,
+      "artifact_blockers": [],
+      "artifact_ready": true,
+      "component_id": "small_target_alpha_20",
+      "local_live_blockers": [],
+      "local_live_compatible": true,
+      "model_upload_blockers": [],
+      "model_upload_compatible": true,
+      "warnings": []
+    }
+  ],
+  "deployment_classification": "pickle_upload_ready",
+  "local_live_blockers": [],
+  "local_live_compatible": true,
+  "model_upload_blockers": [],
+  "model_upload_compatible": true,
+  "pickle_upload_ready": true,
+  "warnings": []
+}

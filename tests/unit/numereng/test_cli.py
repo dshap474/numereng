@@ -2694,7 +2694,7 @@ def _hpo_response(*, study_id: str, experiment_id: str | None = "exp-1") -> api_
             config_path="configs/base.json",
             experiment_id=experiment_id,
             objective=api_module.HpoObjectiveRequest(
-                metric="post_fold_champion_objective",
+                metric="bmc_last_200_eras.mean",
                 direction="maximize",
                 neutralization=api_module.HpoNeutralizationRequest(),
             ),
