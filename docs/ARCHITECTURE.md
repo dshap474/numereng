@@ -546,8 +546,9 @@ cli hpo create
       - create/resume one JournalStorage-backed Optuna study keyed by `study_id`
       - execute Optuna trials
       - each trial runs training + index_run
-      - extract the HPO objective from `post_fold_snapshots.parquet` by default
-      - optional neutralization + custom metric extraction only for explicit non-default metrics
+      - default objective is `bmc_last_200_eras.mean`
+      - legacy `post_fold_champion_objective` still extracts from `post_fold_snapshots.parquet`
+      - optional neutralization + custom metric extraction applies when scoring an alternate metric path
       - persist `study_summary.json`, `trials_live.parquet`, and sqlite study/trial rows after every trial
 ```
 
@@ -558,7 +559,8 @@ Metadata behavior in HPO:
 - Mutable resume controls are in the `stopping` block (`max_trials`, `max_completed_trials`, `timeout_seconds`, `plateau`).
   `max_trials` and `max_completed_trials` are total-study caps across resumes; `timeout_seconds` is per invocation.
 - Optuna pruning and multi-worker execution are intentionally out of scope for HPO v2.
-- Default champion-run HPO objective:
+- Default HPO metric: `bmc_last_200_eras.mean`.
+- Legacy `post_fold_champion_objective` remains available explicitly:
   `0.25 * mean(corr_ender20_fold_mean | corr_native_fold_mean) + 2.25 * mean(bmc_fold_mean | bmc_ender20_fold_mean)`
   with `results.json` fallback when the snapshot artifact is missing or unusable.
 - Duplicate deterministic trial params first reuse a completed study trial when possible, then reuse a finished deterministic run only when its scoring artifacts are intact; nonterminal pre-existing run dirs fail loudly and are never reset automatically.

@@ -201,7 +201,7 @@ def handle_hpo_create(args: Sequence[str]) -> int:
 
     metric = objective_config.get("metric")
     if not isinstance(metric, str):
-        metric = "post_fold_champion_objective"
+        metric = "bmc_last_200_eras.mean"
     if "--metric" in values:
         metric = values["--metric"]
 

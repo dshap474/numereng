@@ -608,6 +608,10 @@ def test_create_study_reuses_existing_finished_deterministic_run(
     run_dir = store_root / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "run.json").write_text(json.dumps({"status": "FINISHED"}), encoding="utf-8")
+    (run_dir / "results.json").write_text(
+        json.dumps({"metrics": {"bmc_last_200_eras": {"mean": 0.14}}}),
+        encoding="utf-8",
+    )
     _write_post_fold_snapshots(store_root, run_id=run_id, objective_value=0.14)
 
     preview = TrainingRunPreview(

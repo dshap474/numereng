@@ -17,7 +17,7 @@ def _write_valid_config(path: Path) -> None:
                 "config_path": "configs/base.json",
                 "experiment_id": "2026-04-11_ender20_hpo",
                 "objective": {
-                    "metric": "post_fold_champion_objective",
+                    "metric": "bmc_last_200_eras.mean",
                     "direction": "maximize",
                     "neutralization": {
                         "enabled": True,

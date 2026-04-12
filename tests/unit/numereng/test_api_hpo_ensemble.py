@@ -138,7 +138,7 @@ def _study_create_request() -> api_module.HpoStudyCreateRequest:
         config_path="configs/base.json",
         experiment_id="exp-1",
         objective=api_module.HpoObjectiveRequest(
-            metric="post_fold_champion_objective",
+            metric="bmc_last_200_eras.mean",
             direction="maximize",
             neutralization=api_module.HpoNeutralizationRequest(),
         ),

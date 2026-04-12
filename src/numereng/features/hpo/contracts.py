@@ -50,7 +50,7 @@ class HpoNeutralizationSpec:
 class HpoObjectiveSpec:
     """Objective block for one HPO study."""
 
-    metric: str = "post_fold_champion_objective"
+    metric: str = "bmc_last_200_eras.mean"
     direction: HpoDirection = "maximize"
     neutralization: HpoNeutralizationSpec = HpoNeutralizationSpec()
 

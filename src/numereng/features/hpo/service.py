@@ -55,7 +55,8 @@ from numereng.features.training.run_lock import RUN_LOCK_FILENAME
 from numereng.features.training.service import resolve_benchmark_source
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
-_DEFAULT_HPO_METRIC = "post_fold_champion_objective"
+_DEFAULT_HPO_METRIC = "bmc_last_200_eras.mean"
+_LEGACY_POST_FOLD_OBJECTIVE_METRIC = "post_fold_champion_objective"
 _POST_FOLD_CORR_WEIGHT = 0.25
 _POST_FOLD_BMC_WEIGHT = 2.25
 
@@ -954,12 +955,14 @@ def _resolve_trial_metric(
             metric=request.objective.metric,
             scoring_client=neutralized_metric_client,
         )
-    if request.objective.metric == _DEFAULT_HPO_METRIC:
+    if request.objective.metric == _LEGACY_POST_FOLD_OBJECTIVE_METRIC:
         return _extract_post_fold_objective_value(
             store_root=store_root,
             run_id=training_result.run_id,
             results_path=training_result.results_path,
         )
+    if request.objective.metric == _DEFAULT_HPO_METRIC:
+        return _extract_metric_value(results_path=training_result.results_path, metric=_DEFAULT_HPO_METRIC)
     return _extract_metric_value(results_path=training_result.results_path, metric=request.objective.metric)
 
 
@@ -1015,7 +1018,7 @@ def _extract_post_fold_objective_value(
                 raise HpoExecutionError(f"hpo_post_fold_snapshots_invalid:{snapshot_path}") from exc
     if results_path is None:
         raise HpoExecutionError(f"hpo_post_fold_snapshots_not_found:{snapshot_path}")
-    return _extract_default_hpo_metric_from_results(results_path=results_path)
+    return _extract_legacy_post_fold_objective_from_results(results_path=results_path)
 
 
 def _extract_metric_value_from_predictions(
@@ -1072,8 +1075,8 @@ def _extract_metric_value_from_predictions(
         raise HpoExecutionError(f"hpo_neutralized_metric_compute_failed:{exc}") from exc
 
     metrics_payload = _metrics_payload_from_summaries(summaries=scoring_result.summaries)
-    if metric == _DEFAULT_HPO_METRIC:
-        value = _default_hpo_metric_from_payload(metrics_payload)
+    if metric == _LEGACY_POST_FOLD_OBJECTIVE_METRIC:
+        value = _legacy_post_fold_objective_from_payload(metrics_payload)
     else:
         value = _metric_lookup({"metrics": metrics_payload}, metric)
         if value is None and not metric.startswith("metrics."):
@@ -1095,7 +1098,7 @@ def _metrics_payload_from_summaries(*, summaries: dict[str, Any]) -> dict[str, A
     return payload
 
 
-def _extract_default_hpo_metric_from_results(*, results_path: Path) -> float:
+def _extract_legacy_post_fold_objective_from_results(*, results_path: Path) -> float:
     if not results_path.exists():
         raise HpoExecutionError(f"hpo_results_not_found:{results_path}")
 
@@ -1106,15 +1109,15 @@ def _extract_default_hpo_metric_from_results(*, results_path: Path) -> float:
 
     metrics_payload = payload.get("metrics")
     if not isinstance(metrics_payload, dict):
-        raise HpoExecutionError(f"hpo_metric_not_found:{_DEFAULT_HPO_METRIC}")
+        raise HpoExecutionError(f"hpo_metric_not_found:{_LEGACY_POST_FOLD_OBJECTIVE_METRIC}")
 
-    value = _default_hpo_metric_from_payload(metrics_payload)
+    value = _legacy_post_fold_objective_from_payload(metrics_payload)
     if value is None:
-        raise HpoExecutionError(f"hpo_metric_not_found:{_DEFAULT_HPO_METRIC}")
+        raise HpoExecutionError(f"hpo_metric_not_found:{_LEGACY_POST_FOLD_OBJECTIVE_METRIC}")
     return value
 
 
-def _default_hpo_metric_from_payload(metrics_payload: dict[str, Any]) -> float | None:
+def _legacy_post_fold_objective_from_payload(metrics_payload: dict[str, Any]) -> float | None:
     payload = {"metrics": metrics_payload}
     corr_value = _metric_lookup(payload, "metrics.corr.mean")
     bmc_value = _metric_lookup(payload, "metrics.bmc_last_200_eras.mean")

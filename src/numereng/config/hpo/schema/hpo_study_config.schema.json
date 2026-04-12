@@ -75,7 +75,7 @@
           "type": "string"
         },
         "metric": {
-          "default": "post_fold_champion_objective",
+          "default": "bmc_last_200_eras.mean",
           "title": "Metric",
           "type": "string"
         },
