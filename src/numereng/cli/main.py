@@ -10,89 +10,149 @@ from numereng.cli.usage import USAGE
 from numereng.platform.errors import PackageError
 
 
+def _dispatch_command(
+    *,
+    module_name: str,
+    handler_name: str,
+    args: list[str],
+) -> int:
+    try:
+        module = __import__(module_name, fromlist=[handler_name])
+        handler = getattr(module, handler_name)
+    except ModuleNotFoundError as exc:
+        missing = exc.name or "unknown"
+        if missing.startswith("numereng"):
+            raise
+        raise PackageError(f"runtime_dependency_missing:{missing}:run_numereng_workspace_sync") from exc
+    return handler(args)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint returning process-style exit codes."""
     args = list(sys.argv[1:] if argv is None else argv)
 
-    if args and args[0] == "run":
-        from numereng.cli.commands.run import handle_run_command
+    try:
+        if args and args[0] == "run":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.run",
+                handler_name="handle_run_command",
+                args=args[1:],
+            )
 
-        return handle_run_command(args[1:])
+        if args and args[0] == "baseline":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.baseline",
+                handler_name="handle_baseline_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "baseline":
-        from numereng.cli.commands.baseline import handle_baseline_command
+        if args and args[0] == "dataset-tools":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.dataset_tools",
+                handler_name="handle_dataset_tools_command",
+                args=args[1:],
+            )
 
-        return handle_baseline_command(args[1:])
+        if args and args[0] == "init":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.init",
+                handler_name="handle_init_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "dataset-tools":
-        from numereng.cli.commands.dataset_tools import handle_dataset_tools_command
+        if args and args[0] == "workspace":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.workspace",
+                handler_name="handle_workspace_command",
+                args=args[1:],
+            )
 
-        return handle_dataset_tools_command(args[1:])
+        if args and args[0] == "experiment":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.experiment",
+                handler_name="handle_experiment_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "init":
-        from numereng.cli.commands.init import handle_init_command
+        if args and args[0] == "hpo":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.hpo",
+                handler_name="handle_hpo_command",
+                args=args[1:],
+            )
 
-        return handle_init_command(args[1:])
+        if args and args[0] == "neutralize":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.neutralize",
+                handler_name="handle_neutralize_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "experiment":
-        from numereng.cli.commands.experiment import handle_experiment_command
+        if args and args[0] == "monitor":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.monitor",
+                handler_name="handle_monitor_command",
+                args=args[1:],
+            )
 
-        return handle_experiment_command(args[1:])
+        if args and args[0] == "ensemble":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.ensemble",
+                handler_name="handle_ensemble_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "hpo":
-        from numereng.cli.commands.hpo import handle_hpo_command
+        if args and args[0] == "store":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.store",
+                handler_name="handle_store_command",
+                args=args[1:],
+            )
 
-        return handle_hpo_command(args[1:])
+        if args and args[0] == "cloud":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.cloud",
+                handler_name="handle_cloud_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "neutralize":
-        from numereng.cli.commands.neutralize import handle_neutralize_command
+        if args and args[0] == "numerai":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.numerai",
+                handler_name="handle_numerai_command",
+                args=args[1:],
+            )
 
-        return handle_neutralize_command(args[1:])
+        if args and args[0] == "serve":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.serve",
+                handler_name="handle_serve_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "monitor":
-        from numereng.cli.commands.monitor import handle_monitor_command
+        if args and args[0] == "research":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.research",
+                handler_name="handle_research_command",
+                args=args[1:],
+            )
 
-        return handle_monitor_command(args[1:])
+        if args and args[0] == "remote":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.remote",
+                handler_name="handle_remote_command",
+                args=args[1:],
+            )
 
-    if args and args[0] == "ensemble":
-        from numereng.cli.commands.ensemble import handle_ensemble_command
-
-        return handle_ensemble_command(args[1:])
-
-    if args and args[0] == "store":
-        from numereng.cli.commands.store import handle_store_command
-
-        return handle_store_command(args[1:])
-
-    if args and args[0] == "cloud":
-        from numereng.cli.commands.cloud import handle_cloud_command
-
-        return handle_cloud_command(args[1:])
-
-    if args and args[0] == "numerai":
-        from numereng.cli.commands.numerai import handle_numerai_command
-
-        return handle_numerai_command(args[1:])
-
-    if args and args[0] == "serve":
-        from numereng.cli.commands.serve import handle_serve_command
-
-        return handle_serve_command(args[1:])
-
-    if args and args[0] == "research":
-        from numereng.cli.commands.research import handle_research_command
-
-        return handle_research_command(args[1:])
-
-    if args and args[0] == "remote":
-        from numereng.cli.commands.remote import handle_remote_command
-
-        return handle_remote_command(args[1:])
-
-    if args and args[0] == "viz":
-        from numereng.cli.commands.viz import handle_viz_command
-
-        return handle_viz_command(args[1:])
+        if args and args[0] == "viz":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.viz",
+                handler_name="handle_viz_command",
+                args=args[1:],
+            )
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
     if any(arg in {"-h", "--help"} for arg in args):
         print(USAGE)

@@ -1,5 +1,7 @@
 # Support
 
+`numereng` is community-built and maintainer-supported. It is not an official Numerai product.
+
 ## Where to ask for help
 
 - Bugs, feature requests, and usage questions for `numereng`: use the GitHub issue forms in this repository.

@@ -49,6 +49,35 @@ def test_cli_main_unknown_argument(capsys: pytest.CaptureFixture[str]) -> None:
     assert "unknown arguments: --unknown" in captured.err
 
 
+def test_cli_main_translates_missing_runtime_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import importlib
+
+    real_import = __import__
+
+    def fake_import(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ):
+        if name == "numereng.cli.commands.serve":
+            raise ModuleNotFoundError("No module named 'cloudpickle'", name="cloudpickle")
+        return real_import(name, globals, locals, fromlist, level)
+
+    main_module = importlib.import_module("numereng.cli.main")
+    monkeypatch.setattr(main_module, "__import__", fake_import, raising=False)
+
+    exit_code = cli.main(["serve", "--help"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "runtime_dependency_missing:cloudpickle:run_numereng_workspace_sync" in captured.err
+
+
 def test_cli_monitor_snapshot_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -88,6 +117,89 @@ def test_cli_monitor_snapshot_success(
 
     assert exit_code == 0
     assert payload["summary"]["live_runs"] == 1
+
+
+def test_cli_init_provisions_workspace_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_workspace_init(request: api_module.WorkspaceInitRequest) -> api_module.WorkspaceInitResponse:
+        assert request.workspace_root == "/tmp/numerai-dev"
+        assert request.runtime_source == "path"
+        assert request.runtime_path == "/tmp/numereng-src"
+        assert request.with_training is True
+        assert request.with_mlops is None
+        return api_module.WorkspaceInitResponse(
+            workspace_root="/tmp/numerai-dev",
+            store_root="/tmp/numerai-dev/.numereng",
+            workspace_project_path="/tmp/numerai-dev/pyproject.toml",
+            python_version_path="/tmp/numerai-dev/.python-version",
+            venv_path="/tmp/numerai-dev/.venv",
+            created_paths=["/tmp/numerai-dev/experiments"],
+            updated_paths=["/tmp/numerai-dev/pyproject.toml"],
+            runtime_source="path",
+            runtime_path="/tmp/numereng-src",
+            extras=["training"],
+            dependency_spec="numereng[training]",
+            installed_numereng_version="1.2.3",
+            verified_dependencies=["numereng", "cloudpickle"],
+            skipped_existing_paths=[],
+            installed_skill_ids=["numereng-experiment-ops"],
+        )
+
+    monkeypatch.setattr(api_module, "workspace_init", fake_workspace_init)
+
+    exit_code = cli.main(
+        [
+            "init",
+            "--workspace",
+            "/tmp/numerai-dev",
+            "--runtime-source",
+            "path",
+            "--runtime-path",
+            "/tmp/numereng-src",
+            "--with-training",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["runtime_source"] == "path"
+    assert payload["extras"] == ["training"]
+    assert payload["verified_dependencies"] == ["numereng", "cloudpickle"]
+
+
+def test_cli_workspace_sync_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_workspace_sync(request: api_module.WorkspaceSyncRequest) -> api_module.WorkspaceSyncResponse:
+        assert request.workspace_root == "/tmp/numerai-dev"
+        assert request.with_mlops is True
+        return api_module.WorkspaceSyncResponse(
+            workspace_root="/tmp/numerai-dev",
+            store_root="/tmp/numerai-dev/.numereng",
+            workspace_project_path="/tmp/numerai-dev/pyproject.toml",
+            python_version_path="/tmp/numerai-dev/.python-version",
+            venv_path="/tmp/numerai-dev/.venv",
+            created_paths=[],
+            updated_paths=["/tmp/numerai-dev/pyproject.toml"],
+            runtime_source="pypi",
+            runtime_path=None,
+            extras=["mlops"],
+            dependency_spec="numereng[mlops]==1.2.3",
+            installed_numereng_version="1.2.3",
+            verified_dependencies=["numereng", "cloudpickle"],
+        )
+
+    monkeypatch.setattr(api_module, "workspace_sync", fake_workspace_sync)
+
+    exit_code = cli.main(["workspace", "sync", "--workspace", "/tmp/numerai-dev", "--with-mlops"])
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["venv_path"] == "/tmp/numerai-dev/.venv"
+    assert payload["extras"] == ["mlops"]
 
 
 def test_cli_viz_launches_packaged_app(

@@ -22,6 +22,7 @@
 - Python facade: `import numereng.api`
 
 It orchestrates:
+- workspace bootstrap and runtime sync
 - training
 - submission
 - experiments
@@ -72,7 +73,7 @@ It orchestrates:
           | src/numereng/config/*|       | src/numereng/platform|
           +----------------------+       +----------------------+
 
-Persistence root (default): `.numereng/`
+Canonical runtime store: `.numereng/` inside one user workspace root
 ```
 
 ## 4. Source Layout
@@ -89,6 +90,7 @@ src/numereng/
     numerai_client.py
 
   features/
+    workspace/                 # workspace scaffold + uv runtime provisioning
     training/                  # training pipeline, run manifests/artifacts
       scoring/                 # modular post-training scoring service + metric engines
     serving/                   # submission packages, live build, and model-upload pickle assembly
@@ -153,6 +155,8 @@ Boundary behavior:
   - `2`: parse/usage failure
 
 Command families:
+- `init`: workspace scaffold + local uv runtime provisioning
+- `workspace`: `sync`
 - `run`: `train`, `score`, `submit`, `cancel`
 - `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `run-plan`, `score-round`, `promote`, `report`, `pack`
 - `baseline`: `build`
@@ -169,51 +173,34 @@ Command families:
 - `numerai`: `datasets` (`list`, `download`), `models`, `round`, `forum scrape`
 
 ## 6. Runtime Persistence Model
-Default store root: `.numereng`
+Numereng has two path surfaces:
 
-Canonical top-level dirs:
+- workspace-root authoring paths: `experiments/`, `notes/`, `custom_models/`, `research_programs/`, `.agents/skills/`
+- workspace-root runtime bootstrap files: `pyproject.toml`, `.python-version`, `.venv/`
+- hidden runtime store: `.numereng/`
+
+Canonical runtime-store dirs under `.numereng/`:
 - `runs`
 - `datasets`
 - `cloud`
-- `experiments`
-- `notes`
 - `cache`
 - `tmp`
 - `remote_ops`
 
-Canonical top-level sqlite files:
+Canonical sqlite files under `.numereng/`:
 - `numereng.db`
 - `numereng.db-shm`
 - `numereng.db-wal`
 
-Dynamic top-level dirs may also appear:
+Dynamic runtime-store dirs may also appear under `.numereng/`:
 - `hpo/`
 - `ensembles/`
 
 ```text
-.numereng/
-  numereng.db
-  numereng.db-shm
-  numereng.db-wal
-
-  runs/
-    <run_id>/
-      run.json                      # includes durable execution provenance
-      runtime.json
-      run.log
-      resolved.json
-      results.json
-      metrics.json
-      score_provenance.json
-      artifacts/predictions/*.parquet
-        numereng-managed parquet artifacts use ZSTD level 3
-
-  datasets/
-    baselines/
-      <baseline_name>/
-        baseline.json
-        pred_<baseline_name>.parquet
-
+<workspace>/
+  pyproject.toml
+  .python-version
+  .venv/
   experiments/
     <experiment_id>/
       experiment.json
@@ -243,6 +230,8 @@ Dynamic top-level dirs may also appear:
           round.md
           llm_trace.jsonl
           llm_trace.md
+      hpo/<study_id>/...
+      ensembles/<ensemble_id>/...
     _archive/
       <experiment_id>/
         experiment.json
@@ -252,26 +241,6 @@ Dynamic top-level dirs may also appear:
       hpo/<study_id>/...
       ensembles/<ensemble_id>/...
 
-  hpo/<study_id>/...                  # global studies
-  ensembles/<ensemble_id>/...         # global ensembles
-  datasets/
-  cache/
-    cloud/
-      <provider>/
-        runs/<run_id>/state.json
-        runs/<run_id>/pull/
-        ops/<op_id>/state.json
-    remote_ops/
-      pulls/
-        <target_id>/
-          experiments/<experiment_id>/{experiment.json,pull.json}
-          runs/<run_id>/*
-  tmp/
-    remote-configs/*.json            # retention-managed staging for detached remote launches
-    lifecycle_smoke/<session>/*.json # generated smoke-test configs
-  remote_ops/
-    experiment_run_plan/
-      <experiment_id>__<start>_<end>.json
   notes/
     __RESEARCH_MEMORY__/
       CURRENT.md
@@ -279,7 +248,47 @@ Dynamic top-level dirs may also appear:
       topics/*.md
       decisions/*.md
       legacy-progression/...
-  cloud/                              # legacy compatibility-only cloud state during migration
+
+  .numereng/
+    numereng.db
+    numereng.db-shm
+    numereng.db-wal
+    runs/
+      <run_id>/
+        run.json                      # includes durable execution provenance
+        runtime.json
+        run.log
+        resolved.json
+        results.json
+        metrics.json
+        score_provenance.json
+        artifacts/predictions/*.parquet
+          numereng-managed parquet artifacts use ZSTD level 3
+    datasets/
+      baselines/
+        <baseline_name>/
+          baseline.json
+          pred_<baseline_name>.parquet
+    hpo/<study_id>/...                # global studies
+    ensembles/<ensemble_id>/...       # global ensembles
+    cache/
+      cloud/
+        <provider>/
+          runs/<run_id>/state.json
+          runs/<run_id>/pull/
+          ops/<op_id>/state.json
+      remote_ops/
+        pulls/
+          <target_id>/
+            experiments/<experiment_id>/{experiment.json,pull.json}
+            runs/<run_id>/*
+    tmp/
+      remote-configs/*.json           # retention-managed staging for detached remote launches
+      lifecycle_smoke/<session>/*.json # generated smoke-test configs
+    remote_ops/
+      experiment_run_plan/
+        <experiment_id>__<start>_<end>.json
+    cloud/                            # legacy compatibility-only cloud state during migration
 ```
 
 Data model split:
@@ -303,6 +312,24 @@ numereng [--fail]
   -> cli.main
   -> api.run_bootstrap_check
   -> HealthResponse JSON
+```
+
+Workspace bootstrap / repair:
+```text
+numereng init
+  -> cli.commands.init
+  -> features.workspace.init_workspace
+      -> scaffold canonical workspace roots
+      -> features.workspace.runtime.sync_workspace_environment
+          -> create/update workspace pyproject.toml
+          -> create/update .python-version
+          -> uv sync
+          -> verify numereng + required runtime deps inside .venv
+
+numereng workspace sync
+  -> cli.commands.workspace
+  -> api.workspace_sync
+  -> features.workspace.runtime.sync_workspace_environment
 ```
 
 ### 7.2 Training

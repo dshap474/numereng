@@ -176,6 +176,9 @@ from numereng.api.contracts import (
     VizAppRequest,
     WorkspaceInitRequest,
     WorkspaceInitResponse,
+    WorkspaceRuntimeSource,
+    WorkspaceSyncRequest,
+    WorkspaceSyncResponse,
 )
 from numereng.platform.errors import PackageError
 
@@ -252,6 +255,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "store_repair_run_lifecycles": ("numereng.api._store", "store_repair_run_lifecycles"),
     "create_viz_app": ("numereng.api._viz", "create_viz_app"),
     "workspace_init": ("numereng.api._workspace", "workspace_init"),
+    "workspace_sync": ("numereng.api._workspace", "workspace_sync"),
     "cloud_aws_image_build_push": ("numereng.api.cloud", "cloud_aws_image_build_push"),
     "cloud_aws_train_cancel": ("numereng.api.cloud", "cloud_aws_train_cancel"),
     "cloud_aws_train_extract": ("numereng.api.cloud", "cloud_aws_train_extract"),
@@ -367,7 +371,14 @@ def __getattr__(name: str):
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     module_name, attribute_name = target
-    value = getattr(import_module(module_name), attribute_name)
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError as exc:
+        missing = exc.name or ""
+        if missing and not missing.startswith("numereng"):
+            raise PackageError(f"runtime_dependency_missing:{missing}:run_numereng_workspace_sync") from exc
+        raise
+    value = getattr(module, attribute_name)
     globals()[name] = value
     return value
 
@@ -623,6 +634,9 @@ __all__ = [
     "StoreRebuildResponse",
     "WorkspaceInitRequest",
     "WorkspaceInitResponse",
+    "WorkspaceRuntimeSource",
+    "WorkspaceSyncRequest",
+    "WorkspaceSyncResponse",
     "VizAppRequest",
     "TrainingEngineMode",
     "PostTrainingScoringPolicy",
@@ -757,6 +771,7 @@ __all__ = [
     "store_repair_run_lifecycles",
     "store_rebuild",
     "workspace_init",
+    "workspace_sync",
     "create_viz_app",
     "run_training",
     "run_bootstrap_check",

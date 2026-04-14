@@ -1,5 +1,0 @@
-plan_index,round,seed,target,horizon,config_path,score_stage_default
-1,r1,42,target_alpha_20,20d,configs/r1_medium_target_alpha_20_seed42_full_history_refit.json,post_training_core
-2,r1,43,target_charlie_20,20d,configs/r1_medium_target_charlie_20_seed43_full_history_refit.json,post_training_core
-3,r1,42,target_jasper_60,60d,configs/r1_small_target_jasper_60_seed42_full_history_refit.json,post_training_core
-4,r1,42,target_alpha_20,20d,configs/r1_small_target_alpha_20_seed42_full_history_refit.json,post_training_core

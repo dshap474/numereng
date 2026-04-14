@@ -3,7 +3,8 @@
 USAGE = (
     "usage:\n"
     "  numereng [--fail]\n"
-    "  numereng init [--workspace <path>]\n"
+    "  numereng init [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]\n"  # noqa: E501
+    "  numereng workspace sync [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]\n"  # noqa: E501
     "  numereng viz [--workspace <path>] [--host <host>] [--port <n>]\n"
     "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--workspace <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
     "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--experiment-id <id>] [--workspace <path>]\n"  # noqa: E501

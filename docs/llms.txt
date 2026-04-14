@@ -4,7 +4,7 @@ Status: stable CLI/API boundaries; feature-slice internals
 Purpose:
 - Numerai workflow package (train, submit, experiments, HPO, ensemble, neutralize, store, cloud, viz monitoring).
 - Public surfaces: CLI (`numereng`) and Python facade (`import numereng.api`).
-- Runtime baseline: Python `3.12+`; package users install `numereng` and work from a workspace root, while repo contributors use the project-managed `.venv` via `uv sync --extra dev`.
+- Runtime baseline: Python `3.12+`; package users bootstrap a workspace-local `uv` project via `numereng init` and then run `uv run numereng ...` from that workspace, while repo contributors use the project-managed `.venv` via `uv sync --extra dev`.
 
 Read order:
 1) docs/llms.txt
@@ -59,10 +59,12 @@ Source map:
 
 Workspace layout:
 - Workspace-root dirs: `experiments`, `notes`, `custom_models`, `research_programs`, `.agents/skills`.
-- Hidden runtime store: `.numereng` (`numereng.db`, `runs`, `datasets`, `cache`, `tmp`, `remote_ops`).
-- Numereng-managed dirs under `.numereng`: `experiments`, `notes`, `runs`, `datasets`, `cache`, `tmp`, `remote_ops`.
-- Top-level files: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
-- Dynamic roots may appear: `hpo/`, `ensembles/`.
+- Package-managed workspace runtime files: `pyproject.toml`, `.python-version`, `.venv/`.
+- Hidden runtime store: `.numereng` (`numereng.db`, `runs`, `datasets`, `cloud`, `cache`, `tmp`, `remote_ops`).
+- Numereng-managed dirs under `.numereng`: `runs`, `datasets`, `cloud`, `cache`, `tmp`, `remote_ops`.
+- Top-level sqlite files under `.numereng`: `numereng.db`, `numereng.db-shm`, `numereng.db-wal`.
+- Experiment-local dynamic roots may appear under `experiments/<experiment_id>/`: `hpo/`, `ensembles/`.
+- Global dynamic runtime roots may also appear under `.numereng/`: `hpo/`, `ensembles/`.
 - Legacy compatibility state may still appear under `cloud/` during migration, but new cloud writers use `cache/cloud/`.
 - Canonical rolling research memory now lives under `notes/__RESEARCH_MEMORY__/`:
   - `CURRENT.md` is the single rolling frontier / next-step note
@@ -117,6 +119,9 @@ Key artifacts:
 Wiring map:
 - Bootstrap:
   `numereng [--fail] -> cli.main -> api.run_bootstrap_check`
+- Workspace bootstrap / repair:
+  `cli init -> features.workspace.init_workspace -> features.workspace.runtime.sync_workspace_environment -> uv sync`
+  `cli workspace sync -> api.workspace_sync -> features.workspace.runtime.sync_workspace_environment -> uv sync`
 - Train:
   `cli run train -> bind cli metadata -> api.run_training -> api.run_training_pipeline (compat) -> features.training.run_training`
 - Public workflow entrypoint:
