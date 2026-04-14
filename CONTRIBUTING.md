@@ -8,7 +8,7 @@ This file is contributor-facing. End users should install `numereng`, initialize
 
 - Python 3.12+
 - `uv`
-- Node.js 20+ (only needed for `make viz`)
+- Node.js 20+ (only needed for `just viz`)
 
 ## Setup
 

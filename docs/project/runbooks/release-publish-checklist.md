@@ -6,11 +6,14 @@ Use this runbook before publishing a new numereng release.
 
 1. Sync packaged docs and shipped skills from canonical sources:
    - `./scripts/sync_packaged_assets.sh`
-2. Run the fast gate:
+2. Confirm local secrets are still untracked and out of release artifacts:
+   - verify `.env` and similar auth files are ignored
+   - verify no secrets are staged in the publish diff
+3. Run the fast gate:
    - `just test`
-3. Run the install smoke:
+4. Run the install smoke:
    - `./scripts/release_smoke_install.sh`
-4. If serving/model-upload changes are included, run the serving release gate:
+5. If serving/model-upload changes are included, run the serving release gate:
    - `docs/project/runbooks/serve-release-gate.md`
 
 ## Optional Artifact Hygiene Check
@@ -33,4 +36,8 @@ Expected result:
 1. Build release artifacts:
    - `uv build`
 2. Confirm the changelog or release notes are ready.
-3. Publish with the maintainer workflow you normally use.
+3. Keep the public share language explicit:
+   - community-built
+   - self-supported
+   - not affiliated with or endorsed by Numerai
+4. Publish with the maintainer workflow you normally use.

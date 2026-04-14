@@ -6,6 +6,15 @@ Reference for the supported `numereng` CLI surface.
 
 - `numereng [--fail]`
 - `numereng --help`
+- `numereng init [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]`
+- `numereng workspace sync [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]`
+
+Notes:
+
+- `init` now scaffolds the workspace and provisions a workspace-local `uv` project with `.venv/`
+- `workspace sync` is the recovery path when package metadata changes or the local workspace env drifts
+- `--runtime-source pypi` is the default end-user mode
+- `--runtime-source path --runtime-path /abs/path/to/numereng` is the explicit contributor/local-source mode
 
 ## `run`
 

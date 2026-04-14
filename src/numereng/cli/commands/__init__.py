@@ -22,6 +22,7 @@ __all__ = [
     "handle_serve_command",
     "handle_store_command",
     "handle_viz_command",
+    "handle_workspace_command",
 ]
 
 _COMMAND_MODULES = {
@@ -41,6 +42,7 @@ _COMMAND_MODULES = {
     "handle_serve_command": "numereng.cli.commands.serve",
     "handle_store_command": "numereng.cli.commands.store",
     "handle_viz_command": "numereng.cli.commands.viz",
+    "handle_workspace_command": "numereng.cli.commands.workspace",
 }
 
 

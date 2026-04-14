@@ -8,6 +8,11 @@ from pathlib import Path
 
 from numereng.assets import shipped_skill_ids, shipped_skills_root
 from numereng.features.store.layout import resolve_workspace_layout
+from numereng.features.workspace.runtime import (
+    WorkspaceRuntimeSource,
+    WorkspaceSyncResult,
+    sync_workspace_environment,
+)
 
 
 @dataclass(frozen=True)
@@ -17,10 +22,18 @@ class WorkspaceInitResult:
     created_paths: tuple[Path, ...]
     skipped_existing_paths: tuple[Path, ...]
     installed_skill_ids: tuple[str, ...]
+    sync_result: WorkspaceSyncResult
 
 
-def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
-    """Create one canonical numereng workspace scaffold without overwriting user files."""
+def init_workspace(
+    *,
+    workspace_root: str | Path = ".",
+    runtime_source: WorkspaceRuntimeSource | None = None,
+    runtime_path: str | Path | None = None,
+    with_training: bool | None = None,
+    with_mlops: bool | None = None,
+) -> WorkspaceInitResult:
+    """Create one canonical numereng workspace scaffold and local uv runtime."""
 
     layout = resolve_workspace_layout(workspace_root)
     created: list[Path] = []
@@ -74,7 +87,7 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
             [
                 "# numereng workspace",
                 "",
-                "This workspace uses visible authoring roots plus a hidden `.numereng/` runtime store.",
+                "This workspace uses a local `uv` project plus a hidden `.numereng/` runtime store.",
                 "",
                 "Visible workspace roots:",
                 "- `experiments/`",
@@ -82,6 +95,10 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
                 "- `custom_models/`",
                 "- `research_programs/`",
                 "- `.agents/skills/`",
+                "",
+                "Run numereng through the workspace-local environment:",
+                "- `uv run numereng --help`",
+                "- `uv run numereng experiment list`",
                 "",
                 "Numereng-managed state under `.numereng/`:",
                 "- `.numereng/runs/`",
@@ -116,6 +133,7 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
                 "- `custom_models/` is the canonical runtime discovery root for custom model plugins.",
                 "- `research_programs/` is resolved before packaged built-ins.",
                 "- Do not assume a `numereng` source checkout is required to use this workspace.",
+                "- Use `uv run numereng ...` from this workspace so commands use the local `.venv`.",
                 "",
             ]
         )
@@ -267,12 +285,21 @@ def init_workspace(*, workspace_root: str | Path = ".") -> WorkspaceInitResult:
                 created.append(destination)
             installed_skill_ids.append(skill_id)
 
+    sync_result = sync_workspace_environment(
+        workspace_root=layout.workspace_root,
+        runtime_source=runtime_source,
+        runtime_path=runtime_path,
+        with_training=with_training,
+        with_mlops=with_mlops,
+    )
+
     return WorkspaceInitResult(
         workspace_root=layout.workspace_root,
         store_root=layout.store_root,
         created_paths=tuple(created),
         skipped_existing_paths=tuple(skipped),
         installed_skill_ids=tuple(installed_skill_ids),
+        sync_result=sync_result,
     )
 
 

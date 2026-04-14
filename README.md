@@ -4,6 +4,8 @@
 
 `numereng` is a package-first agentic development environment for Numerai. It gives you one installed runtime plus one workspace layout for experiments, notes, custom models, research programs, shipped agent skills, and the read-only dashboard.
 
+`numereng` is a community-built, self-supported tool. It is not affiliated with, endorsed by, or supported by Numerai.
+
 Stable public interfaces:
 
 - CLI: `numereng`
@@ -15,14 +17,17 @@ Stable public interfaces:
 Requires Python `3.12+`.
 
 ```bash
-uv tool install numereng
+uvx --from numereng numereng init --workspace numerai-dev
 ```
 
 Alternative:
 
 ```bash
 pip install numereng
+python -m numereng.cli init --workspace numerai-dev
 ```
+
+`numereng init` now creates the canonical workspace scaffold and provisions a workspace-local `uv` project with its own `.venv`. From then on, run commands from the workspace with `uv run numereng ...`.
 
 The base install includes the public Python API, CLI, monitor stack, and the core local training/scoring runtime.
 
@@ -36,9 +41,8 @@ Optional extras:
 Create a fresh workspace anywhere:
 
 ```bash
-mkdir numerai-dev
+uvx --from numereng numereng init --workspace numerai-dev
 cd numerai-dev
-numereng init
 ```
 
 That creates the canonical workspace layout:
@@ -56,9 +60,9 @@ numerai-dev/
 Then work from that directory:
 
 ```bash
-numereng --help
-numereng experiment list
-numereng viz
+uv run numereng --help
+uv run numereng experiment list
+uv run numereng viz
 ```
 
 Default dashboard endpoint:
@@ -84,7 +88,7 @@ Hidden numereng-managed runtime state:
 - `.numereng/tmp/`
 - `.numereng/remote_ops/`
 
-`numereng init` is idempotent and does not overwrite existing user-authored files.
+`numereng init` is idempotent and does not overwrite existing user-authored files. If the workspace runtime drifts after a package upgrade, run `uv run numereng workspace sync`.
 
 ## Core Workflows
 

@@ -257,6 +257,98 @@ def test_run_bootstrap_check_translates_internal_error() -> None:
         run_bootstrap_check(fail=True)
 
 
+def test_workspace_init_returns_synced_workspace_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    from numereng.features.workspace.runtime import WorkspaceSyncResult
+    from numereng.features.workspace.service import WorkspaceInitResult
+
+    def fake_init_workspace_record(**kwargs: Any) -> WorkspaceInitResult:
+        assert kwargs["runtime_source"] == "path"
+        assert kwargs["runtime_path"] == "/tmp/numereng-src"
+        assert kwargs["with_training"] is True
+        return WorkspaceInitResult(
+            workspace_root=Path("/tmp/numerai-dev"),
+            store_root=Path("/tmp/numerai-dev/.numereng"),
+            created_paths=(Path("/tmp/numerai-dev/experiments"),),
+            skipped_existing_paths=(),
+            installed_skill_ids=("numereng-experiment-ops",),
+            sync_result=WorkspaceSyncResult(
+                workspace_root=Path("/tmp/numerai-dev"),
+                store_root=Path("/tmp/numerai-dev/.numereng"),
+                workspace_project_path=Path("/tmp/numerai-dev/pyproject.toml"),
+                python_version_path=Path("/tmp/numerai-dev/.python-version"),
+                venv_path=Path("/tmp/numerai-dev/.venv"),
+                created_paths=(Path("/tmp/numerai-dev/pyproject.toml"),),
+                updated_paths=(),
+                runtime_source="path",
+                runtime_path=Path("/tmp/numereng-src"),
+                extras=("training",),
+                dependency_spec="numereng[training]",
+                installed_numereng_version="1.2.3",
+                verified_dependencies=("numereng", "cloudpickle"),
+            ),
+        )
+
+    monkeypatch.setattr("numereng.api._workspace.init_workspace_record", fake_init_workspace_record)
+
+    response = api_module.workspace_init(
+        api_module.WorkspaceInitRequest(
+            workspace_root="/tmp/numerai-dev",
+            runtime_source="path",
+            runtime_path="/tmp/numereng-src",
+            with_training=True,
+        )
+    )
+
+    assert response.runtime_source == "path"
+    assert response.runtime_path == "/tmp/numereng-src"
+    assert response.venv_path == "/tmp/numerai-dev/.venv"
+    assert response.verified_dependencies == ["numereng", "cloudpickle"]
+
+
+def test_workspace_sync_returns_synced_runtime_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    from numereng.features.workspace.runtime import WorkspaceSyncResult
+
+    def fake_sync_workspace_environment_record(**kwargs: Any) -> WorkspaceSyncResult:
+        assert kwargs["workspace_root"] == "/tmp/numerai-dev"
+        return WorkspaceSyncResult(
+            workspace_root=Path("/tmp/numerai-dev"),
+            store_root=Path("/tmp/numerai-dev/.numereng"),
+            workspace_project_path=Path("/tmp/numerai-dev/pyproject.toml"),
+            python_version_path=Path("/tmp/numerai-dev/.python-version"),
+            venv_path=Path("/tmp/numerai-dev/.venv"),
+            created_paths=(),
+            updated_paths=(Path("/tmp/numerai-dev/pyproject.toml"),),
+            runtime_source="pypi",
+            runtime_path=None,
+            extras=(),
+            dependency_spec="numereng==1.2.3",
+            installed_numereng_version="1.2.3",
+            verified_dependencies=("numereng", "cloudpickle"),
+        )
+
+    monkeypatch.setattr(
+        "numereng.api._workspace.sync_workspace_environment_record",
+        fake_sync_workspace_environment_record,
+    )
+
+    response = api_module.workspace_sync(api_module.WorkspaceSyncRequest(workspace_root="/tmp/numerai-dev"))
+
+    assert response.runtime_source == "pypi"
+    assert response.updated_paths == ["/tmp/numerai-dev/pyproject.toml"]
+
+
+def test_lazy_public_api_translates_missing_runtime_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_import_module(name: str):
+        if name == "numereng.api._serving":
+            raise ModuleNotFoundError("No module named 'cloudpickle'", name="cloudpickle")
+        return importlib.import_module(name)
+
+    monkeypatch.setattr("numereng.api.import_module", fake_import_module)
+
+    with pytest.raises(PackageError, match="runtime_dependency_missing:cloudpickle:run_numereng_workspace_sync"):
+        getattr(api_module, "serve_pickle_build")
+
+
 def test_public_pipeline_module_is_importable() -> None:
     pipeline_module = importlib.import_module("numereng.api.pipeline")
 

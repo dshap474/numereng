@@ -1,6 +1,6 @@
 # Numereng
 
-`numereng` is an installable Numerai workspace runtime. You install the package once, initialize a workspace, and then do your work from that workspace.
+`numereng` is an installable Numerai workspace runtime. You bootstrap a workspace once, it gets its own local `uv` project and `.venv`, and then you do your work from that workspace.
 
 Stable public interfaces:
 
@@ -11,11 +11,9 @@ Stable public interfaces:
 ## Golden Path
 
 ```bash
-uv tool install numereng
-mkdir numerai-dev
+uvx --from numereng numereng init --workspace numerai-dev
 cd numerai-dev
-numereng init
-numereng viz
+uv run numereng viz
 ```
 
 ## Canonical Workspace Layout

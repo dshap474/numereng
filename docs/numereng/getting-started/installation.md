@@ -1,41 +1,34 @@
 # Installation
 
-Set up `numereng` as an installed runtime, then initialize a workspace.
+Bootstrap a workspace as a local `uv` project. The workspace owns its `.venv` and installed `numereng` runtime.
 
 ## Prerequisites
 
 - Python `3.12+`
-- `uv` or `pip`
+- `uv`
 
-## Install The Package
+## Bootstrap A Workspace
 
 Preferred:
 
 ```bash
-uv tool install numereng
+uvx --from numereng numereng init --workspace numerai-dev
 ```
 
-Alternative:
+Contributor or local-source mode:
 
 ```bash
-pip install numereng
+uvx --from /absolute/path/to/numereng numereng init --workspace numerai-dev --runtime-source path --runtime-path /absolute/path/to/numereng
 ```
 
 The base install already includes the core local training/scoring stack. Optional extras remain available for additional model backends and HPO tooling:
 
 ```bash
-pip install "numereng[training]"
-```
-
-## Initialize A Workspace
-
-```bash
-mkdir numerai-dev
 cd numerai-dev
-numereng init
+uv run numereng workspace sync --with-training
 ```
 
-This creates:
+`numereng init` creates:
 
 - `experiments/`
 - `notes/`
@@ -43,17 +36,16 @@ This creates:
 - `research_programs/`
 - `.agents/skills/`
 - `.numereng/`
+- `pyproject.toml`
+- `.python-version`
+- `.venv/`
 
 ## Verify The Install
 
 ```bash
-numereng --help
-```
-
-If you installed `numereng` into a Python environment rather than as a `uv tool`, you can also verify the public Python facade:
-
-```bash
-python -c "import numereng.api"
+cd numerai-dev
+uv run numereng --help
+uv run python -c "import numereng.api, cloudpickle"
 ```
 
 ## Configure Credentials
@@ -70,7 +62,7 @@ export NUMERAI_SECRET_KEY=your_secret_key
 From the workspace root:
 
 ```bash
-numereng viz
+uv run numereng viz
 ```
 
 Default local endpoint:
