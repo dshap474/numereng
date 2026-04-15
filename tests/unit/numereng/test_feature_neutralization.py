@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 
@@ -8,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
+from numerai_tools import scoring as numerai_tools_scoring
 
 from numereng.features.feature_neutralization import (
     NeutralizationDataError,
@@ -18,16 +18,6 @@ from numereng.features.feature_neutralization import (
     neutralize_run_predictions,
 )
 from numereng.features.feature_neutralization import service as service_module
-
-
-def _load_vendored_scoring_module():
-    module_path = Path(__file__).resolve().parents[3] / "vendor" / "numerai-tools" / "numerai_tools" / "scoring.py"
-    spec = importlib.util.spec_from_file_location("vendored_numerai_tools_scoring", module_path)
-    if spec is None or spec.loader is None:  # pragma: no cover - defensive import guard
-        raise RuntimeError("vendored_scoring_module_missing")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _write_predictions(path: Path) -> pd.DataFrame:
@@ -203,7 +193,6 @@ def test_neutralize_prediction_frame_rejects_duplicate_neutralizer_keys() -> Non
 
 
 def test_neutralize_prediction_frame_matches_vendored_numerai_tools_global_mode() -> None:
-    scoring_module = _load_vendored_scoring_module()
     predictions = pd.DataFrame(
         {
             "era": ["0001", "0001", "0002", "0002"],
@@ -229,7 +218,7 @@ def test_neutralize_prediction_frame_matches_vendored_numerai_tools_global_mode(
         rank_output=False,
     )
 
-    expected = scoring_module.neutralize(
+    expected = numerai_tools_scoring.neutralize(
         predictions[["prediction"]].copy(),
         neutralizers[["feature_1", "feature_2"]].copy(),
         proportion=0.5,
@@ -244,7 +233,6 @@ def test_neutralize_prediction_frame_matches_vendored_numerai_tools_global_mode(
 
 
 def test_neutralize_prediction_frame_matches_vendored_numerai_tools_era_mode() -> None:
-    scoring_module = _load_vendored_scoring_module()
     predictions = pd.DataFrame(
         {
             "era": ["0001", "0001", "0001", "0002", "0002", "0002"],
@@ -274,7 +262,7 @@ def test_neutralize_prediction_frame_matches_vendored_numerai_tools_era_mode() -
     for era in ("0001", "0002"):
         pred_slice = predictions.loc[predictions["era"] == era, ["prediction"]].copy()
         neutralizer_slice = neutralizers.loc[neutralizers["era"] == era, ["feature_1", "feature_2"]].copy()
-        expected_parts.append(scoring_module.neutralize(pred_slice, neutralizer_slice, proportion=0.3))
+        expected_parts.append(numerai_tools_scoring.neutralize(pred_slice, neutralizer_slice, proportion=0.3))
     expected = pd.concat(expected_parts, axis=0)
 
     np.testing.assert_allclose(
@@ -286,7 +274,6 @@ def test_neutralize_prediction_frame_matches_vendored_numerai_tools_era_mode() -
 
 
 def test_internal_neutralize_matrix_matches_vendored_numerai_tools_for_multiple_columns() -> None:
-    scoring_module = _load_vendored_scoring_module()
     values = pd.DataFrame(
         {
             "prediction_a": [0.11, 0.42, 0.73, 0.21],
@@ -305,7 +292,7 @@ def test_internal_neutralize_matrix_matches_vendored_numerai_tools_for_multiple_
         neutralizers=neutralizers.to_numpy(dtype=float),
         proportion=0.5,
     )
-    expected = scoring_module.neutralize(values.copy(), neutralizers.copy(), proportion=0.5)
+    expected = numerai_tools_scoring.neutralize(values.copy(), neutralizers.copy(), proportion=0.5)
 
     np.testing.assert_allclose(actual, expected.to_numpy(dtype=float), rtol=1e-10, atol=1e-10)
 

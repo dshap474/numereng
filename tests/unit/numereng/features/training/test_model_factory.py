@@ -42,6 +42,36 @@ MODEL_REGISTRY = {{{class_name!r}: {class_name}}}
     )
 
 
+def _write_backend_plugin_file(
+    path: Path,
+    *,
+    module_name: str,
+    backend_class_name: str,
+    public_model_name: str,
+    missing_backend_error: str,
+) -> None:
+    path.write_text(
+        (
+            f"try:\n"
+            f"    from {module_name} import {backend_class_name} as _BackendModel\n"
+            f"except (ImportError, AttributeError) as exc:\n"
+            f"    raise RuntimeError({missing_backend_error!r}) from exc\n\n"
+            f"class {public_model_name}:\n"
+            f"    def __init__(self, feature_cols=None, **kwargs):\n"
+            f"        self.feature_cols = feature_cols\n"
+            f"        self.kwargs = kwargs\n"
+            f"        self.backend = _BackendModel(**kwargs)\n\n"
+            f"    def fit(self, X, y):\n"
+            f"        self.backend.fit(X, y)\n"
+            f"        return self\n\n"
+            f"    def predict(self, X):\n"
+            f"        return self.backend.predict(X)\n\n"
+            f"MODEL_REGISTRY = {{{public_model_name!r}: {public_model_name}}}\n"
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_fake_backend_module(
     monkeypatch: pytest.MonkeyPatch,
     module_name: str,
@@ -67,10 +97,6 @@ def _write_fake_backend_module(
 
 def _custom_model_path(model_name: str) -> Path:
     return Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models" / f"{model_name}.py"
-
-
-def _repo_custom_models_root() -> Path:
-    return Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models"
 
 
 def test_build_model_uses_builtin_model_registry() -> None:
@@ -220,27 +246,61 @@ def test_build_model_discover_module_from_custom_root(monkeypatch: pytest.Monkey
     assert hasattr(model, "fit")
 
 
-def test_build_model_xgboost_from_explicit_module_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_xgboost_from_explicit_module_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "xgboost", "XGBRegressor", True)
+    module_path = tmp_path / "xgboost_model.py"
+    _write_backend_plugin_file(
+        module_path,
+        module_name="xgboost",
+        backend_class_name="XGBRegressor",
+        public_model_name="XGBoostRegressor",
+        missing_backend_error="training_model_backend_missing_xgboost",
+    )
 
     model = model_factory.build_model(
         "XGBoostRegressor",
         {"n_estimators": 100},
-        {"module_path": str(_custom_model_path("xgboost_model"))},
+        {"module_path": str(module_path)},
     )
     assert model.__class__.__name__ == "XGBoostRegressor"
 
 
-def test_build_model_xgboost_from_custom_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_xgboost_from_custom_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "xgboost", "XGBRegressor", True)
-    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", _repo_custom_models_root)
+    root = tmp_path / "custom_models"
+    root.mkdir()
+    _write_backend_plugin_file(
+        root / "xgboost_model.py",
+        module_name="xgboost",
+        backend_class_name="XGBRegressor",
+        public_model_name="XGBoostRegressor",
+        missing_backend_error="training_model_backend_missing_xgboost",
+    )
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: root)
 
     model = model_factory.build_model("XGBoostRegressor", {"n_estimators": 200}, {})
     assert model.__class__.__name__ == "XGBoostRegressor"
 
 
-def test_build_model_xgboost_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_xgboost_missing_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "xgboost", "XGBRegressor", False)
+    module_path = tmp_path / "xgboost_model.py"
+    _write_backend_plugin_file(
+        module_path,
+        module_name="xgboost",
+        backend_class_name="XGBRegressor",
+        public_model_name="XGBoostRegressor",
+        missing_backend_error="training_model_backend_missing_xgboost",
+    )
 
     with pytest.raises(
         TrainingModelError,
@@ -249,24 +309,47 @@ def test_build_model_xgboost_missing_backend(monkeypatch: pytest.MonkeyPatch) ->
         model_factory.build_model(
             "XGBoostRegressor",
             {"n_estimators": 100},
-            {"module_path": str(_custom_model_path("xgboost_model"))},
+            {"module_path": str(module_path)},
         )
 
 
-def test_build_model_catboost_from_explicit_module_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_catboost_from_explicit_module_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "catboost", "CatBoostRegressor", True)
+    module_path = tmp_path / "catboost_model.py"
+    _write_backend_plugin_file(
+        module_path,
+        module_name="catboost",
+        backend_class_name="CatBoostRegressor",
+        public_model_name="CatBoostRegressor",
+        missing_backend_error="training_model_backend_missing_catboost",
+    )
 
     model = model_factory.build_model(
         "CatBoostRegressor",
         {"iterations": 200},
-        {"module_path": str(_custom_model_path("catboost_model"))},
+        {"module_path": str(module_path)},
     )
     assert model.__class__.__name__ == "CatBoostRegressor"
 
 
-def test_build_model_catboost_from_custom_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_catboost_from_custom_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "catboost", "CatBoostRegressor", True)
-    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", _repo_custom_models_root)
+    root = tmp_path / "custom_models"
+    root.mkdir()
+    _write_backend_plugin_file(
+        root / "catboost_model.py",
+        module_name="catboost",
+        backend_class_name="CatBoostRegressor",
+        public_model_name="CatBoostRegressor",
+        missing_backend_error="training_model_backend_missing_catboost",
+    )
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: root)
 
     model = model_factory.build_model("CatBoostRegressor", {"iterations": 200}, {})
     assert model.__class__.__name__ == "CatBoostRegressor"
@@ -285,8 +368,19 @@ def test_build_model_does_not_fall_back_to_packaged_repo_custom_models(
         model_factory.build_model("XGBoostRegressor", {"n_estimators": 200}, {})
 
 
-def test_build_model_catboost_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_model_catboost_missing_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     _write_fake_backend_module(monkeypatch, "catboost", "CatBoostRegressor", False)
+    module_path = tmp_path / "catboost_model.py"
+    _write_backend_plugin_file(
+        module_path,
+        module_name="catboost",
+        backend_class_name="CatBoostRegressor",
+        public_model_name="CatBoostRegressor",
+        missing_backend_error="training_model_backend_missing_catboost",
+    )
 
     with pytest.raises(
         TrainingModelError,
@@ -295,7 +389,7 @@ def test_build_model_catboost_missing_backend(monkeypatch: pytest.MonkeyPatch) -
         model_factory.build_model(
             "CatBoostRegressor",
             {"iterations": 200},
-            {"module_path": str(_custom_model_path("catboost_model"))},
+            {"module_path": str(module_path)},
         )
 
 

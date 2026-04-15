@@ -403,8 +403,29 @@ def test_build_oof_predictions_xgboost_trains_after_unlabeled_rows_are_filtered(
 
     custom_models_root = tmp_path / "custom_models"
     custom_models_root.mkdir()
-    source_module = Path(model_factory.__file__).resolve().parents[1] / "models" / "custom_models" / "xgboost_model.py"
-    (custom_models_root / "xgboost_model.py").write_text(source_module.read_text(encoding="utf-8"), encoding="utf-8")
+    (custom_models_root / "xgboost_model.py").write_text(
+        """
+from xgboost import XGBRegressor as _BackendModel
+
+
+class XGBoostRegressor:
+    def __init__(self, feature_cols=None, **kwargs):
+        self.feature_cols = feature_cols
+        self.kwargs = kwargs
+        self.backend = _BackendModel(**kwargs)
+
+    def fit(self, X, y):
+        self.backend.fit(X, y)
+        return self
+
+    def predict(self, X):
+        return self.backend.predict(X)
+
+
+MODEL_REGISTRY = {"XGBoostRegressor": XGBoostRegressor}
+""",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: custom_models_root)
 
     full = pd.DataFrame(

@@ -37,6 +37,9 @@ def _load_model_registry(module_path: Path) -> dict[str, Any]:
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001
+        message = str(exc)
+        if message.startswith("training_model_"):
+            raise TrainingModelError(message) from exc
         raise TrainingModelError(f"training_model_custom_module_load_failed:{module_path}") from exc
 
     registry = getattr(module, "MODEL_REGISTRY", None)
