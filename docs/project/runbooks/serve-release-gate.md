@@ -24,9 +24,10 @@ This is the release blocker for public model-upload support.
 2. Choose a spare Classic model slot that is not handling production submissions.
 3. Use a run-backed package whose components come from persisted `full_history_refit` model artifacts.
 4. Build a known-good pickle package:
-   - `uv run numereng serve pickle build --experiment-id <id> --package-id <id>`
+   - `uv run numereng serve pickle build --experiment-id <id> --package-id <id> --docker-image "Python 3.12"`
+   - confirm the build recorded `pickle_smoke_verified=true` for that same docker image
 5. Upload it:
-   - `uv run numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <spare_model_name>`
+   - `uv run numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <spare_model_name> --docker-image "Python 3.12"`
 6. Confirm:
    - upload succeeds locally
    - Numerai accepts the uploaded pickle

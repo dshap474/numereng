@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
@@ -60,6 +61,7 @@ from numereng.features.submission.client import SubmissionClient
 from numereng.platform.numerai_client import NumeraiClient
 
 NumeraiTournament = Literal["classic"]
+_DEFAULT_MODEL_UPLOAD_DOCKER_IMAGE = "Python 3.12"
 
 _LIVE_DATASET_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?/live\.parquet$")
 _LIVE_BENCHMARK_PATTERN = re.compile(
@@ -288,6 +290,7 @@ def build_submission_pickle(
     workspace_root: str | Path,
     experiment_id: str,
     package_id: str,
+    docker_image: str | None = None,
     client: ServingClient | None = None,
 ) -> PickleBuildResult:
     """Fit package components and serialize one Numerai-compatible predict callable."""
@@ -296,6 +299,9 @@ def build_submission_pickle(
     package = _normalize_existing_package_components(package=package, workspace_root=workspace_root)
     inspection = _inspect_and_persist_package(package=package, workspace_root=workspace_root)
     package = inspection.package
+    resolved_docker_image = (
+        docker_image or package.artifacts.get("pickle_runtime_docker_image") or _DEFAULT_MODEL_UPLOAD_DOCKER_IMAGE
+    )
     _ = client
     try:
         fitted_components = _load_pickle_compatible_components(workspace_root=workspace_root, package=package)
@@ -304,6 +310,12 @@ def build_submission_pickle(
             blend_rule=package.blend_rule,
             neutralization=package.neutralization,
             pickle_path=package.package_path / "artifacts" / "pickle" / "model.pkl",
+        )
+        smoke_details = _verify_isolated_pickle_runtime(
+            pickle_path=pickle_path,
+            fitted_components=fitted_components,
+            docker_image=resolved_docker_image,
+            working_dir=package.package_path / "artifacts" / "pickle",
         )
         updated = _save_package_update(
             package,
@@ -315,10 +327,30 @@ def build_submission_pickle(
                 "pickle_uses_baseline_inputs": str(
                     any(item.baseline_predictions_path is not None for item in fitted_components)
                 ).lower(),
+                "pickle_runtime_docker_image": resolved_docker_image,
+                "pickle_smoke_verified": "true",
+                "pickle_smoke_checked_at": smoke_details["checked_at"],
+                "pickle_smoke_command": smoke_details["command"],
+                "pickle_smoke_runtime": smoke_details["runtime"],
             },
         )
-        return PickleBuildResult(package=updated, pickle_path=pickle_path)
+        refreshed = _inspect_and_persist_package(package=updated, workspace_root=workspace_root)
+        return PickleBuildResult(
+            package=refreshed.package,
+            pickle_path=pickle_path,
+            docker_image=resolved_docker_image,
+            smoke_verified=True,
+        )
     except Exception as exc:
+        _save_package_update(
+            package,
+            status=package.status,
+            artifacts={
+                "pickle_runtime_docker_image": resolved_docker_image,
+                "pickle_smoke_verified": "false",
+                "pickle_smoke_checked_at": utc_now_iso(),
+            },
+        )
         _save_failure(package=package, stage="pickle_build", exc=exc)
         raise
 
@@ -340,21 +372,24 @@ def upload_submission_pickle(
         workspace_root=workspace_root,
         experiment_id=experiment_id,
         package_id=package_id,
+        docker_image=docker_image,
         client=numerai_client,
     )
     resolved_data_version = data_version or built.package.data_version
+    resolved_docker_image = docker_image or built.docker_image
     _validate_model_upload_options(
         client=numerai_client,
         data_version=resolved_data_version,
-        docker_image=docker_image,
+        docker_image=resolved_docker_image,
     )
+    _ensure_pickle_upload_ready(package=built.package, docker_image=resolved_docker_image)
     try:
         upload = upload_model_pickle_file(
             pickle_path=built.pickle_path,
             model_name=model_name,
             tournament="classic",
             data_version=resolved_data_version,
-            docker_image=docker_image,
+            docker_image=resolved_docker_image,
             client=numerai_client,
         )
     except Exception as exc:
@@ -609,6 +644,8 @@ def _load_pickle_compatible_components(
     workspace_root: str | Path,
     package: SubmissionPackageRecord,
 ) -> tuple[FittedComponent, ...]:
+    if package.neutralization is not None and package.neutralization.enabled:
+        raise ServingUnsupportedConfigError("serving_model_upload_neutralization_not_supported")
     loaded_components = []
     for item in package.components:
         try:
@@ -618,11 +655,120 @@ def _load_pickle_compatible_components(
         if (
             not loaded.model_upload_compatible
             or loaded.uses_custom_module
+            or loaded.model_type != "LGBMRegressor"
             or loaded.component.baseline_predictions_path is not None
         ):
             raise ServingUnsupportedConfigError("serving_model_upload_preflight_failed")
         loaded_components.append(loaded.component)
     return tuple(loaded_components)
+
+
+def _verify_isolated_pickle_runtime(
+    *,
+    pickle_path: Path,
+    fitted_components: tuple[FittedComponent, ...],
+    docker_image: str,
+    working_dir: Path,
+) -> dict[str, str]:
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        raise ServingRuntimeError("serving_model_upload_smoke_runtime_unavailable")
+    python_version = _docker_python_version(docker_image)
+    feature_cols = sorted({col for item in fitted_components for col in item.feature_cols})
+    id_cols = sorted({item.id_col for item in fitted_components})
+    era_cols = sorted({item.era_col for item in fitted_components})
+    python_args = [] if python_version is None else ["--python", python_version]
+    script = _pickle_smoke_script(
+        pickle_path=pickle_path,
+        feature_cols=feature_cols,
+        id_cols=id_cols,
+        era_cols=era_cols,
+    )
+    command = [
+        uvx,
+        *python_args,
+        "--with",
+        "cloudpickle",
+        "--with",
+        "pandas",
+        "--with",
+        "numpy",
+        "--with",
+        "lightgbm",
+        "python",
+        "-c",
+        script,
+    ]
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            cwd=str(working_dir.resolve()),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        message = (exc.stdout or "").strip()
+        if message:
+            raise ServingRuntimeError(f"serving_model_upload_smoke_failed:{message}") from exc
+        raise ServingRuntimeError("serving_model_upload_smoke_failed") from exc
+    return {
+        "checked_at": utc_now_iso(),
+        "command": " ".join(command[:-1] + ["<python-smoke-script>"]),
+        "runtime": docker_image,
+    }
+
+
+def _pickle_smoke_script(
+    *,
+    pickle_path: Path,
+    feature_cols: list[str],
+    id_cols: list[str],
+    era_cols: list[str],
+) -> str:
+    payload = {
+        "pickle_path": str(pickle_path.resolve()),
+        "feature_cols": feature_cols,
+        "id_cols": id_cols,
+        "era_cols": era_cols,
+    }
+    return (
+        "import json\n"
+        "import inspect\n"
+        "import pandas as pd\n"
+        f"payload = json.loads({json.dumps(json.dumps(payload))})\n"
+        "frame = pd.DataFrame({col: [0.0, 1.0] for col in payload['feature_cols']})\n"
+        "for col in payload['id_cols']:\n"
+        "    frame[col] = ['row_1', 'row_2']\n"
+        "for col in payload['era_cols']:\n"
+        "    frame[col] = ['live', 'live']\n"
+        "benchmark = pd.DataFrame(index=frame.index)\n"
+        "predictor = pd.read_pickle(payload['pickle_path'])\n"
+        "assert len(inspect.signature(predictor).parameters) in (1, 2)\n"
+        "submission = predictor(frame, benchmark)\n"
+        "assert isinstance(submission, pd.DataFrame)\n"
+        "assert list(submission.columns) == ['prediction']\n"
+        "assert len(submission) == len(frame)\n"
+        "assert submission['prediction'].notna().all()\n"
+        "assert submission['prediction'].between(0, 1).all()\n"
+    )
+
+
+def _docker_python_version(docker_image: str) -> str | None:
+    match = re.search(r"Python\\s+(\\d+\\.\\d+)", docker_image)
+    if match is not None:
+        return match.group(1)
+    return None
+
+
+def _ensure_pickle_upload_ready(*, package: SubmissionPackageRecord, docker_image: str) -> None:
+    smoke_verified = package.artifacts.get("pickle_smoke_verified") == "true"
+    smoke_runtime = package.artifacts.get("pickle_runtime_docker_image")
+    if not smoke_verified:
+        raise ServingValidationError("serving_model_upload_smoke_not_verified")
+    if smoke_runtime != docker_image:
+        raise ServingValidationError("serving_model_upload_runtime_mismatch")
 
 
 def _resolve_live_dataset_names(*, client: ServingClient) -> tuple[str, str | None]:

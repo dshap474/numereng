@@ -36,6 +36,8 @@ def inspect_submission_package(
         package_model_blockers.append("serving_tournament_not_supported")
     if not package.data_version.startswith("v"):
         warnings.append("serving_data_version_unrecognized")
+    if package.neutralization is not None and package.neutralization.enabled:
+        package_model_blockers.append("serving_model_upload_neutralization_not_supported")
 
     for component in package.components:
         local_blockers: list[str] = []
@@ -133,10 +135,11 @@ def inspect_submission_package(
         and not package_model_blockers
         and all(item.model_upload_compatible for item in component_reports)
     )
+    pickle_upload_ready = model_upload_compatible and _pickle_smoke_verified(package)
     deployment_classification = _deployment_classification(
         local_live_compatible=local_live_compatible,
         artifact_live_ready=artifact_live_ready,
-        pickle_upload_ready=model_upload_compatible,
+        pickle_upload_ready=pickle_upload_ready,
     )
     return ServingInspectionResult(
         package=package,
@@ -146,7 +149,7 @@ def inspect_submission_package(
         artifact_backed=artifact_backed,
         artifact_ready=artifact_ready,
         artifact_live_ready=artifact_live_ready,
-        pickle_upload_ready=model_upload_compatible,
+        pickle_upload_ready=pickle_upload_ready,
         deployment_classification=deployment_classification,
         local_live_blockers=tuple(_dedupe(package_local_blockers)),
         model_upload_blockers=tuple(_dedupe(package_model_blockers)),
@@ -203,6 +206,17 @@ def _deployment_classification(
     if artifact_live_ready:
         return "artifact_backed_live_ready"
     return "local_live_only"
+
+
+def _pickle_smoke_verified(package: SubmissionPackageRecord) -> bool:
+    if package.artifacts.get("pickle_smoke_verified") != "true":
+        return False
+    if not package.artifacts.get("pickle_runtime_docker_image"):
+        return False
+    pickle_path = package.artifacts.get("pickle_path")
+    if not pickle_path:
+        return False
+    return Path(pickle_path).expanduser().is_file()
 
 
 def _dedupe(items: list[str]) -> list[str]:

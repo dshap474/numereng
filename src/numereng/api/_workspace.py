@@ -41,9 +41,7 @@ def workspace_init(request: WorkspaceInitRequest | None = None) -> WorkspaceInit
         created_paths=[str(path) for path in result.created_paths],
         updated_paths=[str(path) for path in result.sync_result.updated_paths],
         runtime_source=result.sync_result.runtime_source,
-        runtime_path=(
-            None if result.sync_result.runtime_path is None else str(result.sync_result.runtime_path)
-        ),
+        runtime_path=(None if result.sync_result.runtime_path is None else str(result.sync_result.runtime_path)),
         extras=list(result.sync_result.extras),
         dependency_spec=result.sync_result.dependency_spec,
         installed_numereng_version=result.sync_result.installed_numereng_version,

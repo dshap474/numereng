@@ -47,7 +47,7 @@ def test_load_remote_targets_accepts_powershell_shell_for_windows_targets(tmp_pa
         "\n".join(
             [
                 "id: pc",
-                "label: Windows remote example",
+                "label: Windows PC",
                 "kind: ssh",
                 "ssh_config_host: pc",
                 "shell: powershell",

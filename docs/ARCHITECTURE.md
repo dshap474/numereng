@@ -642,9 +642,11 @@ cli serve pickle build|upload
       - inspect compatibility before build or upload
       - reject local-only packages conservatively for hosted inference
       - require persisted run-backed model artifacts for every component
+      - classify `model_upload_compatible` separately from verified `pickle_upload_ready`
       - validate requested data version / docker image against the Numerai API on upload
       - load persisted fitted models without retraining
-      - serialize a Numerai-compatible `predict(live_features, live_benchmark_models)` callable
+      - serialize a self-contained Numerai-compatible `predict(live_features, live_benchmark_models)` callable
+      - run an isolated hosted-runtime smoke before marking the pickle upload-ready
       - `upload` then hands the pickle to `features.submission`
 
 cli run submit

@@ -169,6 +169,7 @@ def serve_pickle_build(request: ServePickleBuildRequest) -> ServePickleBuildResp
             workspace_root=request.workspace_root,
             experiment_id=request.experiment_id,
             package_id=request.package_id,
+            docker_image=request.docker_image,
         )
     except (
         ServingPackageNotFoundError,
@@ -179,7 +180,12 @@ def serve_pickle_build(request: ServePickleBuildRequest) -> ServePickleBuildResp
         raise PackageError(str(exc)) from exc
     except NumeraiClientError as exc:
         raise PackageError(str(exc)) from exc
-    return ServePickleBuildResponse(package=_package_response(result.package), pickle_path=str(result.pickle_path))
+    return ServePickleBuildResponse(
+        package=_package_response(result.package),
+        pickle_path=str(result.pickle_path),
+        docker_image=result.docker_image,
+        smoke_verified=result.smoke_verified,
+    )
 
 
 def serve_pickle_upload(request: ServePickleUploadRequest) -> ServePickleUploadResponse:

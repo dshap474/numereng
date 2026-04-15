@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from numereng.assets import assets_root, shipped_skill_ids, shipped_skills_root
@@ -31,13 +32,17 @@ def test_packaged_assets_are_curated_and_local_path_free() -> None:
     assert not packaged_numerai_docs_root.exists()
     assert not any((packaged_assets_root / "docs").rglob(".forum_scraper_state.json"))
 
-    forbidden_snippets = ("/Users/<user>/", r"C:\Users\\", "Windows remote example")
+    forbidden_patterns = (
+        re.compile(r"/Users/[^/\n]+/"),
+        re.compile(r"[A-Z]:\\Users\\\\"),
+        re.compile(r"\b[A-Z][a-z]+'s PC\b"),
+    )
     text_extensions = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1"}
     for path in packaged_assets_root.rglob("*"):
         if not path.is_file() or path.suffix not in text_extensions:
             continue
         payload = path.read_text(encoding="utf-8")
-        assert all(snippet not in payload for snippet in forbidden_snippets), path
+        assert all(pattern.search(payload) is None for pattern in forbidden_patterns), path
 
 
 def test_packaged_shipped_skills_match_source_allowlist() -> None:

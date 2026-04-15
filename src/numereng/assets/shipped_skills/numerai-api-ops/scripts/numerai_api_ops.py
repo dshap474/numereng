@@ -543,6 +543,30 @@ query ModelById($modelId: ID!) {
 }
 """
 
+ACCOUNT_MODELS_QUERY = """
+query AccountModels {
+  account {
+    models {
+      id
+      name
+      tournament
+      username
+      computePickleUpload {
+        id
+        filename
+        modelId
+        assignedModelSlots
+        validationStatus
+        diagnosticsStatus
+        triggerStatus
+        insertedAt
+        updatedAt
+      }
+    }
+  }
+}
+"""
+
 COMPUTE_PICKLES_QUERY = """
 query ListComputePickles($id: ID, $modelId: ID, $unassigned: Boolean!) {
   computePickles(id: $id, modelId: $modelId, unassigned: $unassigned) {
@@ -902,24 +926,34 @@ def run_check_api_credentials(args: dict[str, Any], auth_header: str | None, dry
     return {"result": graphql_request(API_TOKEN_QUERY, auth_required=True, auth_header=auth_header)}
 
 
+def _get_account_models(auth_header: str | None) -> list[dict[str, Any]]:
+    account = graphql_request(ACCOUNT_MODELS_QUERY, auth_required=True, auth_header=auth_header)["account"]
+    models = account.get("models")
+    if not isinstance(models, list):
+        raise RuntimeError("GraphQL account.models response was not a list.")
+    return models
+
+
+def _find_account_model(models: list[dict[str, Any]], model_id: str) -> dict[str, Any]:
+    for model in models:
+        if model.get("id") == model_id:
+            return model
+    raise RuntimeError(f"Model {model_id} was not present in authenticated account model list.")
+
+
 def run_create_model(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
     variables = {"name": args["name"], "tournament": args.get("tournament", 8)}
     plan = {
         "mutation": ADD_MODEL_MUTATION.strip(),
         "variables": variables,
-        "verify_query": MODEL_BY_ID_QUERY.strip(),
+        "verify_query": ACCOUNT_MODELS_QUERY.strip(),
     }
     if dry_run:
         return dry_run_output(OPERATIONS["create_model"], args, plan)
     data = graphql_request(ADD_MODEL_MUTATION, variables, auth_required=True, auth_header=auth_header)
     model = data["addModel"]
-    verification = graphql_request(
-        MODEL_BY_ID_QUERY,
-        {"modelId": model["id"]},
-        auth_required=False,
-        auth_header=auth_header,
-    )
-    return {"result": model, "verification": verification["model"]}
+    verification = _find_account_model(_get_account_models(auth_header), model["id"])
+    return {"result": model, "verification": verification}
 
 
 def run_list_compute_pickles(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
@@ -939,19 +973,32 @@ def run_list_compute_pickles(args: dict[str, Any], auth_header: str | None, dry_
 
 
 def run_assign_compute_pickle(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:
-    variables = {"modelId": args["model_id"], "pickleId": args["pickle_id"]}
-    verify_vars = {"id": args["pickle_id"], "modelId": args["model_id"], "unassigned": False}
+    variables = {"modelId": args["model_id"], "pickleId": args.get("pickle_id")}
+    verify_vars = {"id": args.get("pickle_id"), "modelId": None, "unassigned": False}
     plan = {
         "mutation": ASSIGN_PICKLE_MUTATION.strip(),
         "variables": variables,
-        "verify_query": COMPUTE_PICKLES_QUERY.strip(),
-        "verify_variables": verify_vars,
+        "verify_query": {
+            "account_model": ACCOUNT_MODELS_QUERY.strip(),
+            "pickle_record": COMPUTE_PICKLES_QUERY.strip(),
+        },
+        "verify_variables": {
+            "account_model_id": args["model_id"],
+            "pickle_record": verify_vars,
+        },
     }
     if dry_run:
         return dry_run_output(OPERATIONS["assign_compute_pickle"], args, plan)
     result = graphql_request(ASSIGN_PICKLE_MUTATION, variables, auth_required=True, auth_header=auth_header)
-    verification = graphql_request(COMPUTE_PICKLES_QUERY, verify_vars, auth_required=True, auth_header=auth_header)
-    return {"result": result["assignPickleToModel"], "verification": verification["computePickles"]}
+    verification: dict[str, Any] = {"model": _find_account_model(_get_account_models(auth_header), args["model_id"])}
+    if args.get("pickle_id") is not None:
+        verification["pickles"] = graphql_request(
+            COMPUTE_PICKLES_QUERY,
+            verify_vars,
+            auth_required=True,
+            auth_header=auth_header,
+        )["computePickles"]
+    return {"result": result["assignPickleToModel"], "verification": verification}
 
 
 def run_trigger_compute_pickle(args: dict[str, Any], auth_header: str | None, dry_run: bool) -> dict[str, Any]:

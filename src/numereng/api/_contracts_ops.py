@@ -696,11 +696,14 @@ class ServeLiveSubmitResponse(BaseModel):
 class ServePickleBuildRequest(WorkspaceBoundRequest):
     experiment_id: str
     package_id: str
+    docker_image: str | None = None
 
 
 class ServePickleBuildResponse(BaseModel):
     package: ServePackageResponse
     pickle_path: str
+    docker_image: str
+    smoke_verified: bool = False
 
 
 class ServePickleUploadRequest(WorkspaceBoundRequest):

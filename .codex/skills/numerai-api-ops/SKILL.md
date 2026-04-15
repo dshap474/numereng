@@ -53,6 +53,12 @@ This skill is API-only. It covers official Numerai operations through:
   - exact method or GraphQL root used
   - core IDs returned
   - read-back verification result
+- Distinguish these objects before giving write advice:
+  - model slot: the persistent Numerai model identity
+  - compute pickle: the uploaded hosted-inference artifact
+  - assigned pickle: the compute pickle currently attached to a model slot
+- For model-upload workflows, check account model capacity before assuming the user must reuse an existing slot.
+- For compute-pickle assignment read-back, verify against `account.models.computePickleUpload` first. Do not rely only on `computePickles(modelId=...)`, because that filter tracks the upload owner model and can miss a reassigned slot.
 
 ## Network And Auth
 
@@ -199,6 +205,14 @@ uv run python .agents/skills/numerai-api-ops/scripts/introspect_graphql_schema.p
 - Wrapper parity is incomplete. Use direct GraphQL helpers for confirmed gaps instead of stretching an unstable wrapper path.
 - `schema-unconfirmed` means the operation must not be advertised or executed as supported until live schema verification succeeds.
 - All write actions require explicit user confirmation, even if a helper exists.
+- Model names created through `addModel` must be username-safe and no longer than 20 characters.
+- The safest model-upload operator sequence is:
+  1. inspect existing account models
+  2. decide whether to reuse or create a slot
+  3. create or upload the compute pickle
+  4. assign the compute pickle
+  5. verify the assigned slot through `account.models.computePickleUpload`
+- Disabling a hosted model upload is the same assignment mutation with `pickleId = null`.
 
 ## Validation
 

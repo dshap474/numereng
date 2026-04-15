@@ -81,7 +81,7 @@ Notes:
 - `numereng serve package list [--experiment-id <id>] [--format <table|json>] [--workspace <path>]`
 - `numereng serve live build --experiment-id <id> --package-id <id> [--workspace <path>]`
 - `numereng serve live submit --experiment-id <id> --package-id <id> --model-name <name> [--workspace <path>]`
-- `numereng serve pickle build --experiment-id <id> --package-id <id> [--workspace <path>]`
+- `numereng serve pickle build --experiment-id <id> --package-id <id> [--docker-image <image>] [--workspace <path>]`
 - `numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--workspace <path>]`
 
 Notes:
@@ -89,6 +89,8 @@ Notes:
 - `serve package inspect` is the compatibility gate for both local live builds and Numerai-hosted model uploads
 - local live build and model upload compatibility are classified separately
 - hosted model-upload support is intentionally conservative; local-only packages are valid and expected
+- `pickle_upload_ready` only becomes true after a successful isolated hosted-runtime smoke for the selected docker image
+- `serve pickle build` defaults to the explicit Numerai runtime label `Python 3.12`
 - `serve pickle upload` validates the requested data version and docker image against the Numerai API before upload
 
 ## `neutralize`

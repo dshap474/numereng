@@ -48,7 +48,7 @@ class _FakeServingClient:
         return ["v5.2"]
 
     def model_upload_docker_images(self) -> list[str]:
-        return ["ghcr.io/numerai/numerai-inference:py3.11"]
+        return ["Python 3.11", "Python 3.12"]
 
     def download_dataset(
         self,
@@ -256,7 +256,9 @@ def test_serve_pickle_build_roundtrip_from_run_backed_package(monkeypatch: pytes
         )
     )
     assert inspect_result.artifact_ready is True
-    assert inspect_result.pickle_upload_ready is True
+    assert inspect_result.model_upload_compatible is True
+    assert inspect_result.pickle_upload_ready is False
+    assert inspect_result.deployment_classification == "artifact_backed_live_ready"
     monkeypatch.setattr(
         serving_service_module,
         "fit_component",
@@ -276,6 +278,8 @@ def test_serve_pickle_build_roundtrip_from_run_backed_package(monkeypatch: pytes
             workspace_root=str(tmp_path),
         )
     )
+    assert pickle_result.docker_image == "Python 3.12"
+    assert pickle_result.smoke_verified is True
 
     predictor = pickle.loads(Path(pickle_result.pickle_path).read_bytes())
     live = pd.read_parquet(live_result.live_dataset_path)

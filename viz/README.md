@@ -56,7 +56,7 @@ The frontend is SSR-first again:
 
 ## Related Files
 
-- Backend launcher: [api.py](/path/to/numereng/viz/api.py)
-- Backend snapshot merge: [monitor_snapshot.py](/path/to/numereng/viz/api/numereng_viz/monitor_snapshot.py)
-- Frontend page: [+page.svelte](/path/to/numereng/viz/web/src/routes/experiments/+page.svelte)
-- Frontend route load: [+page.ts](/path/to/numereng/viz/web/src/routes/experiments/+page.ts)
+- Backend launcher: [`viz/api.py`](./api.py)
+- Backend snapshot merge: [`viz/api/numereng_viz/monitor_snapshot.py`](./api/numereng_viz/monitor_snapshot.py)
+- Frontend page: [`viz/web/src/routes/experiments/+page.svelte`](./web/src/routes/experiments/+page.svelte)
+- Frontend route load: [`viz/web/src/routes/experiments/+page.ts`](./web/src/routes/experiments/+page.ts)

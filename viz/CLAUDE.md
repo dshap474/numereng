@@ -1,6 +1,6 @@
 # viz
 
-- Read [llms.txt](/path/to/numereng/viz/docs/llms.txt) first, then [ARCHITECTURE.md](/path/to/numereng/viz/docs/ARCHITECTURE.md).
+- Read [`viz/docs/llms.txt`](./docs/llms.txt) first, then [`viz/docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md).
 - `viz/api/numereng_viz` is the authoritative backend package. `viz/api.py` is only the launcher shim.
 - Mission control is federated: local store + zero or more SSH remote stores. The UI must never assume `experiment_id` is globally unique.
 - Use `/api/experiments/overview` as the mission-control source of truth. Do not rebuild the experiments page by stitching other endpoints together.

@@ -12,7 +12,7 @@ from numereng.features.remote_ops import service as remote_service
 def _target():
     return remote_service.SshRemoteTargetProfile(
         id="pc",
-        label="Windows remote example",
+        label="Windows PC",
         ssh_config_host="pc",
         shell="powershell",
         repo_root=r"C:\Users\<you>\remote-access\numereng",

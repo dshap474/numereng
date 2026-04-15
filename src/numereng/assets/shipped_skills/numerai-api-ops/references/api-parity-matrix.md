@@ -34,14 +34,14 @@ Status values:
 | Upload diagnostics | `numerapi-native` | vendored `numerapi` | `upload_diagnostics` | `Api.upload_diagnostics` | `run_diagnostics.create` | Auth required |
 | Delete diagnostics | `graphql-helper` | direct GraphQL | `delete_diagnostics` | `deleteDiagnostics` | `run_diagnostics.delete` | Live schema confirmed 2026-03-21 |
 | Create compute pickle upload | `numerapi-native` | vendored `numerapi` | `create_compute_pickle_upload` | `Api.model_upload` | `upload_model.create` | Auth required |
-| List compute pickles | `graphql-helper` | direct GraphQL | `list_compute_pickles` | `computePickles` | `upload_model.list` | Live schema confirmed 2026-03-21 |
+| List compute pickles | `graphql-helper` | direct GraphQL | `list_compute_pickles` | `computePickles` | `upload_model.list` | Live schema confirmed 2026-03-21; `modelId` filters by upload owner model |
 | List compute data versions | `numerapi-native` | vendored `numerapi` | `list_model_upload_data_versions` | `Api.model_upload_data_versions` | `upload_model.list_data_versions` | Auth required |
 | List compute docker images | `numerapi-native` | vendored `numerapi` | `list_model_upload_docker_images` | `Api.model_upload_docker_images` | `upload_model.list_docker_images` | Auth required |
-| Assign compute pickle to model | `graphql-helper` | direct GraphQL | `assign_compute_pickle` | `assignPickleToModel` | `upload_model.assign` | Live schema confirmed 2026-03-21 |
+| Assign compute pickle to model | `graphql-helper` | direct GraphQL | `assign_compute_pickle` | `assignPickleToModel` | `upload_model.assign` | Live schema confirmed 2026-03-21; verify via `account.models.computePickleUpload` |
 | Trigger compute pickle | `graphql-helper` | direct GraphQL | `trigger_compute_pickle` | `triggerComputePickleUpload` | `upload_model.trigger` | Live schema confirmed 2026-03-21 |
 | Read trigger logs | `graphql-helper` | direct GraphQL | `get_trigger_logs` | `triggerLogs` | `upload_model.get_logs` | Live schema confirmed 2026-03-21 |
 | Read diagnostics trigger logs | `graphql-helper` | direct GraphQL | `get_diagnostics_trigger_logs` | `diagnosticsTriggerLogs` | none | Live schema confirmed 2026-03-21 |
-| Create model | `graphql-helper` | direct GraphQL | `create_model` | `addModel` | `create_model` | Current mutation name is `addModel`, not legacy `createModel` |
+| Create model | `graphql-helper` | direct GraphQL | `create_model` | `addModel` | `create_model` | Current mutation name is `addModel`, not legacy `createModel`; name must be <= 20 chars |
 | Pipeline status | `numerapi-native` | vendored `numerapi` | `pipeline_status` | `Api.pipeline_status` | none | Read-only |
 | Signals ticker universe | `numerapi-native` | vendored `numerapi` | `ticker_universe` | `SignalsAPI.ticker_universe` | none | Signals only |
 | Increase / decrease stake | `numerapi-native` | vendored `numerapi` | `change_stake` | `stake_increase`, `stake_decrease` | none | Auth required |

@@ -75,7 +75,8 @@ Use `serve live submit` if you want numereng to upload that parquet immediately.
 ```bash
 uv run numereng serve pickle build \
   --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id jasper60_single_test
+  --package-id jasper60_single_test \
+  --docker-image "Python 3.12"
 ```
 
 `serve pickle build` only succeeds when the package passes hosted-inference preflight.
@@ -87,11 +88,14 @@ Current v1 rules are intentionally conservative:
 - every component must be run-backed and have a loadable persisted model artifact
 - external baseline side-input files are rejected
 - custom module/plugin components are rejected for hosted inference
+- final neutralization is rejected for hosted inference in this pass
 - the package must fit Numerai model-upload dependency/runtime expectations
+- the exported pickle must pass an isolated smoke in the selected hosted runtime before numereng will mark it `pickle_upload_ready`
 
 If the package is compatible, numereng writes:
 
 - `artifacts/pickle/model.pkl`
+- `artifacts/pickle/*` metadata that records the selected docker image and smoke verification result
 
 Upload it with:
 
@@ -118,5 +122,11 @@ Numerai model uploads are hosted under strict limits:
 - no internet access
 - self-contained pickle only
 - limited CPU, RAM, and runtime
+
+Numereng treats hosted model uploads as stricter than local live builds:
+
+- local live builds may use artifact-backed components or a local retrain fallback
+- hosted pickles must be self-contained and must not depend on importing `numereng`
+- `pickle_upload_ready` means the package already passed isolated hosted smoke for the selected docker image
 
 If a package is local-live compatible but not model-upload compatible, keep using `serve live build` plus `run submit`.

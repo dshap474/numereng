@@ -8,6 +8,7 @@ import numereng.api as api_module
 import numereng.api._serving as serving_api_module
 from numereng.features.serving import (
     ModelUploadResult,
+    PickleBuildResult,
     ServingBlendRule,
     ServingComponentInspection,
     ServingComponentSpec,
@@ -74,25 +75,25 @@ def test_api_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, tmp_
             package=package,
             checked_at="2026-04-11T00:00:00Z",
             local_live_compatible=True,
-            model_upload_compatible=False,
-            artifact_backed=False,
-            artifact_ready=False,
-            artifact_live_ready=False,
+            model_upload_compatible=True,
+            artifact_backed=True,
+            artifact_ready=True,
+            artifact_live_ready=True,
             pickle_upload_ready=False,
-            deployment_classification="local_live_only",
+            deployment_classification="artifact_backed_live_ready",
             local_live_blockers=(),
-            model_upload_blockers=("serving_model_upload_custom_modules_not_supported",),
-            artifact_blockers=("serving_component_config_backed_only",),
+            model_upload_blockers=(),
+            artifact_blockers=(),
             warnings=(),
             components=(
                 ServingComponentInspection(
                     component_id="dummy",
                     local_live_compatible=True,
-                    model_upload_compatible=False,
-                    artifact_backed=False,
-                    artifact_ready=False,
-                    model_upload_blockers=("serving_model_upload_custom_modules_not_supported",),
-                    artifact_blockers=("serving_component_config_backed_only",),
+                    model_upload_compatible=True,
+                    artifact_backed=True,
+                    artifact_ready=True,
+                    model_upload_blockers=(),
+                    artifact_blockers=(),
                 ),
             ),
             report_path=tmp_path / "report.json",
@@ -108,8 +109,8 @@ def test_api_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, tmp_
     )
 
     assert response.local_live_compatible is True
-    assert response.model_upload_compatible is False
-    assert response.deployment_classification == "local_live_only"
+    assert response.model_upload_compatible is True
+    assert response.deployment_classification == "artifact_backed_live_ready"
     assert response.components[0].component_id == "dummy"
 
 
@@ -140,3 +141,32 @@ def test_api_serve_pickle_upload_success(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     assert response.upload_id == "pickle-1"
     assert response.model_id == "model-1"
+
+
+def test_api_serve_pickle_build_passes_docker_image(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    package = _package(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _build(**kwargs):
+        captured.update(kwargs)
+        return PickleBuildResult(
+            package=package,
+            pickle_path=tmp_path / "model.pkl",
+            docker_image="Python 3.12",
+            smoke_verified=True,
+        )
+
+    monkeypatch.setattr(serving_api_module, "build_submission_pickle", _build)
+
+    response = api_module.serve_pickle_build(
+        api_module.ServePickleBuildRequest(
+            experiment_id="exp-1",
+            package_id="pkg-1",
+            docker_image="Python 3.12",
+            workspace_root=str(tmp_path),
+        )
+    )
+
+    assert captured["docker_image"] == "Python 3.12"
+    assert response.docker_image == "Python 3.12"
+    assert response.smoke_verified is True
