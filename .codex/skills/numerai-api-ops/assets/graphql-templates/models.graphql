@@ -4,6 +4,18 @@ query AccountModels {
       id
       name
       tournament
+      username
+      computePickleUpload {
+        id
+        filename
+        modelId
+        assignedModelSlots
+        validationStatus
+        diagnosticsStatus
+        triggerStatus
+        insertedAt
+        updatedAt
+      }
     }
   }
 }

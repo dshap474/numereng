@@ -38,7 +38,8 @@ USAGE = (
     "  numereng serve package list [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"
     "  numereng serve live build --experiment-id <id> --package-id <id> [--workspace <path>]\n"
     "  numereng serve live submit --experiment-id <id> --package-id <id> --model-name <name> [--workspace <path>]\n"
-    "  numereng serve pickle build --experiment-id <id> --package-id <id> [--workspace <path>]\n"
+    "  numereng serve pickle build --experiment-id <id> --package-id <id> [--docker-image <image>] "
+    "[--workspace <path>]\n"
     "  numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--workspace <path>]\n"  # noqa: E501
     "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
     "  numereng monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json]\n"

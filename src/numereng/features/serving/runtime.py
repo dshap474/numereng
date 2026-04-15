@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
 
 import cloudpickle
 import numpy as np
@@ -14,6 +14,7 @@ import pandas as pd
 from numereng.features.feature_neutralization import neutralize_prediction_frame
 from numereng.features.scoring.metrics import attach_benchmark_predictions, load_custom_benchmark_predictions
 from numereng.features.serving.contracts import (
+    RankMethod,
     ServingBlendRule,
     ServingComponentSpec,
     ServingNeutralizationSpec,
@@ -127,8 +128,29 @@ class LoadedServingArtifact:
     """One persisted run-backed component ready for live inference."""
 
     component: FittedComponent
+    model_type: str
     model_upload_compatible: bool
     uses_custom_module: bool
+
+
+class HostedComponentPayload(TypedDict):
+    """Hosted-safe serialized payload for one LightGBM component."""
+
+    component_id: str
+    weight: float
+    model_str: str
+    id_col: str
+    era_col: str
+    feature_cols: tuple[str, ...]
+
+
+class HostedBlendPayload(TypedDict):
+    """Hosted-safe serialized blend contract."""
+
+    per_era_rank: bool
+    rank_method: RankMethod
+    rank_pct: bool
+    final_rerank: bool
 
 
 def prepare_component_plan(
@@ -361,6 +383,7 @@ def load_run_backed_component(
     )
     return LoadedServingArtifact(
         component=fitted,
+        model_type=manifest.model_type,
         model_upload_compatible=manifest.model_upload_compatible,
         uses_custom_module=manifest.uses_custom_module,
     )
@@ -476,28 +499,100 @@ def build_pickled_predictor(
     pickle_path: Path,
 ) -> Path:
     """Serialize one Numerai-compatible predict callable."""
+    if neutralization is not None and neutralization.enabled:
+        raise ServingUnsupportedConfigError("serving_model_upload_neutralization_not_supported")
 
-    def predict(live_features: pd.DataFrame, live_benchmark_models: pd.DataFrame | None = None) -> pd.DataFrame:
-        _ = live_benchmark_models
-        component_predictions = [
-            (
-                prediction_member_from_fitted(item),
-                predict_component_live(component=item, live_features=live_features),
-            )
-            for item in fitted_components
-        ]
-        _internal, submission = blend_component_predictions(
-            component_predictions=component_predictions,
-            live_features=live_features,
-            blend_rule=blend_rule,
-            neutralization=neutralization,
-        )
-        return submission
+    hosted_components = tuple(_hosted_component_payload(item) for item in fitted_components)
+    blend_payload: HostedBlendPayload = {
+        "per_era_rank": blend_rule.per_era_rank,
+        "rank_method": blend_rule.rank_method,
+        "rank_pct": blend_rule.rank_pct,
+        "final_rerank": blend_rule.final_rerank,
+    }
+
+    class HostedPredictor:
+        def __init__(
+            self,
+            *,
+            components: tuple[HostedComponentPayload, ...],
+            blend: HostedBlendPayload,
+        ) -> None:
+            self._components = components
+            self._blend = blend
+
+        def __call__(self, live_features, live_benchmark_models=None):
+            _ = live_benchmark_models
+            import lightgbm as lgb
+            import numpy as np
+            import pandas as pd
+
+            def _ensure_id_and_era(frame, *, id_col, era_col):
+                if id_col not in frame.columns:
+                    if frame.index.name == id_col:
+                        frame = frame.reset_index()
+                    else:
+                        raise ValueError(f"serving_live_missing_id_col:{id_col}")
+                if era_col not in frame.columns:
+                    frame[era_col] = "live"
+                return frame
+
+            def _rank_prediction_frame(frame):
+                ranked = frame.copy()
+                if self._blend["per_era_rank"] and "era" in ranked.columns:
+                    ranked["prediction"] = ranked.groupby("era", sort=False)["prediction"].rank(
+                        method=self._blend["rank_method"],
+                        pct=self._blend["rank_pct"],
+                    )
+                else:
+                    ranked["prediction"] = ranked["prediction"].rank(
+                        method=self._blend["rank_method"],
+                        pct=self._blend["rank_pct"],
+                    )
+                return ranked
+
+            component_predictions = []
+            for item in self._components:
+                live = _ensure_id_and_era(
+                    live_features.copy(),
+                    id_col=item["id_col"],
+                    era_col=item["era_col"],
+                )
+                missing = [col for col in item["feature_cols"] if col not in live.columns]
+                if missing:
+                    raise ValueError("serving_live_feature_columns_missing:" + ",".join(missing[:5]))
+                model = lgb.Booster(model_str=item["model_str"])
+                values = model.predict(live[list(item["feature_cols"])])
+                frame = pd.DataFrame(
+                    {
+                        "era": live[item["era_col"]].astype(str).to_numpy(),
+                        "id": live[item["id_col"]].astype(str).to_numpy(),
+                        "prediction": np.asarray(values, dtype=float),
+                    }
+                )
+                component_predictions.append((item["component_id"], float(item["weight"]), frame))
+
+            if not component_predictions:
+                raise ValueError("serving_component_predictions_empty")
+            anchor = component_predictions[0][2][["era", "id"]].copy()
+            blended = np.zeros(len(anchor), dtype=float)
+            for _, weight, frame in component_predictions:
+                if not frame[["era", "id"]].equals(anchor[["era", "id"]]):
+                    raise ValueError("serving_component_predictions_misaligned")
+                ranked = _rank_prediction_frame(frame)
+                blended += ranked["prediction"].to_numpy(dtype=float) * weight
+
+            internal = anchor.copy()
+            internal["prediction"] = blended
+            if self._blend["final_rerank"]:
+                internal = _rank_prediction_frame(internal)
+            return pd.DataFrame({"prediction": internal["prediction"].to_numpy(dtype=float)}, index=live_features.index)
+
+    predictor = HostedPredictor(components=hosted_components, blend=blend_payload)
 
     resolved = Path(pickle_path).expanduser().resolve()
     resolved.parent.mkdir(parents=True, exist_ok=True)
     with resolved.open("wb") as handle:
-        cloudpickle.dump(predict, handle)
+        cloudpickle.dump(predictor, handle)
     return resolved
 
 
@@ -511,6 +606,32 @@ def _apply_serving_resource_controls(*, model_type: str, model_params: dict[str,
         if key in normalized:
             normalized[key] = min(_coerce_int(normalized.get(key), default=1), 1)
     return normalized
+
+
+def _hosted_component_payload(component: FittedComponent) -> HostedComponentPayload:
+    if component.baseline_predictions_path is not None:
+        raise ServingUnsupportedConfigError("serving_model_upload_baseline_inputs_not_supported")
+    model = component.model
+    if type(model).__module__ == "numereng.features.models.lgbm":
+        raw_model = getattr(model, "_model", None)
+        if raw_model is None:
+            raise ServingUnsupportedConfigError("serving_model_upload_model_unwrap_failed")
+        model = raw_model
+    elif type(model).__module__.startswith("lightgbm"):
+        model = model
+    else:
+        raise ServingUnsupportedConfigError("serving_model_upload_model_type_not_supported")
+    booster = getattr(model, "booster_", None)
+    if booster is None:
+        raise ServingUnsupportedConfigError("serving_model_upload_model_unwrap_failed")
+    return {
+        "component_id": component.component_id,
+        "weight": float(component.weight),
+        "model_str": booster.model_to_string(),
+        "id_col": component.id_col,
+        "era_col": component.era_col,
+        "feature_cols": tuple(component.feature_cols),
+    }
 
 
 def _ensure_id_and_era_columns(frame: pd.DataFrame, *, id_col: str, era_col: str) -> pd.DataFrame:

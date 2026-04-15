@@ -15,7 +15,7 @@ from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 def _target() -> SshRemoteTargetProfile:
     return SshRemoteTargetProfile(
         id="pc",
-        label="Daniel's PC",
+        label="Windows PC",
         ssh_config_host="pc",
         shell="powershell",
         repo_root=r"C:\Users\dansh\remote-access\numereng",

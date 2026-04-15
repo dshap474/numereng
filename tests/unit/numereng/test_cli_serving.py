@@ -151,3 +151,56 @@ def test_cli_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, caps
     assert exit_code == 0
     assert payload["model_upload_compatible"] is False
     assert payload["deployment_classification"] == "local_live_only"
+
+
+def test_cli_serve_pickle_build_passes_docker_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured_request: dict[str, object] = {}
+    package = api_module.ServePackageResponse(
+        package_id="pkg-1",
+        experiment_id="exp-1",
+        tournament="classic",
+        data_version="v5.2",
+        package_path="/tmp/pkg-1",
+        status="pickle_built",
+        components=[api_module.ServeComponentRequest(weight=1.0, config_path="/tmp/component.json")],
+        blend_rule=api_module.ServeBlendRuleRequest(),
+        neutralization=None,
+        artifacts={},
+        created_at="2026-04-11T00:00:00Z",
+        updated_at="2026-04-11T00:00:00Z",
+        provenance={},
+    )
+
+    def _build(request: api_module.ServePickleBuildRequest) -> api_module.ServePickleBuildResponse:
+        captured_request["docker_image"] = request.docker_image
+        return api_module.ServePickleBuildResponse(
+            package=package,
+            pickle_path="/tmp/model.pkl",
+            docker_image="Python 3.12",
+            smoke_verified=True,
+        )
+
+    monkeypatch.setattr(api_module, "serve_pickle_build", _build)
+
+    exit_code = main(
+        [
+            "serve",
+            "pickle",
+            "build",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--docker-image",
+            "Python 3.12",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert captured_request["docker_image"] == "Python 3.12"
+    assert payload["docker_image"] == "Python 3.12"
+    assert payload["smoke_verified"] is True

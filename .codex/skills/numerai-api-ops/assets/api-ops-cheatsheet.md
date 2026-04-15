@@ -51,3 +51,16 @@ uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py list
 uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py show <operation>
 uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py run <operation> --dry-run
 ```
+
+## Model Upload Workflow
+
+1. Inspect the existing account model slots first.
+2. Decide whether to reuse a slot or create a new slot.
+3. Upload or locate the compute pickle.
+4. Assign the compute pickle to the chosen slot.
+5. Verify the assigned slot through `account.models.computePickleUpload`.
+
+Notes:
+- `computePickles(modelId=...)` follows the upload owner model and is not the best verification surface after reassignment.
+- Passing `pickleId = null` to `assign_compute_pickle` disables the hosted model upload on that slot.
+- Model names must be username-safe and no longer than 20 characters.

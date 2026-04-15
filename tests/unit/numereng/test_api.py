@@ -338,6 +338,8 @@ def test_workspace_sync_returns_synced_runtime_payload(monkeypatch: pytest.Monke
 
 
 def test_lazy_public_api_translates_missing_runtime_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    api_module.__dict__.pop("serve_pickle_build", None)
+
     def fake_import_module(name: str):
         if name == "numereng.api._serving":
             raise ModuleNotFoundError("No module named 'cloudpickle'", name="cloudpickle")
@@ -409,7 +411,7 @@ def test_remote_list_targets_returns_public_model(monkeypatch: pytest.MonkeyPatc
         lambda: (
             RemoteTargetRecord(
                 id="pc",
-                label="Daniel's PC",
+                label="Windows PC",
                 kind="ssh",
                 shell="powershell",
                 repo_root=r"C:\Users\dansh\remote-access\numereng",
@@ -467,7 +469,7 @@ def test_remote_bootstrap_viz_returns_public_model(monkeypatch: pytest.MonkeyPat
                 RemoteVizBootstrapTargetResult(
                     target=RemoteTargetRecord(
                         id="pc",
-                        label="Daniel's PC",
+                        label="Windows PC",
                         kind="ssh",
                         shell="powershell",
                         repo_root=r"C:\Users\dansh\remote-access\numereng",

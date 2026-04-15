@@ -227,6 +227,7 @@ def _handle_pickle_build(args: Sequence[str]) -> int:
         request_cls=api.ServePickleBuildRequest,
         call=api.serve_pickle_build,
         required={"--experiment-id", "--package-id"},
+        optional={"--docker-image"},
     )
 
 

@@ -7,6 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import numereng.features.serving.service as serving_service_module
+from numereng.features.models.lgbm import LGBMRegressor
 from numereng.features.serving import (
     ServingBlendRule,
     ServingComponentSpec,
@@ -21,11 +23,6 @@ from numereng.features.serving import (
     upload_submission_pickle,
 )
 from numereng.features.training.model_artifacts import ModelArtifactManifest, save_model_artifact
-
-
-class _ArtifactRegressor:
-    def predict(self, X: pd.DataFrame) -> pd.Series:
-        return X["feature_a"] * 0.75 + X["feature_b"] * 0.25
 
 
 class _FakeServingClient:
@@ -62,7 +59,7 @@ class _FakeServingClient:
         return ["v5.2"]
 
     def model_upload_docker_images(self) -> list[str]:
-        return ["ghcr.io/numerai/numerai-inference:py3.11"]
+        return ["Python 3.11", "Python 3.12"]
 
     def download_dataset(
         self,
@@ -122,6 +119,19 @@ class _FakeServingClient:
             )
             return str(path)
         raise AssertionError(f"unexpected filename: {filename}")
+
+
+@pytest.fixture(autouse=True)
+def _stub_pickle_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        serving_service_module,
+        "_verify_isolated_pickle_runtime",
+        lambda **_: {
+            "checked_at": "2026-04-11T00:00:00Z",
+            "command": "uvx --with ...",
+            "runtime": "Python 3.12",
+        },
+    )
 
 
 def _write_custom_plugin(tmp_path: Path, *, name: str, expression: str) -> Path:
@@ -200,9 +210,25 @@ def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
         "output": {},
     }
     (run_dir / "resolved.json").write_text(json.dumps(resolved_config), encoding="utf-8")
+    model = LGBMRegressor(
+        feature_cols=["feature_a", "feature_b"],
+        n_estimators=5,
+        learning_rate=0.1,
+        num_leaves=8,
+        min_data_in_leaf=1,
+        verbosity=-1,
+    )
+    train = pd.DataFrame(
+        {
+            "feature_a": [0.1, 0.2, 0.3, 0.4],
+            "feature_b": [0.5, 0.3, 0.2, 0.1],
+            "target": [0.2, 0.4, 0.6, 0.8],
+        }
+    )
+    model.fit(train[["feature_a", "feature_b"]], train["target"])
     save_model_artifact(
         run_dir=run_dir,
-        model=_ArtifactRegressor(),
+        model=model,
         manifest=ModelArtifactManifest(
             run_id=run_id,
             model_type="LGBMRegressor",
@@ -424,6 +450,25 @@ def test_build_submission_pickle_round_trips_artifact_backed_predictor(tmp_path:
     built = pd.read_parquet(build_result.submission_predictions_path)
     submission = predictor(live, None)
     assert submission["prediction"].tolist() == pytest.approx(built["prediction"].tolist())
+    assert pickle_result.docker_image == "Python 3.12"
+    assert pickle_result.smoke_verified is True
+    assert pickle_result.package.artifacts["preflight_pickle_upload_ready"] == "true"
+
+
+def test_inspect_package_marks_artifact_backed_lgbm_as_not_verified_before_pickle_build(tmp_path: Path) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert result.model_upload_compatible is True
+    assert result.pickle_upload_ready is False
+    assert result.deployment_classification == "artifact_backed_live_ready"
 
 
 def test_build_submission_pickle_rejects_local_only_package(tmp_path: Path) -> None:
@@ -501,3 +546,85 @@ def test_upload_submission_pickle_validates_model_upload_options(tmp_path: Path)
             data_version="v9.9",
             client=client,
         )
+
+
+def test_build_submission_pickle_rejects_neutralized_package(tmp_path: Path) -> None:
+    client = _FakeServingClient()
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+    package_path = tmp_path / "experiments" / "exp-1" / "submission_packages" / "pkg-1" / "package.json"
+    payload = json.loads(package_path.read_text(encoding="utf-8"))
+    payload["neutralization"] = {
+        "enabled": True,
+        "proportion": 0.5,
+        "mode": "era",
+        "neutralizer_cols": [],
+        "rank_output": True,
+    }
+    package_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    with pytest.raises(
+        ServingUnsupportedConfigError,
+        match="serving_model_upload_preflight_failed|serving_model_upload_neutralization_not_supported",
+    ):
+        build_submission_pickle(
+            workspace_root=tmp_path,
+            experiment_id="exp-1",
+            package_id="pkg-1",
+            client=client,
+        )
+
+
+def test_upload_submission_pickle_rejects_runtime_mismatch(tmp_path: Path) -> None:
+    client = _FakeServingClient()
+    config_path = _write_config(
+        tmp_path,
+        name="lgbm_component",
+        model_type="LGBMRegressor",
+        params={"n_estimators": 5, "learning_rate": 0.1, "num_leaves": 8, "min_data_in_leaf": 1, "verbosity": -1},
+    )
+    package = create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, config_path=config_path),),
+    )
+    package = type(package)(
+        **{
+            **package.__dict__,
+            "artifacts": {
+                "pickle_smoke_verified": "true",
+                "pickle_runtime_docker_image": "Python 3.12",
+                "pickle_path": str(tmp_path / "model.pkl"),
+            },
+        }
+    )
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        serving_service_module,
+        "build_submission_pickle",
+        lambda **_: serving_service_module.PickleBuildResult(
+            package=package,
+            pickle_path=tmp_path / "model.pkl",
+            docker_image="Python 3.12",
+            smoke_verified=True,
+        ),
+    )
+
+    try:
+        with pytest.raises(ServingValidationError, match="serving_model_upload_runtime_mismatch"):
+            upload_submission_pickle(
+                workspace_root=tmp_path,
+                experiment_id="exp-1",
+                package_id="pkg-1",
+                model_name="main",
+                docker_image="Python 3.11",
+                client=client,
+            )
+    finally:
+        monkeypatch.undo()

@@ -54,7 +54,7 @@ def test_sync_workspace_environment_creates_managed_uv_project(
     payload = pyproject_path.read_text(encoding="utf-8")
     assert "[tool.numereng.workspace]" in payload
     assert 'runtime_source = "pypi"' in payload
-    assert 'numereng==' in payload
+    assert "numereng==" in payload
     assert (workspace_root / ".python-version").read_text(encoding="utf-8") == "3.12\n"
     assert result.runtime_source == "pypi"
     assert result.installed_numereng_version == "1.2.3"

@@ -118,6 +118,8 @@ class PickleBuildResult:
 
     package: SubmissionPackageRecord
     pickle_path: Path
+    docker_image: str
+    smoke_verified: bool = False
 
 
 @dataclass(frozen=True)

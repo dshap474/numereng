@@ -236,7 +236,7 @@ def test_cli_remote_list_json_success(
             targets=[
                 api_module.RemoteTargetResponse(
                     id="pc",
-                    label="Daniel's PC",
+                    label="Windows PC",
                     kind="ssh",
                     shell="powershell",
                     repo_root=r"C:\Users\dansh\remote-access\numereng",
@@ -275,7 +275,7 @@ def test_cli_remote_bootstrap_viz_success(
                 api_module.RemoteVizBootstrapTargetResponse(
                     target=api_module.RemoteTargetResponse(
                         id="pc",
-                        label="Daniel's PC",
+                        label="Windows PC",
                         kind="ssh",
                         shell="powershell",
                         repo_root=r"C:\Users\dansh\remote-access\numereng",

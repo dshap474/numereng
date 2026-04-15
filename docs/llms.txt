@@ -167,6 +167,7 @@ Wiring map:
   `cli serve package create|inspect|list -> api.serve_package_* -> features.serving`
   `cli serve live build|submit -> api.serve_live_* -> features.serving -> features.submission`
   `cli serve pickle build|upload -> api.serve_pickle_* -> features.serving -> features.submission`
+  - hosted model uploads are stricter than local live builds: `pickle_upload_ready` only becomes true after an isolated hosted-runtime smoke succeeds for the selected Numerai docker image, and exported pickles must be self-contained rather than depending on local `numereng` imports
 - HPO:
   `cli hpo create -> api.hpo_create -> features.hpo.create_study -> validate v2 study spec + resume by study_id -> JournalStorage-backed Optuna -> per-trial run_training + index_run + study summary/trial parquet updates`
 - Ensemble:

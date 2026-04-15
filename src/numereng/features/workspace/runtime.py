@@ -42,7 +42,7 @@ class WorkspaceEnvConfig:
         extras = self.extras
         package_name = "numereng"
         if extras:
-            package_name = f'{package_name}[{",".join(extras)}]'
+            package_name = f"{package_name}[{','.join(extras)}]"
         if self.runtime_source == "pypi":
             return f"{package_name}=={__version__}"
         return package_name
@@ -281,10 +281,7 @@ def _render_workspace_pyproject(config: WorkspaceEnvConfig) -> str:
             [
                 "",
                 "[tool.uv.sources]",
-                (
-                    'numereng = { path = "'
-                    f'{_escape_toml_string(str(config.runtime_path))}", editable = true }}'
-                ),
+                (f'numereng = {{ path = "{_escape_toml_string(str(config.runtime_path))}", editable = true }}'),
             ]
         )
     lines.append("")
