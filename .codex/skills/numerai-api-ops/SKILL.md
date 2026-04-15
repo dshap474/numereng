@@ -209,10 +209,11 @@ uv run python .agents/skills/numerai-api-ops/scripts/introspect_graphql_schema.p
 - The safest model-upload operator sequence is:
   1. inspect existing account models
   2. decide whether to reuse or create a slot
-  3. create or upload the compute pickle
-  4. assign the compute pickle
+  3. create or upload the compute pickle for the target slot
+  4. assign the compute pickle only when it already belongs to that slot, or when disabling with `pickleId = null`
   5. verify the assigned slot through `account.models.computePickleUpload`
 - Disabling a hosted model upload is the same assignment mutation with `pickleId = null`.
+- Do not treat cross-slot compute-pickle reassignment as a safe production migration path. If a model should run under a new slot, upload a fresh compute pickle directly to that slot.
 
 ## Validation
 

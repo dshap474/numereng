@@ -62,5 +62,6 @@ uv run python .agents/skills/numerai-api-ops/scripts/numerai_api_ops.py run <ope
 
 Notes:
 - `computePickles(modelId=...)` follows the upload owner model and is not the best verification surface after reassignment.
+- If the target is a brand-new slot, upload a fresh compute pickle for that slot. Do not rely on reassigning an older pickle from another slot as the production migration path.
 - Passing `pickleId = null` to `assign_compute_pickle` disables the hosted model upload on that slot.
 - Model names must be username-safe and no longer than 20 characters.
