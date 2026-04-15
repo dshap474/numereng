@@ -9,6 +9,7 @@ cd "${ROOT_DIR}"
 
 uv build
 WHEEL_PATH="$(ls -1t dist/*.whl | head -n 1)"
+FIND_LINKS_PATH="$(cd dist && pwd -P)"
 
 rm -rf "${WORKSPACE_DIR}"
 mkdir -p "${WORKSPACE_DIR}"
@@ -17,7 +18,7 @@ uv venv "${WORKSPACE_DIR}/.venv"
 uv pip install --python "${WORKSPACE_DIR}/.venv/bin/python" "${WHEEL_PATH}"
 
 "${WORKSPACE_DIR}/.venv/bin/python" -c "import cloudpickle, numereng.api, numereng.features.serving"
-"${WORKSPACE_DIR}/.venv/bin/numereng" init --workspace "${WORKSPACE_DIR}" >/dev/null
+UV_FIND_LINKS="${FIND_LINKS_PATH}" "${WORKSPACE_DIR}/.venv/bin/numereng" init --workspace "${WORKSPACE_DIR}" >/dev/null
 "${WORKSPACE_DIR}/.venv/bin/numereng" serve --help >/dev/null
 
 test -d "${WORKSPACE_DIR}/experiments"

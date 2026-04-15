@@ -28,6 +28,16 @@ cd numerai-dev
 uv run numereng workspace sync --with-training
 ```
 
+## Update An Installed Workspace
+
+When a new `numereng` version is published, refresh an existing end-user workspace with a fresh published launcher:
+
+```bash
+uvx --from numereng numereng workspace sync --workspace numerai-dev --runtime-source pypi
+```
+
+That keeps the workspace on the published package path instead of switching it into contributor-local source mode.
+
 `numereng init` creates:
 
 - `experiments/`

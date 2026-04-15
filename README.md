@@ -29,6 +29,12 @@ python -m numereng.cli init --workspace numerai-dev
 
 `numereng init` now creates the canonical workspace scaffold and provisions a workspace-local `uv` project with its own `.venv`. From then on, run commands from the workspace with `uv run numereng ...`.
 
+To upgrade an existing end-user workspace to the latest published `numereng`, use a fresh published launcher:
+
+```bash
+uvx --from numereng numereng workspace sync --workspace numerai-dev --runtime-source pypi
+```
+
 The base install includes the public Python API, CLI, monitor stack, and the core local training/scoring runtime.
 
 Optional extras:
@@ -134,6 +140,18 @@ uv sync --extra dev
 just test
 just build
 ```
+
+Maintainer release flow:
+
+```bash
+uv build
+./scripts/release_smoke_install.sh
+```
+
+Then publish through the GitHub `Release` workflow:
+
+- manual dispatch publishes to TestPyPI
+- pushing `vX.Y.Z` publishes to PyPI after the workflow verifies the tag matches `pyproject.toml`
 
 Contributor/deep-system docs:
 
