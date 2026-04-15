@@ -23,7 +23,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
         with:
-          enable-cache: true
+          enable-cache: false
 
       - uses: taiki-e/install-action@just
 
@@ -109,7 +109,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Publish to TestPyPI
         env:
