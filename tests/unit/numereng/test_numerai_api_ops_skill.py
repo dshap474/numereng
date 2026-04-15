@@ -116,6 +116,10 @@ def test_run_assign_compute_pickle_verifies_assignment_from_account_model_state(
     assert result["result"] is True
     assert result["verification"]["model"]["computePickleUpload"]["id"] == "pickle-7"
     assert result["verification"]["pickles"][0]["assignedModelSlots"] == ["slot-2"]
+    assert result["verification"]["warnings"] == [
+        "assigned_pickle_owner_mismatch:existing pickle belongs to a different model slot;"
+        " use a fresh compute pickle upload for the target slot instead of cross-slot reassignment"
+    ]
     assert calls == [
         (module.ASSIGN_PICKLE_MUTATION, {"modelId": "slot-2", "pickleId": "pickle-7"}, True),
         (module.ACCOUNT_MODELS_QUERY, None, True),

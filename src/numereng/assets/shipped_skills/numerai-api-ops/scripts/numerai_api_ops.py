@@ -998,6 +998,13 @@ def run_assign_compute_pickle(args: dict[str, Any], auth_header: str | None, dry
             auth_required=True,
             auth_header=auth_header,
         )["computePickles"]
+        if verification["pickles"]:
+            owner_model_id = verification["pickles"][0].get("modelId")
+            if owner_model_id != args["model_id"]:
+                verification["warnings"] = [
+                    "assigned_pickle_owner_mismatch:existing pickle belongs to a different model slot;"
+                    " use a fresh compute pickle upload for the target slot instead of cross-slot reassignment"
+                ]
     return {"result": result["assignPickleToModel"], "verification": verification}
 
 

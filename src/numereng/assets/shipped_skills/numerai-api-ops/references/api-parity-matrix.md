@@ -37,7 +37,7 @@ Status values:
 | List compute pickles | `graphql-helper` | direct GraphQL | `list_compute_pickles` | `computePickles` | `upload_model.list` | Live schema confirmed 2026-03-21; `modelId` filters by upload owner model |
 | List compute data versions | `numerapi-native` | vendored `numerapi` | `list_model_upload_data_versions` | `Api.model_upload_data_versions` | `upload_model.list_data_versions` | Auth required |
 | List compute docker images | `numerapi-native` | vendored `numerapi` | `list_model_upload_docker_images` | `Api.model_upload_docker_images` | `upload_model.list_docker_images` | Auth required |
-| Assign compute pickle to model | `graphql-helper` | direct GraphQL | `assign_compute_pickle` | `assignPickleToModel` | `upload_model.assign` | Live schema confirmed 2026-03-21; verify via `account.models.computePickleUpload` |
+| Assign compute pickle to model | `graphql-helper` | direct GraphQL | `assign_compute_pickle` | `assignPickleToModel` | `upload_model.assign` | Live schema confirmed 2026-03-21; verify via `account.models.computePickleUpload`; do not use cross-slot reassignment as the primary production migration path |
 | Trigger compute pickle | `graphql-helper` | direct GraphQL | `trigger_compute_pickle` | `triggerComputePickleUpload` | `upload_model.trigger` | Live schema confirmed 2026-03-21 |
 | Read trigger logs | `graphql-helper` | direct GraphQL | `get_trigger_logs` | `triggerLogs` | `upload_model.get_logs` | Live schema confirmed 2026-03-21 |
 | Read diagnostics trigger logs | `graphql-helper` | direct GraphQL | `get_diagnostics_trigger_logs` | `diagnosticsTriggerLogs` | none | Live schema confirmed 2026-03-21 |
