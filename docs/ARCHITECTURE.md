@@ -178,6 +178,7 @@ Numereng has two path surfaces:
 - workspace-root authoring paths: `experiments/`, `notes/`, `custom_models/`, `research_programs/`, `.agents/skills/`
 - workspace-root runtime bootstrap files: `pyproject.toml`, `.python-version`, `.venv/`
 - hidden runtime store: `.numereng/`
+- public release path: `.github/workflows/release.yml` builds with `uv build`, publishes manually to TestPyPI on workflow dispatch, and publishes to PyPI on `vX.Y.Z` tags via Trusted Publishing
 
 Canonical runtime-store dirs under `.numereng/`:
 - `runs`

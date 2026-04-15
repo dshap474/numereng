@@ -33,11 +33,27 @@ Expected result:
 
 ## Publish
 
-1. Build release artifacts:
-   - `uv build`
+1. Bump `version` in `pyproject.toml`.
 2. Confirm the changelog or release notes are ready.
-3. Keep the public share language explicit:
+3. Configure pending or active Trusted Publishers on TestPyPI and PyPI for:
+   - repo: `dshap474/numereng`
+   - workflow: `.github/workflows/release.yml`
+   - environments: `testpypi` and `pypi`
+   - keep `pypi` environment approval-gated
+   - remember a pending publisher does not reserve `numereng` until the first successful trusted publish
+4. Build release artifacts:
+   - `uv build`
+5. Run the GitHub `Release` workflow manually to publish to TestPyPI.
+6. Smoke the published package from a clean temp workspace:
+   - `uvx --from numereng --default-index https://test.pypi.org/simple --index https://pypi.org/simple numereng init --workspace /tmp/numereng-testpypi-smoke`
+7. Push the production tag:
+   - `git tag vX.Y.Z`
+   - `git push origin vX.Y.Z`
+8. Verify the published-user install path against real PyPI:
+   - `uvx --from numereng numereng init --workspace /tmp/numereng-pypi-smoke`
+   - `uvx --from numereng numereng workspace sync --workspace /tmp/numereng-pypi-smoke --runtime-source pypi`
+9. Keep the public share language explicit:
    - community-built
    - self-supported
    - not affiliated with or endorsed by Numerai
-4. Publish with the maintainer workflow you normally use.
+10. If serving/model-upload changes shipped, finish the serving release gate before announcing the release.

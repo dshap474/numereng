@@ -5,6 +5,8 @@ Purpose:
 - Numerai workflow package (train, submit, experiments, HPO, ensemble, neutralize, store, cloud, viz monitoring).
 - Public surfaces: CLI (`numereng`) and Python facade (`import numereng.api`).
 - Runtime baseline: Python `3.12+`; package users bootstrap a workspace-local `uv` project via `numereng init` and then run `uv run numereng ...` from that workspace, while repo contributors use the project-managed `.venv` via `uv sync --extra dev`.
+- Public package release flow is Trusted Publishing via `.github/workflows/release.yml`: manual dispatch publishes to TestPyPI, and `vX.Y.Z` tags publish to PyPI after the workflow validates the tag matches `pyproject.toml`.
+- End-user workspace upgrades should use a fresh published launcher (`uvx --from numereng numereng workspace sync --runtime-source pypi`) so the workspace pins the newly published package version instead of the previously installed one.
 
 Read order:
 1) docs/llms.txt
