@@ -30,6 +30,7 @@ build/
 # Testing
 .pytest_cache/
 .ruff_cache/
+.import_linter_cache/
 .coverage
 htmlcov/
 .pre-commit-cache/

@@ -37,16 +37,16 @@ Optional extras:
 just bootstrap
 
 # auto-fix lint issues and normalize formatting
-make fmt
+just fmt
 
 # repo hygiene and high-confidence secret scan
-make oss-preflight
+just oss-preflight
 
 # fast gate: format check + lint + scoped ty + non-slow tests
-make test
+just test
 
 # full gate: includes slow tests
-make test-all
+just test-all
 
 # build package artifacts
 uv build
