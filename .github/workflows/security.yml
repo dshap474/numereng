@@ -23,11 +23,13 @@ jobs:
         with:
           enable-cache: true
 
+      - uses: taiki-e/install-action@just
+
       - name: Install dependencies
         run: uv sync --extra dev --locked
 
       - name: Run repo-local security checks
-        run: make security
+        run: just security
 
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@v2

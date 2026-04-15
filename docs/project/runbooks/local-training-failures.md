@@ -8,7 +8,7 @@
 
 ## First checks
 
-1. Run `make test` if the failure happened during local development changes.
+1. Run `just test` if the failure happened during local development changes.
 2. Inspect the run log under `.numereng/runs/<run_id>/run.log`.
 3. Inspect `.numereng/runs/<run_id>/runtime.json`.
 4. Inspect the current lifecycle row through the CLI/API store tooling.

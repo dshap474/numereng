@@ -20,11 +20,13 @@ jobs:
         with:
           enable-cache: true
 
+      - uses: taiki-e/install-action@just
+
       - name: Install dependencies
         run: uv sync --extra dev --locked
 
       - name: Run CI gate
-        run: make ci
+        run: just ci
 
       - name: Run HPO smoke
-        run: make hpo-smoke
+        run: just hpo-smoke

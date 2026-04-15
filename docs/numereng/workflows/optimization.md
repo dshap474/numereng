@@ -14,7 +14,6 @@ Convenience entrypoints:
 
 ```bash
 just hpo-smoke
-make hpo-smoke
 ```
 
 Optional:

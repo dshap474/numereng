@@ -20,8 +20,10 @@ jobs:
         with:
           enable-cache: true
 
+      - uses: taiki-e/install-action@just
+
       - name: Install dependencies
         run: uv sync --extra dev --locked
 
       - name: Run readiness checks
-        run: make readiness
+        run: just readiness

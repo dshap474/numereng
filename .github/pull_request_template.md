@@ -5,9 +5,9 @@
 
 ## Testing
 
-- [ ] `make oss-preflight`
-- [ ] `make test`
-- [ ] `make test-all` (if needed)
+- [ ] `just oss-preflight`
+- [ ] `just test`
+- [ ] `just test-all` (if needed)
 - [ ] `uv build` (if packaging or metadata changed)
 
 ## Checklist
