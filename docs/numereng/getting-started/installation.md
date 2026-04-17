@@ -1,59 +1,26 @@
-# Installation
+# Setup
 
-Bootstrap a workspace as a local `uv` project. The workspace owns its `.venv` and installed `numereng` runtime.
+`numereng` is meant to be used directly from a local source checkout.
 
 ## Prerequisites
 
 - Python `3.12+`
 - `uv`
+- optional: `just`
 
-## Bootstrap A Workspace
-
-Preferred:
+## Clone And Bootstrap
 
 ```bash
-uvx --from numereng numereng init --workspace numerai-dev
+git clone <your-fork-or-local-path> numereng
+cd numereng
+uv sync --extra dev
 ```
 
-Contributor or local-source mode:
+The repo-managed `.venv` is the canonical runtime.
+
+## Verify
 
 ```bash
-uvx --from /absolute/path/to/numereng numereng init --workspace numerai-dev --runtime-source path --runtime-path /absolute/path/to/numereng
-```
-
-The base install already includes the core local training/scoring stack. Optional extras remain available for additional model backends and HPO tooling:
-
-```bash
-cd numerai-dev
-uv run numereng workspace sync --with-training
-```
-
-## Update An Installed Workspace
-
-When a new `numereng` version is published, refresh an existing end-user workspace with a fresh published launcher:
-
-```bash
-uvx --from numereng numereng workspace sync --workspace numerai-dev --runtime-source pypi
-```
-
-That keeps the workspace on the published package path instead of switching it into contributor-local source mode.
-
-`numereng init` creates:
-
-- `experiments/`
-- `notes/`
-- `custom_models/`
-- `research_programs/`
-- `.agents/skills/`
-- `.numereng/`
-- `pyproject.toml`
-- `.python-version`
-- `.venv/`
-
-## Verify The Install
-
-```bash
-cd numerai-dev
 uv run numereng --help
 uv run python -c "import numereng.api, cloudpickle"
 ```
@@ -69,21 +36,16 @@ export NUMERAI_SECRET_KEY=your_secret_key
 
 ## Launch The Dashboard
 
-From the workspace root:
+From the repo root:
 
 ```bash
-uv run numereng viz
+just viz
 ```
 
 Default local endpoint:
 
 - [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
-## Contributor Setup
+## Working Rule
 
-If you are hacking on `numereng` itself rather than just using it, use the repo-managed environment instead:
-
-```bash
-uv sync --extra dev
-just test
-```
+Stay in the repo root. Run commands with `uv run ...` so they use the repo-managed environment and repo-local `.numereng/` state.

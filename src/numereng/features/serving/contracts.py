@@ -8,6 +8,9 @@ from typing import Literal
 
 NeutralizationMode = Literal["era", "global"]
 RankMethod = Literal["average", "min", "max", "first", "dense"]
+PackageScoreRuntime = Literal["auto", "pickle", "local"]
+PackageScoreStage = Literal["post_training_core", "post_training_full"]
+PackageEvaluationDataset = Literal["validation"]
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,44 @@ class ModelUploadResult:
 
 
 @dataclass(frozen=True)
+class PackageScoreResult:
+    """Artifacts produced by scoring one submission package on a local dataset."""
+
+    package: SubmissionPackageRecord
+    dataset: PackageEvaluationDataset
+    data_version: str
+    stage: PackageScoreStage
+    runtime_requested: PackageScoreRuntime
+    runtime_used: Literal["pickle", "local"]
+    predictions_path: Path
+    score_provenance_path: Path
+    summaries_path: Path
+    metric_series_path: Path
+    manifest_path: Path
+    row_count: int
+    era_count: int
+
+
+@dataclass(frozen=True)
+class PackageDiagnosticsSyncResult:
+    """Persisted Numerai diagnostics snapshot for one uploaded package pickle."""
+
+    package: SubmissionPackageRecord
+    model_id: str
+    upload_id: str
+    wait_requested: bool
+    diagnostics_status: str
+    terminal: bool
+    timed_out: bool
+    synced_at: str
+    compute_status_path: Path
+    logs_path: Path
+    raw_path: Path | None = None
+    summary_path: Path | None = None
+    per_era_path: Path | None = None
+
+
+@dataclass(frozen=True)
 class LiveSubmitResult:
     """Result returned after building and submitting a live parquet."""
 
@@ -149,12 +190,17 @@ __all__ = [
     "LiveBuildResult",
     "LiveSubmitResult",
     "ModelUploadResult",
+    "PackageDiagnosticsSyncResult",
+    "PackageEvaluationDataset",
+    "PackageScoreResult",
+    "PackageScoreRuntime",
+    "PackageScoreStage",
+    "PickleBuildResult",
     "ServingComponentInspection",
     "ServingBlendRule",
     "ServingComponentSpec",
     "ServingInspectionResult",
     "ServingNeutralizationSpec",
-    "PickleBuildResult",
     "RankMethod",
     "SubmissionPackageRecord",
 ]

@@ -6,12 +6,12 @@
 
 # Data directories (downloaded and generated files)
 output/
-experiments/
 notebooks/
 predictions/
 src/numereng/features/models/custom_models/
 !src/numereng/features/models/custom_models/.gitkeep
 !src/numereng/features/models/custom_models/template_model.py
+.agents/
 numerai-example/
 
 # Python

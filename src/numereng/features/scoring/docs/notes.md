@@ -10,8 +10,6 @@
 - `cwmm`
 - `fnc`
 - `fnc_<alias>`
-- `feature_exposure`
-- `max_feature_exposure`
 - `corr_with_benchmark`
 - `baseline_corr_*`
 - `corr_delta_vs_baseline_*`
@@ -25,8 +23,6 @@
   - `CORR20V2`
   - `MMC`
   - `BMC`
-  - `feature exposure`
-  - `max feature exposure`
   - `mean`
   - `std`
   - `sharpe`
@@ -40,8 +36,6 @@
   - `BMC`
   - `bmc_last_200_eras`
   - `avg_corr_with_benchmark`
-  - `feature exposure`
-  - `max feature exposure`
   - `mean`
   - `std`
   - `sharpe`

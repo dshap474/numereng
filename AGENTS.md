@@ -1,6 +1,6 @@
 # numereng
 
-This file is contributor-facing repo guidance. Installed users should work from a numereng workspace; contributors work from this source checkout.
+This file is contributor-facing repo guidance. Clone the repo, `cd` into it, and work directly from this source checkout.
 
 Read order:
 1. `docs/llms.txt` (agent entrypoint)
@@ -21,6 +21,11 @@ Read order:
 - Do not create ad-hoc virtual envs.
 - Numerai MCP auth is project-local via `.codex/config.toml` and expects `NUMERAI_MCP_AUTH` in the launching shell environment.
 - If Numerai MCP tools are loaded but return missing-auth errors, run `eval "$(uv run python -m numereng.platform.export_numerai_mcp_auth)"` from the repo root, then relaunch Codex from that shell if MCP access is needed.
+
+## Repo Model
+- The repo checkout is the canonical workspace.
+- Use the repo-managed environment via `uv sync --extra dev`.
+- Run commands from the repo root with `uv run numereng ...`.
 
 ## Non-Negotiable Rules
 - Preserve dependency direction: `config -> platform -> features -> api -> cli`.
@@ -63,7 +68,7 @@ Read order:
 - Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
 - Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
 - Legacy runs may be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` remains as a deprecated alias. Viz otherwise uses a bounded read-only fallback on first miss.
-- Canonical workspace roots: `experiments`, `notes`, `custom_models`, `research_programs`, `.agents/skills`.
+- Canonical tracked extension roots: `src/numereng/features/models/custom_models`, `src/numereng/features/agentic_research/programs`, `.agents/skills`.
 - Canonical hidden runtime roots under `.numereng`: `runs`, `datasets`, `cloud`, `cache`, `tmp`, `remote_ops`.
 - `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
 - `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.

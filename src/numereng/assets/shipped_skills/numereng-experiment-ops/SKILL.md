@@ -346,8 +346,6 @@ The packed markdown includes:
   - `mmc_mean`
   - `cwmm_mean`
   - `fnc_mean`
-  - `feature_exposure_mean`
-  - `max_feature_exposure`
   - `max_drawdown`
   - `mmc_coverage_ratio_rows`
 

@@ -314,6 +314,7 @@ export interface ExperimentConfig {
 export interface DocResponse {
 	content: string;
 	exists: boolean;
+	missing_reason?: 'docs_not_downloaded' | 'document_not_found' | string;
 }
 
 export interface ConfigListResponse {

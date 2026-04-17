@@ -35,7 +35,14 @@
 			const res = await api.getNumeraiDocContent(requestedPath);
 			if (res.exists) {
 				content = res.content;
+				docNotice = '';
 			} else {
+				if (res.missing_reason === 'docs_not_downloaded') {
+					content =
+						'*Numerai docs are not preinstalled in this workspace.*\n\nRun `uv run numereng docs sync numerai` to download the official docs locally.';
+					docNotice = '';
+					return;
+				}
 				if (requestedPath !== DEFAULT_DOC_PATH) {
 					const fallback = await api.getNumeraiDocContent(DEFAULT_DOC_PATH);
 					if (fallback.exists) {
@@ -108,7 +115,10 @@
 </script>
 
 <div class="-m-8 -mt-14 md:-mt-8 flex h-screen">
-	<nav class="w-64 flex-shrink-0 overflow-y-auto bg-card border-r border-border px-4 pb-4 pt-[25.6px]">
+	<nav class="docs-sidebar-shell w-64 flex-shrink-0 overflow-y-auto px-4 pb-4 pt-[25.6px]">
+		<div class="px-2 pb-3">
+			<h2 class="text-sm font-medium text-sidebar-primary">Docs</h2>
+		</div>
 		{#if loading}
 			<div class="px-2 text-muted-foreground text-sm">Loading...</div>
 		{:else if tree}
@@ -116,7 +126,7 @@
 				<div class="mb-3">
 					<button
 						type="button"
-						class="flex items-center justify-between w-full px-2 text-left text-xs font-semibold uppercase tracking-wider text-foreground/70 hover:text-foreground transition-colors"
+						class="flex items-center justify-between w-full px-2 text-left text-sm font-bold uppercase tracking-wider text-sidebar-foreground hover:text-sidebar-primary transition-colors"
 						onclick={() => toggleSection(section.heading)}
 					>
 						{section.heading}
@@ -131,7 +141,7 @@
 									{#if section.heading === 'Forum Archive' && item.children}
 										<button
 											type="button"
-											class="flex items-center justify-between w-full text-left px-2 py-1 text-sm rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+											class="flex items-center justify-between w-full text-left px-2 py-1 text-sm rounded text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50 transition-colors"
 											onclick={() => toggleForumYear(item.title)}
 										>
 											{item.title}
@@ -143,14 +153,14 @@
 										<button
 											type="button"
 											class="block w-full text-left px-2 py-1 text-sm rounded transition-colors {isSelected(item.path)
-												? 'bg-accent text-accent-foreground font-medium'
-												: 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+												? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+												: 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50'}"
 											onclick={() => item.path && selectDoc(item.path)}
 										>
 											{item.title}
 										</button>
 									{:else}
-										<span class="block px-2 py-1 text-sm text-muted-foreground">{item.title}</span>
+										<span class="block px-2 py-1 text-sm text-sidebar-foreground">{item.title}</span>
 									{/if}
 									{#if item.children && (section.heading !== 'Forum Archive' || expandedForumYears.has(item.title))}
 										<ul class="ml-3 space-y-0.5">
@@ -160,14 +170,14 @@
 														<button
 															type="button"
 															class="block w-full text-left px-2 py-1 text-xs rounded transition-colors {isSelected(child.path)
-																? 'bg-accent text-accent-foreground font-medium'
-																: 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+																? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+																: 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50'}"
 															onclick={() => child.path && selectDoc(child.path)}
 														>
 															{child.title}
 														</button>
 													{:else}
-														<span class="block px-2 py-1 text-xs text-muted-foreground">{child.title}</span>
+														<span class="block px-2 py-1 text-xs text-sidebar-foreground">{child.title}</span>
 													{/if}
 												</li>
 											{/each}
@@ -186,7 +196,7 @@
 		{#if error}
 			<div class="border border-destructive/50 bg-destructive/10 rounded-lg p-4 text-sm text-destructive">
 				{error}
-				<p class="mt-2 text-muted-foreground">Run <code class="bg-muted px-1 py-0.5 rounded text-xs">uv run numereng docs sync</code> to download the docs.</p>
+				<p class="mt-2 text-muted-foreground">Run <code class="bg-muted px-1 py-0.5 rounded text-xs">uv run numereng docs sync numerai</code> to download the official docs into this workspace.</p>
 			</div>
 		{:else if docLoading}
 			<div class="text-muted-foreground text-sm">Loading document...</div>

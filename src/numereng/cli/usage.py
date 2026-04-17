@@ -3,8 +3,7 @@
 USAGE = (
     "usage:\n"
     "  numereng [--fail]\n"
-    "  numereng init [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]\n"  # noqa: E501
-    "  numereng workspace sync [--workspace <path>] [--runtime-source <pypi|path>] [--runtime-path <path>] [--with-training] [--with-mlops]\n"  # noqa: E501
+    "  numereng docs sync numerai [--workspace <path>]\n"
     "  numereng viz [--workspace <path>] [--host <host>] [--port <n>]\n"
     "  numereng run submit --model-name <name> (--run-id <id> | --predictions <path>) [--workspace <path>] [--tournament <classic|signals|crypto>] [--allow-non-live-artifact] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]]\n"  # noqa: E501
     "  numereng run train --config <path.json> [--output-dir <path>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--experiment-id <id>] [--workspace <path>]\n"  # noqa: E501
@@ -36,11 +35,13 @@ USAGE = (
     "  numereng serve package create --experiment-id <id> --package-id <id> --components <json|path> [--data-version <v>] [--blend-rule <json|path>] [--neutralization <json|path>] [--workspace <path>]\n"  # noqa: E501
     "  numereng serve package inspect --experiment-id <id> --package-id <id> [--workspace <path>]\n"
     "  numereng serve package list [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"
+    "  numereng serve package score --experiment-id <id> --package-id <id> [--dataset <validation>] [--runtime <auto|pickle|local>] [--stage <post_training_core|post_training_full>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng serve package sync-diagnostics --experiment-id <id> --package-id <id> [--no-wait] [--workspace <path>]\n"  # noqa: E501
     "  numereng serve live build --experiment-id <id> --package-id <id> [--workspace <path>]\n"
     "  numereng serve live submit --experiment-id <id> --package-id <id> --model-name <name> [--workspace <path>]\n"
     "  numereng serve pickle build --experiment-id <id> --package-id <id> [--docker-image <image>] "
     "[--workspace <path>]\n"
-    "  numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--wait-diagnostics] [--workspace <path>]\n"  # noqa: E501
     "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
     "  numereng monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json]\n"
     "  numereng remote list [--format <table|json>]\n"

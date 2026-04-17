@@ -115,8 +115,8 @@ Optional:
 Current model notes:
 
 - built-in model type: `LGBMRegressor`
-- plugin models can be loaded from `custom_models/`
-- `module_path` is optional if the requested plugin type can be discovered in `custom_models/`
+- plugin models can be loaded from `src/numereng/features/models/custom_models/`
+- `module_path` is optional if the requested plugin type can be discovered in `src/numereng/features/models/custom_models/`
 
 ## `training`
 
@@ -219,7 +219,7 @@ Minimal example:
   "study_name": "lgbm-sweep",
   "config_path": "configs/run.json",
   "objective": {
-    "metric": "post_fold_champion_objective",
+    "metric": "bmc_last_200_eras.mean",
     "direction": "maximize",
     "neutralization": {
       "enabled": false,
@@ -275,5 +275,6 @@ Minimal example:
 - HPO v2 config is a clean break from the old flat study config shape
 - `sampler.kind=random` only allows `kind` and `seed`; TPE-only fields are invalid
 - `stopping.timeout_seconds` is a per-`hpo create` invocation budget; resumed studies do not accumulate prior wall-clock time
-- `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first with `corr_ender20_fold_mean -> corr_native_fold_mean` and `bmc_fold_mean -> bmc_ender20_fold_mean` fallback, then falls back to `results.json`
+- HPO defaults to `bmc_last_200_eras.mean`
+- legacy `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first with `corr_ender20_fold_mean -> corr_native_fold_mean` and `bmc_fold_mean -> bmc_ender20_fold_mean` fallback, then falls back to `results.json`
 - repeated identical HPO params reuse a completed trial value or a finished deterministic run when the scoring artifacts are intact; pre-existing non-finished run dirs fail loudly and are not reset automatically

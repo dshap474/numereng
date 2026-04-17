@@ -243,15 +243,6 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         [{"mean": 0.2, "std": 0.3, "sharpe": 0.67, "max_drawdown": 0.11}],
         index=["prediction"],
     )
-    feature_exposure_df = pd.DataFrame(
-        [{"mean": 0.12, "std": 0.05, "sharpe": 2.4, "max_drawdown": 0.08}],
-        index=["prediction"],
-    )
-    max_feature_exposure_df = pd.DataFrame(
-        [{"mean": 0.22, "std": 0.06, "sharpe": 3.67, "max_drawdown": 0.09}],
-        index=["prediction"],
-    )
-
     store_root = tmp_path / "store"
     output_dir = store_root / "runs" / "run-temp"
     predictions_dir = output_dir / "artifacts" / "predictions"
@@ -359,8 +350,6 @@ def test_run_training_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
                 "cwmm": cwmm_df,
                 "bmc": bmc_df,
                 "bmc_last_200_eras": bmc_df,
-                "feature_exposure": feature_exposure_df,
-                "max_feature_exposure": max_feature_exposure_df,
             },
             score_provenance={
                 "schema_version": "1",

@@ -1,29 +1,26 @@
 # Project Layout
 
-Numereng has two layouts you need to keep straight:
+The repo checkout is the workspace.
 
-- the user-facing workspace root
-- the hidden runtime store under `.numereng/`
+## Repo Roots
 
-## Workspace Root
+These are the repo-local extension directories you are expected to read and edit directly:
 
-These are the directories you are expected to read and edit directly:
-
-- `experiments/`: experiment manifests, notes, configs, launcher scripts, HPO and ensemble outputs
-- `notes/`: general workspace notes plus `__RESEARCH_MEMORY__/`
-- `custom_models/`: user-authored model plugins
-- `research_programs/`: user-authored research program markdown
-- `.agents/skills/`: numereng-owned shipped skills plus any local skill additions
+- `src/numereng/features/models/custom_models/`: tracked custom model plugins
+- `src/numereng/features/agentic_research/programs/`: tracked research program markdown
+- `.agents/skills/`: repo-local skills
 
 ## Runtime Store
 
-Numereng-owned runtime state lives under `.numereng/`:
+Numereng-managed runtime state lives under `.numereng/`:
 
 ```text
 .numereng/
   numereng.db
   numereng.db-shm
   numereng.db-wal
+  experiments/
+  notes/
   runs/
   datasets/
   cache/
@@ -35,10 +32,10 @@ Numereng-owned runtime state lives under `.numereng/`:
 
 ## Experiment Layout
 
-Experiments live under `experiments/<experiment_id>/`:
+Experiments live under `.numereng/experiments/<experiment_id>/`:
 
 ```text
-experiments/<experiment_id>/
+.numereng/experiments/<experiment_id>/
   experiment.json
   EXPERIMENT.md
   EXPERIMENT.pack.md
@@ -49,7 +46,7 @@ experiments/<experiment_id>/
   ensembles/
 ```
 
-Archived experiments live under `experiments/_archive/<experiment_id>/`.
+Archived experiments live under `.numereng/experiments/_archive/<experiment_id>/`.
 
 ## Run Artifacts
 
@@ -65,8 +62,8 @@ For a scored run, the canonical runtime artifacts live under `.numereng/runs/<ru
 
 ## Path Rules
 
-- Use `--workspace` when you need to target a workspace other than the current directory.
+- Use `--workspace` when you need to target another checkout's runtime store or docs mirror paths.
 - Training and HPO configs are JSON-only.
-- `custom_models/` is the canonical runtime discovery root for custom model plugins.
-- `research_programs/` is resolved before packaged built-ins.
-- Managed runtime scratch state stays under `.numereng/`, not the workspace root.
+- `src/numereng/features/models/custom_models/` is the canonical runtime discovery root for custom model plugins.
+- `src/numereng/features/agentic_research/programs/` is the default research program catalog root.
+- Managed runtime scratch state stays under `.numereng/`.

@@ -166,9 +166,7 @@
 		'corr_with_benchmark',
 		'corr_delta_vs_baseline',
 		'fnc_native',
-		'fnc_ender20',
-		'feature_exposure',
-		'max_feature_exposure'
+		'fnc_ender20'
 	];
 
 	let visiblePerformanceMetrics = $derived.by(() => {
@@ -217,7 +215,7 @@
 	function shouldHideMetric(metricKey: string): boolean {
 		const meta = scoringDashboard?.meta;
 		if (!meta) return false;
-		if (metricKey.startsWith('fnc_') || metricKey.includes('feature_exposure')) {
+		if (metricKey.startsWith('fnc_')) {
 			if (meta.omissions?.post_training_features === 'feature_neutral_metrics_disabled') {
 				return true;
 			}
@@ -266,8 +264,6 @@
 			fnc_native: 'FNC Native',
 			fnc_ender20: 'FNC Ender20',
 			cwmm: 'CWMM',
-			feature_exposure: 'Feature Exposure',
-			max_feature_exposure: 'Max Feature Exposure',
 			corr_with_benchmark: 'Corr vs Benchmark',
 			corr_delta_vs_baseline: 'Corr Delta vs Baseline'
 		};
@@ -283,7 +279,7 @@
 
 	function metricSummaryRow(metricKey: string): Record<string, unknown> | null {
 		if (!scoringDashboard) return null;
-		if (metricKey.startsWith('fnc_') || metricKey.includes('feature_exposure')) {
+		if (metricKey.startsWith('fnc_')) {
 			return scoringDashboard.feature_summary;
 		}
 		return scoringDashboard.summary;

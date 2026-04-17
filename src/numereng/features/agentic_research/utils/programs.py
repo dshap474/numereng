@@ -22,7 +22,6 @@ from numereng.features.agentic_research.utils.types import (
     ResearchProgramRoundPolicy,
     ResearchProgramSource,
 )
-from numereng.features.store import resolve_workspace_layout
 
 _PROGRAMS_DIR = Path(__file__).resolve().parents[1] / "programs"
 _DEFAULT_TRACKED_PROGRAM_IDS = frozenset({"numerai-experiment-loop"})
@@ -135,7 +134,7 @@ def resolve_user_programs_dir(path: str | Path | None = None) -> Path:
     env_value = os.getenv(_ENV_PROGRAMS_DIR)
     if env_value:
         return Path(env_value).expanduser().resolve()
-    return resolve_workspace_layout().research_programs_root
+    return _PROGRAMS_DIR
 
 
 def _iter_program_directories(path: str | Path | None = None) -> tuple[Path, ...]:

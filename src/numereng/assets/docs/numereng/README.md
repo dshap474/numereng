@@ -1,6 +1,6 @@
 # Numereng
 
-`numereng` is an installable Numerai workspace runtime. You bootstrap a workspace once, it gets its own local `uv` project and `.venv`, and then you do your work from that workspace.
+`numereng` is a repo-local Numerai workspace runtime. Clone the repo, `cd` into it, use the repo-managed `.venv`, and work directly from this checkout.
 
 Stable public interfaces:
 
@@ -11,24 +11,23 @@ Stable public interfaces:
 ## Golden Path
 
 ```bash
-uvx --from numereng numereng init --workspace numerai-dev
-cd numerai-dev
-uv run numereng viz
+uv sync --extra dev
+just viz
 ```
 
 ## Canonical Workspace Layout
 
-Visible user-authored roots:
+Tracked authoring and extension roots:
 
-- `experiments/`
-- `notes/`
-- `custom_models/`
-- `research_programs/`
+- `src/numereng/features/models/custom_models/`
+- `src/numereng/features/agentic_research/programs/`
 - `.agents/skills/`
 
 Hidden numereng-managed runtime state:
 
 - `.numereng/numereng.db`
+- `.numereng/experiments/`
+- `.numereng/notes/`
 - `.numereng/runs/`
 - `.numereng/datasets/`
 - `.numereng/cache/`
@@ -47,7 +46,7 @@ Hidden numereng-managed runtime state:
 - Maintain datasets and runtime state: `numereng dataset-tools --help`, `numereng store --help`
 - Launch cloud workflows: `numereng cloud --help`
 - Query Numerai datasets/models/rounds and forum data: `numereng numerai --help`
-- Launch the read-only dashboard: `numereng viz`
+- Launch the read-only dashboard: `just viz`
 
 ## Where To Go Next
 

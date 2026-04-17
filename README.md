@@ -2,7 +2,7 @@
 
 # numereng
 
-`numereng` is a package-first agentic development environment for Numerai. It gives you one installed runtime plus one workspace layout for experiments, notes, custom models, research programs, shipped agent skills, and the read-only dashboard.
+`numereng` is a repo-local Numerai workspace for training, experiments, submissions, serving, and monitoring.
 
 `numereng` is a community-built, self-supported tool. It is not affiliated with, endorsed by, or supported by Numerai.
 
@@ -12,126 +12,90 @@ Stable public interfaces:
 - Python facade: `import numereng.api`
 - Workflow facade: `import numereng.api.pipeline`
 
-## Install
+## Quick start
 
 Requires Python `3.12+`.
 
-```bash
-uvx --from numereng numereng init --workspace numerai-dev
-```
-
-Alternative:
+Clone the repo, enter it, and use the repo-managed environment:
 
 ```bash
-pip install numereng
-python -m numereng.cli init --workspace numerai-dev
+git clone <your-fork-or-local-path> numereng
+cd numereng
+uv sync --extra dev
 ```
 
-`numereng init` now creates the canonical workspace scaffold and provisions a workspace-local `uv` project with its own `.venv`. From then on, run commands from the workspace with `uv run numereng ...`.
-
-To upgrade an existing end-user workspace to the latest published `numereng`, use a fresh published launcher:
-
-```bash
-uvx --from numereng numereng workspace sync --workspace numerai-dev --runtime-source pypi
-```
-
-The base install includes the public Python API, CLI, monitor stack, and the core local training/scoring runtime.
-
-Optional extras:
-
-- `pip install "numereng[training]"` for additional model backends and HPO tooling beyond the core local stack
-- `pip install "numereng[mlops]"`
-
-## Quick Start
-
-Create a fresh workspace anywhere:
-
-```bash
-uvx --from numereng numereng init --workspace numerai-dev
-cd numerai-dev
-```
-
-That creates the canonical workspace layout:
-
-```text
-numerai-dev/
-  experiments/
-  notes/
-  custom_models/
-  research_programs/
-  .agents/skills/
-  .numereng/
-```
-
-Then work from that directory:
+First commands:
 
 ```bash
 uv run numereng --help
 uv run numereng experiment list
-uv run numereng viz
+just viz
 ```
 
 Default dashboard endpoint:
 
 - [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
-## Workspace Model
+## Workspace model
 
-Visible workspace roots:
+The repo checkout is the canonical workspace.
 
-- `experiments/`
-- `notes/`
-- `custom_models/`
-- `research_programs/`
+Tracked authoring and extension roots:
+
+- `src/numereng/features/models/custom_models/`
+- `src/numereng/features/agentic_research/programs/`
 - `.agents/skills/`
 
-Hidden numereng-managed runtime state:
+Repo-local runtime and experiment state:
 
-- `.numereng/numereng.db`
+- `.numereng/experiments/`
+- `.numereng/notes/`
 - `.numereng/runs/`
 - `.numereng/datasets/`
 - `.numereng/cache/`
 - `.numereng/tmp/`
 - `.numereng/remote_ops/`
+- `.numereng/numereng.db`
 
-`numereng init` is idempotent and does not overwrite existing user-authored files. If the workspace runtime drifts after a package upgrade, run `uv run numereng workspace sync`.
+## Core workflows
 
-## Core Workflows
+Use these command groups from the repo root:
 
-- Train runs from strict JSON configs: `numereng run train --help`
-- Re-score an existing run: `numereng run score --help`
-- Submit predictions or run outputs: `numereng run submit --help`
-- Manage experiments and experiment reports: `numereng experiment --help`
-- Run agentic research campaigns: `numereng research --help`
-- Run HPO studies: `numereng hpo --help`
-- Build ensembles: `numereng ensemble --help`
-- Build production submission packages and model uploads: `numereng serve --help`
-- Neutralize predictions: `numereng neutralize --help`
-- Maintain datasets and runtime state: `numereng dataset-tools --help`, `numereng store --help`
-- Launch read-only monitoring: `numereng viz`
-- Launch cloud jobs: `numereng cloud --help`
-- Query Numerai APIs and forum data: `numereng numerai --help`
+- Train and rescore local runs: `uv run numereng run train --help`, `uv run numereng run score --help`
+- Submit predictions or run outputs: `uv run numereng run submit --help`
+- Manage experiments and reports: `uv run numereng experiment --help`
+- Build model packages and hosted uploads: `uv run numereng serve --help`
+- Run research and optimization loops: `uv run numereng research --help`, `uv run numereng ensemble --help`, `uv run numereng neutralize --help`
+- Launch monitoring and dashboard views: `just viz`
+- Query Numerai APIs and datasets: `uv run numereng numerai --help`
 
-Python users can call the same flows through typed request/response contracts in `numereng.api.contracts`.
+For deeper workflow documentation, use the docs links below instead of treating the README as the full command reference.
 
-## Docs
+## Python API
 
-- Product docs: [`docs/numereng`](docs/numereng)
-- Agent entrypoint: [`docs/llms.txt`](docs/llms.txt)
-- Architecture map: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+The Python API is available for typed automation and power-user flows. For full local training orchestration, use `numereng.api.pipeline`.
+
+## Docs and help
 
 Start here:
 
-- [`docs/numereng/getting-started/installation.md`](docs/numereng/getting-started/installation.md)
-- [`docs/numereng/getting-started/project-layout.md`](docs/numereng/getting-started/project-layout.md)
-- [`docs/numereng/reference/custom-models.md`](docs/numereng/reference/custom-models.md)
-- [`docs/numereng/workflows/dashboard.md`](docs/numereng/workflows/dashboard.md)
-- [`docs/numereng/workflows/serving.md`](docs/numereng/workflows/serving.md)
+- Repo setup: [docs/numereng/getting-started/installation.md](docs/numereng/getting-started/installation.md)
+- Workspace layout: [docs/numereng/getting-started/project-layout.md](docs/numereng/getting-started/project-layout.md)
+- Custom models: [docs/numereng/reference/custom-models.md](docs/numereng/reference/custom-models.md)
+- Dashboard: [docs/numereng/workflows/dashboard.md](docs/numereng/workflows/dashboard.md)
+- Serving and hosted model uploads: [docs/numereng/workflows/serving.md](docs/numereng/workflows/serving.md)
 
-## Contributors
+Deeper system docs:
 
-The repo remains the source of truth for implementation, tests, docs, and packaged assets.
-End users do not need this checkout; they only need an installed `numereng` runtime plus a workspace.
+- Agent entrypoint: [docs/llms.txt](docs/llms.txt)
+- Architecture map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+## Contributing
+
+Start with:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 Contributor setup:
 
@@ -141,21 +105,4 @@ just test
 just build
 ```
 
-Maintainer release flow:
-
-```bash
-uv build
-./scripts/release_smoke_install.sh
-```
-
-Then publish through the GitHub `Release` workflow:
-
-- manual dispatch publishes to TestPyPI
-- pushing `vX.Y.Z` publishes to PyPI after the workflow verifies the tag matches `pyproject.toml`
-
-Contributor/deep-system docs:
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- [`docs/llms.txt`](docs/llms.txt)
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`SECURITY.md`](SECURITY.md)
+The intended user path is clone the repo, `cd` into it, launch your agent, and work directly against this checkout.

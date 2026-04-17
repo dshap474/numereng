@@ -23,7 +23,7 @@ def _dispatch_command(
         missing = exc.name or "unknown"
         if missing.startswith("numereng"):
             raise
-        raise PackageError(f"runtime_dependency_missing:{missing}:run_numereng_workspace_sync") from exc
+        raise PackageError(f"runtime_dependency_missing:{missing}:run_uv_sync_extra_dev") from exc
     return handler(args)
 
 
@@ -53,17 +53,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args=args[1:],
             )
 
-        if args and args[0] == "init":
+        if args and args[0] == "docs":
             return _dispatch_command(
-                module_name="numereng.cli.commands.init",
-                handler_name="handle_init_command",
-                args=args[1:],
-            )
-
-        if args and args[0] == "workspace":
-            return _dispatch_command(
-                module_name="numereng.cli.commands.workspace",
-                handler_name="handle_workspace_command",
+                module_name="numereng.cli.commands.docs",
+                handler_name="handle_docs_command",
                 args=args[1:],
             )
 

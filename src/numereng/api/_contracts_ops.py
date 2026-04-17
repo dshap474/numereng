@@ -11,7 +11,6 @@ from numereng.api._contracts_base import NeutralizationMode, WorkspaceBoundReque
 from numereng.config.hpo.contracts import canonicalize_hpo_sampler_payload
 
 _SAFE_ID = re.compile(r"^[\w\-.]+$")
-WorkspaceRuntimeSource = Literal["pypi", "path"]
 
 
 class HpoSearchSpaceSpecRequest(BaseModel):
@@ -712,6 +711,7 @@ class ServePickleUploadRequest(WorkspaceBoundRequest):
     model_name: str
     data_version: str | None = None
     docker_image: str | None = None
+    wait_diagnostics: bool = False
 
 
 class ServePickleUploadResponse(BaseModel):
@@ -722,50 +722,29 @@ class ServePickleUploadResponse(BaseModel):
     upload_id: str
     data_version: str | None = None
     docker_image: str | None = None
+    diagnostics_synced: bool = False
+    diagnostics_status: str | None = None
+    diagnostics_terminal: bool | None = None
+    diagnostics_timed_out: bool | None = None
+    diagnostics_synced_at: str | None = None
+    diagnostics_compute_status_path: str | None = None
+    diagnostics_logs_path: str | None = None
+    diagnostics_raw_path: str | None = None
+    diagnostics_summary_path: str | None = None
+    diagnostics_per_era_path: str | None = None
 
 
-class WorkspaceRuntimeRequest(WorkspaceBoundRequest):
-    runtime_source: WorkspaceRuntimeSource | None = None
-    runtime_path: str | None = None
-    with_training: bool | None = None
-    with_mlops: bool | None = None
-
-    @model_validator(mode="after")
-    def _validate_runtime_selection(self) -> WorkspaceRuntimeRequest:
-        if self.runtime_path is not None and self.runtime_source != "path":
-            raise ValueError("runtime_path requires runtime_source=path")
-        if self.runtime_source == "path" and not self.runtime_path:
-            raise ValueError("runtime_path is required when runtime_source=path")
-        return self
+class DocsSyncRequest(WorkspaceBoundRequest):
+    domain: Literal["numerai"] = "numerai"
 
 
-class WorkspaceInitRequest(WorkspaceRuntimeRequest):
-    pass
-
-
-class WorkspaceSyncRequest(WorkspaceRuntimeRequest):
-    pass
-
-
-class WorkspaceSyncResponse(BaseModel):
+class DocsSyncResponse(BaseModel):
     workspace_root: str
-    store_root: str
-    workspace_project_path: str
-    python_version_path: str
-    venv_path: str
-    created_paths: list[str] = Field(default_factory=list)
-    updated_paths: list[str] = Field(default_factory=list)
-    runtime_source: WorkspaceRuntimeSource
-    runtime_path: str | None = None
-    extras: list[str] = Field(default_factory=list)
-    dependency_spec: str
-    installed_numereng_version: str
-    verified_dependencies: list[str] = Field(default_factory=list)
-
-
-class WorkspaceInitResponse(WorkspaceSyncResponse):
-    skipped_existing_paths: list[str] = Field(default_factory=list)
-    installed_skill_ids: list[str] = Field(default_factory=list)
+    destination_root: str
+    sync_meta_path: str
+    upstream_commit: str
+    synced_at: str
+    synced_files: int = Field(default=0, ge=0)
 
 
 __all__ = [
@@ -773,6 +752,8 @@ __all__ = [
     "BaselineBuildResponse",
     "DatasetToolsBuildDownsampleRequest",
     "DatasetToolsBuildDownsampleResponse",
+    "DocsSyncRequest",
+    "DocsSyncResponse",
     "EnsembleBuildRequest",
     "EnsembleComponentResponse",
     "EnsembleSelectRequest",
@@ -833,9 +814,4 @@ __all__ = [
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
-    "WorkspaceInitRequest",
-    "WorkspaceInitResponse",
-    "WorkspaceRuntimeSource",
-    "WorkspaceSyncRequest",
-    "WorkspaceSyncResponse",
 ]

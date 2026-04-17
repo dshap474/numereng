@@ -14,8 +14,6 @@ SHARED_RUN_METRIC_NAMES: tuple[str, ...] = (
     "mmc_mean",
     "cwmm_mean",
     "fnc_mean",
-    "feature_exposure_mean",
-    "max_feature_exposure",
     "max_drawdown",
     "mmc_coverage_ratio_rows",
 )
@@ -32,8 +30,6 @@ _SHARED_RUN_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "mmc_mean": ("mmc_mean", "mmc_ender20.mean", "mmc.mean"),
     "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
     "fnc_mean": ("fnc_mean", "fnc.mean"),
-    "feature_exposure_mean": ("feature_exposure_mean", "feature_exposure.mean"),
-    "max_feature_exposure": ("max_feature_exposure", "max_feature_exposure.mean"),
     "max_drawdown": ("max_drawdown", "corr.max_drawdown"),
 }
 

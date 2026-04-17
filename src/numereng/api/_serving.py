@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from numereng.api.contracts import (
     ServeBlendRuleRequest,
@@ -19,12 +20,17 @@ from numereng.api.contracts import (
     ServePackageListRequest,
     ServePackageListResponse,
     ServePackageResponse,
+    ServePackageScoreRequest,
+    ServePackageScoreResponse,
+    ServePackageSyncDiagnosticsRequest,
+    ServePackageSyncDiagnosticsResponse,
     ServePickleBuildRequest,
     ServePickleBuildResponse,
     ServePickleUploadRequest,
     ServePickleUploadResponse,
 )
 from numereng.features.serving import (
+    PackageDiagnosticsSyncResult,
     ServingBlendRule,
     ServingComponentSpec,
     ServingInspectionResult,
@@ -39,7 +45,9 @@ from numereng.features.serving import (
     create_submission_package,
     inspect_package,
     list_submission_packages,
+    score_submission_package,
     submit_live_package,
+    sync_submission_package_diagnostics,
     upload_submission_pickle,
 )
 from numereng.features.submission import (
@@ -47,6 +55,7 @@ from numereng.features.submission import (
     SubmissionModelUploadFileNotFoundError,
     SubmissionModelUploadFormatUnsupportedError,
 )
+from numereng.features.training.errors import TrainingError
 from numereng.platform.errors import NumeraiClientError, PackageError
 
 
@@ -162,6 +171,69 @@ def serve_live_submit(request: ServeLiveSubmitRequest) -> ServeLiveSubmitRespons
     )
 
 
+def serve_package_score(request: ServePackageScoreRequest) -> ServePackageScoreResponse:
+    """Score one final submission package on local validation data."""
+    try:
+        result = score_submission_package(
+            workspace_root=request.workspace_root,
+            experiment_id=request.experiment_id,
+            package_id=request.package_id,
+            dataset=request.dataset,
+            runtime=request.runtime,
+            stage=request.stage,
+        )
+    except (
+        ServingPackageNotFoundError,
+        ServingValidationError,
+        ServingRuntimeError,
+        ServingUnsupportedConfigError,
+        TrainingError,
+        ValueError,
+    ) as exc:
+        raise PackageError(str(exc)) from exc
+    except NumeraiClientError as exc:
+        raise PackageError(str(exc)) from exc
+    return ServePackageScoreResponse(
+        package=_package_response(result.package),
+        dataset=result.dataset,
+        data_version=result.data_version,
+        stage=result.stage,
+        runtime_requested=result.runtime_requested,
+        runtime_used=result.runtime_used,
+        predictions_path=str(result.predictions_path),
+        score_provenance_path=str(result.score_provenance_path),
+        summaries_path=str(result.summaries_path),
+        metric_series_path=str(result.metric_series_path),
+        manifest_path=str(result.manifest_path),
+        row_count=result.row_count,
+        era_count=result.era_count,
+    )
+
+
+def serve_package_sync_diagnostics(
+    request: ServePackageSyncDiagnosticsRequest,
+) -> ServePackageSyncDiagnosticsResponse:
+    """Sync the latest Numerai diagnostics snapshot for one uploaded submission package."""
+    try:
+        result = sync_submission_package_diagnostics(
+            workspace_root=request.workspace_root,
+            experiment_id=request.experiment_id,
+            package_id=request.package_id,
+            wait=request.wait,
+        )
+    except (
+        ServingPackageNotFoundError,
+        ServingValidationError,
+        ServingRuntimeError,
+        ServingUnsupportedConfigError,
+        ValueError,
+    ) as exc:
+        raise PackageError(str(exc)) from exc
+    except NumeraiClientError as exc:
+        raise PackageError(str(exc)) from exc
+    return _package_diagnostics_response(result)
+
+
 def serve_pickle_build(request: ServePickleBuildRequest) -> ServePickleBuildResponse:
     """Build one Numerai model-upload pickle from a submission package."""
     try:
@@ -199,6 +271,14 @@ def serve_pickle_upload(request: ServePickleUploadRequest) -> ServePickleUploadR
             data_version=request.data_version,
             docker_image=request.docker_image,
         )
+        diagnostics = None
+        if request.wait_diagnostics:
+            diagnostics = sync_submission_package_diagnostics(
+                workspace_root=request.workspace_root,
+                experiment_id=request.experiment_id,
+                package_id=request.package_id,
+                wait=True,
+            )
     except (
         ServingPackageNotFoundError,
         ServingValidationError,
@@ -207,18 +287,33 @@ def serve_pickle_upload(request: ServePickleUploadRequest) -> ServePickleUploadR
         SubmissionModelNotFoundError,
         SubmissionModelUploadFileNotFoundError,
         SubmissionModelUploadFormatUnsupportedError,
+        TrainingError,
     ) as exc:
         raise PackageError(str(exc)) from exc
     except NumeraiClientError as exc:
         raise PackageError(str(exc)) from exc
     return ServePickleUploadResponse(
-        package=_package_response(result.package),
+        package=_package_response(result.package if diagnostics is None else diagnostics.package),
         pickle_path=str(result.pickle_path),
         model_name=result.model_name,
         model_id=result.model_id,
         upload_id=result.upload_id,
         data_version=result.data_version,
         docker_image=result.docker_image,
+        diagnostics_synced=diagnostics is not None,
+        diagnostics_status=None if diagnostics is None else diagnostics.diagnostics_status,
+        diagnostics_terminal=None if diagnostics is None else diagnostics.terminal,
+        diagnostics_timed_out=None if diagnostics is None else diagnostics.timed_out,
+        diagnostics_synced_at=None if diagnostics is None else diagnostics.synced_at,
+        diagnostics_compute_status_path=None if diagnostics is None else str(diagnostics.compute_status_path),
+        diagnostics_logs_path=None if diagnostics is None else str(diagnostics.logs_path),
+        diagnostics_raw_path=None if diagnostics is None or diagnostics.raw_path is None else str(diagnostics.raw_path),
+        diagnostics_summary_path=None
+        if diagnostics is None or diagnostics.summary_path is None
+        else str(diagnostics.summary_path),
+        diagnostics_per_era_path=None
+        if diagnostics is None or diagnostics.per_era_path is None
+        else str(diagnostics.per_era_path),
     )
 
 
@@ -300,6 +395,25 @@ def _inspection_response(result: ServingInspectionResult) -> ServePackageInspect
     )
 
 
+def _package_diagnostics_response(result: PackageDiagnosticsSyncResult) -> ServePackageSyncDiagnosticsResponse:
+    diagnostics: Any = result
+    return ServePackageSyncDiagnosticsResponse(
+        package=_package_response(diagnostics.package),
+        model_id=diagnostics.model_id,
+        upload_id=diagnostics.upload_id,
+        wait_requested=diagnostics.wait_requested,
+        diagnostics_status=diagnostics.diagnostics_status,
+        terminal=diagnostics.terminal,
+        timed_out=diagnostics.timed_out,
+        synced_at=diagnostics.synced_at,
+        compute_status_path=str(diagnostics.compute_status_path),
+        logs_path=str(diagnostics.logs_path),
+        raw_path=None if diagnostics.raw_path is None else str(diagnostics.raw_path),
+        summary_path=None if diagnostics.summary_path is None else str(diagnostics.summary_path),
+        per_era_path=None if diagnostics.per_era_path is None else str(diagnostics.per_era_path),
+    )
+
+
 def _to_feature_component(item: ServeComponentRequest) -> ServingComponentSpec:
     return ServingComponentSpec(
         component_id=item.component_id or "",
@@ -335,6 +449,8 @@ __all__ = [
     "serve_live_build",
     "serve_live_submit",
     "serve_package_create",
+    "serve_package_score",
+    "serve_package_sync_diagnostics",
     "serve_package_list",
     "serve_pickle_build",
     "serve_pickle_upload",

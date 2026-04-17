@@ -46,6 +46,10 @@ def _handle_package_command(args: Sequence[str]) -> int:
         return _handle_package_inspect(args[1:])
     if args[0] == "list":
         return _handle_package_list(args[1:])
+    if args[0] == "score":
+        return _handle_package_score(args[1:])
+    if args[0] == "sync-diagnostics":
+        return _handle_package_sync_diagnostics(args[1:])
     print(f"unknown serve package command: {args[0]}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2
@@ -200,6 +204,28 @@ def _handle_package_inspect(args: Sequence[str]) -> int:
         request_cls=api.ServePackageInspectRequest,
         call=api.serve_package_inspect,
         required={"--experiment-id", "--package-id"},
+        value_flags={"--experiment-id", "--package-id", "--workspace"},
+    )
+
+
+def _handle_package_score(args: Sequence[str]) -> int:
+    return _handle_simple_request(
+        args,
+        request_cls=api.ServePackageScoreRequest,
+        call=api.serve_package_score,
+        required={"--experiment-id", "--package-id"},
+        value_flags={"--experiment-id", "--package-id", "--dataset", "--runtime", "--stage", "--workspace"},
+    )
+
+
+def _handle_package_sync_diagnostics(args: Sequence[str]) -> int:
+    return _handle_simple_request(
+        args,
+        request_cls=api.ServePackageSyncDiagnosticsRequest,
+        call=api.serve_package_sync_diagnostics,
+        required={"--experiment-id", "--package-id"},
+        value_flags={"--experiment-id", "--package-id", "--workspace"},
+        bool_flags={"--no-wait"},
     )
 
 
@@ -209,6 +235,7 @@ def _handle_live_build(args: Sequence[str]) -> int:
         request_cls=api.ServeLiveBuildRequest,
         call=api.serve_live_build,
         required={"--experiment-id", "--package-id"},
+        value_flags={"--experiment-id", "--package-id", "--workspace"},
     )
 
 
@@ -218,6 +245,7 @@ def _handle_live_submit(args: Sequence[str]) -> int:
         request_cls=api.ServeLiveSubmitRequest,
         call=api.serve_live_submit,
         required={"--experiment-id", "--package-id", "--model-name"},
+        value_flags={"--experiment-id", "--package-id", "--model-name", "--workspace"},
     )
 
 
@@ -227,7 +255,7 @@ def _handle_pickle_build(args: Sequence[str]) -> int:
         request_cls=api.ServePickleBuildRequest,
         call=api.serve_pickle_build,
         required={"--experiment-id", "--package-id"},
-        optional={"--docker-image"},
+        value_flags={"--experiment-id", "--package-id", "--docker-image", "--workspace"},
     )
 
 
@@ -237,7 +265,15 @@ def _handle_pickle_upload(args: Sequence[str]) -> int:
         request_cls=api.ServePickleUploadRequest,
         call=api.serve_pickle_upload,
         required={"--experiment-id", "--package-id", "--model-name"},
-        optional={"--data-version", "--docker-image"},
+        value_flags={
+            "--experiment-id",
+            "--package-id",
+            "--model-name",
+            "--data-version",
+            "--docker-image",
+            "--workspace",
+        },
+        bool_flags={"--wait-diagnostics"},
     )
 
 
@@ -247,10 +283,10 @@ def _handle_simple_request(
     request_cls: type[object],
     call: object,
     required: set[str],
-    optional: set[str] | None = None,
+    value_flags: set[str],
+    bool_flags: set[str] | None = None,
 ) -> int:
-    value_flags = {"--experiment-id", "--package-id", "--model-name", "--data-version", "--docker-image", "--workspace"}
-    values, _, parse_error = _parse_simple_options(args, value_flags=value_flags)
+    values, toggles, parse_error = _parse_simple_options(args, value_flags=value_flags, bool_flags=bool_flags)
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -263,29 +299,26 @@ def _handle_simple_request(
         print(f"missing required argument: {missing[0]}", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
-    payload = {
-        "experiment_id": values.get("--experiment-id"),
-        "package_id": values.get("--package-id"),
-        "model_name": values.get("--model-name"),
-        "data_version": values.get("--data-version"),
-        "docker_image": values.get("--docker-image"),
-        "workspace_root": values.get("--workspace", "."),
-    }
-    if optional is None:
-        optional = set()
     allowed_keys = {
         "--experiment-id": "experiment_id",
         "--package-id": "package_id",
         "--model-name": "model_name",
         "--data-version": "data_version",
         "--docker-image": "docker_image",
+        "--dataset": "dataset",
+        "--runtime": "runtime",
+        "--stage": "stage",
     }
     request_payload = {
-        field: payload[field]
+        field: values.get(flag)
         for flag, field in allowed_keys.items()
-        if flag in values or flag in required or flag in optional
+        if flag in values or flag in required
     }
     request_payload["workspace_root"] = values.get("--workspace", ".")
+    if "--wait-diagnostics" in toggles:
+        request_payload["wait_diagnostics"] = True
+    if "--no-wait" in toggles:
+        request_payload["wait"] = False
     try:
         request = cast(object, request_cls).model_validate(request_payload)  # type: ignore[union-attr]
         response = cast(object, call)(request)  # type: ignore[misc]

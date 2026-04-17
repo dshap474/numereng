@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from collections.abc import Callable, Iterable, Sequence
 from functools import lru_cache
 from importlib import import_module
@@ -17,7 +18,6 @@ from numereng.features.scoring._fastops import (
     correlation_contribution_matrix,
     cwmm_matrix_vs_reference,
     feature_exposure_matrices,
-    feature_neutral_corr_matrix,
     numerai_corr_matrix_vs_target,
 )
 from numereng.features.scoring.artifacts import SCORING_STAGE_FILENAMES
@@ -227,6 +227,14 @@ def _load_prediction_corr_functions() -> tuple[Callable[..., pd.DataFrame], Call
     except ImportError as exc:
         raise TrainingMetricsError("training_metrics_dependency_missing_numerai_tools") from exc
     return tie_kept_rank__gaussianize__pow_1_5, pearson_correlation
+
+
+def _load_max_feature_correlation() -> Callable[..., tuple[str, float]]:
+    try:
+        from numerai_tools.scoring import max_feature_correlation
+    except ImportError as exc:
+        raise TrainingMetricsError("training_metrics_dependency_missing_numerai_tools") from exc
+    return max_feature_correlation
 
 
 def _is_native_numerai_tools_callable(func: object) -> bool:
@@ -610,44 +618,21 @@ def per_era_fnc(
     if not resolved_feature_cols:
         raise TrainingDataError("training_fnc_feature_cols_empty")
 
-    if not _is_native_numerai_tools_callable(feature_neutral_corr):
-        fallback_per_col: list[pd.Series] = []
-        required_cols = [target_col, *resolved_feature_cols]
-        for pred_col in resolved_pred_cols:
-            fallback_per_col.append(
-                _single_prediction_per_era(
-                    frame=df,
-                    pred_col=pred_col,
-                    required_cols=required_cols,
-                    era_col=era_col,
-                    scorer=lambda group, col: feature_neutral_corr(
-                        group[[col]],
-                        group[resolved_feature_cols],
-                        group[target_col],
-                    ),
-                )
-            )
-        if not fallback_per_col:
-            return pd.DataFrame()
-        return cast(pd.DataFrame, _sort_era_index(pd.concat(fallback_per_col, axis=1)))
-
     per_col: list[pd.Series] = []
-    required_cols = [*resolved_feature_cols, target_col]
+    required_cols = [target_col, *resolved_feature_cols]
     for pred_col in resolved_pred_cols:
         per_col.append(
-            _single_prediction_metric_per_era(
+            _single_prediction_per_era(
                 frame=df,
                 pred_col=pred_col,
                 required_cols=required_cols,
                 era_col=era_col,
-                scorer=lambda pred, extra: float(
-                    feature_neutral_corr_matrix(
-                        pred.reshape(-1, 1),
-                        extra[:, : len(resolved_feature_cols)],
-                        extra[:, len(resolved_feature_cols)],
-                    )[0]
+                scorer=lambda group, col: feature_neutral_corr(
+                    group[[col]],
+                    group[resolved_feature_cols],
+                    group[target_col],
                 ),
-            )
+            ),
         )
     if not per_col:
         return pd.DataFrame()
@@ -682,7 +667,11 @@ def per_era_feature_exposure(
     feature_cols: Sequence[str],
     era_col: str = "era",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Compute per-era RMS and max absolute feature exposure for predictions."""
+    """Compute local rank-based RMS and max feature exposure diagnostics.
+
+    This helper is kept for research/debugging workflows. It is not the
+    Numerai-style max feature correlation metric.
+    """
     resolved_pred_cols = [str(col) for col in _as_list(pred_cols)]
     resolved_feature_cols = [str(col) for col in feature_cols]
     if not resolved_feature_cols:
@@ -720,6 +709,50 @@ def per_era_feature_exposure(
         cast(pd.DataFrame, _sort_era_index(pd.concat(rms_series, axis=1))),
         cast(pd.DataFrame, _sort_era_index(pd.concat(max_series, axis=1))),
     )
+
+
+def per_era_max_feature_correlation(
+    df: pd.DataFrame,
+    pred_cols: Sequence[object],
+    feature_cols: Sequence[str],
+    era_col: str = "era",
+) -> pd.DataFrame:
+    """Compute per-era max absolute Pearson feature correlation."""
+    max_feature_correlation = _load_max_feature_correlation()
+    resolved_pred_cols = [str(col) for col in _as_list(pred_cols)]
+    resolved_feature_cols = [str(col) for col in feature_cols]
+    if not resolved_feature_cols:
+        raise TrainingDataError("training_max_feature_correlation_feature_cols_empty")
+
+    per_col: list[pd.Series] = []
+    for pred_col in resolved_pred_cols:
+        subset = df[[era_col, pred_col, *resolved_feature_cols]].dropna(subset=[pred_col])
+        if subset.empty:
+            per_col.append(pd.Series(dtype="float64", name=pred_col))
+            continue
+
+        values: dict[object, float] = {}
+        for era_value, group in subset.groupby(era_col, sort=False):
+            aligned = group[[pred_col, *resolved_feature_cols]].dropna()
+            if len(aligned) < 2:
+                values[era_value] = float(np.nan)
+                continue
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    warnings.simplefilter("ignore", category=FutureWarning)
+                    _, corr = max_feature_correlation(aligned[pred_col], aligned[resolved_feature_cols])
+            except (AssertionError, KeyError, ValueError):
+                corr = float(np.nan)
+            values[era_value] = float(corr) if pd.notna(corr) else float(np.nan)
+
+        result = pd.Series(values, name=pred_col, dtype="float64")
+        result.index.name = era_col
+        per_col.append(cast(pd.Series, _sort_era_index(result)))
+
+    if not per_col:
+        return pd.DataFrame()
+    return cast(pd.DataFrame, _sort_era_index(pd.concat(per_col, axis=1)))
 
 
 def max_drawdown(scores: pd.Series) -> float:
@@ -2171,10 +2204,6 @@ def _build_post_training_features_summary_frame(
     prediction_col: str,
     summaries: dict[str, pd.DataFrame],
 ) -> pd.DataFrame | None:
-    metric_keys = {"fnc", "feature_exposure", "max_feature_exposure"}
-    if not any(key in summaries for key in metric_keys):
-        return None
-
     row: dict[str, object] = {
         "run_id": run_id,
         "config_hash": config_hash,
@@ -2184,7 +2213,9 @@ def _build_post_training_features_summary_frame(
         "prediction_col": prediction_col,
     }
 
+    has_feature_metrics = False
     if "fnc" in summaries:
+        has_feature_metrics = True
         row.update(
             _flatten_summary_metric(
                 summaries["fnc"],
@@ -2201,6 +2232,7 @@ def _build_post_training_features_summary_frame(
         payout_target_col=payout_target_col,
     )
     if resolved_fnc_ender_key is not None:
+        has_feature_metrics = True
         row.update(
             _flatten_summary_metric(
                 summaries[resolved_fnc_ender_key],
@@ -2209,17 +2241,8 @@ def _build_post_training_features_summary_frame(
             )
         )
 
-    for metric_key in ("feature_exposure", "max_feature_exposure"):
-        summary = summaries.get(metric_key)
-        if summary is None:
-            continue
-        row.update(
-            _flatten_summary_metric(
-                summary,
-                output_metric=metric_key,
-                prediction_col=prediction_col,
-            )
-        )
+    if not has_feature_metrics:
+        return None
 
     return pd.DataFrame([row])
 
@@ -2528,19 +2551,6 @@ def _summarize_prediction_file_with_scores_materialized(
                     aliases=target_aliases,
                 )
             ] = _single_series_frame(fnc_per_era, resolved_pred_cols[0])
-        feature_exposure_per_era, max_feature_exposure_per_era = per_era_feature_exposure(
-            predictions_for_fnc,
-            resolved_pred_cols,
-            resolved_feature_cols,
-            era_col=era_col,
-        )
-        summaries["feature_exposure"] = summarize_scores(feature_exposure_per_era)
-        summaries["max_feature_exposure"] = summarize_scores(max_feature_exposure_per_era)
-        metric_frames["feature_exposure"] = _single_series_frame(feature_exposure_per_era, resolved_pred_cols[0])
-        metric_frames["max_feature_exposure"] = _single_series_frame(
-            max_feature_exposure_per_era,
-            resolved_pred_cols[0],
-        )
 
     benchmark_path: Path | None = None
     benchmark_col: str | None = None

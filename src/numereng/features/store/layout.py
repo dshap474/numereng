@@ -9,16 +9,13 @@ CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "runs",
     "datasets",
     "cloud",
+    "experiments",
+    "notes",
     "cache",
     "tmp",
     "remote_ops",
 )
-CANONICAL_WORKSPACE_TOP_LEVEL_DIRS: tuple[str, ...] = (
-    "experiments",
-    "notes",
-    "custom_models",
-    "research_programs",
-)
+CANONICAL_WORKSPACE_TOP_LEVEL_DIRS: tuple[str, ...] = (".agents",)
 CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
     "numereng.db",
     "numereng.db-shm",
@@ -30,6 +27,9 @@ TARGETED_STRAY_DIRS: tuple[str, ...] = (
     "smoke_live_check",
 )
 CANONICAL_STORE_DIRNAME = ".numereng"
+_FEATURES_ROOT = Path(__file__).resolve().parents[1]
+_BUILTIN_CUSTOM_MODELS_ROOT = _FEATURES_ROOT / "models" / "custom_models"
+_BUILTIN_RESEARCH_PROGRAMS_ROOT = _FEATURES_ROOT / "agentic_research" / "programs"
 
 
 @dataclass(frozen=True)
@@ -76,10 +76,10 @@ def resolve_workspace_layout(workspace_root: str | Path = ".") -> WorkspaceLayou
     return WorkspaceLayout(
         workspace_root=resolved_workspace_root,
         store_root=store_root,
-        experiments_root=resolved_workspace_root / "experiments",
-        notes_root=resolved_workspace_root / "notes",
-        custom_models_root=resolved_workspace_root / "custom_models",
-        research_programs_root=resolved_workspace_root / "research_programs",
+        experiments_root=store_root / "experiments",
+        notes_root=store_root / "notes",
+        custom_models_root=_BUILTIN_CUSTOM_MODELS_ROOT,
+        research_programs_root=_BUILTIN_RESEARCH_PROGRAMS_ROOT,
         skills_root=resolved_workspace_root / ".agents" / "skills",
     )
 

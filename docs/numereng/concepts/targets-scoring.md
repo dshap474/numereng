@@ -31,10 +31,8 @@ Run scoring produces:
 - `cwmm`
 - `bmc` / `bmc_<alias>`
 - `bmc_last_200_eras` / `bmc_last_200_eras_<alias>`
-- `feature_exposure`
-- `max_feature_exposure`
 
-`bmc` and feature-exposure metrics are diagnostics. Numereng does not emit payout estimate fields.
+`bmc` is a diagnostic metric. Numereng does not emit payout estimate fields.
 
 ## FNC Semantics
 
@@ -68,4 +66,4 @@ That means:
 - `policy.fnc_target_policy`
 - `policy.benchmark_min_overlap_ratio`
 
-Feature-neutral diagnostics are stage-driven: `post_training_core` omits FNC and exposure outputs, while `post_training_full` and `all` include them.
+Feature-neutral diagnostics are stage-driven: `post_training_core` omits FNC outputs, while `post_training_full` and `all` include them.

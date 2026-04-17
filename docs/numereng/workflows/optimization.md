@@ -82,7 +82,7 @@ Optional neutralization controls:
 Study artifacts are stored either:
 
 - globally under `.numereng/hpo/<study_id>/`
-- under an experiment at `experiments/<experiment_id>/hpo/<study_id>/`
+- under an experiment at `.numereng/experiments/<experiment_id>/hpo/<study_id>/`
 
 Each study root now includes:
 

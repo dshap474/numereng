@@ -17,12 +17,11 @@
 - [14. Change Guidance](#14-change-guidance)
 
 ## 1. Purpose
-`numereng` is a package-first Numerai workflow system with two stable public interfaces:
+`numereng` is a repo-local Numerai workflow system with two stable public interfaces:
 - CLI: `numereng`
 - Python facade: `import numereng.api`
 
 It orchestrates:
-- workspace bootstrap and runtime sync
 - training
 - submission
 - experiments
@@ -73,7 +72,7 @@ It orchestrates:
           | src/numereng/config/*|       | src/numereng/platform|
           +----------------------+       +----------------------+
 
-Canonical runtime store: `.numereng/` inside one user workspace root
+Canonical runtime store: `.numereng/` inside the repo checkout
 ```
 
 ## 4. Source Layout
@@ -86,14 +85,15 @@ src/numereng/
 
   platform/
     errors.py
+    docs_sync.py
     forum_scraper.py
     numerai_client.py
 
   features/
-    workspace/                 # workspace scaffold + uv runtime provisioning
+    docs_sync.py                 # repo-local Numerai docs mirror sync
     training/                  # training pipeline, run manifests/artifacts
       scoring/                 # modular post-training scoring service + metric engines
-    serving/                   # submission packages, live build, and model-upload pickle assembly
+    serving/                   # submission packages, live build, package validation scoring, diagnostics sync, and model-upload pickle assembly
     submission/                # run/file artifact resolution + Numerai upload
     baseline/                  # shared benchmark baseline construction from persisted runs
     feature_neutralization/    # prediction neutralization; vectorized least-squares engine with numerai-tools-style intercept parity
@@ -110,7 +110,7 @@ src/numereng/
       modal/                   # deploy/data/train orchestration + state
       lambda/, runpod/, vast/  # placeholders
     models/
-      custom_models/           # model plugin path; numereng may normalize backend asset paths into `<effective_store_root>/cache/*`
+      custom_models/           # tracked model plugin path; numereng may normalize backend asset paths into `<effective_store_root>/cache/*`
 
   api/
     contracts.py
@@ -133,7 +133,7 @@ src/numereng/
     main.py
     usage.py
     common.py
-    commands/{run,experiment,baseline,hpo,ensemble,serve,neutralize,store,monitor,numerai,cloud*}.py
+    commands/{run,experiment,baseline,hpo,ensemble,serve,neutralize,store,monitor,numerai,docs,cloud*}.py
 ```
 
 ## 5. Public Contracts
@@ -155,15 +155,14 @@ Boundary behavior:
   - `2`: parse/usage failure
 
 Command families:
-- `init`: workspace scaffold + local uv runtime provisioning
-- `workspace`: `sync`
+- `docs`: `sync numerai`
 - `run`: `train`, `score`, `submit`, `cancel`
 - `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `run-plan`, `score-round`, `promote`, `report`, `pack`
 - `baseline`: `build`
 - `research`: `init`, `status`, `run`
 - `hpo`: `create`, `list`, `details`, `trials`
 - `ensemble`: `build`, `select`, `list`, `details`
-- `serve`: `package create|list`, `live build|submit`, `pickle build|upload`
+- `serve`: `package create|list|inspect|score|sync-diagnostics`, `live build|submit`, `pickle build|upload`
 - `neutralize`: `apply`
 - `dataset-tools`: `build-downsampled-full`
 - `store`: `init`, `index`, `rebuild`, `doctor`, `materialize-viz-artifacts`
@@ -175,10 +174,10 @@ Command families:
 ## 6. Runtime Persistence Model
 Numereng has two path surfaces:
 
-- workspace-root authoring paths: `experiments/`, `notes/`, `custom_models/`, `research_programs/`, `.agents/skills/`
-- workspace-root runtime bootstrap files: `pyproject.toml`, `.python-version`, `.venv/`
+- tracked extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/programs/`, `.agents/skills/`
+- optional synced vendor docs path: `docs/numerai/` (manual mirror, not bundled into wheel assets)
+- repo-root dev files: `pyproject.toml`, `.python-version`, `.venv/`
 - hidden runtime store: `.numereng/`
-- public release path: `.github/workflows/release.yml` builds with `uv build`, publishes manually to TestPyPI on workflow dispatch, and publishes to PyPI on `vX.Y.Z` tags via Trusted Publishing
 
 Canonical runtime-store dirs under `.numereng/`:
 - `runs`
@@ -198,15 +197,22 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
 - `ensembles/`
 
 ```text
-<workspace>/
+<repo-root>/
   pyproject.toml
   .python-version
   .venv/
-  experiments/
-    <experiment_id>/
-      experiment.json
-      EXPERIMENT.md
-      EXPERIMENT.pack.md
+  docs/
+    numerai/                     # optional local mirror from `numereng docs sync numerai`
+  src/numereng/features/models/custom_models/
+  src/numereng/features/agentic_research/programs/
+  .agents/
+    skills/
+  .numereng/
+    experiments/
+      <experiment_id>/
+        experiment.json
+        EXPERIMENT.md
+        EXPERIMENT.pack.md
       run_scripts/*
       ensemble_selection/
         <selection_id>/
@@ -231,26 +237,25 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
           round.md
           llm_trace.jsonl
           llm_trace.md
-      hpo/<study_id>/...
-      ensembles/<ensemble_id>/...
-    _archive/
-      <experiment_id>/
-        experiment.json
-        EXPERIMENT.md
-        EXPERIMENT.pack.md
-        configs/*.json
-      hpo/<study_id>/...
-      ensembles/<ensemble_id>/...
+        hpo/<study_id>/...
+        ensembles/<ensemble_id>/...
+      _archive/
+        <experiment_id>/
+          experiment.json
+          EXPERIMENT.md
+          EXPERIMENT.pack.md
+          configs/*.json
+        hpo/<study_id>/...
+        ensembles/<ensemble_id>/...
 
-  notes/
-    __RESEARCH_MEMORY__/
-      CURRENT.md
-      experiments/<experiment_id>.md
-      topics/*.md
-      decisions/*.md
-      legacy-progression/...
+    notes/
+      __RESEARCH_MEMORY__/
+        CURRENT.md
+        experiments/<experiment_id>.md
+        topics/*.md
+        decisions/*.md
+        legacy-progression/...
 
-  .numereng/
     numereng.db
     numereng.db-shm
     numereng.db-wal
@@ -303,7 +308,7 @@ Data model split:
 - `remote_ops/experiment_run_plan/*.json` is the durable execution-state contract for source-owned experiment windows and is the only restart/reconciliation target for `remote experiment maintain`.
 - `store rebuild` re-derives index state from filesystem artifacts.
 - Viz detail reads treat local artifacts as authoritative hot-path data: local experiment/run detail requests do not fetch remote overlay metadata unless the caller explicitly supplies a remote source or the local artifact is missing.
-- Archived experiments keep the same experiment ID, but their experiment-local files move under `experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
+- Archived experiments keep the same experiment ID, but their experiment-local files move under `.numereng/experiments/_archive/<id>` while run artifacts remain under `.numereng/runs/<run_id>`.
 
 ## 7. Core Execution Flows
 
@@ -315,22 +320,15 @@ numereng [--fail]
   -> HealthResponse JSON
 ```
 
-Workspace bootstrap / repair:
+Repo bootstrap:
 ```text
-numereng init
-  -> cli.commands.init
-  -> features.workspace.init_workspace
-      -> scaffold canonical workspace roots
-      -> features.workspace.runtime.sync_workspace_environment
-          -> create/update workspace pyproject.toml
-          -> create/update .python-version
-          -> uv sync
-          -> verify numereng + required runtime deps inside .venv
+uv sync --extra dev
 
-numereng workspace sync
-  -> cli.commands.workspace
-  -> api.workspace_sync
-  -> features.workspace.runtime.sync_workspace_environment
+numereng docs sync numerai
+  -> cli.commands.docs
+  -> api.sync_docs
+  -> features.docs_sync.sync_numerai_docs
+      -> platform.docs_sync.clone_shallow
 ```
 
 ### 7.2 Training
@@ -370,7 +368,7 @@ cli experiment run-plan
   -> parse/validate experiment id + row window + score stage
   -> api.experiment_run_plan
   -> features.experiments.run_experiment_plan
-      1) load `experiments/<id>/run_plan.csv`
+      1) load `.numereng/experiments/<id>/run_plan.csv`
       2) create/update `.numereng/remote_ops/experiment_run_plan/<id>__<start>_<end>.json`
       3) train each selected config with `post_training_scoring=none`
       4) score each completed round once via `experiment score-round`
@@ -446,7 +444,7 @@ Data loading and CV rules:
 - `baseline_corr` is no longer persisted as a run metric; instead, provenance records whether payout-target baseline CORR came from the shared active-benchmark artifact or from transient fallback computation.
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - Deferred or failed post-training scoring still leaves `results.json` and `metrics.json` on disk with `training.scoring.policy`, `status`, `requested_stage`, `refreshed_stages`, and optional `reason` / `error` metadata. `score_provenance.json` appears once scoring materializes successfully.
-- Feature exposure diagnostics are computed during post-run scoring using the same `fncv3_features` join path as FNC. Training persists nested summaries for `feature_exposure` (RMS exposure) and `max_feature_exposure` (max absolute exposure), while viz exposes `feature_exposure_mean` and scalar `max_feature_exposure` from those nested payloads.
+- Canonical post-run feature diagnostics are FNC-only. Training neutralizes to `fncv3_features`, persists `fnc` summaries in `post_training_full_summary`, and no longer emits feature-exposure summaries as canonical scoring outputs.
 - `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, `fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`), benchmark source metadata (`active` or explicit path), join row/era counts, benchmark/meta missing-row/era counts, and the persisted scoring-artifact manifest summary.
 - Benchmark post-run scoring joins require strict era alignment, but `bmc` / `bmc_last_200_eras` are computed on the maximum available overlapping benchmark window whenever any overlap exists.
 - Meta-model post-run scoring joins require strict era alignment, but `mmc` / `cwmm` are computed on the maximum available overlapping meta-model window whenever any overlap exists.
@@ -509,8 +507,8 @@ cli experiment archive|unarchive
       - resolve experiment from live or archived root
       - mutate manifest status (`archived` or restored pre-archive status)
       - move experiment dir between:
-          experiments/<id>
-          experiments/_archive/<id>
+          .numereng/experiments/<id>
+          .numereng/experiments/_archive/<id>
       - upsert experiment index row so viz reflects the change immediately
 ```
 
@@ -524,10 +522,10 @@ cli research init|status|run
   -> api.research_init|api.research_status|api.research_run
   -> features.agentic_research.init_research|get_research_status|run_research
       - persist supervisor state under:
-          experiments/<root>/agentic_research/program.json
-          experiments/<root>/agentic_research/session_program.md
-          experiments/<root>/agentic_research/lineage.json
-          experiments/<root>/agentic_research/rounds/rN/*
+          .numereng/experiments/<root>/agentic_research/program.json
+          .numereng/experiments/<root>/agentic_research/session_program.md
+          .numereng/experiments/<root>/agentic_research/lineage.json
+          .numereng/experiments/<root>/agentic_research/rounds/rN/*
       - `research init` requires one persisted `program_id`
       - the default tracked program lives under `src/numereng/features/agentic_research/programs/numerai-experiment-loop.md`
       - local custom programs can be dropped into `src/numereng/features/agentic_research/programs/*.md`; that folder includes a README and `.gitignore` so extra programs stay untracked by default
@@ -551,7 +549,7 @@ cli research init|status|run
         - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
       - phase-aware custom programs can still use the structured planner JSON contract
         - the JSON schema is generated from the persisted program definition instead of loaded from strategy assets
-      - persist planner trace entries per round at `experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
+      - persist planner trace entries per round at `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
       - persist one canonical round bundle per round at `rounds/rN/round.json` and `rounds/rN/round.md`
       - round bundles and planner traces record `program_id`, `program_sha256`, and `session_program_path`
       - the round markdown is deliberately compact: round status, parent selection, mutation lineage, scored outcome, and links back to the full planner trace for that round
@@ -617,13 +615,17 @@ cli ensemble select
 
 ### 7.6 Submission + Neutralize
 ```text
-cli serve package create|inspect|list
+cli serve package create|inspect|list|score|sync-diagnostics
   -> api.serve_package_*
   -> features.serving
-      - persist one submission package under `experiments/<id>/submission_packages/<package_id>/`
+      - persist one submission package under `.numereng/experiments/<id>/submission_packages/<package_id>/`
       - freeze explicit component sources, weights, blend rule, and optional post-processing
       - inspect compatibility separately for local live builds, artifact-backed live readiness, and Numerai-hosted model uploads
       - persist a stable preflight report under `artifacts/preflight/report.json`
+      - `score` executes the final package artifact on local validation data (`runtime=auto|pickle|local`)
+      - `score` persists package-native predictions, summaries, provenance, and metric series under `artifacts/eval/validation/<runtime>/`
+      - `score` reuses `features.scoring.metrics.score_prediction_file_with_details(...)` directly instead of the run scorer and emits explicit target-labeled metrics
+      - `sync-diagnostics` polls the exact uploaded compute-pickle id, then persists upload-scoped compute status/logs plus the latest available Numerai model diagnostics snapshot under `artifacts/diagnostics/<upload_id>/`
 
 cli serve live build|submit
   -> api.serve_live_*
@@ -649,6 +651,7 @@ cli serve pickle build|upload
       - serialize a self-contained Numerai-compatible `predict(live_features, live_benchmark_models)` callable
       - run an isolated hosted-runtime smoke before marking the pickle upload-ready
       - `upload` then hands the pickle to `features.submission`
+      - optional `--wait-diagnostics` chains into package diagnostics sync after a successful upload without changing the package deployment status
 
 cli run submit
   -> api.submit_predictions
@@ -705,6 +708,15 @@ cli numerai forum scrape
   -> platform.scrape_forum_posts
   -> local export output chosen by the operator (commonly `docs/numerai/forum/`); this is generated user data, not packaged product docs
   -> viz docs API appends "Forum Archive" under `/api/docs/numerai/tree` with year -> month index navigation
+```
+
+### 7.10 Numerai Docs Browsing
+```text
+viz docs numerai
+  -> prefer repo docs/numerai/
+  -> else repo docs/numerai/
+  -> else packaged fallback if present
+  -> if no local mirror exists, docs page points the user at `uv run numereng docs sync numerai`
 ```
 
 ## 8. Telemetry + Run Monitoring Architecture
@@ -786,7 +798,7 @@ Stable lifecycle statuses:
 Experiment id for telemetry job rows is resolved as:
 1. explicit `experiment_id` argument (preferred)
 2. fallback inference from config path under:
-   `experiments/<experiment_id>/configs/*`
+   `.numereng/experiments/<experiment_id>/configs/*`
 
 Operational impact:
 - `numereng run train --experiment-id <id>` guarantees experiment-scoped monitor visibility.
@@ -831,7 +843,7 @@ Store/remote monitor contract:
 - Remote ops use the same target profiles plus `python_cmd` for helper scripts and optional `runner_cmd` for detached CLI launches. Sync is local-driven and archive-based over SSH:
   - repo sync includes tracked files plus untracked nonignored files from the local working tree
   - repo sync excludes `.git`, `.numereng`, gitignored machine profiles, envs, caches, and build outputs
-  - experiment sync includes only `experiments/<id>/EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
+  - experiment sync includes only `.numereng/experiments/<id>/EXPERIMENT.md|run_plan.csv|configs/*|run_scripts/*`
   - remote experiment creation uses the target store root directly and does not overwrite an existing remote manifest
   - experiment pull preflights one remote experiment, selects only `FINISHED` runs, materializes full remote run directories into `.numereng/runs/<run_id>`, and reconciles the local experiment manifest from remote runtime truth while leaving active/incomplete remote runs to SSH fallback
   - experiment maintain is idempotent: terminal windows noop, live supervisors noop, and dead nonterminal windows relaunch the same row window with `--resume`
@@ -856,7 +868,7 @@ Live monitor streaming route:
 - multiplexes events/logs/samples with periodic heartbeat
 
 Viz scoring contract:
-- Public viz metrics are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, `feature_exposure_*`, `max_feature_exposure`, `max_drawdown`, and `mmc_coverage_ratio_rows`.
+- Public viz metrics are canonical-only: `corr_*`, `fnc_*`, `mmc_*`, `bmc_*`, `bmc_last_200_eras_mean`, `cwmm_*`, `max_drawdown`, and `mmc_coverage_ratio_rows`.
 - Viz also publishes generic payout-target aliases `corr_payout_mean` and `mmc_payout_mean`; `corr_payout_mean` comes from `corr_ender20`, while `mmc_mean` / `mmc_payout_mean` normalize to the payout-backed MMC surface with legacy `mmc_ender20` fallback for older runs.
 - Viz does not expose payout-derived metrics or payout-specific routes.
 - Per-era correlation payloads use `{ era, corr }`.
@@ -873,15 +885,21 @@ Current frontend routes:
 - `/experiments`
 - `/experiments/[id]`
 
+Viz backend API-doc routes:
+- `/api/docs`
+- `/api/openapi.json`
+- `/api/redoc`
+
 Important UI contract:
 - There are no standalone `/run-ops` or `/configs` frontend pages.
 - The frontend is SSR-first again. Server-side route loads use `http://127.0.0.1:8502/api` by default and may be overridden with `VIZ_API_BASE`; browser requests still use `/api`.
 - The root layout is intentionally local-fast. It loads only the local experiment list plus system capabilities and does not fetch remote-aware mission-control data.
 - `/experiments` is a mission-control dashboard, not a launch surface. It route-loads `/api/experiments/overview?include_remote=false`, then refreshes `/api/experiments/overview?include_remote=true` after hydration and polls that remote-aware view every 10 seconds while visible, preserving the last successful snapshot on transient failures.
+- The frontend docs pages keep exclusive ownership of `/docs`; generated FastAPI Swagger/ReDoc endpoints are namespaced under `/api/docs` and `/api/redoc` to avoid route collisions on direct reloads and deep links.
 - The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
 - The mission-control overview is canonicalized by `experiment_id`: when an experiment exists locally and on one remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate local/remote rows.
 - The global left-rail experiment navigator now uses the local experiment list from the root layout, so unrelated routes stay fast and remote-free. Remote-aware canonicalized experiment rows remain on `/experiments`.
-- `numereng viz` is the canonical dashboard launcher for installed workspaces. Repo-local `just viz` remains a contributor wrapper for the source checkout and should not be treated as the product contract.
+- `just viz` is the canonical dashboard launcher for the repo-root workflow.
 - Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
 - Launch/control actions are CLI/API-only by design.
@@ -919,10 +937,10 @@ CLI/API training launch
 
 ### 9.4 Notes copy behavior
 - Notes copy buttons copy file contents (fetched from `/api/notes/content`), not file path labels.
-- `notes/__RESEARCH_MEMORY__/CURRENT.md` is the canonical rolling research-memory surface.
-- `notes/__RESEARCH_MEMORY__/experiments/*.md` stores one durable review per completed experiment.
-- `notes/__RESEARCH_MEMORY__/topics/*.md` stores hybrid topic ledgers.
-- `notes/__RESEARCH_MEMORY__/legacy-progression/` preserves the prior `__PROGRESSION__` monthly summaries as historical inputs only.
+- `.numereng/notes/__RESEARCH_MEMORY__/CURRENT.md` is the canonical rolling research-memory surface.
+- `.numereng/notes/__RESEARCH_MEMORY__/experiments/*.md` stores one durable review per completed experiment.
+- `.numereng/notes/__RESEARCH_MEMORY__/topics/*.md` stores hybrid topic ledgers.
+- `.numereng/notes/__RESEARCH_MEMORY__/legacy-progression/` preserves the prior `__PROGRESSION__` monthly summaries as historical inputs only.
 
 ## 10. Boundary Error Model
 ```text
@@ -978,7 +996,7 @@ success/help
 34. SageMaker managed entrypoint removes store DB sidecars (`numereng.db*`) from managed output before artifact packaging.
 35. Managed AWS `--state-path` defaults under `<store_root>/cache/cloud/aws/...`; explicit overrides must resolve under `<store_root>/cache/cloud/**/*.json` or legacy `<store_root>/cloud/*.json` during the migration window. Submit-time `NUMERENG_RUN_EXECUTION_JSON` is intentionally trimmed to the minimum provider/runtime fields needed inside the container so long descriptive run IDs and canonical state paths stay under SageMaker env-size limits; full cloud provenance is recovered from managed state during pull/extract.
 36. Archived experiments are read-only: `experiment train` and `experiment promote` must fail until the experiment is unarchived.
-37. Experiment archive moves affect only `experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
+37. Experiment archive moves affect only `.numereng/experiments/*`; run artifacts remain canonical under `.numereng/runs/*`.
 38. Managed AWS and EC2 `runtime_profile` selects packaging only (`standard|lgbm-cuda`) and never overrides the training config device.
 39. SageMaker submit may omit `--image-uri`; when omitted, numereng resolves the checked-in default alias for the selected `runtime_profile`, persists the resolved `image_uri`, and records the tag digest in managed state/cloud metadata for reproducibility.
 40. SageMaker CUDA submit requires config device `cuda`, `runtime_profile=lgbm-cuda`, and a GPU instance type (`ml.g*` or `ml.p*`); mismatches fail before submit.

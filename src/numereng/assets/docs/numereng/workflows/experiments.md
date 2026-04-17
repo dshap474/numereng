@@ -12,7 +12,7 @@ uv run numereng experiment create \
   --tags baseline,lgbm
 ```
 
-This creates `experiments/<experiment_id>/` with:
+This creates `.numereng/experiments/<experiment_id>/` with:
 
 - `experiment.json`
 - `EXPERIMENT.md` seeded to the current report-section scaffold
@@ -69,7 +69,7 @@ uv run numereng experiment report --id 2026-03-12_lgbm-baseline --format table
 uv run numereng experiment pack --id 2026-03-12_lgbm-baseline
 ```
 
-Useful artifacts under `experiments/<experiment_id>/`:
+Useful artifacts under `.numereng/experiments/<experiment_id>/`:
 
 - `experiment.json`
 - `EXPERIMENT.md`

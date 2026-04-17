@@ -153,6 +153,121 @@ def test_cli_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, caps
     assert payload["deployment_classification"] == "local_live_only"
 
 
+def test_cli_serve_package_score_success(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    package = api_module.ServePackageResponse(
+        package_id="pkg-1",
+        experiment_id="exp-1",
+        tournament="classic",
+        data_version="v5.2",
+        package_path="/tmp/pkg-1",
+        status="created",
+        components=[api_module.ServeComponentRequest(weight=1.0, config_path="/tmp/component.json")],
+        blend_rule=api_module.ServeBlendRuleRequest(),
+        neutralization=None,
+        artifacts={},
+        created_at="2026-04-11T00:00:00Z",
+        updated_at="2026-04-11T00:00:00Z",
+        provenance={},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "serve_package_score",
+        lambda request: api_module.ServePackageScoreResponse(
+            package=package,
+            dataset=request.dataset,
+            data_version="v5.2",
+            stage=request.stage,
+            runtime_requested=request.runtime,
+            runtime_used="local",
+            predictions_path="/tmp/predictions.parquet",
+            score_provenance_path="/tmp/score_provenance.json",
+            summaries_path="/tmp/summaries.json",
+            metric_series_path="/tmp/metric_series.parquet",
+            manifest_path="/tmp/manifest.json",
+            row_count=4,
+            era_count=2,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "serve",
+            "package",
+            "score",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--runtime",
+            "local",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["runtime_used"] == "local"
+    assert payload["row_count"] == 4
+
+
+def test_cli_serve_package_sync_diagnostics_no_wait(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    package = api_module.ServePackageResponse(
+        package_id="pkg-1",
+        experiment_id="exp-1",
+        tournament="classic",
+        data_version="v5.2",
+        package_path="/tmp/pkg-1",
+        status="pickle_uploaded",
+        components=[api_module.ServeComponentRequest(weight=1.0, config_path="/tmp/component.json")],
+        blend_rule=api_module.ServeBlendRuleRequest(),
+        neutralization=None,
+        artifacts={},
+        created_at="2026-04-11T00:00:00Z",
+        updated_at="2026-04-11T00:00:00Z",
+        provenance={},
+    )
+    monkeypatch.setattr(
+        api_module,
+        "serve_package_sync_diagnostics",
+        lambda request: api_module.ServePackageSyncDiagnosticsResponse(
+            package=package,
+            model_id="model-1",
+            upload_id="upload-1",
+            wait_requested=request.wait,
+            diagnostics_status="pending",
+            terminal=False,
+            timed_out=False,
+            synced_at="2026-04-16T12:00:00Z",
+            compute_status_path="/tmp/compute_status.json",
+            logs_path="/tmp/logs.json",
+            raw_path=None,
+            summary_path=None,
+            per_era_path=None,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "serve",
+            "package",
+            "sync-diagnostics",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--no-wait",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert payload["wait_requested"] is False
+    assert payload["diagnostics_status"] == "pending"
+
+
 def test_cli_serve_pickle_build_passes_docker_image(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -204,3 +319,101 @@ def test_cli_serve_pickle_build_passes_docker_image(
     assert captured_request["docker_image"] == "Python 3.12"
     assert payload["docker_image"] == "Python 3.12"
     assert payload["smoke_verified"] is True
+
+
+def test_cli_serve_pickle_upload_wait_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured_request: dict[str, object] = {}
+    package = api_module.ServePackageResponse(
+        package_id="pkg-1",
+        experiment_id="exp-1",
+        tournament="classic",
+        data_version="v5.2",
+        package_path="/tmp/pkg-1",
+        status="pickle_uploaded",
+        components=[api_module.ServeComponentRequest(weight=1.0, config_path="/tmp/component.json")],
+        blend_rule=api_module.ServeBlendRuleRequest(),
+        neutralization=None,
+        artifacts={},
+        created_at="2026-04-11T00:00:00Z",
+        updated_at="2026-04-11T00:00:00Z",
+        provenance={},
+    )
+
+    def _upload(request: api_module.ServePickleUploadRequest) -> api_module.ServePickleUploadResponse:
+        captured_request["wait_diagnostics"] = request.wait_diagnostics
+        return api_module.ServePickleUploadResponse(
+            package=package,
+            pickle_path="/tmp/model.pkl",
+            model_name="main",
+            model_id="model-1",
+            upload_id="upload-1",
+            data_version="v5.2",
+            docker_image="Python 3.12",
+            diagnostics_synced=True,
+            diagnostics_status="pending",
+        )
+
+    monkeypatch.setattr(api_module, "serve_pickle_upload", _upload)
+
+    exit_code = main(
+        [
+            "serve",
+            "pickle",
+            "upload",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--model-name",
+            "main",
+            "--wait-diagnostics",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert captured_request["wait_diagnostics"] is True
+    assert payload["diagnostics_synced"] is True
+
+
+def test_cli_serve_live_build_rejects_runtime_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(
+        [
+            "serve",
+            "live",
+            "build",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--runtime",
+            "pickle",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "unknown arguments: --runtime" in captured.err
+
+
+def test_cli_serve_pickle_build_rejects_stage_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = main(
+        [
+            "serve",
+            "pickle",
+            "build",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--stage",
+            "post_training_full",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "unknown arguments: --stage" in captured.err

@@ -6,7 +6,7 @@ This folder owns model implementations used by the training pipeline.
 ## Source-of-Truth Modules
 
 - `lgbm.py`: built-in LightGBM wrapper exposed as model type `LGBMRegressor`
-- `custom_models/*.py`: user plugin modules loaded through `MODEL_REGISTRY`
+- `src/numereng/features/models/custom_models/*.py`: tracked plugin modules loaded through `MODEL_REGISTRY`
 - `__init__.py`: public exports for this feature slice
 - `features/training/model_factory.py`: model resolution + plugin discovery entrypoint
 
@@ -35,7 +35,7 @@ Golden path:
 5. Smoke test with `uv run numereng run train --config <config.json>`
 
 Treat `template_model.py` as the tracked reference example. Treat other files in
-`custom_models/` as optional local examples.
+`src/numereng/features/models/custom_models/` as tracked repo examples.
 
 ## How Custom Model Discovery Works
 
@@ -114,9 +114,5 @@ MODEL_REGISTRY = {"TemplateModel": TemplateModel}
 
 ## Git Behavior
 
-By default, `.gitignore` ignores this directory:
-
-- `src/numereng/features/models/custom_models/`
-
-`template_model.py` is the tracked exception and should remain the canonical reference example.
-User-specific model files stay local by default unless intentionally committed as shared repo code.
+This directory is part of the tracked repo. Add new files here only when the wrapper is meant to
+become shared numereng behavior.

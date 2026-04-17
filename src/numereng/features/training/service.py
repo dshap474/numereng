@@ -670,16 +670,6 @@ def _telemetry_metric_payload(metrics_payload: dict[str, object]) -> dict[str, o
         bmc_last_200_mean = _coerce_finite_float(bmc_last_200_obj.get("mean"))
         if bmc_last_200_mean is not None:
             payload["bmc_last_200_eras_mean"] = bmc_last_200_mean
-    feature_exposure_obj = metrics_payload.get("feature_exposure")
-    if isinstance(feature_exposure_obj, dict):
-        feature_exposure_mean = _coerce_finite_float(feature_exposure_obj.get("mean"))
-        if feature_exposure_mean is not None:
-            payload["feature_exposure_mean"] = feature_exposure_mean
-    max_feature_exposure_obj = metrics_payload.get("max_feature_exposure")
-    if isinstance(max_feature_exposure_obj, dict):
-        max_feature_exposure_mean = _coerce_finite_float(max_feature_exposure_obj.get("mean"))
-        if max_feature_exposure_mean is not None:
-            payload["max_feature_exposure"] = max_feature_exposure_mean
     return payload
 
 

@@ -39,7 +39,7 @@ Start with the nearest wrapper. `template_model.py` remains the canonical lowest
 - Place custom files under `src/numereng/features/models/custom_models/`.
 - The directory is ignored by git for new files by default so custom work stays modular.
 - `template_model.py` is the tracked exception and is the canonical example to copy from.
-- This repo also contains many tracked wrapper examples and tests under `custom_models/`.
+- This repo also contains many tracked wrapper examples and tests under `src/numereng/features/models/custom_models/`.
 - Discovery happens from:
   - explicit `model.module_path` in config, or
   - scanning `src/numereng/features/models/custom_models/**/*.py` when `module_path` is not set.
@@ -91,14 +91,14 @@ Start from the template, then reference it from config:
 }
 ```
 
-If your model file lives under `custom_models/` and the type is unique, `model.module_path` can be
+If your model file lives under `src/numereng/features/models/custom_models/` and the type is unique, `model.module_path` can be
 omitted and numereng will discover it automatically.
 
 ## Tracked vs local files
 
 - `template_model.py` is tracked on purpose so the repo has one stable reference example.
-- User-specific new model files in `custom_models/` stay local by default because the directory is
-  gitignored for new files.
+- New tracked model files in `src/numereng/features/models/custom_models/` are part of the repo and
+  should only be added when the wrapper is meant to become shared numereng behavior.
 - Many wrappers already committed in this repo are tracked examples and valid starting points.
 - Commit a custom model file only when it is intended to become shared repo behavior.
 

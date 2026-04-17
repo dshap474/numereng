@@ -83,14 +83,6 @@ _STAGE_REQUIRED_COLUMNS: dict[str, list[str]] = {
         "target_col",
         "payout_target_col",
         "prediction_col",
-        "feature_exposure_mean",
-        "feature_exposure_std",
-        "feature_exposure_sharpe",
-        "feature_exposure_max_drawdown",
-        "max_feature_exposure_mean",
-        "max_feature_exposure_std",
-        "max_feature_exposure_sharpe",
-        "max_feature_exposure_max_drawdown",
     ],
 }
 
