@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from numerai_tools.scoring import neutralize as numerai_tools_neutralize
 
 from numereng.features.feature_neutralization.contracts import (
     NeutralizationMode,
@@ -379,17 +380,21 @@ def _neutralize_matrix(
 
     matrix = np.nan_to_num(neutralizers.astype(float), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
     payload = np.nan_to_num(values.astype(float), copy=True, nan=0.0, posinf=0.0, neginf=0.0)
-    intercept = np.ones((matrix.shape[0], 1), dtype=float)
-    augmented = np.hstack((matrix, intercept))
+    payload_frame = pd.DataFrame(payload)
+    neutralizer_frame = pd.DataFrame(matrix, index=payload_frame.index)
 
     try:
-        coefficients = np.linalg.lstsq(augmented, payload, rcond=1e-6)[0]
-        component = augmented @ coefficients
+        resolved = numerai_tools_neutralize(
+            payload_frame,
+            neutralizer_frame,
+            proportion=proportion,
+        )
+    except (AssertionError, ValueError) as exc:
+        raise NeutralizationExecutionError("neutralization_linalg_failed") from exc
     except np.linalg.LinAlgError as exc:
         raise NeutralizationExecutionError("neutralization_linalg_failed") from exc
 
-    resolved = payload - (proportion * component)
-    return np.asarray(resolved, dtype=float)
+    return np.asarray(resolved.to_numpy(dtype=float), dtype=float)
 
 
 def _validate_proportion(proportion: float) -> None:

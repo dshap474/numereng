@@ -29,8 +29,6 @@ For scored runs, the primary scoring artifacts are:
 - `bmc_last_200_eras_<alias>`
 - `corr_delta_vs_baseline`
 - `corr_delta_vs_baseline_<alias>`
-- `feature_exposure`
-- `max_feature_exposure`
 - `max_drawdown`
 
 Numereng does not emit payout-estimate fields.
@@ -48,8 +46,6 @@ Numereng does not emit payout-estimate fields.
 - `bmc_last_200_eras_<alias>`: explicit extra-target trailing-200 benchmark contribution
 - `corr_delta_vs_baseline`: model payout-target CORR minus the benchmark model's payout-target CORR on the same scored eras
 - `corr_delta_vs_baseline_<alias>`: the same delta on one explicit extra scoring target
-- `feature_exposure`: rank-based exposure summary against `fncv3_features`
-- `max_feature_exposure`: maximum absolute exposure summary
 - `max_drawdown`: drawdown derived from the relevant per-era score series
 
 ## Coverage And Provenance
@@ -76,7 +72,7 @@ Current rules:
 - benchmark and meta-model joins require strict era alignment
 - benchmark diagnostics score only overlapping rows
 - meta metrics are emitted whenever there is usable overlap
-- feature-heavy diagnostics are stage-driven: `post_training_core` omits FNC/exposure, while `post_training_full` and `all` include them
+- feature-heavy diagnostics are stage-driven: `post_training_core` omits FNC, while `post_training_full` and `all` include it
 - `baseline_corr` itself is no longer persisted as a run metric; payout-target benchmark CORR is read from the shared active-benchmark artifact when available, or computed transiently for delta fallback
 
 ## Dashboard Contract
@@ -88,8 +84,6 @@ The dashboard normalizes a subset of the metric space into common ranking fields
 - `fnc_mean`
 - `mmc_mean`
 - `bmc_mean`
-- `feature_exposure_mean`
-- `max_feature_exposure`
 
 `mmc_mean`, `bmc_mean`, and `bmc_last_200_eras_mean` normalize to the payout-backed surface for newly written runs, with legacy `*_ender20` fallback for historical runs.
 

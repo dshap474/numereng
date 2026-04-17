@@ -85,7 +85,7 @@ Use this when the predictions artifact already exists and you want to rebuild `r
 
 `run score` defaults to `--stage all`. Use `--stage post_training_core` for the
 lighter scorecard-only pass, or `--stage post_training_full` when you want the
-inclusive feature-heavy FNC / exposure diagnostics without the broader `all`
+inclusive feature-heavy FNC diagnostics without the broader `all`
 stage refresh.
 
 ## Outputs

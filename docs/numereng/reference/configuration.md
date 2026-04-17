@@ -115,8 +115,8 @@ Optional:
 Current model notes:
 
 - built-in model type: `LGBMRegressor`
-- plugin models can be loaded from `custom_models/`
-- `module_path` is optional if the requested plugin type can be discovered in `custom_models/`
+- plugin models can be loaded from `src/numereng/features/models/custom_models/`
+- `module_path` is optional if the requested plugin type can be discovered in `src/numereng/features/models/custom_models/`
 
 ## `training`
 

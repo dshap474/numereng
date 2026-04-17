@@ -12,6 +12,7 @@
 * [Experiments](workflows/experiments.md)
 * [Hyperparameter Optimization](workflows/optimization.md)
 * [Ensembles](workflows/ensembles.md)
+* [Serving & Model Uploads](workflows/serving.md)
 * [Submissions](workflows/submission.md)
 * [Cloud Training](workflows/cloud-training.md)
 * [Store Operations](workflows/store-ops.md)

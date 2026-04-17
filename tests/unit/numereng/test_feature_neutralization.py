@@ -298,14 +298,18 @@ def test_internal_neutralize_matrix_matches_vendored_numerai_tools_for_multiple_
 
 
 def test_era_mode_uses_one_lstsq_solve_per_era_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    original_lstsq = service_module.np.linalg.lstsq
+    original_neutralize = service_module.numerai_tools_neutralize
     calls: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
 
-    def _counting_lstsq(a: np.ndarray, b: np.ndarray, rcond: float | None = None):
-        calls.append((a.shape, b.shape))
-        return original_lstsq(a, b, rcond=rcond)
+    def _counting_neutralize(
+        df: pd.DataFrame,
+        neutralizers: pd.DataFrame,
+        proportion: float = 1.0,
+    ) -> pd.DataFrame:
+        calls.append((df.shape, neutralizers.shape))
+        return original_neutralize(df, neutralizers, proportion=proportion)
 
-    monkeypatch.setattr(service_module.np.linalg, "lstsq", _counting_lstsq)
+    monkeypatch.setattr(service_module, "numerai_tools_neutralize", _counting_neutralize)
 
     values = np.asarray(
         [
@@ -336,7 +340,7 @@ def test_era_mode_uses_one_lstsq_solve_per_era_block(monkeypatch: pytest.MonkeyP
     )
 
     assert resolved.shape == values.shape
-    assert calls == [((2, 3), (2, 2)), ((2, 3), (2, 2))]
+    assert calls == [((2, 2), (2, 2)), ((2, 2), (2, 2))]
 
 
 def test_rank_output_still_produces_percentile_ranked_predictions() -> None:

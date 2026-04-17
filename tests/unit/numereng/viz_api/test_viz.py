@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from numereng_viz.app import create_app
 from numereng_viz.contracts import capabilities_payload
 from numereng_viz.monitor_snapshot import RemoteSnapshotCoordinator, build_monitor_snapshot, merge_monitor_snapshots
 from numereng_viz.routes import create_router
@@ -59,6 +60,29 @@ def test_list_experiments_fallback_without_db(tmp_path: Path) -> None:
 
     assert len(payload) == 1
     assert payload[0]["experiment_id"] == "exp-a"
+
+
+def test_create_app_routes_swagger_under_api_namespace(tmp_path: Path) -> None:
+    frontend_root = Path(__file__).resolve().parents[4] / "src" / "numereng" / "assets" / "viz_static"
+    assert frontend_root.is_dir()
+
+    app = create_app(workspace_root=tmp_path, store_root=tmp_path / ".numereng")
+    client = TestClient(app)
+
+    frontend_docs = client.get("/docs")
+    assert frontend_docs.status_code == 200
+    assert frontend_docs.headers["content-type"].startswith("text/html")
+    assert "Numereng Viz API" not in frontend_docs.text
+
+    api_docs = client.get("/api/docs")
+    assert api_docs.status_code == 200
+    assert "Numereng Viz API" in api_docs.text
+
+    openapi = client.get("/api/openapi.json")
+    assert openapi.status_code == 200
+    payload = openapi.json()
+    assert payload["openapi"] == "3.1.0"
+    assert "/api/system/capabilities" in payload["paths"]
 
 
 def test_list_experiment_configs_discovers_json_configs(tmp_path: Path) -> None:
@@ -203,8 +227,6 @@ def test_get_run_metrics_uses_shared_scalar_metric_normalization(tmp_path: Path)
                 "fnc": {"mean": 0.04},
                 "bmc": {"mean": 0.05},
                 "bmc_last_200_eras": {"mean": 0.06},
-                "feature_exposure": {"mean": 0.07},
-                "max_feature_exposure": {"mean": 0.08},
             }
         ),
         encoding="utf-8",
@@ -231,8 +253,6 @@ def test_get_run_metrics_uses_shared_scalar_metric_normalization(tmp_path: Path)
     assert payload["mmc_mean"] == 0.02
     assert payload["cwmm_mean"] == 0.03
     assert payload["fnc_mean"] == 0.04
-    assert payload["feature_exposure_mean"] == 0.07
-    assert payload["max_feature_exposure"] == 0.08
     assert payload["max_drawdown"] == -0.03
     assert payload["mmc_coverage_ratio_rows"] == 0.25
 
@@ -2445,6 +2465,59 @@ def test_numerai_docs_tree_appends_generated_forum_archive(tmp_path: Path) -> No
     assert adapter.get_doc_content("numerai", "forum/INDEX.md")["exists"] is True
 
 
+def test_numerai_docs_prefer_workspace_local_root(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    store_root = workspace_root / ".numereng"
+    store_root.mkdir(parents=True)
+
+    workspace_docs = workspace_root / "docs" / "numerai"
+    workspace_docs.mkdir(parents=True)
+    (workspace_docs / "README.md").write_text("# Workspace copy\n")
+
+    repo_root = tmp_path / "repo"
+    repo_docs = repo_root / "docs" / "numerai"
+    repo_docs.mkdir(parents=True)
+    (repo_docs / "README.md").write_text("# Repo copy\n")
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            workspace_root=workspace_root,
+            repo_root=repo_root,
+        )
+    )
+
+    payload = adapter.get_doc_content("numerai", "README.md")
+
+    assert payload["exists"] is True
+    assert payload["content"] == "# Workspace copy\n"
+
+
+def test_numerai_doc_content_reports_docs_not_downloaded_when_missing(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    store_root = workspace_root / ".numereng"
+    store_root.mkdir(parents=True)
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True)
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            workspace_root=workspace_root,
+            repo_root=repo_root,
+        )
+    )
+
+    payload = adapter.get_doc_content("numerai", "README.md")
+
+    assert payload == {
+        "content": "",
+        "exists": False,
+        "missing_reason": "docs_not_downloaded",
+    }
+
+
 def test_docs_asset_endpoint_serves_domain_and_shared_assets(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)
@@ -2543,8 +2616,6 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
         {
           "corr": {"mean": 0.12, "sharpe": 0.8, "std": 0.2, "max_drawdown": 0.9},
           "fnc": {"mean": 0.06, "std": 0.03, "sharpe": 2.0},
-          "feature_exposure": {"mean": 0.16, "std": 0.05, "sharpe": 3.2},
-          "max_feature_exposure": {"mean": 0.31, "std": 0.07, "sharpe": 4.4},
           "mmc": {"mean": 0.01, "sharpe": 0.2},
           "bmc": {"mean": 0.04}
         }
@@ -2562,9 +2633,6 @@ def test_get_run_metrics_normalizes_nested_metrics_from_filesystem(tmp_path: Pat
     assert payload["fnc_sharpe"] == pytest.approx(2.0)
     assert payload["mmc_mean"] == pytest.approx(0.01)
     assert payload["bmc_mean"] == pytest.approx(0.04)
-    assert payload["feature_exposure_mean"] == pytest.approx(0.16)
-    assert payload["feature_exposure_sharpe"] == pytest.approx(3.2)
-    assert payload["max_feature_exposure"] == pytest.approx(0.31)
     assert payload["max_drawdown"] == pytest.approx(0.9)
 
 
@@ -2582,14 +2650,6 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
         conn.execute(
             "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
             ("run-1", "fnc", None, '{"mean": 0.05, "std": 0.02, "sharpe": 2.5}'),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "feature_exposure", None, '{"mean": 0.14, "std": 0.03, "sharpe": 4.5}'),
-        )
-        conn.execute(
-            "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
-            ("run-1", "max_feature_exposure", None, '{"mean": 0.27, "std": 0.05, "sharpe": 5.4}'),
         )
         conn.execute(
             "INSERT INTO metrics (run_id, name, value, value_json) VALUES (?, ?, ?, ?)",
@@ -2614,9 +2674,6 @@ def test_get_run_metrics_normalizes_nested_value_json_from_sqlite(tmp_path: Path
     assert payload["fnc_sharpe"] == pytest.approx(2.5)
     assert payload["mmc_mean"] == pytest.approx(0.01)
     assert payload["bmc_mean"] == pytest.approx(0.02)
-    assert payload["feature_exposure_mean"] == pytest.approx(0.14)
-    assert payload["feature_exposure_sharpe"] == pytest.approx(4.5)
-    assert payload["max_feature_exposure"] == pytest.approx(0.27)
     assert payload["max_drawdown"] == pytest.approx(0.7)
 
 

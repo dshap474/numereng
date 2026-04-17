@@ -22,10 +22,6 @@ export const CANONICAL_METRIC_KEYS = [
 	'cwmm_mean',
 	'cwmm_std',
 	'cwmm_sharpe',
-	'feature_exposure_mean',
-	'feature_exposure_std',
-	'feature_exposure_sharpe',
-	'max_feature_exposure',
 	'max_drawdown'
 ] as const;
 
@@ -37,8 +33,6 @@ export const RUNOPS_MAIN_METRICS = [
 	'fnc_mean',
 	'mmc_mean',
 	'cwmm_mean',
-	'feature_exposure_mean',
-	'max_feature_exposure',
 	'max_drawdown'
 ] as const;
 
@@ -60,10 +54,6 @@ export const RUNOPS_ALL_SCORING_METRICS = [
 	'cwmm_mean',
 	'cwmm_std',
 	'cwmm_sharpe',
-	'feature_exposure_mean',
-	'feature_exposure_std',
-	'feature_exposure_sharpe',
-	'max_feature_exposure',
 	'max_drawdown'
 ] as const;
 
@@ -126,14 +116,6 @@ export function metricLabel(key: string): string {
 			return 'CWMM Std';
 		case 'cwmm_sharpe':
 			return 'CWMM Sharpe';
-		case 'feature_exposure_mean':
-			return 'Feature Exposure Mean';
-		case 'feature_exposure_std':
-			return 'Feature Exposure Std';
-		case 'feature_exposure_sharpe':
-			return 'Feature Exposure Sharpe';
-		case 'max_feature_exposure':
-			return 'Max Feature Exposure';
 		case 'max_drawdown':
 			return 'Max Drawdown';
 		default:

@@ -29,8 +29,6 @@ Prioritize the dashboard by decision value, not by total metric count.
 
 - cumulative / per-era `fnc_ender20`
 - cumulative / per-era `fnc_native`
-- cumulative / per-era `feature_exposure`
-- cumulative / per-era `max_feature_exposure`
 
 ### Advanced / debug
 
@@ -62,7 +60,7 @@ The vendored Numerai example is narrower and more BMC-centric.
 ### Short comparison
 
 - Numerai example: optimize for recent `BMC`, sanity-check `corr`
-- Numereng: lead with `corr_ender20` and `bmc_ender20`, keep FNC/exposure in diagnostics, keep helper metrics secondary
+- Numereng: lead with `corr_ender20` and `bmc_ender20`, keep FNC in diagnostics, keep helper metrics secondary
 
 ## Prospective plots
 

@@ -1,14 +1,14 @@
 ---
 name: implement-custom-model
-description: "Implement a numereng custom model plugin under custom_models using the existing wrapper and factory patterns."
+description: "Implement a numereng custom model plugin under src/numereng/features/models/custom_models using the existing wrapper and factory patterns."
 user-invocable: true
 ---
 
 # Implement Custom Model
 
 Use this skill to add or update a custom model that works with the current numereng training
-pipeline. Default assumption: you are implementing a workspace-local plugin under
-`custom_models/` and wiring it through the existing model factory, not changing the core training
+pipeline. Default assumption: you are implementing a tracked plugin under
+`src/numereng/features/models/custom_models/` and wiring it through the existing model factory, not changing the core training
 architecture.
 
 Run from:
@@ -16,7 +16,7 @@ Run from:
 
 ## Use when
 - the user wants to add a new custom model type to numereng
-- the user needs to know how wrappers under `custom_models/` should be structured
+- the user needs to know how wrappers under `src/numereng/features/models/custom_models/` should be structured
 - the user needs to decide whether an existing tracked wrapper already covers the requested estimator
 - the user needs the correct config and validation path for a new custom model adapter
 
@@ -31,7 +31,7 @@ Run from:
 
 Default path for a new custom model plugin:
 
-1. Check `custom_models/` to see whether the estimator already exists.
+1. Check `src/numereng/features/models/custom_models/` to see whether the estimator already exists.
 2. Choose the closest starting point:
    - use `template_model.py` for a novel or unusual estimator API
    - use the closest tracked sklearn-style wrapper when the estimator is similar to an existing wrapper
@@ -55,7 +55,7 @@ first-class shared repo default rather than a custom-model plugin.
 ## Canonical Files
 
 - Workspace starter template:
-  - `custom_models/template_model.py`
+  - `src/numereng/features/models/custom_models/template_model.py`
 - Product docs:
   - `docs/numereng/reference/custom-models.md`
 - Repo-internal references, only if you are editing numereng itself:
@@ -65,20 +65,20 @@ first-class shared repo default rather than a custom-model plugin.
 ## Implementation Workflow
 
 1. Decide whether a new wrapper is actually needed.
-- First inspect `custom_models/` for an existing compatible wrapper in the workspace.
+- First inspect `src/numereng/features/models/custom_models/` for an existing compatible wrapper in the repo.
 - If the requested estimator already exists, prefer reusing the existing `model.type` and params.
 - Add a new wrapper only when the estimator or adapter behavior is genuinely new.
 
 2. Choose model integration mode.
-- Default: custom plugin in `custom_models/`
+- Default: tracked custom plugin in `src/numereng/features/models/custom_models/`
 - Built-in: only when the model should ship as shared repo behavior via `_BUILTIN_MODELS`
 - Prefer the plugin path unless the user explicitly wants a tracked built-in model.
 
 3. Start from the closest tracked implementation.
 - Novel API or unusual backend:
-  - copy `custom_models/template_model.py`
+  - copy `src/numereng/features/models/custom_models/template_model.py`
 - Sklearn-like estimator:
-  - copy the closest wrapper already in `custom_models/`
+  - copy the closest wrapper already in `src/numereng/features/models/custom_models/`
 - Optional third-party backend:
   - copy `xgboost_model.py` or `catboost_model.py` to preserve backend-missing error behavior
 - Wrapper class requirements:
@@ -94,9 +94,9 @@ first-class shared repo default rather than a custom-model plugin.
 - Plugin path:
   - no `model_factory.py` change needed if `MODEL_REGISTRY` is present
   - use `model.module_path` when you want explicit resolution
-  - omit `model.module_path` when discovery from `custom_models/` is sufficient
+  - omit `model.module_path` when discovery from `src/numereng/features/models/custom_models/` is sufficient
   - relative `model.module_path` values are resolved against:
-    - `custom_models/`
+    - `src/numereng/features/models/custom_models/`
     - current working directory
   - absolute paths also work
   - if the path omits `.py`, numereng also tries the `.py` suffix
@@ -131,7 +131,7 @@ Example:
   },
   "model": {
     "type": "YourModelType",
-    "module_path": "custom_models/your_model.py",
+    "module_path": "src/numereng/features/models/custom_models/your_model.py",
     "params": {}
   },
   "training": {
@@ -156,9 +156,9 @@ Example:
 
 ## Tracked vs local model files
 
-- `template_model.py` is seeded into new workspaces on `numereng init`.
-- New local wrappers work at runtime as long as they live under `custom_models/` or are referenced by `model.module_path`.
-- Numereng does not auto-discover repo/package custom-model wrappers outside the workspace.
+- `template_model.py` is tracked in the repo as the canonical starter module.
+- Tracked wrappers work at runtime as long as they live under `src/numereng/features/models/custom_models/` or are referenced by `model.module_path`.
+- Numereng does not auto-discover wrappers outside the tracked source-tree directory unless `model.module_path` points to them explicitly.
 - Commit a custom model file only when it is intended to become shared repo behavior.
 
 ## Troubleshooting
@@ -197,6 +197,6 @@ Return:
 ## Done Criteria
 
 - New model type can be selected with `model.type` in JSON config.
-- For the default plugin path: dropping a valid module into `custom_models/` is enough for
+- For the default plugin path: dropping a valid module into `src/numereng/features/models/custom_models/` is enough for
   numereng to resolve it, with or without explicit `model.module_path`.
 - Training succeeds via `numereng run train --config ...`.

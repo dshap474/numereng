@@ -79,8 +79,6 @@ Canonical viz/read metric names:
 - `bmc_mean` from `bmc.mean`
 - `bmc_last_200_eras_mean` from `bmc_last_200_eras.mean`
 - `cwmm_mean` from `cwmm.mean` when meta-model overlap exists
-- `feature_exposure_mean` from `feature_exposure.mean`
-- `max_feature_exposure` from `max_feature_exposure.mean`
 - `max_drawdown` from `corr.max_drawdown`
 - no payout estimate field is emitted by training scoring artifacts or viz APIs
 
@@ -92,12 +90,10 @@ When `score_provenance.json` exists, it must include:
 - `sources`: fingerprinted paths for predictions, meta model, benchmark
 - `joins`: overlap counters (rows, eras)
 
-Feature exposure diagnostics:
+Canonical feature-neutral diagnostics:
 
-- Scoring reuses the canonical `fncv3_features` join path to compute rank-based per-era exposures.
-- `feature_exposure` persists RMS exposure across features as `{mean,std,sharpe,max_drawdown}`.
-- `max_feature_exposure` persists per-era max absolute exposure as `{mean,std,sharpe,max_drawdown}`.
-- Viz/read APIs normalize `max_feature_exposure.mean` to the scalar key `max_feature_exposure`.
+- Scoring reuses the canonical `fncv3_features` join path for FNC.
+- `post_training_full` persists only FNC-derived summaries in canonical scoring artifacts.
 
 Canonical coverage ratio derivation:
 

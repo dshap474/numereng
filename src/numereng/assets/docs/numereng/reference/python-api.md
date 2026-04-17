@@ -75,6 +75,16 @@ HPO v2 requests are nested:
 - `ensemble_list(EnsembleListRequest | None = None)`
 - `ensemble_get(EnsembleGetRequest)`
 
+### Serving
+
+- `serve_package_create(ServePackageCreateRequest)`
+- `serve_package_inspect(ServePackageInspectRequest)`
+- `serve_package_list(ServePackageListRequest | None = None)`
+- `serve_live_build(ServeLiveBuildRequest)`
+- `serve_live_submit(ServeLiveSubmitRequest)`
+- `serve_pickle_build(ServePickleBuildRequest)`
+- `serve_pickle_upload(ServePickleUploadRequest)`
+
 ### Neutralization And Store
 
 - `neutralize_apply(NeutralizeRequest)`
@@ -117,6 +127,10 @@ Examples:
 - `ExperimentCreateRequest`
 - `HpoStudyCreateRequest`
 - `EnsembleBuildRequest`
+- `ServePackageCreateRequest`
+- `ServePackageInspectRequest`
+- `ServeLiveBuildRequest`
+- `ServePickleBuildRequest`
 - `NeutralizeRequest`
 - `SubmissionRequest`
 

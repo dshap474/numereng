@@ -12,7 +12,6 @@ __all__ = [
     "handle_ensemble_command",
     "handle_experiment_command",
     "handle_hpo_command",
-    "handle_init_command",
     "handle_monitor_command",
     "handle_neutralize_command",
     "handle_numerai_command",
@@ -22,7 +21,6 @@ __all__ = [
     "handle_serve_command",
     "handle_store_command",
     "handle_viz_command",
-    "handle_workspace_command",
 ]
 
 _COMMAND_MODULES = {
@@ -32,7 +30,6 @@ _COMMAND_MODULES = {
     "handle_ensemble_command": "numereng.cli.commands.ensemble",
     "handle_experiment_command": "numereng.cli.commands.experiment",
     "handle_hpo_command": "numereng.cli.commands.hpo",
-    "handle_init_command": "numereng.cli.commands.init",
     "handle_monitor_command": "numereng.cli.commands.monitor",
     "handle_neutralize_command": "numereng.cli.commands.neutralize",
     "handle_numerai_command": "numereng.cli.commands.numerai",
@@ -42,7 +39,6 @@ _COMMAND_MODULES = {
     "handle_serve_command": "numereng.cli.commands.serve",
     "handle_store_command": "numereng.cli.commands.store",
     "handle_viz_command": "numereng.cli.commands.viz",
-    "handle_workspace_command": "numereng.cli.commands.workspace",
 }
 
 

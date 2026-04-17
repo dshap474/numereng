@@ -88,8 +88,6 @@ Feature diagnostics:
 
 - `fnc`
 - `fnc_<alias>`
-- `feature_exposure`
-- `max_feature_exposure`
 
 Observability helpers:
 
@@ -164,8 +162,6 @@ Primary emitted metrics:
 
 - `fnc_<native>`
 - `fnc_ender20`
-- `feature_exposure`
-- `max_feature_exposure`
 
 Persisted artifact:
 

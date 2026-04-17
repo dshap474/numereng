@@ -369,8 +369,8 @@ def test_materialized_scoring_core_vs_full_integration(tmp_path: Path) -> None:
     assert "fnc" not in core_summaries
     assert "feature_exposure" not in core_summaries
     assert "fnc" in full_summaries
-    assert "feature_exposure" in full_summaries
-    assert "max_feature_exposure" in full_summaries
+    assert "feature_exposure" not in full_summaries
+    assert "max_feature_exposure" not in full_summaries
 
 
 @pytest.mark.integration

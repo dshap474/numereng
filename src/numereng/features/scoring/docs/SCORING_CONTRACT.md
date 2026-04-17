@@ -23,8 +23,6 @@ Feature-heavy scoring stages (`all` and `post_training_full`) also emit:
 
 - `fnc`
 - `fnc_<alias>`
-- `feature_exposure`
-- `max_feature_exposure`
 
 Training scoring also emits `corr` families for the resolved scoring
 targets:
@@ -65,8 +63,6 @@ compatibility with the metrics below, not pandas callback execution.
 These are useful Numereng diagnostics but are not canonical official Numerai
 payout metrics:
 
-- `feature_exposure`: per-era RMS rank-based feature exposure across `fncv3_features`
-- `max_feature_exposure`: per-era max absolute rank-based feature exposure across `fncv3_features`
 - `avg_corr_with_benchmark`: local diagnostic attached to BMC summaries; computed as per-era `numerai_tools.scoring.numerai_corr` between the submission and the selected benchmark series, then averaged across eras
 - `corr_delta_vs_baseline` / `corr_delta_vs_baseline_<alias>`: the per-era difference between the model's CORR and the benchmark model's own CORR on the same scoring target; positive values mean the model outperformed the benchmark on that era
 
@@ -151,7 +147,7 @@ Post-training scoring is policy-driven:
   later through the experiment round-batch workflow
 
 `run score` and `experiment score-round` can refresh any stage, including the
-inclusive feature-heavy `post_training_full`. Historical runs may still expose the legacy filenames `post_training_summary.parquet` and
+inclusive FNC-oriented `post_training_full`. Historical runs may still expose the legacy filenames `post_training_summary.parquet` and
 `post_training_features_summary.parquet`, which remain read-compatible.
 
 There is one official persisted-run scorer. It supports these canonical stage

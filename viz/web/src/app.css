@@ -390,6 +390,12 @@
 		contain-intrinsic-size: auto 320px;
 	}
 
+	.docs-sidebar-shell {
+		background-color: var(--color-sidebar-background);
+		color: var(--color-sidebar-foreground);
+		border-right: 1px solid var(--color-sidebar-border);
+	}
+
 	/* Reduced motion — disable animations for users who prefer it */
 	@media (prefers-reduced-motion: reduce) {
 		*, *::before, *::after {

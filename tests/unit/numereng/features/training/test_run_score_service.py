@@ -37,8 +37,6 @@ def _scoring_summaries() -> dict[str, pd.DataFrame]:
     return {
         "corr": _summary_frame(0.1),
         "fnc": _summary_frame(0.09),
-        "feature_exposure": _summary_frame(0.12),
-        "max_feature_exposure": _summary_frame(0.22),
         "mmc": _summary_frame(0.03),
         "cwmm": _summary_frame(0.2),
         "bmc": _summary_frame(0.01),
@@ -50,10 +48,8 @@ def test_metrics_payload_from_summaries_excludes_payout_fields() -> None:
     payload = run_score_module._metrics_payload_from_summaries(_scoring_summaries())
     assert "payout_estimate" not in payload
     assert "payout_estimate_mean" not in payload
-    assert isinstance(payload["feature_exposure"], dict)
-    assert isinstance(payload["max_feature_exposure"], dict)
-    assert cast(dict[str, object], payload["feature_exposure"])["mean"] == pytest.approx(0.12)
-    assert cast(dict[str, object], payload["max_feature_exposure"])["mean"] == pytest.approx(0.22)
+    assert "feature_exposure" not in payload
+    assert "max_feature_exposure" not in payload
 
 
 def test_score_run_updates_run_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

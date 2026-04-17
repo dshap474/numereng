@@ -1,4 +1,4 @@
-"""CLI helpers for `numereng workspace ...`."""
+"""CLI helpers for `numereng docs ...`."""
 
 from __future__ import annotations
 
@@ -14,23 +14,27 @@ from numereng.cli.usage import USAGE
 from numereng.platform.errors import PackageError
 
 
-def handle_workspace_command(args: Sequence[str]) -> int:
+def handle_docs_command(args: Sequence[str]) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(USAGE)
         return 0
     if args[0] == "sync":
-        return _handle_workspace_sync(args[1:])
-    print(f"unknown workspace command: {args[0]}", file=sys.stderr)
+        return _handle_docs_sync(args[1:])
+    print(f"unknown docs command: {args[0]}", file=sys.stderr)
     print(USAGE, file=sys.stderr)
     return 2
 
 
-def _handle_workspace_sync(args: Sequence[str]) -> int:
-    values, toggles, parse_error = _parse_simple_options(
-        args,
-        value_flags={"--workspace", "--runtime-source", "--runtime-path"},
-        bool_flags={"--with-training", "--with-mlops"},
-    )
+def _handle_docs_sync(args: Sequence[str]) -> int:
+    if not args:
+        print(USAGE)
+        return 0
+    if args[0] != "numerai":
+        print(f"unknown docs sync target: {args[0]}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+
+    values, _, parse_error = _parse_simple_options(args[1:], value_flags={"--workspace"})
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -39,13 +43,10 @@ def _handle_workspace_sync(args: Sequence[str]) -> int:
         print(USAGE, file=sys.stderr)
         return 2
     try:
-        response = api.workspace_sync(
-            api.WorkspaceSyncRequest(
+        response = api.sync_docs(
+            api.DocsSyncRequest(
                 workspace_root=values.get("--workspace", "."),
-                runtime_source=values.get("--runtime-source"),
-                runtime_path=values.get("--runtime-path"),
-                with_training=True if "--with-training" in toggles else None,
-                with_mlops=True if "--with-mlops" in toggles else None,
+                domain="numerai",
             )
         )
     except ValidationError as exc:
@@ -60,4 +61,4 @@ def _handle_workspace_sync(args: Sequence[str]) -> int:
     return 0
 
 
-__all__ = ["handle_workspace_command"]
+__all__ = ["handle_docs_command"]

@@ -78,10 +78,6 @@ _METRIC_QUERY_ALIASES: dict[str, tuple[str, ...]] = {
     "cwmm_mean": ("cwmm_mean", "cwmm.mean"),
     "cwmm_std": ("cwmm_std", "cwmm.std"),
     "cwmm_sharpe": ("cwmm_sharpe", "cwmm.sharpe"),
-    "feature_exposure_mean": ("feature_exposure_mean", "feature_exposure.mean"),
-    "feature_exposure_std": ("feature_exposure_std", "feature_exposure.std"),
-    "feature_exposure_sharpe": ("feature_exposure_sharpe", "feature_exposure.sharpe"),
-    "max_feature_exposure": ("max_feature_exposure", "max_feature_exposure.mean"),
     "max_drawdown": ("max_drawdown", "corr.max_drawdown"),
 }
 _LEGACY_SCORING_SERIES_SPECS: tuple[tuple[str, str, str], ...] = (
@@ -603,8 +599,6 @@ def _normalize_round_metrics(
         ("bmc_n_eras", ("bmc_ender20.n_eras", "bmc.n_eras", "bmc_n_eras"), True),
         ("cwmm_std", ("cwmm.std", "cwmm_std"), False),
         ("cwmm_sharpe", ("cwmm.sharpe", "cwmm_sharpe"), False),
-        ("feature_exposure_std", ("feature_exposure.std", "feature_exposure_std"), False),
-        ("feature_exposure_sharpe", ("feature_exposure.sharpe", "feature_exposure_sharpe"), False),
     )
 
     for output_key, aliases, cast_int in scalar_metrics:
@@ -756,10 +750,15 @@ class VizStoreConfig:
         )
         repo_root = self.repo_root.expanduser().resolve() if self.repo_root is not None else repository_root()
         repo_docs_root = repo_root / "docs"
+        workspace_docs_root = workspace_root / "docs"
         numerai_root = (
             self.numerai_docs_root.expanduser().resolve()
             if self.numerai_docs_root is not None
-            else (repo_docs_root / "numerai" if (repo_docs_root / "numerai").is_dir() else docs_root("numerai"))
+            else (
+                workspace_docs_root / "numerai"
+                if (workspace_docs_root / "numerai").is_dir()
+                else (repo_docs_root / "numerai" if (repo_docs_root / "numerai").is_dir() else docs_root("numerai"))
+            )
         )
         numereng_root = (
             self.numereng_docs_root.expanduser().resolve()
@@ -3454,9 +3453,11 @@ class VizStoreAdapter:
     def get_doc_content(self, domain: str, path: str) -> dict[str, Any]:
         normalized_path = _normalize_markdown_doc_path(path)
         root = self._doc_root_for_domain(domain)
+        if domain == "numerai" and not root.exists():
+            return {"content": "", "exists": False, "missing_reason": "docs_not_downloaded"}
         full_path = self._resolve_within_root(root, normalized_path)
         if not full_path.exists() or not full_path.is_file():
-            return {"content": "", "exists": False}
+            return {"content": "", "exists": False, "missing_reason": "document_not_found"}
         return {"content": full_path.read_text(), "exists": True}
 
     def get_doc_asset_path(self, domain: str, path: str) -> Path:

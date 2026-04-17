@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 from numerai_tools.scoring import (
     correlation_contribution,
     feature_neutral_corr,
+    max_feature_correlation,
     numerai_corr,
     pearson_correlation,
     tie_kept_rank__gaussianize__pow_1_5,
@@ -20,6 +22,7 @@ from numereng.features.scoring.metrics import (
     build_scoring_artifact_bundle,
     ensure_full_benchmark_models,
     per_era_corr,
+    per_era_max_feature_correlation,
     per_era_reference_corr,
     summarize_prediction_file_with_scores,
     validate_join_source_coverage,
@@ -247,6 +250,111 @@ def test_per_era_feature_exposure_returns_nan_when_all_features_constant() -> No
 
     assert pd.isna(rms.loc["era1", "prediction"])
     assert pd.isna(max_exposure.loc["era1", "prediction"])
+
+
+def test_per_era_max_feature_correlation_matches_notebook_formula() -> None:
+    df = pd.DataFrame(
+        {
+            "era": ["era1", "era1", "era1", "era2", "era2", "era2"],
+            "feature_1": [0.1, 0.2, 0.3, 0.3, 0.1, 0.2],
+            "feature_2": [0.3, 0.2, 0.1, 0.2, 0.3, 0.1],
+            "prediction": [0.1, 0.2, 0.3, 0.25, 0.05, 0.15],
+        }
+    )
+
+    scores = per_era_max_feature_correlation(
+        df,
+        ["prediction"],
+        ["feature_1", "feature_2"],
+        era_col="era",
+    )
+    expected = (
+        df.groupby("era")[["feature_1", "feature_2", "prediction"]]
+        .apply(lambda group: group[["feature_1", "feature_2"]].corrwith(group["prediction"]).abs().max())
+        .astype("float64")
+    )
+
+    assert scores.loc["era1", "prediction"] == pytest.approx(float(expected.loc["era1"]))
+    assert scores.loc["era2", "prediction"] == pytest.approx(float(expected.loc["era2"]))
+
+
+def test_per_era_max_feature_correlation_matches_numerai_tools_reference() -> None:
+    df = pd.DataFrame(
+        {
+            "era": ["era1", "era1", "era1", "era2", "era2", "era2"],
+            "feature_1": [0.1, 0.2, 0.3, 0.3, 0.2, 0.1],
+            "feature_2": [0.3, 0.2, 0.1, 0.1, 0.2, 0.3],
+            "prediction": [0.1, 0.2, 0.3, 0.3, 0.15, 0.05],
+        }
+    )
+
+    scores = per_era_max_feature_correlation(
+        df,
+        ["prediction"],
+        ["feature_1", "feature_2"],
+        era_col="era",
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+        warnings.simplefilter("ignore", category=FutureWarning)
+        expected = (
+            df.groupby("era")[["feature_1", "feature_2", "prediction"]]
+            .apply(
+                lambda group: max_feature_correlation(
+                    group["prediction"],
+                    group[["feature_1", "feature_2"]],
+                )[1]
+            )
+            .astype("float64")
+        )
+
+    assert scores.loc["era1", "prediction"] == pytest.approx(float(expected.loc["era1"]))
+    assert scores.loc["era2", "prediction"] == pytest.approx(float(expected.loc["era2"]))
+
+
+def test_per_era_max_feature_correlation_multi_column_support() -> None:
+    df = pd.DataFrame(
+        {
+            "era": ["era1", "era1", "era1", "era2", "era2", "era2"],
+            "feature_1": [0.1, 0.2, 0.3, 0.1, 0.2, 0.3],
+            "feature_2": [0.3, 0.2, 0.1, 0.3, 0.2, 0.1],
+            "pred_a": [0.1, 0.2, 0.3, 0.1, 0.2, 0.3],
+            "pred_b": [0.3, 0.2, 0.1, 0.3, 0.2, 0.1],
+        }
+    )
+
+    scores = per_era_max_feature_correlation(
+        df,
+        ["pred_a", "pred_b"],
+        ["feature_1", "feature_2"],
+        era_col="era",
+    )
+
+    assert scores.loc["era1", "pred_a"] == pytest.approx(1.0)
+    assert scores.loc["era1", "pred_b"] == pytest.approx(1.0)
+    assert scores.loc["era2", "pred_a"] == pytest.approx(1.0)
+    assert scores.loc["era2", "pred_b"] == pytest.approx(1.0)
+
+
+def test_per_era_max_feature_correlation_returns_nan_for_degenerate_eras() -> None:
+    df = pd.DataFrame(
+        {
+            "era": ["era1", "era1", "era1", "era2", "era2", "era2"],
+            "feature_1": [1.0, 1.0, 1.0, 0.1, 0.2, 0.3],
+            "feature_2": [2.0, 2.0, 2.0, 0.3, 0.2, 0.1],
+            "prediction": [0.1, 0.2, 0.3, 0.1, 0.2, 0.3],
+        }
+    )
+
+    scores = per_era_max_feature_correlation(
+        df,
+        ["prediction"],
+        ["feature_1", "feature_2"],
+        era_col="era",
+    )
+
+    assert pd.isna(scores.loc["era1", "prediction"])
+    assert scores.loc["era2", "prediction"] == pytest.approx(1.0)
 
 
 def test_per_era_core_metrics_match_numerai_tools_reference() -> None:
@@ -571,8 +679,6 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     assert set(summaries) >= {
         "corr",
         "fnc",
-        "feature_exposure",
-        "max_feature_exposure",
         "mmc",
         "cwmm",
         "bmc",
@@ -580,8 +686,6 @@ def test_summarize_prediction_file_with_scores_includes_mmc_cwmm_and_provenance(
     }
     assert "prediction" in summaries["corr"].index
     assert "prediction" in summaries["fnc"].index
-    assert "prediction" in summaries["feature_exposure"].index
-    assert "prediction" in summaries["max_feature_exposure"].index
     assert "prediction" in summaries["mmc"].index
     assert "prediction" in summaries["cwmm"].index
 
@@ -1461,8 +1565,6 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
         "corr_delta_vs_baseline": _summary_frame(0.015),
         "fnc": _summary_frame(0.05),
         "fnc_ender20": _summary_frame(0.06),
-        "feature_exposure": _summary_frame(0.07),
-        "max_feature_exposure": _summary_frame(0.08),
     }
     summaries["bmc"].loc["prediction", "avg_corr_with_benchmark"] = 0.12
 
@@ -1490,8 +1592,6 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
             ),
             "fnc_native": pd.DataFrame([{"era": "era1", "value": 0.04}, {"era": "era2", "value": 0.05}]),
             "fnc_ender20": pd.DataFrame([{"era": "era1", "value": 0.05}, {"era": "era2", "value": 0.06}]),
-            "feature_exposure": pd.DataFrame([{"era": "era1", "value": 0.07}, {"era": "era2", "value": 0.08}]),
-            "max_feature_exposure": pd.DataFrame([{"era": "era1", "value": 0.08}, {"era": "era2", "value": 0.09}]),
             "corr_with_benchmark": pd.DataFrame([{"era": "era1", "value": 0.11}, {"era": "era2", "value": 0.12}]),
         },
         benchmark_source=BenchmarkSource(
@@ -1584,8 +1684,8 @@ def test_build_scoring_artifact_bundle_emits_staged_frames(tmp_path: Path) -> No
     post_training_features = bundle.stage_frames["post_training_full_summary"]
     assert "fnc_native_mean" in post_training_features.columns
     assert "fnc_ender20_mean" in post_training_features.columns
-    assert "feature_exposure_mean" in post_training_features.columns
-    assert "max_feature_exposure_mean" in post_training_features.columns
+    assert "feature_exposure_mean" not in post_training_features.columns
+    assert "max_feature_exposure_mean" not in post_training_features.columns
 
 
 def test_build_scoring_artifact_bundle_omits_post_fold_without_cv_fold(tmp_path: Path) -> None:

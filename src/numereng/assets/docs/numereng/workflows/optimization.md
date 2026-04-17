@@ -43,7 +43,7 @@ uv run numereng hpo create \
   --study-name lgbm-sweep \
   --config configs/run.json \
   --search-space '{"model.params.learning_rate":{"type":"float","low":0.001,"high":0.05,"log":true}}' \
-  --metric post_fold_champion_objective \
+  --metric bmc_last_200_eras.mean \
   --direction maximize \
   --n-trials 50 \
   --timeout-seconds 21600 \
@@ -82,7 +82,7 @@ Optional neutralization controls:
 Study artifacts are stored either:
 
 - globally under `.numereng/hpo/<study_id>/`
-- under an experiment at `experiments/<experiment_id>/hpo/<study_id>/`
+- under an experiment at `.numereng/experiments/<experiment_id>/hpo/<study_id>/`
 
 Each study root now includes:
 
@@ -103,6 +103,7 @@ Trial runs still produce normal run artifacts and are indexed like any other run
 - `sampler.kind=random` only accepts `kind` and `seed`
 - if `--neutralize` is set, `--neutralizer-path` is required
 - trial indexing is mandatory; indexing failures mark the trial failed
-- `post_fold_champion_objective` reads `post_fold_snapshots.parquet` first and falls back to `results.json` if the snapshot artifacts are missing or unusable
+- HPO defaults to `bmc_last_200_eras.mean`
+- legacy `post_fold_champion_objective` remains available and reads `post_fold_snapshots.parquet` first, then falls back to `results.json`
 - identical parameter draws reuse a completed trial value or a finished deterministic run; stuck or partial run dirs fail loudly and require operator cleanup
 - the objective metric must exist in the scored run outputs or study evaluation fails

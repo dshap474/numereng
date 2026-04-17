@@ -33,11 +33,11 @@ Current rules:
 
 ## Custom Models
 
-Numereng supports plugin models loaded from `custom_models/`.
+Numereng supports plugin models loaded from `src/numereng/features/models/custom_models/`.
 
 The canonical onboarding path is:
 
-1. copy `custom_models/template_model.py`
+1. copy `src/numereng/features/models/custom_models/template_model.py`
 2. rename the class and `MODEL_REGISTRY` key
 3. implement `fit` and `predict`
 4. reference the model with `model.type` and, when needed, `model.module_path`

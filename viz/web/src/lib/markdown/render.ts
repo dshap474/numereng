@@ -226,7 +226,7 @@ function classifyCodespan(text: string): string[] {
 
 	const collapsedMetric = normalized.replaceAll('.', '_');
 	if (
-		/^(bmc|corr|fnc|mmc|cwmm|feature_exposure|max_feature_exposure|max_drawdown)(?:_[a-z0-9]+)*$/.test(
+		/^(bmc|corr|fnc|mmc|cwmm|max_drawdown)(?:_[a-z0-9]+)*$/.test(
 			collapsedMetric
 		)
 	) {

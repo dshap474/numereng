@@ -31,7 +31,13 @@ def create_app(
     service = VizService(adapter)
     frontend_root = viz_static_root()
 
-    app = FastAPI(title="Numereng Viz API", version="0.3.0")
+    app = FastAPI(
+        title="Numereng Viz API",
+        version="0.3.0",
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        redoc_url="/api/redoc",
+    )
     app.state.viz_service = service
 
     app.add_middleware(

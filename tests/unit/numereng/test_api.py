@@ -21,6 +21,8 @@ from numereng.api import (
     CloudAwsResponse,
     CloudEc2Response,
     CloudModalResponse,
+    DocsSyncRequest,
+    DocsSyncResponse,
     ExperimentArchiveRequest,
     ExperimentArchiveResponse,
     ExperimentCreateRequest,
@@ -139,6 +141,7 @@ from numereng.api import (
     store_rebuild,
     store_repair_run_lifecycles,
     submit_predictions,
+    sync_docs,
 )
 from numereng.features.agentic_research import (
     ResearchBestRun,
@@ -257,84 +260,41 @@ def test_run_bootstrap_check_translates_internal_error() -> None:
         run_bootstrap_check(fail=True)
 
 
-def test_workspace_init_returns_synced_workspace_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    from numereng.features.workspace.runtime import WorkspaceSyncResult
-    from numereng.features.workspace.service import WorkspaceInitResult
+def test_sync_docs_returns_workspace_mirror_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    docs_module = importlib.import_module("numereng.api._docs")
 
-    def fake_init_workspace_record(**kwargs: Any) -> WorkspaceInitResult:
-        assert kwargs["runtime_source"] == "path"
-        assert kwargs["runtime_path"] == "/tmp/numereng-src"
-        assert kwargs["with_training"] is True
-        return WorkspaceInitResult(
-            workspace_root=Path("/tmp/numerai-dev"),
-            store_root=Path("/tmp/numerai-dev/.numereng"),
-            created_paths=(Path("/tmp/numerai-dev/experiments"),),
-            skipped_existing_paths=(),
-            installed_skill_ids=("numereng-experiment-ops",),
-            sync_result=WorkspaceSyncResult(
-                workspace_root=Path("/tmp/numerai-dev"),
-                store_root=Path("/tmp/numerai-dev/.numereng"),
-                workspace_project_path=Path("/tmp/numerai-dev/pyproject.toml"),
-                python_version_path=Path("/tmp/numerai-dev/.python-version"),
-                venv_path=Path("/tmp/numerai-dev/.venv"),
-                created_paths=(Path("/tmp/numerai-dev/pyproject.toml"),),
-                updated_paths=(),
-                runtime_source="path",
-                runtime_path=Path("/tmp/numereng-src"),
-                extras=("training",),
-                dependency_spec="numereng[training]",
-                installed_numereng_version="1.2.3",
-                verified_dependencies=("numereng", "cloudpickle"),
-            ),
-        )
+    class _Result:
+        workspace_root = Path("/tmp/numerai-dev")
+        destination_root = Path("/tmp/numerai-dev/docs/numerai")
+        sync_meta_path = Path("/tmp/numerai-dev/docs/numerai/.sync-meta.json")
+        upstream_commit = "abc123"
+        synced_at = "2026-04-16T00:00:00Z"
+        synced_files = 12
 
-    monkeypatch.setattr("numereng.api._workspace.init_workspace_record", fake_init_workspace_record)
+    def fake_sync_numerai_docs(*, workspace_root: str | Path = ".") -> _Result:
+        assert workspace_root == "/tmp/numerai-dev"
+        return _Result()
 
-    response = api_module.workspace_init(
-        api_module.WorkspaceInitRequest(
-            workspace_root="/tmp/numerai-dev",
-            runtime_source="path",
-            runtime_path="/tmp/numereng-src",
-            with_training=True,
-        )
-    )
+    monkeypatch.setattr(docs_module, "sync_numerai_docs", fake_sync_numerai_docs)
 
-    assert response.runtime_source == "path"
-    assert response.runtime_path == "/tmp/numereng-src"
-    assert response.venv_path == "/tmp/numerai-dev/.venv"
-    assert response.verified_dependencies == ["numereng", "cloudpickle"]
+    response = sync_docs(DocsSyncRequest(workspace_root="/tmp/numerai-dev", domain="numerai"))
+
+    assert isinstance(response, DocsSyncResponse)
+    assert response.destination_root == "/tmp/numerai-dev/docs/numerai"
+    assert response.synced_files == 12
 
 
-def test_workspace_sync_returns_synced_runtime_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    from numereng.features.workspace.runtime import WorkspaceSyncResult
+def test_sync_docs_translates_runtime_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    docs_module = importlib.import_module("numereng.api._docs")
 
-    def fake_sync_workspace_environment_record(**kwargs: Any) -> WorkspaceSyncResult:
-        assert kwargs["workspace_root"] == "/tmp/numerai-dev"
-        return WorkspaceSyncResult(
-            workspace_root=Path("/tmp/numerai-dev"),
-            store_root=Path("/tmp/numerai-dev/.numereng"),
-            workspace_project_path=Path("/tmp/numerai-dev/pyproject.toml"),
-            python_version_path=Path("/tmp/numerai-dev/.python-version"),
-            venv_path=Path("/tmp/numerai-dev/.venv"),
-            created_paths=(),
-            updated_paths=(Path("/tmp/numerai-dev/pyproject.toml"),),
-            runtime_source="pypi",
-            runtime_path=None,
-            extras=(),
-            dependency_spec="numereng==1.2.3",
-            installed_numereng_version="1.2.3",
-            verified_dependencies=("numereng", "cloudpickle"),
-        )
+    def fake_sync_numerai_docs(*, workspace_root: str | Path = ".") -> object:
+        _ = workspace_root
+        raise RuntimeError("docs_sync_git_missing")
 
-    monkeypatch.setattr(
-        "numereng.api._workspace.sync_workspace_environment_record",
-        fake_sync_workspace_environment_record,
-    )
+    monkeypatch.setattr(docs_module, "sync_numerai_docs", fake_sync_numerai_docs)
 
-    response = api_module.workspace_sync(api_module.WorkspaceSyncRequest(workspace_root="/tmp/numerai-dev"))
-
-    assert response.runtime_source == "pypi"
-    assert response.updated_paths == ["/tmp/numerai-dev/pyproject.toml"]
+    with pytest.raises(PackageError, match="docs_sync_failed:docs_sync_git_missing"):
+        sync_docs(DocsSyncRequest())
 
 
 def test_lazy_public_api_translates_missing_runtime_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -347,7 +307,7 @@ def test_lazy_public_api_translates_missing_runtime_dependency(monkeypatch: pyte
 
     monkeypatch.setattr("numereng.api.import_module", fake_import_module)
 
-    with pytest.raises(PackageError, match="runtime_dependency_missing:cloudpickle:run_numereng_workspace_sync"):
+    with pytest.raises(PackageError, match="runtime_dependency_missing:cloudpickle:run_uv_sync_extra_dev"):
         getattr(api_module, "serve_pickle_build")
 
 

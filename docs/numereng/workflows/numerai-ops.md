@@ -1,6 +1,25 @@
 # Numerai Operations
 
-The `numerai` command family covers account-scoped dataset/model queries and deterministic forum scraping.
+The `numerai` command family covers account-scoped dataset/model queries and deterministic forum scraping. The separate `docs` command downloads the official Numerai docs into the current repo checkout on demand.
+
+## Official Docs Mirror
+
+Download or refresh the official Numerai docs locally:
+
+```bash
+uv run numereng docs sync numerai
+```
+
+Optional:
+
+- `--workspace <path>`
+
+The mirror lands in `docs/numerai/`.
+
+Notes:
+
+- Numerai docs are not preinstalled into the repo checkout
+- the sync preserves local `SYNC_POLICY.md`, `.sync-meta.json`, and `forum/` content inside `docs/numerai/`
 
 ## Datasets
 

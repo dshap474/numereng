@@ -6,7 +6,7 @@ This directory is a synced copy of upstream Numerai docs.
 
 - Upstream repository: `https://github.com/numerai/docs.git`
 - Local mirror path: `docs/numerai/`
-- Sync workflow: manual upstream mirror refresh (`git clone` + `rsync`)
+- Sync workflow: `uv run numereng docs sync numerai`
 
 ## Policy
 
@@ -19,12 +19,5 @@ This directory is a synced copy of upstream Numerai docs.
 ## Sync Commands
 
 ```bash
-tmp_dir="$(mktemp -d)"
-git clone --depth 1 https://github.com/numerai/docs.git "$tmp_dir/docs"
-rsync -a --delete \
-  --exclude 'SYNC_POLICY.md' \
-  --exclude '.sync-meta.json' \
-  --exclude 'forum/' \
-  "$tmp_dir/docs/" docs/numerai/
-rm -rf "$tmp_dir"
+uv run numereng docs sync numerai
 ```

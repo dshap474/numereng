@@ -96,7 +96,10 @@
 </script>
 
 <div class="-m-8 -mt-14 md:-mt-8 flex h-screen">
-	<nav class="w-64 flex-shrink-0 overflow-y-auto bg-card border-r border-border px-4 pb-4 pt-[25.6px]">
+	<nav class="docs-sidebar-shell w-64 flex-shrink-0 overflow-y-auto px-4 pb-4 pt-[25.6px]">
+		<div class="px-2 pb-3">
+			<h2 class="text-sm font-medium text-sidebar-primary">Docs</h2>
+		</div>
 		{#if loading}
 			<div class="px-2 text-muted-foreground text-sm">Loading...</div>
 		{:else if tree}
@@ -104,7 +107,7 @@
 				<div class="mb-3">
 					<button
 						type="button"
-						class="flex items-center justify-between w-full px-2 text-left text-xs font-semibold uppercase tracking-wider text-foreground/70 hover:text-foreground transition-colors"
+						class="flex items-center justify-between w-full px-2 text-left text-sm font-bold uppercase tracking-wider text-sidebar-foreground hover:text-sidebar-primary transition-colors"
 						onclick={() => toggleSection(section.heading)}
 					>
 						{section.heading}
@@ -120,14 +123,14 @@
 										<button
 											type="button"
 											class="block w-full text-left px-2 py-1 text-sm rounded transition-colors {isSelected(item.path)
-												? 'bg-accent text-accent-foreground font-medium'
-												: 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+												? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+												: 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50'}"
 											onclick={() => item.path && selectDoc(item.path)}
 										>
 											{item.title}
 										</button>
 									{:else}
-										<span class="block px-2 py-1 text-sm text-muted-foreground">{item.title}</span>
+										<span class="block px-2 py-1 text-sm text-sidebar-foreground">{item.title}</span>
 									{/if}
 									{#if item.children}
 										<ul class="ml-3 space-y-0.5">
@@ -137,14 +140,14 @@
 														<button
 															type="button"
 															class="block w-full text-left px-2 py-1 text-xs rounded transition-colors {isSelected(child.path)
-																? 'bg-accent text-accent-foreground font-medium'
-																: 'text-muted-foreground hover:text-foreground hover:bg-accent/50'}"
+																? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+																: 'text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/50'}"
 															onclick={() => child.path && selectDoc(child.path)}
 														>
 															{child.title}
 														</button>
 													{:else}
-														<span class="block px-2 py-1 text-xs text-muted-foreground">{child.title}</span>
+														<span class="block px-2 py-1 text-xs text-sidebar-foreground">{child.title}</span>
 													{/if}
 												</li>
 											{/each}

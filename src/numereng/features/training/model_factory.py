@@ -11,7 +11,6 @@ from typing import Any
 
 from numereng.config.settings import load_settings
 from numereng.features.models.lgbm import LGBMRegressor
-from numereng.features.store import resolve_workspace_layout
 from numereng.features.training.errors import TrainingModelError
 from numereng.features.training.target_transforms import TargetTransformWrapper
 
@@ -19,9 +18,9 @@ _BUILTIN_MODELS = {"LGBMRegressor": LGBMRegressor}
 
 
 def _resolve_custom_models_root() -> Path:
-    """Return the canonical workspace custom model directory."""
+    """Return the tracked repository custom model directory."""
 
-    return resolve_workspace_layout().custom_models_root.resolve()
+    return (Path(__file__).resolve().parents[1] / "models" / "custom_models").resolve()
 
 
 def _load_model_registry(module_path: Path) -> dict[str, Any]:

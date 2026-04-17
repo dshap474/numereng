@@ -4,9 +4,9 @@ Numereng supports plugin model adapters through `MODEL_REGISTRY` modules loaded 
 
 ## Golden Path
 
-Start from the workspace template created by `numereng init`:
+Start from the tracked repo template:
 
-1. copy `custom_models/template_model.py`
+1. copy `src/numereng/features/models/custom_models/template_model.py`
 2. rename the class and `MODEL_REGISTRY` key
 3. implement `fit` and `predict`
 4. reference the model from config with `model.type`
@@ -17,14 +17,14 @@ Start from the workspace template created by `numereng init`:
 
 Custom model modules live under:
 
-- `custom_models/`
+- `src/numereng/features/models/custom_models/`
 
 Discovery works in two modes:
 
 - explicit `model.module_path`
-- automatic scan of `custom_models/**/*.py` when `module_path` is omitted
+- automatic scan of `src/numereng/features/models/custom_models/**/*.py` when `module_path` is omitted
 
-Workspace-local models are the canonical runtime discovery source. Numereng does not auto-discover packaged repo custom-model wrappers.
+Tracked source-tree models are the canonical runtime discovery source.
 
 ## Required Module Shape
 
@@ -53,7 +53,7 @@ Each registered class must:
   },
   "model": {
     "type": "YourModelType",
-    "module_path": "custom_models/your_model.py",
+    "module_path": "src/numereng/features/models/custom_models/your_model.py",
     "params": {}
   },
   "training": {
@@ -64,7 +64,8 @@ Each registered class must:
 }
 ```
 
-If the file is discoverable under `custom_models/` and the type is unique, `module_path` can be omitted.
+If the file is discoverable under `src/numereng/features/models/custom_models/` and the type is unique,
+`module_path` can be omitted.
 
 ## Built-In Behavior
 

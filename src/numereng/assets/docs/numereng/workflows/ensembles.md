@@ -45,7 +45,7 @@ uv run numereng ensemble details --ensemble-id <ensemble_id>
 Ensembles are stored either:
 
 - globally under `.numereng/ensembles/<ensemble_id>/`
-- under an experiment at `experiments/<experiment_id>/ensembles/<ensemble_id>/`
+- under an experiment at `.numereng/experiments/<experiment_id>/ensembles/<ensemble_id>/`
 
 Canonical files include:
 
