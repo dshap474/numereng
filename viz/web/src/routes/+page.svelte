@@ -284,8 +284,8 @@
 
 <style>
 	.launch-mirror-shell {
-		--bg: #121212;
-		--ink: #ebe4df;
+		--bg: #0f0f11;
+		--ink: #dadada;
 		--font-display: Impact, 'Arial Black', sans-serif;
 		--font-mono: 'Space Mono', monospace;
 		--border-fine: 1px solid var(--ink);
@@ -355,7 +355,7 @@
 		display: flex;
 		justify-content: center;
 		align-items: center;
-		background: radial-gradient(circle, rgba(235, 228, 223, 0.05) 0%, transparent 70%);
+		background: radial-gradient(circle, rgba(218, 218, 218, 0.05) 0%, transparent 70%);
 		z-index: 3;
 	}
 

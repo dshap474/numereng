@@ -2,6 +2,9 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { api, type NumeraiDocTree, type NumeraiDocNode } from '$lib/api/client';
+	import NoteTreeItem from '$lib/components/ui/reader/NoteTreeItem.svelte';
+	import ReaderSidebar from '$lib/components/ui/reader/ReaderSidebar.svelte';
+	import ReaderWorkspace from '$lib/components/ui/reader/ReaderWorkspace.svelte';
 	import { renderMarkdown } from '$lib/markdown/render';
 
 	const HIDDEN_NOTE_STEMS = new Set(['CLAUDE', 'AGENTS']);
@@ -32,6 +35,12 @@
 		return apiRootItems.filter((n) => !n.children);
 	});
 	let hasSections = $derived.by(() => renderSections.length > 0);
+	let selectedTitle = $derived.by(() =>
+		selectedPath ? selectedPath.split('/').pop()?.replace(/\.md$/i, '') || 'Selected note' : 'Notes'
+	);
+	let selectedBreadcrumb = $derived.by(() =>
+		selectedPath ? selectedPath.replace(/\.md$/i, '').split('/').join(' / ') : 'Choose a note from the collection.'
+	);
 
 	function isHiddenNoteFile(node: NumeraiDocNode): boolean {
 		if (node.children && node.children.length > 0) return false;
@@ -142,10 +151,6 @@
 		}
 	}
 
-	function isSelected(nodePath: string | null): boolean {
-		return nodePath === selectedPath;
-	}
-
 	let rendered = $derived.by(() => {
 		try {
 			return renderMarkdown(content, { surface: 'notes', currentPath: selectedPath });
@@ -167,150 +172,119 @@
 	});
 </script>
 
-<div class="-m-8 -mt-14 md:-mt-8 flex h-screen">
-	<nav class="w-64 flex-shrink-0 bg-card border-r border-border px-4 pb-4 pt-[25.6px] flex flex-col overflow-hidden">
-		<div class="flex items-center justify-between pb-2 mb-2 border-b border-border/50 flex-shrink-0">
-			<span class="px-2 text-xs font-semibold uppercase tracking-wider text-foreground/80">Notes</span>
-		</div>
-
-		<div class="flex-1 overflow-y-auto">
+<ReaderWorkspace>
+	{#snippet sidebar()}
+		<ReaderSidebar
+			kicker="Notes"
+			title="Workspace notes"
+			description="Research memory, notes, and local collections."
+		>
 			{#if loading}
-				<div class="px-2 text-muted-foreground text-sm">Loading...</div>
+				<div class="px-2 py-3 text-sm text-muted-foreground">Loading notes…</div>
 			{:else if tree}
 				{#if renderSections.length === 0 && rootFiles.length === 0}
-					<div class="px-2 text-muted-foreground text-sm">No notes yet. Create one below.</div>
+					<div class="px-2 py-3 text-sm text-muted-foreground">No notes yet. Create one below.</div>
 				{:else}
 					{#each renderSections as section}
-						<div class="mb-3">
+						<section class="reader-section-block">
 							<button
 								type="button"
-								class="flex items-center justify-between w-full px-2 text-left text-xs font-semibold uppercase tracking-wider text-foreground/80 hover:text-foreground transition-colors"
+								class="reader-section-label"
 								onclick={() => toggleSection(section.heading)}
 							>
-								{section.heading}
-								<svg class="w-3 h-3 flex-shrink-0 transition-transform {expandedSections.has(section.heading) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+								<span>{section.heading}</span>
+								<svg class="reader-chevron {expandedSections.has(section.heading) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
 								</svg>
 							</button>
+
 							{#if expandedSections.has(section.heading)}
-								<ul class="mt-1 space-y-0.5">
+								<ul class="mt-2 space-y-1">
 									{#each section.items as item (item.path || item.title)}
 										<li>
-											{@render noteNode(item, 0)}
+											<NoteTreeItem
+												{item}
+												depth={0}
+												{selectedPath}
+												{expandedFolders}
+												onToggleFolder={toggleFolder}
+												onSelect={selectNote}
+												onCopy={copyNoteContent}
+												{copyStatus}
+												{copiedPath}
+											/>
 										</li>
 									{/each}
 								</ul>
 							{/if}
-						</div>
+						</section>
 					{/each}
 
 					{#if rootFiles.length > 0}
-						<div class="{hasSections ? 'mt-3 pt-3 border-t border-border/50' : 'mt-1'}">
-							<ul class="space-y-0.5">
+						<section class={`reader-section-block ${hasSections ? 'border-t border-white/6 pt-4' : ''}`}>
+							<div class="reader-section-label reader-section-label-static">
+								<span>Loose notes</span>
+							</div>
+							<ul class="mt-2 space-y-1">
 								{#each rootFiles as item (item.path || item.title)}
 									<li>
-										{@render noteNode(item, 0)}
+										<NoteTreeItem
+											{item}
+											depth={0}
+											{selectedPath}
+											{expandedFolders}
+											onToggleFolder={toggleFolder}
+											onSelect={selectNote}
+											onCopy={copyNoteContent}
+											{copyStatus}
+											{copiedPath}
+										/>
 									</li>
 								{/each}
 							</ul>
-						</div>
+						</section>
 					{/if}
 				{/if}
 			{/if}
+		</ReaderSidebar>
+	{/snippet}
+
+	<div class="reader-content-header">
+		<div>
+			<div class="reader-content-kicker">Notes workspace</div>
+			<h1 class="reader-content-title">{selectedTitle}</h1>
+			<div class="reader-content-meta">{selectedBreadcrumb}</div>
 		</div>
 
-		<div class="pt-3 border-t border-border/50 flex-shrink-0">
-		</div>
-	</nav>
+		{#if selectedPath}
+			<button type="button" class="reader-secondary-button" onclick={() => void copyNoteContent(selectedPath)}>
+				{#if copiedPath === selectedPath && copyStatus === 'copied'}
+					Copied
+				{:else if copiedPath === selectedPath && copyStatus === 'error'}
+					Copy failed
+				{:else}
+					Copy markdown
+				{/if}
+			</button>
+		{/if}
+	</div>
 
-	<div class="flex-1 min-w-0 overflow-y-auto px-8 pb-8 pt-[18px]">
+	<div class="reader-document-region">
 		{#if error}
-			<div class="border border-destructive/50 bg-destructive/10 rounded-lg p-4 text-sm text-destructive mb-4">
+			<div class="reader-alert reader-alert-danger mb-4">
 				{error}
 				<button type="button" class="ml-2 underline" onclick={() => (error = '')}>dismiss</button>
 			</div>
 		{/if}
 
 		{#if !selectedPath}
-			<div class="text-muted-foreground text-sm">Select a note from the sidebar.</div>
+			<div class="py-6 text-sm text-muted-foreground">Select a note from the sidebar.</div>
 		{:else if docLoading}
-			<div class="text-muted-foreground text-sm">Loading...</div>
+			<div class="py-6 text-sm text-muted-foreground">Loading note…</div>
 		{:else}
-			<div class="flex items-center gap-2 mb-4">
-				<span class="text-sm text-muted-foreground font-mono">{selectedPath}</span>
-			</div>
-			<div class="prose-dark text-sm">
+			<div class="prose-dark reader-prose text-sm">
 				{@html rendered}
 			</div>
 		{/if}
 	</div>
-</div>
-
-{#snippet noteNode(item: NumeraiDocNode, depth: number)}
-	{#if item.children}
-		<!-- Folder -->
-		{@const folderKey = item.path ?? item.title}
-		<div>
-			<button
-				type="button"
-				class="flex items-center justify-between w-full text-left px-2 py-1 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/50 {depth === 0 ? 'text-sm' : 'text-xs'}"
-				style="padding-left: {depth * 0.75 + 0.5}rem"
-				onclick={() => toggleFolder(folderKey)}
-			>
-				<span class="truncate">{item.title}</span>
-				<svg class="w-3 h-3 flex-shrink-0 transition-transform {expandedFolders.has(folderKey) ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-				</svg>
-			</button>
-			{#if expandedFolders.has(folderKey) && item.children}
-				<ul class="mt-0.5 space-y-0.5">
-					{#each item.children as child (child.path || child.title)}
-						<li>
-							{@render noteNode(child, depth + 1)}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
-	{:else if item.path}
-		<!-- File -->
-		<div
-			class="flex items-center w-full rounded transition-colors px-2 py-1 {isSelected(item.path)
-				? 'bg-accent text-accent-foreground font-medium'
-				: 'text-muted-foreground hover:text-foreground hover:bg-accent/50'} {depth === 0 ? 'text-sm' : 'text-xs'}"
-			style="padding-left: {depth * 0.75 + 0.5}rem"
-		>
-			<button type="button" class="flex-1 text-left truncate" onclick={() => item.path && selectNote(item.path)}>
-				{item.title}
-			</button>
-			<button
-				type="button"
-				class="ml-2 p-1 rounded hover:bg-accent/60 transition-colors flex-shrink-0 opacity-70 hover:opacity-100 {copiedPath === item.path && copyStatus === 'copied'
-					? 'text-positive'
-					: copiedPath === item.path && copyStatus === 'error'
-						? 'text-negative'
-				: isSelected(item.path)
-					? 'text-accent-foreground/70'
-					: 'text-muted-foreground/70 hover:text-foreground/70'}"
-				title="Copy note content"
-				aria-label="Copy note content"
-				onclick={(e) => { e.preventDefault(); item.path && void copyNoteContent(item.path); }}
-			>
-				{#if copiedPath === item.path && copyStatus === 'copied'}
-					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-					</svg>
-				{:else if copiedPath === item.path && copyStatus === 'error'}
-					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-					</svg>
-				{:else}
-					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
-						<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-						<path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-					</svg>
-				{/if}
-			</button>
-		</div>
-	{/if}
-{/snippet}
+</ReaderWorkspace>

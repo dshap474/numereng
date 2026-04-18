@@ -26,7 +26,7 @@
 
 <style>
 	.accent-card {
-		background: #151515;
+		background: var(--color-card);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 </style>

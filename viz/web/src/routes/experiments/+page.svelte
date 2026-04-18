@@ -882,25 +882,25 @@
 	}
 
 	.mission-panel {
-		background: #070707;
+		background: #111115;
 		backdrop-filter: blur(18px);
 	}
 
 	.mission-surface {
-		background: #070707;
+		background: #111115;
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 	}
 
 	.mission-toolbar {
-		background: #070707;
+		background: #111115;
 	}
 
 	.mission-pane {
-		background: #070707;
+		background: #111115;
 	}
 
 	.mission-pane-header {
-		background: #151515;
+		background: var(--color-card);
 	}
 
 	.mission-loading-indicator {
@@ -942,7 +942,7 @@
 		margin-left: auto;
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: 0.95rem;
-		background: #151515;
+		background: var(--color-card);
 		cursor: pointer;
 		opacity: 0.96;
 		padding: 0.75rem 0.95rem;
@@ -1008,22 +1008,22 @@
 	}
 
 	.remote-source-detail-card {
-		background: #151515;
+		background: var(--color-card);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.experiment-row {
-		background: #151515;
+		background: var(--color-card);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.recent-activity-card {
-		background: #151515;
+		background: var(--color-card);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
 	.mission-primary-run {
-		background: #151515;
+		background: var(--color-card);
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 	}
 
