@@ -159,14 +159,15 @@ Command families:
 - `run`: `train`, `score`, `submit`, `cancel`
 - `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `run-plan`, `score-round`, `promote`, `report`, `pack`
 - `baseline`: `build`
-- `research`: `init`, `status`, `run`
+- `research`: `program list`, `program show`, `init`, `status`, `run`
 - `hpo`: `create`, `list`, `details`, `trials`
 - `ensemble`: `build`, `select`, `list`, `details`
 - `serve`: `package create|list|inspect|score|sync-diagnostics`, `live build|submit`, `pickle build|upload`
 - `neutralize`: `apply`
 - `dataset-tools`: `build-downsampled-full`
-- `store`: `init`, `index`, `rebuild`, `doctor`, `materialize-viz-artifacts`
+- `store`: `init`, `index`, `rebuild`, `doctor`, `backfill-run-execution`, `repair-run-lifecycles`, `materialize-viz-artifacts`
 - `monitor`: `snapshot`
+- `viz`
 - `remote`: `list`, `bootstrap-viz`, `doctor`, `repo sync`, `experiment sync`, `experiment pull`, `experiment launch`, `experiment status`, `experiment maintain`, `experiment stop`, `config push`, `run train`
 - `cloud`: `ec2`, `aws`, `modal`
 - `numerai`: `datasets` (`list`, `download`), `models`, `round`, `forum scrape`
@@ -174,8 +175,9 @@ Command families:
 ## 6. Runtime Persistence Model
 Numereng has two path surfaces:
 
-- tracked extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/programs/`, `.agents/skills/`
-- optional synced vendor docs path: `docs/numerai/` (manual mirror, not bundled into wheel assets)
+- source-tree extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/programs/`
+- local ignored custom-skill path: `.agents/skills/`
+- optional synced vendor docs path: `docs/numerai/` (manual local mirror)
 - repo-root dev files: `pyproject.toml`, `.python-version`, `.venv/`
 - hidden runtime store: `.numereng/`
 
@@ -714,8 +716,6 @@ cli numerai forum scrape
 ```text
 viz docs numerai
   -> prefer repo docs/numerai/
-  -> else repo docs/numerai/
-  -> else packaged fallback if present
   -> if no local mirror exists, docs page points the user at `uv run numereng docs sync numerai`
 ```
 

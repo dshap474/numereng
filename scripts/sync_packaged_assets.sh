@@ -3,17 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ASSETS_DIR="${ROOT_DIR}/src/numereng/assets"
-DOCS_SRC="${ROOT_DIR}/docs/numereng"
-DOCS_DST="${ASSETS_DIR}/docs/numereng"
 DOCS_SHARED_SRC="${ROOT_DIR}/docs/assets"
 DOCS_SHARED_DST="${ASSETS_DIR}/docs/assets"
 SKILLS_SRC_ROOT="${ROOT_DIR}/.codex/skills"
 SKILLS_DST_ROOT="${ASSETS_DIR}/shipped_skills"
 ALLOWLIST_PATH="${SKILLS_SRC_ROOT}/.gitignore"
 
-mkdir -p "${DOCS_DST}" "${DOCS_SHARED_DST}" "${SKILLS_DST_ROOT}"
+mkdir -p "${DOCS_SHARED_DST}" "${SKILLS_DST_ROOT}"
 
-rsync -a --delete "${DOCS_SRC}/" "${DOCS_DST}/"
+rm -rf "${ASSETS_DIR}/docs/numereng"
 rsync -a --delete "${DOCS_SHARED_SRC}/" "${DOCS_SHARED_DST}/"
 
 rm -rf "${ASSETS_DIR}/docs/numerai"

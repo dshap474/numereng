@@ -1,103 +1,92 @@
 # Experiments
 
-Experiments group related runs, track champions, and keep experiment-local artifacts together.
+Use `experiment` when you want numereng to keep one model-development project organized under one root: configs, round scoring, champion tracking, reports, HPO studies, ensembles, serving packages, and research state.
 
-## Create
+## Create An Experiment
 
 ```bash
 uv run numereng experiment create \
-  --id 2026-03-12_lgbm-baseline \
+  --id 2026-04-18_lgbm-baseline \
   --name "LGBM baseline" \
-  --hypothesis "small feature-set baseline before wider sweeps" \
+  --hypothesis "baseline before wider sweeps" \
   --tags baseline,lgbm
 ```
 
 This creates `.numereng/experiments/<experiment_id>/` with:
 
 - `experiment.json`
-- `EXPERIMENT.md` seeded to the current report-section scaffold
+- `EXPERIMENT.md`
 - `configs/`
-- `run_plan.csv` with the canonical header stub
-- `run_scripts/launch_all.py`, `launch_all.sh`, and `launch_all.ps1`
+- `run_plan.csv`
+- `run_scripts/`
 
-Fill in `run_plan.csv` only when the experiment is using an ordered sweep.
-
-## Train Within An Experiment
+## Train A Config Inside The Experiment
 
 ```bash
 uv run numereng experiment train \
-  --id 2026-03-12_lgbm-baseline \
-  --config configs/run.json
+  --id 2026-04-18_lgbm-baseline \
+  --config .numereng/experiments/2026-04-18_lgbm-baseline/configs/r1_baseline.json
 ```
 
-Optional overrides:
+Useful overrides:
 
-- `--output-dir <path>`
 - `--profile <simple|purged_walk_forward|full_history_refit>`
 - `--post-training-scoring <none|core|full|round_core|round_full>`
 - `--workspace <path>`
 
-`experiment train` uses the same training engine profiles as `run train`, but it links the resulting run to the experiment manifest and report surfaces.
+## Launch One Planned Window
 
-Recommended scoring policy by round:
+```bash
+uv run numereng experiment run-plan \
+  --id 2026-04-18_lgbm-baseline \
+  --start-index 1 \
+  --end-index 5
+```
 
-- scripted sweeps using the generated `run_scripts/launch_all.*`: keep every config at `training.post_training_scoring = "none"` and let the launcher call `experiment score-round`
-- manual non-scripted workflows: early configs in a round use `none`, and the last `rN_*` config may use `round_core` or `round_full`
-
-Those patterns both train the round first, then trigger one deferred `experiment score-round`
-batch pass after the last config links into the manifest.
+Use this when one experiment already has a prepared `run_plan.csv` and you want numereng to execute one contiguous window instead of launching configs one by one.
 
 ## Batch Score One Round
 
 ```bash
 uv run numereng experiment score-round \
-  --id 2026-03-12_lgbm-baseline \
+  --id 2026-04-18_lgbm-baseline \
   --round r1 \
   --stage post_training_full
 ```
 
-Use this to materialize deferred scoring for all eligible `FINISHED` runs in one
-round. It is also the manual recovery path if automatic `round_core` or
-`round_full` scoring fails.
+Use this when round configs deferred scoring and you want numereng to materialize the whole round in one pass.
 
-## Inspect
+## Inspect, Report, And Promote
 
 ```bash
 uv run numereng experiment list
-uv run numereng experiment details --id 2026-03-12_lgbm-baseline
-uv run numereng experiment report --id 2026-03-12_lgbm-baseline --format table
-uv run numereng experiment pack --id 2026-03-12_lgbm-baseline
+uv run numereng experiment details --id 2026-04-18_lgbm-baseline
+uv run numereng experiment report --id 2026-04-18_lgbm-baseline
+uv run numereng experiment promote --id 2026-04-18_lgbm-baseline
+uv run numereng experiment pack --id 2026-04-18_lgbm-baseline
 ```
 
-Useful artifacts under `.numereng/experiments/<experiment_id>/`:
+`experiment pack` overwrites `EXPERIMENT.pack.md` with a compact dashboard-aligned report.
 
-- `experiment.json`
-- `EXPERIMENT.md`
-- `EXPERIMENT.pack.md`
-- `configs/*.json`
-- `hpo/`
-- `ensembles/`
-
-`experiment pack` overwrites `EXPERIMENT.pack.md` in the experiment folder. The packed file
-contains the current `EXPERIMENT.md` narrative plus one run-summary table with dashboard-aligned
-scalar metrics only, not per-era or other time-series artifacts.
-
-## Promote A Champion
+## Archive And Restore
 
 ```bash
-# default metric-based promotion
-uv run numereng experiment promote --id 2026-03-12_lgbm-baseline
-
-# explicit run promotion
-uv run numereng experiment promote --id 2026-03-12_lgbm-baseline --run <run_id>
+uv run numereng experiment archive --id 2026-04-18_lgbm-baseline
+uv run numereng experiment unarchive --id 2026-04-18_lgbm-baseline
 ```
 
-If `--run` is omitted, numereng promotes the best candidate by the selected metric.
+Archived experiments move under `.numereng/experiments/_archive/<experiment_id>/`.
 
 ## High-Risk Gotchas
 
-- `experiment train` requires both `--id` and `--config`
-- config files must end in `.json`
-- if you override `--workspace`, keep experiment paths and output paths aligned to the same store
-- `full_history_refit` should be reserved for final refits because it emits no validation metrics
-- `round_core` and `round_full` require `experiment train` plus an `rN_*` config filename
+- keep experiment configs inside the experiment’s `configs/` folder whenever possible
+- `experiment train` enforces experiment-linked output discipline; do not point it at arbitrary output roots
+- `round_core` and `round_full` rely on the experiment context and config naming conventions
+- `experiment score-round` only resolves finished runs that still have persisted predictions
+
+## Read Next
+
+- [Agentic Research](agentic-research.md)
+- [Hyperparameter Optimization](optimization.md)
+- [Ensembles](ensembles.md)
+- [Serving & Model Uploads](serving.md)

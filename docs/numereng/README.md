@@ -1,29 +1,48 @@
 # Numereng
 
-`numereng` is a repo-local Numerai workspace runtime. Clone the repo, `cd` into it, use the repo-managed `.venv`, and work directly from this checkout.
+`numereng` is a repo-local Numerai workflow runtime. You clone the repo, work directly from that checkout, and let numereng manage model-development state under `.numereng/`.
 
-Stable public interfaces:
+Public surfaces:
 
 - CLI: `numereng`
 - Python facade: `import numereng.api`
-- Workflow facade: `import numereng.api.pipeline`
+- Training workflow facade: `import numereng.api.pipeline`
 
-## Golden Path
+## Quick Start
 
 ```bash
+git clone <repo-url> numereng
+cd numereng
 uv sync --extra dev
+uv run numereng store init
+uv run numereng --help
 just viz
 ```
 
+If you want a local copy of the official Numerai docs:
+
+```bash
+uv run numereng docs sync numerai
+```
+
+## How To Think About Numereng
+
+- A **run** is one concrete training or scoring result under `.numereng/runs/<run_id>/`.
+- An **experiment** groups related configs, runs, champions, reports, HPO studies, ensembles, and serving packages under `.numereng/experiments/<experiment_id>/`.
+- **Agentic research** runs a persisted config-mutation loop inside one root experiment.
+- **Serving** freezes a winning package for local live builds or Numerai-hosted model uploads.
+- **Store** commands keep filesystem artifacts and SQLite state aligned.
+- **Dashboard** and **monitor** are read-only inspection surfaces over the current checkout.
+
 ## Canonical Workspace Layout
 
-Tracked authoring and extension roots:
+Repo-local extension roots:
 
-- `src/numereng/features/models/custom_models/`
-- `src/numereng/features/agentic_research/programs/`
-- `.agents/skills/`
+- `src/numereng/features/models/custom_models/` for custom model wrappers
+- `src/numereng/features/agentic_research/programs/` for research-program markdown
+- `.agents/skills/` for local custom skills; this path is gitignored
 
-Hidden numereng-managed runtime state:
+Repo-local runtime state:
 
 - `.numereng/numereng.db`
 - `.numereng/experiments/`
@@ -34,31 +53,24 @@ Hidden numereng-managed runtime state:
 - `.numereng/tmp/`
 - `.numereng/remote_ops/`
 
-## Core Workflows
+## Choose The Right Workflow
 
-- Train a run from a strict JSON config: `numereng run train --help`
-- Re-score an existing run from persisted predictions: `numereng run score --help`
-- Submit predictions or run artifacts: `numereng run submit --help`
-- Group work into experiments: `numereng experiment --help`
-- Run Optuna-backed HPO studies: `numereng hpo --help`
-- Build and inspect ensembles: `numereng ensemble --help`
-- Neutralize predictions as a separate stage: `numereng neutralize --help`
-- Maintain datasets and runtime state: `numereng dataset-tools --help`, `numereng store --help`
-- Launch cloud workflows: `numereng cloud --help`
-- Query Numerai datasets/models/rounds and forum data: `numereng numerai --help`
-- Launch the read-only dashboard: `just viz`
+- Start with [Train Your First Model](getting-started/first-model.md) if you want one good end-to-end example.
+- Use [Training Models](workflows/training.md) for one standalone run.
+- Use [Experiments](workflows/experiments.md) for tracked model development.
+- Use [Agentic Research](workflows/agentic-research.md) for autonomous config mutation loops.
+- Use [Hyperparameter Optimization](workflows/optimization.md) for Optuna studies.
+- Use [Ensembles](workflows/ensembles.md) when blending scored runs.
+- Use [Serving & Model Uploads](workflows/serving.md) and [Submissions](workflows/submission.md) when you are ready to ship.
+- Use [Remote Operations](workflows/remote-ops.md) or [Cloud Training](workflows/cloud-training.md) when local compute is not enough.
+- Use [Store Operations](workflows/store-ops.md) and [Dashboard & Monitor](workflows/dashboard.md) to inspect and maintain the workspace.
 
-## Where To Go Next
+## Read Next
 
 - [Installation](getting-started/installation.md)
 - [Project Layout](getting-started/project-layout.md)
-- [Training Workflow](workflows/training.md)
-- [Experiments](workflows/experiments.md)
-- [Cloud Training](workflows/cloud-training.md)
-- [Store Operations](workflows/store-ops.md)
-- [Dashboard](workflows/dashboard.md)
-- [CLI Reference](reference/cli.md)
+- [CLI Commands](reference/cli.md)
 - [Python API](reference/python-api.md)
-- [Custom Models](reference/custom-models.md)
+- [Runtime Artifacts & Paths](reference/runtime-artifacts.md)
 - [Configuration](reference/configuration.md)
-- [Metrics](reference/metrics.md)
+- [Custom Models](reference/custom-models.md)

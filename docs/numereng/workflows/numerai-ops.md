@@ -1,25 +1,14 @@
 # Numerai Operations
 
-The `numerai` command family covers account-scoped dataset/model queries and deterministic forum scraping. The separate `docs` command downloads the official Numerai docs into the current repo checkout on demand.
+The `numerai` and `docs` command families cover local Numerai docs sync, dataset/model/round queries, and deterministic forum scraping.
 
-## Official Docs Mirror
-
-Download or refresh the official Numerai docs locally:
+## Official Numerai Docs Mirror
 
 ```bash
 uv run numereng docs sync numerai
 ```
 
-Optional:
-
-- `--workspace <path>`
-
-The mirror lands in `docs/numerai/`.
-
-Notes:
-
-- Numerai docs are not preinstalled into the repo checkout
-- the sync preserves local `SYNC_POLICY.md`, `.sync-meta.json`, and `forum/` content inside `docs/numerai/`
+This syncs the official Numerai docs into `docs/numerai/` in the current checkout.
 
 ## Datasets
 
@@ -29,11 +18,6 @@ List available datasets:
 uv run numereng numerai datasets list
 ```
 
-Optional filters:
-
-- `--round <num>`
-- `--tournament <classic|signals|crypto>`
-
 Download one dataset file:
 
 ```bash
@@ -42,27 +26,16 @@ uv run numereng numerai datasets download \
   --dest-path .numereng/datasets
 ```
 
-If `--dest-path` is omitted, numereng chooses the default dataset destination for that filename.
+Use `--round` or `--tournament <classic|signals|crypto>` when needed.
 
-## Models
-
-List account model name to model-id mappings:
+## Models And Current Round
 
 ```bash
 uv run numereng numerai models
-```
-
-Optional:
-
-- `--tournament <classic|signals|crypto>`
-
-## Current Round
-
-```bash
 uv run numereng numerai round current
 ```
 
-Use this before uploads when you want to confirm the current tournament round.
+These are useful before submissions and hosted model uploads.
 
 ## Forum Scraping
 
@@ -78,29 +51,10 @@ Full refresh:
 uv run numereng numerai forum scrape --full
 ```
 
-Optional paths:
+By default, numereng writes forum artifacts under `docs/numerai/forum/`.
 
-- `--output-dir <path>`
-- `--state-path <path>`
+## Read Next
 
-Current defaults:
-
-- output directory: `docs/numerai/forum`
-- default state path: `<output_dir>/.forum_scraper_state.json`
-
-The scraper writes:
-
-- `INDEX.md`
-- `posts/YYYY/MM/*.md`
-- `.forum_scraper_manifest.json`
-- `.forum_scraper_state.json`
-
-## Tournament Flag
-
-Dataset, model, and round commands accept:
-
-- `classic`
-- `signals`
-- `crypto`
-
-Forum scraping is not tournament-specific.
+- [Installation](../getting-started/installation.md)
+- [Dataset Tools](dataset-tools.md)
+- [Submissions](submission.md)

@@ -1,17 +1,25 @@
 # Runtime store (always local, never committed)
-.numereng/*
-.local/
-.cache/
+/.numereng/
+/.local/
+/.cache/
+
+# Local extension roots (never committed)
+/custom_models/
+/research_programs/
+/.agents/
+/AGENTS.local.md
+src/numereng/features/models/custom_models/*
+!src/numereng/features/models/custom_models/template_model.py
+src/numereng/features/agentic_research/programs/*
+!src/numereng/features/agentic_research/programs/.gitignore
+!src/numereng/features/agentic_research/programs/README.md
+!src/numereng/features/agentic_research/programs/numerai-experiment-loop.md
 
 
 # Data directories (downloaded and generated files)
 output/
 notebooks/
 predictions/
-src/numereng/features/models/custom_models/
-!src/numereng/features/models/custom_models/.gitkeep
-!src/numereng/features/models/custom_models/template_model.py
-.agents/
 numerai-example/
 
 # Python

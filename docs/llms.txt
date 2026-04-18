@@ -60,8 +60,9 @@ Source map:
 - `src/numereng/cli/*`: parsing/dispatch/help.
 
 Workspace layout:
-- Repo-root authoring dirs: `custom_models`, `research_programs`, `.agents/skills`.
-- Optional repo-root synced vendor docs: `docs/numerai/` (downloaded manually via `numereng docs sync numerai`; not bundled into wheel assets).
+- Source-tree extension roots: `src/numereng/features/models/custom_models`, `src/numereng/features/agentic_research/programs`.
+- Repo-local custom skill root: `.agents/skills` (local-only and gitignored).
+- Optional repo-root synced vendor docs: `docs/numerai/` (downloaded manually via `numereng docs sync numerai`).
 - Repo-managed runtime files: `pyproject.toml`, `.python-version`, `.venv/`.
 - Hidden runtime store: `.numereng` (`numereng.db`, `runs`, `datasets`, `experiments`, `notes`, `cloud`, `cache`, `tmp`, `remote_ops`).
 - Numereng-managed dirs under `.numereng`: `runs`, `datasets`, `experiments`, `notes`, `cloud`, `cache`, `tmp`, `remote_ops`.
@@ -198,7 +199,7 @@ Wiring map:
   `cli numerai forum scrape -> api.scrape_numerai_forum -> platform.scrape_forum_posts`
   (writes `posts/YYYY/MM/*.md` plus `INDEX.md` files at archive/year/month levels).
   Viz docs API surfaces a "Forum Archive" section in `/api/docs/numerai/tree` with year -> month nodes.
-- Numerai docs browsing prefers repo `docs/numerai/`, then any packaged fallback; missing local mirrors now surface an explicit `uv run numereng docs sync numerai` hint instead of a generic missing README state.
+- Numerai docs browsing reads the repo-local `docs/numerai/` mirror when present; missing local mirrors surface an explicit `uv run numereng docs sync numerai` hint instead of a generic missing README state.
 - Viz backend:
   `/api/* -> features.viz.routes/services/store_adapter`
 

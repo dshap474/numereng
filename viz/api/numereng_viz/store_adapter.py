@@ -763,7 +763,7 @@ class VizStoreConfig:
         numereng_root = (
             self.numereng_docs_root.expanduser().resolve()
             if self.numereng_docs_root is not None
-            else (repo_docs_root / "numereng" if (repo_docs_root / "numereng").is_dir() else docs_root("numereng"))
+            else (repo_docs_root / "numereng")
         )
         shared_assets_root = (
             self.shared_docs_assets_root.expanduser().resolve()

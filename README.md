@@ -32,19 +32,20 @@ uv run numereng experiment list
 just viz
 ```
 
-Default dashboard endpoint:
+When you use `just viz`:
 
-- [http://127.0.0.1:8502](http://127.0.0.1:8502)
+- dashboard UI: [http://127.0.0.1:5173](http://127.0.0.1:5173)
+- backend API: [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
 ## Workspace model
 
 The repo checkout is the canonical workspace.
 
-Tracked authoring and extension roots:
+Extension and authoring roots:
 
-- `src/numereng/features/models/custom_models/`
-- `src/numereng/features/agentic_research/programs/`
-- `.agents/skills/`
+- `src/numereng/features/models/custom_models/` for built-in and default-discovered custom model wrappers
+- `src/numereng/features/agentic_research/programs/` for built-in research programs
+- `.agents/skills/` for repo-local custom skills; this path is local-only and gitignored
 
 Repo-local runtime and experiment state:
 
@@ -79,6 +80,7 @@ The Python API is available for typed automation and power-user flows. For full 
 
 Start here:
 
+- Agent usage guide: [AGENTS.md](AGENTS.md)
 - Repo setup: [docs/numereng/getting-started/installation.md](docs/numereng/getting-started/installation.md)
 - Workspace layout: [docs/numereng/getting-started/project-layout.md](docs/numereng/getting-started/project-layout.md)
 - Custom models: [docs/numereng/reference/custom-models.md](docs/numereng/reference/custom-models.md)

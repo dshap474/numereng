@@ -1,82 +1,95 @@
-# numereng
+"""Codex-first usage guidance for numereng users working from a cloned checkout."""
 
-This file is contributor-facing repo guidance. Clone the repo, `cd` into it, and work directly from this source checkout.
+# numereng User Guide For Agents
 
-Read order:
-1. `docs/llms.txt` (agent entrypoint)
-2. `docs/ARCHITECTURE.md` (deep system map)
+This file is for agents operating `numereng` after a user clones the repo to do Numerai model development.
 
-## Fast Commands
-- Install `just` if you want to use the wrapper commands below.
-- `uv sync --extra dev`
-- `just test`
-- `just test-all`
-- `just build`
+Default assumption:
+- the user wants to use numereng to train, score, compare, package, and submit models
+- the user does not want routine edits to `src/` unless they explicitly ask for package-development work
 
-## Environment Rules
-- Python baseline is `3.12+`.
-- Use only the project-managed env (`.venv`) via `uv sync --extra dev`.
-- Prefer `uv run <tool>` for all commands (`pytest`, `ruff`, `ty`, `numereng`, etc.).
-- If direct Python is required, use `.venv/bin/python`.
-- Do not create ad-hoc virtual envs.
-- Numerai MCP auth is project-local via `.codex/config.toml` and expects `NUMERAI_MCP_AUTH` in the launching shell environment.
-- If Numerai MCP tools are loaded but return missing-auth errors, run `eval "$(uv run python -m numereng.platform.export_numerai_mcp_auth)"` from the repo root, then relaunch Codex from that shell if MCP access is needed.
+## Working Model
+- The repo checkout is the workspace.
+- Run everything from the repo root.
+- Use the repo-managed environment: `uv sync --extra dev`.
+- Prefer `uv run numereng ...` for numereng commands.
+- Runtime state lives under `.numereng/`.
 
-## Repo Model
-- The repo checkout is the canonical workspace.
-- Use the repo-managed environment via `uv sync --extra dev`.
-- Run commands from the repo root with `uv run numereng ...`.
+## First Commands
+```bash
+uv sync --extra dev
+uv run numereng store init
+uv run numereng --help
+just viz
+```
 
-## Non-Negotiable Rules
-- Preserve dependency direction: `config -> platform -> features -> api -> cli`.
-- Keep CLI thin: parse/dispatch/output only. Business logic belongs in `features/*` behind `api/*`.
-- `platform/*` must not import `features/*`.
-- Public surfaces are `src/numereng/api/` and `src/numereng/cli/`.
-- No source file in `src/numereng/api/` or `src/numereng/cli/` may exceed 500 lines.
-- Update `docs/llms.txt` and `docs/ARCHITECTURE.md` when contracts/flows change.
+If Numerai docs are needed locally:
+```bash
+uv run numereng docs sync numerai
+```
 
-## Boundary Contracts
-- CLI entrypoint: `numereng = "numereng.cli:main"`.
-- Python entrypoint: `import numereng.api as api_module`.
-- Stable contracts live in `src/numereng/api/contracts.py`.
-- Full local train/score pipeline entrypoint: `src/numereng/api/pipeline.py::run_training_pipeline(request)`.
-  It runs `prepare_training_run -> load_training_data -> train_model -> finalize_training_run`, maps internal failures to `PackageError`, and always performs cleanup.
-  Deferred post-training scoring is materialized later from saved predictions via `run score` or `experiment score-round`.
-- API boundary must translate internal errors to `PackageError`.
-- CLI exit codes are fixed: `0` success/help, `1` runtime/boundary error, `2` parse/usage error.
+## Canonical Paths
+- `.numereng/runs/`: run artifacts and scored outputs
+- `.numereng/experiments/`: experiment manifests, configs, reports, round-scored workflows
+- `.numereng/notes/`: repo-local notes and research memory
+- `.numereng/datasets/`: local Numerai datasets, downsampled artifacts, baselines
+- `.numereng/cache/`: runtime caches, pulled cloud archives, remote/cache state
+- `.numereng/tmp/`: managed scratch paths
+- `.numereng/remote_ops/`: remote orchestration state
+- `src/numereng/features/models/custom_models/`: default custom model discovery root
+- `src/numereng/features/agentic_research/programs/`: default research-program catalog
+- `.agents/skills/`: local custom skills; gitignored
 
-## High-Risk Gotchas
+## Choose The Right Workflow
+- Use `run train` for one standalone local run.
+- Use `experiment ...` when the user is comparing related configs, tracking champions, or packaging a project.
+- Use `research ...` when the user wants numereng to mutate configs and run an autonomous research loop.
+- Use `hpo ...` for Optuna-backed search over one config/search space.
+- Use `ensemble ...` when combining scored runs into one ranked blend.
+- Use `serve ...` when freezing a production package, rebuilding live predictions, or preparing a Numerai model upload.
+- Use `run submit` when a submit-ready parquet or run artifact already exists.
+- Use `remote ...` for SSH-driven remote repo sync, experiment launch, pullback, and maintenance.
+- Use `cloud ...` for EC2, managed AWS, or Modal workflows.
+- Use `store ...` when the filesystem artifacts and SQLite index need repair or reconciliation.
+- Use `monitor snapshot` and `just viz` / `numereng viz` for read-only monitoring.
+
+## Default Agent Loop
+1. Confirm the user’s current experiment or create one with `numereng experiment create`.
+2. Keep configs under `.numereng/experiments/<id>/configs/` when the work belongs to an experiment.
+3. Train with `experiment train` for tracked experiment work, or `run train` for a one-off run.
+4. Materialize deferred scoring with `run score` or `experiment score-round` when needed.
+5. Review results with `experiment report`, `monitor snapshot`, or the dashboard.
+6. Use `serve` or `run submit` only after validating the winning run/package.
+
+## Safety Rules
+- Do not treat the dashboard as a control plane. It is read-only.
+- Do not delete or rewrite `.numereng/` state casually.
+- Prefer `store doctor` and `store rebuild` over manual SQLite edits.
+- Keep experiment-local work under one experiment root instead of scattering configs around the repo.
 - Submission source is XOR: exactly one of `run_id` or `predictions_path`.
 - Neutralization source is XOR: exactly one of `run_id` or `predictions_path`.
-- Training/HPO config files are JSON-only and reject unknown keys (`extra=forbid`).
-- Legacy `data.loading` config is removed. Training configs hard-fail if it is present; training is materialized-loader only, and run hashing strips the removed block for identity compatibility.
-- Training profile allowed only: `simple|purged_walk_forward|full_history_refit`; legacy `submission` profile references hard-fail with a rename error.
-- `TabPFNRegressor` resolves bare checkpoint names under the effective run `store_root` at `cache/tabpfn` unless `TABPFN_MODEL_CACHE_DIR` is already set.
-- Run IDs are deterministic hash-based IDs (12-char prefixes).
-- Training requires successful pre-finalization `index_run`; if it fails, command fails.
-- Training writes `post_fold` during CV and automatically refreshes `post_training_core`; training/rescore scoring metadata is rebuilt from the persisted scoring manifest, and `post_training_full` is marked `not_requested` until that fuller stage is requested.
-- `experiment train` enforces `output_dir == store_root` (or omit output dir).
-- `experiment pack` writes `experiments/<id>/EXPERIMENT.pack.md` beside `EXPERIMENT.md` and overwrites it on each pack run.
-- Telemetry is fail-open and opt-in via launch metadata binding.
-- Launch metadata precedence: explicit outer binding first (CLI/API caller), API defaults only when unbound.
-- `run train --experiment-id` explicitly scopes telemetry jobs to that experiment.
-- If `experiment_id` is omitted, telemetry infers it when config path is under `experiments/<id>/configs/*`.
-- `experiment score-round` only resolves runs that are `FINISHED` and still have persisted predictions; if duplicate runs share one round config stem, the newest eligible run wins.
-- `research init` requires `--program`; initialized sessions persist the selected program in `agentic_research/program.json` and `session_program.md`.
-- Planner backend selection lives in `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`; the checked-in default is `codex-exec`.
-- `numerai-experiment-loop` is now config-centric: each autonomous round selects one parent config, applies a small LLM mutation, validates one child config, and trains that single child.
-- Agentic research round artifacts are canonicalized to `rounds/rN/round.json` and `rounds/rN/round.md`; legacy per-round `codex_*` transport files are not the durable contract.
-- Dashboard is monitor-only: runs are launched via CLI/API, not frontend controls.
-- Legacy runs may be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` remains as a deprecated alias. Viz otherwise uses a bounded read-only fallback on first miss.
-- Canonical tracked extension roots: `src/numereng/features/models/custom_models`, `src/numereng/features/agentic_research/programs`, `.agents/skills`.
-- Canonical hidden runtime roots under `.numereng`: `runs`, `datasets`, `cloud`, `cache`, `tmp`, `remote_ops`.
-- `cloud aws train submit` supports only `sagemaker|batch` and rejects `--spot` + `--on-demand` together.
-- `cloud modal deploy` requires full ECR URI `<registry>/<repository>:<tag>`.
-- `cloud modal data sync` requires config-required dataset files under local `.numereng/datasets`.
+- Training and HPO configs are JSON-only and reject unknown keys.
+- `experiment train` is the correct path for experiment-linked round scoring policies.
+- `research init` requires `--program` and persists the selected program snapshot into the experiment.
+- `serve pickle build` and `serve pickle upload` are stricter than local live builds; do not assume local success implies hosted-upload success.
+- Remote and cloud commands can create or pull runtime state; confirm the target experiment or run before launching them.
 
-## Verification Anchors
-- Fast gate: `just test`
-- Full gate: `just test-all`
-- Smoke surface contract: `tests/integration/test_smoke_structure.py`
+## High-Signal Commands
+```bash
+uv run numereng experiment list
+uv run numereng experiment details --id <experiment_id>
+uv run numereng experiment report --id <experiment_id>
+uv run numereng run score --run-id <run_id>
+uv run numereng monitor snapshot --json
+just viz
+```
 
-## User Notes (Do Not Edit)
+## When To Touch `src/`
+Only edit `src/` when the user explicitly wants package development, bug fixes, new features, or documentation changes to numereng itself.
+
+If the user just wants to develop Numerai models with numereng, stay in:
+- `.numereng/experiments/`
+- `.numereng/notes/`
+- `.numereng/datasets/`
+- `docs/numereng/`
+
