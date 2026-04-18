@@ -2069,32 +2069,32 @@
 
 <style>
 	.experiment-detail-theme {
-		background: #111111;
-		--color-background: #111111;
-		--color-card: #111111;
-		--color-popover: #111111;
-		--color-surface-100: #111111;
-		--color-secondary: #171717;
-		--color-muted: #171717;
-		--color-accent: #171717;
+		background: #0f0f11;
+		--color-background: #0f0f11;
+		--color-card: #151519;
+		--color-popover: #151519;
+		--color-surface-100: #151519;
+		--color-secondary: #17171b;
+		--color-muted: #19191d;
+		--color-accent: #1d1d23;
 	}
 
 	.analysis-reader-pane {
-		background: #070707;
-		--color-background: #070707;
-		--color-card: #070707;
-		--color-popover: #070707;
-		--color-surface-100: #070707;
-		--color-secondary: #101010;
-		--color-muted: #101010;
-		--color-accent: #101010;
+		background: #111115;
+		--color-background: #111115;
+		--color-card: #151519;
+		--color-popover: #151519;
+		--color-surface-100: #151519;
+		--color-secondary: #17171b;
+		--color-muted: #19191d;
+		--color-accent: #1d1d23;
 	}
 
 	.analysis-top-toolbar {
-		background: #070707;
+		background: #111115;
 	}
 
 	.analysis-shell {
-		background: #070707;
+		background: #111115;
 	}
 </style>
