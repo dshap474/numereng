@@ -1,132 +1,109 @@
-# Serving And Model Uploads
+# Serving & Model Uploads
 
-Use `numereng serve` when you want to freeze a production winner, rebuild live predictions locally, or package a Numerai-hosted model upload.
-
-## When To Use `serve`
-
-- use `numereng run submit` when you already have a live-eligible predictions parquet
-- use `numereng serve` when you need numereng to:
-  - freeze explicit weighted components into one submission package
-  - rebuild live predictions from persisted run artifacts or, as a dev fallback, from configs
-  - inspect whether a package is safe for local live builds or Numerai model uploads
-  - build a Numerai-compatible `cloudpickle` model upload
+Use `numereng serve` when you want to freeze a winning set of components into one production package, rebuild live predictions, or prepare a Numerai-hosted model upload.
 
 ## Package Lifecycle
 
-Create a package from explicit components and weights:
+Create a package:
 
 ```bash
 uv run numereng serve package create \
-  --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id april8_winner_v1 \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1 \
   --components components.json
 ```
 
-Inspect compatibility before building:
+Inspect compatibility:
 
 ```bash
 uv run numereng serve package inspect \
-  --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id april8_winner_v1
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1
 ```
 
-Inspection writes a stable report under:
+List packages:
 
-- `.numereng/experiments/<experiment_id>/submission_packages/<package_id>/artifacts/preflight/report.json`
+```bash
+uv run numereng serve package list --experiment-id 2026-04-18_live-handoff
+```
 
-The report classifies the package separately for:
+Score one package on validation data:
 
-- local live builds
-- artifact-backed live readiness
-- Numerai-hosted model uploads
+```bash
+uv run numereng serve package score \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1 \
+  --runtime auto
+```
 
-The deployment classification is one of:
+Sync hosted diagnostics:
 
-- `local_live_only`
-- `artifact_backed_live_ready`
-- `pickle_upload_ready`
+```bash
+uv run numereng serve package sync-diagnostics \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1
+```
 
 ## Local Live Build
 
 ```bash
 uv run numereng serve live build \
-  --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id april8_winner_v1
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1
 ```
 
-This workflow:
+Submit immediately after building:
 
-1. downloads the current Classic `live.parquet`
-2. prefers persisted `full_history_refit` model artifacts from run-backed components
-3. falls back to local retraining only for config-backed/dev packages
-4. predicts on the live frame
-5. rank-blends the component predictions
-6. writes a submit-ready parquet
-
-Release-grade packages should be built from run IDs whose `full_history_refit` runs already wrote:
-
-- `.numereng/runs/<run_id>/artifacts/model/model.pkl`
-- `.numereng/runs/<run_id>/artifacts/model/manifest.json`
-
-Use `serve live submit` if you want numereng to upload that parquet immediately.
+```bash
+uv run numereng serve live submit \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id april_winner_v1 \
+  --model-name MY_MODEL
+```
 
 ## Model Upload Pickles
 
+Build a hosted-compatible pickle package:
+
 ```bash
 uv run numereng serve pickle build \
-  --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id jasper60_single_test \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id hosted_candidate \
   --docker-image "Python 3.12"
 ```
 
-`serve pickle build` only succeeds when the package passes hosted-inference preflight.
-It is now artifact-backed only and does not retrain components.
-
-Current v1 rules are intentionally conservative:
-
-- Classic only
-- every component must be run-backed and have a loadable persisted model artifact
-- external baseline side-input files are rejected
-- custom module/plugin components are rejected for hosted inference
-- final neutralization is rejected for hosted inference in this pass
-- the package must fit Numerai model-upload dependency/runtime expectations
-- the exported pickle must pass an isolated smoke in the selected hosted runtime before numereng will mark it `pickle_upload_ready`
-
-If the package is compatible, numereng writes:
-
-- `artifacts/pickle/model.pkl`
-- `artifacts/pickle/*` metadata that records the selected docker image and smoke verification result
-
-Upload it with:
+Upload it:
 
 ```bash
 uv run numereng serve pickle upload \
-  --experiment-id 2026-04-11_lgbm-live-submission-handoff \
-  --package-id jasper60_single_test \
+  --experiment-id 2026-04-18_live-handoff \
+  --package-id hosted_candidate \
   --model-name MY_SPARE_MODEL
 ```
 
-## Auth And Environment
+## Artifact Locations
 
-Uploads require Numerai credentials in the active shell environment.
+Serving packages live under:
 
-Typical checks:
+- `.numereng/experiments/<experiment_id>/submission_packages/<package_id>/`
 
-```bash
-uv run numereng numerai models list
-uv run numereng numerai round current
-```
+Important artifacts include:
 
-Numerai model uploads are hosted under strict limits:
+- `package.json`
+- `artifacts/preflight/report.json`
+- `artifacts/eval/validation/<runtime>/...`
+- `artifacts/live/*`
+- `artifacts/pickle/model.pkl`
+- `artifacts/diagnostics/<upload_id>/...`
 
-- no internet access
-- self-contained pickle only
-- limited CPU, RAM, and runtime
+## High-Risk Gotchas
 
-Numereng treats hosted model uploads as stricter than local live builds:
+- hosted model uploads are stricter than local live builds
+- local live builds may use artifact-backed local runtime paths that hosted uploads reject
+- pickle uploads must be self-contained and cannot depend on importing `numereng` at Numerai runtime
+- `serve pickle build` only succeeds when the package passes hosted-inference preflight and isolated smoke
 
-- local live builds may use artifact-backed components or a local retrain fallback
-- hosted pickles must be self-contained and must not depend on importing `numereng`
-- `pickle_upload_ready` means the package already passed isolated hosted smoke for the selected docker image
+## Read Next
 
-If a package is local-live compatible but not model-upload compatible, keep using `serve live build` plus `run submit`.
+- [Submissions](submission.md)
+- [Experiments](experiments.md)

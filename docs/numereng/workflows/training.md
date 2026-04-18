@@ -1,25 +1,22 @@
 # Training Models
 
-Use this workflow for a single local run that is not being launched through experiment metadata.
+Use `run train` when you want one local run that is not primarily managed as an experiment round.
 
-## Benchmark Scoring Prerequisite
+## Use This When
 
-Benchmark-relative metrics do not come from the official
-`*benchmark_models.parquet` dataset files directly.
+- you are validating a single config quickly
+- you do not need experiment-local reports, run plans, or champion tracking
+- you want one run ID linked to one JSON config
 
-By default, Numereng resolves `data.benchmark_source.source = "active"` and
-expects a seeded active benchmark artifact at:
+For tracked model-development work, prefer [Experiments](experiments.md).
 
-- `.numereng/datasets/baselines/active_benchmark/predictions.parquet`
-- `.numereng/datasets/baselines/active_benchmark/benchmark.json`
+## Prerequisites
 
-If that shared artifact has not been seeded yet, prefer an explicit
-`data.benchmark_source = { "source": "path", ... }` config for the run. See
-[Baselines & Active Benchmark](baselines.md).
+- `.numereng/` is initialized
+- required Numerai dataset parquet files already exist locally
+- your config path ends in `.json`
 
 ## Minimal Config
-
-Training configs are strict JSON and validated against the live numereng training contract.
 
 ```json
 {
@@ -27,13 +24,7 @@ Training configs are strict JSON and validated against the live numereng trainin
     "data_version": "v5.2",
     "dataset_variant": "non_downsampled",
     "feature_set": "small",
-    "target_col": "target",
-    "benchmark_source": {
-      "source": "path",
-      "predictions_path": ".numereng/datasets/baselines/medium_ender20_ender60_6run_blend/pred_medium_ender20_ender60_6run_blend.parquet",
-      "pred_col": "prediction",
-      "name": "medium_ender20_ender60_6run_blend"
-    }
+    "target_col": "target"
   },
   "model": {
     "type": "LGBMRegressor",
@@ -48,32 +39,24 @@ Training configs are strict JSON and validated against the live numereng trainin
   "training": {
     "engine": {
       "profile": "purged_walk_forward"
-    }
+    },
+    "post_training_scoring": "none"
   }
 }
 ```
 
-## Run Training
+## Train
 
 ```bash
-numereng run train --config configs/run.json
+uv run numereng run train --config configs/run.json
 ```
 
-Optional overrides:
+Useful overrides:
 
 - `--output-dir <path>`
 - `--profile <simple|purged_walk_forward|full_history_refit>`
-- `--experiment-id <id>` if you want the run linked to an experiment while still using `run train`
+- `--experiment-id <id>`
 - `--post-training-scoring <none|core|full|round_core|round_full>`
-
-`run train` always uses the materialized loader. Post-training scoring is
-policy-driven:
-
-- default is `none`, so training finishes with deferred scoring metadata
-- `--post-training-scoring core` auto-materializes `post_training_core`
-- `--post-training-scoring full` auto-materializes inclusive `post_training_full`
-- `round_core` and `round_full` are parsed but rejected at runtime because
-  round-batch scoring requires the experiment workflow
 
 ## Re-Score A Saved Run
 
@@ -81,48 +64,38 @@ policy-driven:
 uv run numereng run score --run-id <run_id>
 ```
 
-Use this when the predictions artifact already exists and you want to rebuild `results.json`, `metrics.json`, `score_provenance.json`, and the store index rows.
+Use `run score` when predictions already exist and you want to rebuild:
 
-`run score` defaults to `--stage all`. Use `--stage post_training_core` for the
-lighter scorecard-only pass, or `--stage post_training_full` when you want the
-inclusive feature-heavy FNC diagnostics without the broader `all`
-stage refresh.
+- `results.json`
+- `metrics.json`
+- `score_provenance.json`
+- store index rows
 
-## Outputs
+## Run Outputs
 
 Successful runs write under `.numereng/runs/<run_id>/`:
 
 - `run.json`
+- `runtime.json`
 - `run.log`
 - `resolved.json`
 - `results.json`
 - `metrics.json`
 - `artifacts/predictions/*`
-
-When post-training scoring materializes, the run also writes:
-
-- `score_provenance.json`
-- `artifacts/scoring/*`
-
-If `training.post_training_scoring = "none"` or a round-batch policy is still
-pending, `results.json` and `metrics.json` stay on a deferred scoring payload
-until `run score` or `experiment score-round` materializes the summaries.
-
-Run indexing is mandatory. If indexing fails, the command fails.
+- optional `artifacts/scoring/*`
+- optional `artifacts/model/*`
 
 ## High-Risk Gotchas
 
-- config path must end in `.json`
-- unknown config keys fail validation
-- supported training profiles are only `simple`, `purged_walk_forward`, `full_history_refit`
-- `purged_walk_forward` uses a fixed 156-era walk-forward window
-- purged walk-forward embargo defaults are horizon-derived: `20d -> 8`, `60d -> 16`
-- if `target_horizon` is omitted and `target_col` is ambiguous, training fails
-- `simple` requires split train/validation sources and does not accept downsampled variants
+- training and HPO configs are JSON-only and reject unknown keys
+- supported profiles are only `simple`, `purged_walk_forward`, and `full_history_refit`
 - `full_history_refit` is final-fit only and emits no validation metrics
-- default benchmark scoring requires a seeded active benchmark artifact unless
-  the config uses `benchmark_source.source = "path"`
-- `training.post_training_scoring` defaults to `none`; auto-scoring only happens when the resolved policy is `core` or `full`
-- post-training scoring failures are best-effort: the run still finishes `FINISHED`, but `training.scoring.status` and `metrics.json` record the failure
-- post-run FNC always neutralizes to `fncv3_features`
-- numereng does not emit `payout_estimate_mean`
+- `round_core` and `round_full` are experiment-oriented policies; use them with `experiment train`
+- training requires successful run indexing before the command is considered successful
+- default benchmark-relative scoring expects an active benchmark unless you configure `benchmark_source.source = "path"`
+
+## Read Next
+
+- [Configuration](../reference/configuration.md)
+- [Experiments](experiments.md)
+- [Runtime Artifacts & Paths](../reference/runtime-artifacts.md)

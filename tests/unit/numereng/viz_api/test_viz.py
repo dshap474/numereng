@@ -2398,6 +2398,22 @@ def test_numereng_docs_tree_uses_docs_numereng_root_only(tmp_path: Path) -> None
     assert adapter.get_doc_content("numereng", "CUSTOM_MODELS.md")["exists"] is False
 
 
+def test_numereng_docs_do_not_fall_back_to_packaged_assets(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    store_root.mkdir(parents=True)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True)
+
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=repo_root))
+
+    assert adapter.get_doc_tree("numereng") == {"sections": []}
+    assert adapter.get_doc_content("numereng", "README.md") == {
+        "content": "",
+        "exists": False,
+        "missing_reason": "document_not_found",
+    }
+
+
 def test_summary_tree_normalizes_relative_paths_and_blocks_escape(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)

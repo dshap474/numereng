@@ -1,8 +1,6 @@
 # Store Operations
 
-Numereng keeps filesystem artifacts and a SQLite index aligned under the store root.
-
-Use the `store` command family when you need to initialize, reindex, rebuild, or diagnose that state.
+Use `numereng store` when filesystem artifacts and SQLite state need initialization, reconciliation, repair, or viz backfill.
 
 ## Initialize
 
@@ -10,23 +8,19 @@ Use the `store` command family when you need to initialize, reindex, rebuild, or
 uv run numereng store init
 ```
 
-Use this once per store root to bootstrap the SQLite schema.
+## Index Or Rebuild
 
-## Index One Run
+Index one run:
 
 ```bash
 uv run numereng store index --run-id <run_id>
 ```
 
-Use this when a run artifact directory already exists and you want its manifest, metrics, and artifact paths re-ingested.
-
-## Rebuild The Entire Index
+Rebuild the full SQLite index from canonical artifacts:
 
 ```bash
 uv run numereng store rebuild
 ```
-
-Use this when you want SQLite state rebuilt from canonical filesystem artifacts under the store root.
 
 ## Diagnose Drift
 
@@ -34,38 +28,51 @@ Use this when you want SQLite state rebuilt from canonical filesystem artifacts 
 uv run numereng store doctor
 ```
 
-`store doctor` checks for:
-
-- missing or corrupt database state
-- required tables
-- artifact/index mismatches
-- stray top-level paths that do not belong under the canonical store layout
-- retention-managed tmp remote-config staging under `.numereng/tmp/remote-configs/*.json`
-
-## Cleanup Strays
+Clean targeted stray paths:
 
 ```bash
 uv run numereng store doctor --fix-strays
 ```
 
-Use `--fix-strays` only when you explicitly want numereng to clean up detected stray store paths.
+## Repair And Backfill
 
-With `--fix-strays`, numereng now performs two conservative cleanup passes:
+Backfill missing execution metadata:
 
-- deletes targeted stray top-level directories such as old logs/smoke roots
-- prunes `.numereng/tmp/remote-configs/*.json` only when the file is older than 30 days and not referenced by an active run lifecycle
+```bash
+uv run numereng store backfill-run-execution --all
+```
 
-If the store DB is missing or unreadable, tmp remote-config cleanup is skipped rather than guessed.
+Repair lifecycle rows:
 
-## When To Use Each Command
+```bash
+uv run numereng store repair-run-lifecycles --all
+```
 
-- use `init` for a fresh store root
-- use `index` after manual artifact recovery for one run
-- use `rebuild` after large filesystem changes or when the SQLite index is untrusted
-- use `doctor` when artifacts and metrics look inconsistent or you suspect drift
+## Viz Backfill
+
+Materialize missing viz diagnostics:
+
+```bash
+uv run numereng store materialize-viz-artifacts \
+  --kind scoring-artifacts \
+  --run-id <run_id>
+```
+
+Or backfill older per-era compatibility artifacts:
+
+```bash
+uv run numereng store materialize-viz-artifacts \
+  --kind per-era-corr \
+  --experiment-id <experiment_id>
+```
 
 ## High-Risk Gotchas
 
-- keep `--workspace` consistent across train, experiment, HPO, ensemble, and store commands
-- do not assume SQLite is the source of truth; canonical artifacts live on disk
-- use rebuild when you need full reconciliation, not repeated one-off indexing
+- filesystem artifacts are canonical; SQLite is an index over them
+- use rebuild when broad reconciliation is needed, not repeated one-off indexing
+- `--fix-strays` is a cleanup action; do not run it casually on a workspace you have not inspected
+
+## Read Next
+
+- [Runtime Artifacts & Paths](../reference/runtime-artifacts.md)
+- [Dashboard & Monitor](dashboard.md)

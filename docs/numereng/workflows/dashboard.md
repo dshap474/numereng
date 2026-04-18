@@ -1,26 +1,29 @@
-# Dashboard
+# Dashboard & Monitor
 
-Numereng ships a repo-local read-only monitoring stack.
+Numereng ships a repo-local read-only monitoring stack over the current checkout and its `.numereng/` runtime state.
 
-The dashboard reads the current repo checkout and its `.numereng/` runtime state. Launch and control operations still happen through the CLI or Python API.
+## Launch The Dashboard
 
-## Start
-
-From the repo root:
+Preferred shortcut:
 
 ```bash
 just viz
 ```
 
-Default local endpoint:
+This starts:
 
-- [http://127.0.0.1:8502](http://127.0.0.1:8502)
+- dashboard UI on [http://127.0.0.1:5173](http://127.0.0.1:5173)
+- backend API on [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
-Optional overrides:
+Direct backend command:
 
 ```bash
-uv run numereng viz --workspace /path/to/repo --host 127.0.0.1 --port 8600
+uv run numereng viz --workspace . --host 127.0.0.1 --port 8502
 ```
+
+Direct backend endpoint:
+
+- [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
 ## What The Dashboard Reads
 
@@ -28,16 +31,35 @@ uv run numereng viz --workspace /path/to/repo --host 127.0.0.1 --port 8600
 - `.numereng/notes/`
 - `.numereng/runs/`
 - `.numereng/numereng.db`
-- `docs/numerai/`
+- `docs/numereng/`
+- `docs/numerai/` when synced locally
 
-It does not launch jobs or mutate experiment/store state.
+The dashboard does not launch runs or mutate experiment/store state.
 
-## Backend Contract
+## Monitor Snapshot
 
-The packaged FastAPI app exposes:
+For a CLI-readable summary of the same workspace:
 
-- `GET /healthz`
-- `GET /`
-- `GET /api/...` read-only routes for runs, experiments, studies, ensembles, docs, and notes
+```bash
+uv run numereng monitor snapshot --json
+```
 
-The health endpoint reports the resolved `workspace_root` and `.numereng` `store_root`.
+Optional:
+
+- `--workspace <path>`
+- `--no-refresh-cloud`
+
+## Remote-Aware Viz
+
+If you use SSH remote targets, bootstrap the local viz runtime first:
+
+```bash
+uv run numereng remote bootstrap-viz
+```
+
+This keeps the local dashboard as the read surface while remote data is merged in through the backend.
+
+## Read Next
+
+- [Store Operations](store-ops.md)
+- [Remote Operations](remote-ops.md)

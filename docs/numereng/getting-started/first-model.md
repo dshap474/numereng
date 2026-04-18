@@ -1,23 +1,29 @@
 # Train Your First Model
 
-End-to-end walkthrough using current `experiment` + `run` contracts.
+This is the shortest useful numereng path: one experiment, one config, one tracked run.
 
-## Step 1: Initialize Store
+## Step 0: Prerequisites
 
-```bash
-uv run numereng store init
-```
+Before training, make sure you have:
 
-## Step 2: Create an Experiment
+- bootstrapped the repo with `uv sync --extra dev`
+- initialized `.numereng/` with `uv run numereng store init`
+- populated the required Numerai datasets locally under `.numereng/datasets/<data_version>/`
+
+If datasets are not present yet, use the [Numerai Operations](../workflows/numerai-ops.md) workflow first.
+
+## Step 1: Create An Experiment
 
 ```bash
 uv run numereng experiment create \
-  --id 2026-02-22_first_model \
+  --id 2026-04-18_first-model \
   --name "First Model" \
-  --hypothesis "Baseline LGBM on v5.2"
+  --hypothesis "Baseline LGBM on v5.2 small features"
 ```
 
-## Step 3: Create `configs/run.json`
+## Step 2: Add A Config
+
+Create `.numereng/experiments/2026-04-18_first-model/configs/r1_baseline.json`:
 
 ```json
 {
@@ -40,36 +46,46 @@ uv run numereng experiment create \
   "training": {
     "engine": {
       "profile": "purged_walk_forward"
-    }
+    },
+    "post_training_scoring": "core"
   }
 }
 ```
 
-## Step 4: Train the Experiment Run
+## Step 3: Train The Config
 
 ```bash
 uv run numereng experiment train \
-  --id 2026-02-22_first_model \
-  --config configs/run.json
+  --id 2026-04-18_first-model \
+  --config .numereng/experiments/2026-04-18_first-model/configs/r1_baseline.json
 ```
 
-## Step 5: Inspect Results
+## Step 4: Inspect The Result
 
 ```bash
-uv run numereng experiment report --id 2026-02-22_first_model
+uv run numereng experiment report --id 2026-04-18_first-model
+uv run numereng experiment details --id 2026-04-18_first-model
 ```
 
-Run artifacts are under `.numereng/runs/<run_id>/`.
+The resulting run lands under `.numereng/runs/<run_id>/`.
 
-## Step 6: Submit (Optional)
+## Step 5: Re-Score Or Submit When Ready
+
+If you deferred scoring:
+
+```bash
+uv run numereng run score --run-id <run_id>
+```
+
+When you have a candidate you want to upload:
 
 ```bash
 uv run numereng run submit --model-name MY_MODEL --run-id <run_id>
 ```
 
-## Next Steps
+## What To Do Next
 
-- [Training Models](../workflows/training.md)
-- [Experiments](../workflows/experiments.md)
-- [Submissions](../workflows/submission.md)
-- [Metrics](../reference/metrics.md)
+- add more configs to the same experiment and keep comparing them
+- use [Hyperparameter Optimization](../workflows/optimization.md) if you want Optuna to search the config space
+- use [Agentic Research](../workflows/agentic-research.md) if you want numereng to mutate the config autonomously
+- use [Serving & Model Uploads](../workflows/serving.md) if the winner should become a production package

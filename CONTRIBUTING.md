@@ -2,7 +2,7 @@
 
 Thanks for contributing.
 
-This file is contributor-facing. End users should install `numereng`, initialize a workspace, and work from that workspace without cloning the repo.
+This file is contributor-facing. End users now clone the repo and work directly from that checkout as the canonical numereng workspace.
 
 ## Prerequisites
 
@@ -52,12 +52,13 @@ just test-all
 uv build
 ```
 
-Factory-native repo context now lives in:
+Contributor-local agent context lives in:
 
-- `AGENTS.md`
-- `.factory/memories.md`
-- `.factory/rules/*`
-- `.factory/skills/*`
+- `AGENTS.local.md`
+- `docs/llms.txt`
+- `docs/ARCHITECTURE.md`
+
+`AGENTS.local.md` is local-only and should remain untracked. The public repo-root `AGENTS.md` is for end users and agents operating numereng from a cloned checkout.
 
 For targeted work, prefer direct `uv run` commands:
 

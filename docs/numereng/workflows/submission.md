@@ -1,8 +1,8 @@
 # Submissions
 
-Submit predictions to Numerai from a run ID or an explicit predictions file.
+Use `run submit` when you already have a submit-ready predictions source: either a run-backed artifact or an explicit predictions file.
 
-If you need numereng to rebuild a live blend or create a Numerai model-upload pickle first, use [Serving And Model Uploads](serving.md).
+If you still need to freeze a package, rebuild live predictions, or prepare a hosted upload, use [Serving & Model Uploads](serving.md) first.
 
 ## Submit By Run ID
 
@@ -12,7 +12,7 @@ uv run numereng run submit \
   --run-id <run_id>
 ```
 
-## Submit By File
+## Submit By Predictions File
 
 ```bash
 uv run numereng run submit \
@@ -27,46 +27,33 @@ uv run numereng run submit \
   --model-name MY_MODEL \
   --run-id <run_id> \
   --neutralize \
-  --neutralizer-path data/neutralizer.parquet \
-  --neutralization-proportion 0.5 \
-  --neutralization-mode era
+  --neutralizer-path data/neutralizer.parquet
 ```
 
-Additional controls:
+Useful controls:
 
+- `--neutralization-proportion <0..1>`
+- `--neutralization-mode <era|global>`
 - `--neutralizer-cols <csv>`
 - `--no-neutralization-rank`
 
-## Submission Contract
+## Resolution Rules
+
+When submitting by run ID, numereng resolves predictions from:
+
+1. the artifact path recorded in `run.json`
+2. canonical files under `artifacts/predictions/`
+3. single-file fallback inside that predictions directory
+
+## High-Risk Gotchas
 
 - exactly one of `--run-id` or `--predictions` is required
 - `--model-name` is required
 - `--tournament` defaults to `classic`
 - if `--neutralize` is set, `--neutralizer-path` is required
-- `--allow-non-live-artifact` bypasses the default classic live-artifact eligibility check
+- `--allow-non-live-artifact` bypasses the normal classic live-artifact eligibility check
 
-## Run Artifact Resolution
+## Read Next
 
-When submitting by run ID, numereng resolves predictions in this order:
-
-1. the artifact path recorded in `run.json`
-2. canonical files under `artifacts/predictions/`
-3. single-file fallback in that predictions directory
-
-Keep run outputs under `.numereng/runs/<run_id>/artifacts/predictions/` for deterministic behavior.
-
-## Neutralized Outputs
-
-When submission neutralization runs without an explicit `--output-path`, numereng writes sidecar artifacts such as:
-
-- `<original>.neutralized.parquet`
-
-The response metadata records the source path, neutralizer path, mode, proportion, and row-match counts.
-
-## Round Awareness
-
-```bash
-uv run numereng numerai round current
-```
-
-Use this before upload when you want to confirm the active round.
+- [Serving & Model Uploads](serving.md)
+- [Numerai Operations](numerai-ops.md)
