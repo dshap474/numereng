@@ -1,0 +1,15 @@
+id: remote-windows-pc
+label: Remote Windows Workstation
+kind: ssh
+ssh_config_host: remote-windows-pc
+shell: powershell
+user_env: NUMERENG_REMOTE_WINDOWS_USER
+identity_file_env: NUMERENG_REMOTE_WINDOWS_KEY
+repo_root: C:\Users\<you>\path\to\numereng
+store_root: C:\Users\<you>\path\to\numereng\.numereng
+runner_cmd: uv run numereng
+python_cmd: uv run python
+enabled: true
+tags:
+  - gpu
+  - windows

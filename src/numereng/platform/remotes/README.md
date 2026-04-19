@@ -13,6 +13,15 @@ Real machine profiles belong in:
 
 Those profile files are gitignored so each clone stays clean for OSS users.
 
+## Topology modes
+
+Numereng supports two first-class deployment shapes. Neither is a code fork — they differ only in whether you populate `profiles/`.
+
+- **Single-machine** (default, zero profiles) — training, storage, and viz all run on one host reading `.numereng/` directly. No SSH, no config. This is how a fresh clone behaves.
+- **Distributed** (one or more profiles) — training + storage live on a remote compute host (workstation, GPU box, etc.) and viz runs locally as a federated read-only dashboard that SSHes into each enabled profile. Local `.numereng/` still exists but is typically empty or thin; each remote source is keyed by `source_kind:source_id:experiment_id` in the UI so nothing collides with local rows.
+
+Do not mix the modes by syncing a remote's full `.numereng/` back to local — the federation is the intended bridge.
+
 ## Default behavior
 
 - Default profile dir: `src/numereng/platform/remotes/profiles`
@@ -25,11 +34,14 @@ Those profile files are gitignored so each clone stays clean for OSS users.
 
 ## How to add one machine
 
-1. Copy `examples/ssh.example.yaml` into `profiles/<id>.yaml`
+1. Copy the right template into `profiles/<id>.yaml`:
+   - `examples/ssh.example.yaml` for Linux/macOS remotes (`shell: posix`)
+   - `examples/windows.example.yaml` for Windows remotes (`shell: powershell`)
 2. Fill in your SSH host alias or explicit host
 3. Set any referenced env vars for username/key path if needed
 4. Make sure the remote machine can run:
    - `numereng monitor snapshot --workspace <workspace_root> --json`
+   - This implies a working `uv`-managed environment on the remote. First invocation installs deps, so bump `command_timeout_seconds` on the profile (default 15) or run `uv sync` on the remote once before relying on the viz probe.
 
 ## Remote ops
 
