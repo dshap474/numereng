@@ -620,6 +620,10 @@
 	.shell-nav-link-group-open {
 		border-bottom-left-radius: 0;
 		border-bottom-right-radius: 0;
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.08),
+			inset 1px 0 0 rgba(255, 255, 255, 0.08),
+			inset -1px 0 0 rgba(255, 255, 255, 0.08);
 	}
 
 	.shell-nav-chevron-button {
@@ -642,14 +646,13 @@
 		border-top: 0;
 		border-radius: 0 0 0.9rem 0.9rem;
 		padding: 0.4rem;
-		background: var(--color-surface-200);
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+		background: transparent;
 	}
 
 	.shell-submenu-link {
 		border-radius: 0.8rem;
 		color: color-mix(in oklch, var(--color-reader-sidebar-muted) 72%, white 28%);
-		background: rgba(255, 255, 255, 0.025);
+		background: transparent;
 		transition:
 			background-color 160ms var(--ease-out),
 			color 160ms var(--ease-out),
