@@ -1311,14 +1311,70 @@
 				<h2 class="text-sm font-semibold leading-tight">Ops</h2>
 				<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
 			</div>
-			<div class="pill-tabs" aria-label="Ops view">
-				{#each ['table', 'chart'] as view (view)}
+			<div class="flex items-center gap-2">
+				<div class="flex flex-col gap-[4px]">
 					<button
 						type="button"
-						class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
-						onclick={() => (runOpsView = view as 'table' | 'chart')}
-					>{view}</button>
-				{/each}
+						aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
+						aria-pressed={runOpsHeatmapEnabled}
+						title={runOpsHeatmapEnabled ? 'Heatmap on' : 'Heatmap off'}
+						class="inline-flex h-[18px] w-[34px] items-center justify-center rounded-full border text-muted-foreground transition-colors {runOpsHeatmapEnabled ? 'border-white/25 text-foreground' : 'border-white/15 hover:text-foreground hover:bg-white/10'}"
+						onclick={toggleHeatmap}
+					>
+						{#if runOpsHeatmapEnabled}
+							<span class="flex items-center gap-[3px]">
+								<span class="h-[6px] w-[6px] rounded-full" style:background-color="rgba(239, 68, 68, 0.7)"></span>
+								<span class="h-[6px] w-[6px] rounded-full" style:background-color="rgba(34, 197, 94, 0.7)"></span>
+							</span>
+						{:else}
+							<span class="flex items-center gap-[3px]">
+								<span class="h-[6px] w-[6px] rounded-full border border-muted-foreground/40"></span>
+								<span class="h-[6px] w-[6px] rounded-full border border-muted-foreground/40"></span>
+							</span>
+						{/if}
+					</button>
+					<div class="relative">
+						<button
+							type="button"
+							aria-label="Toggle column visibility"
+							aria-expanded={runOpsColumnPickerOpen}
+							class="inline-flex h-[18px] w-[34px] items-center justify-center rounded-full border border-white/15 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+							onclick={() => (runOpsColumnPickerOpen = !runOpsColumnPickerOpen)}
+						>
+							<svg viewBox="0 0 16 16" aria-hidden="true" class="h-[10px] w-[10px]"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
+						</button>
+						{#if runOpsColumnPickerOpen}
+							<div
+								class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
+								role="menu"
+							>
+								<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
+								{#each allMetricColumns as col (col)}
+									{@const visible = !runOpsHiddenColumns.has(col)}
+									<label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-white/5">
+										<input
+											type="checkbox"
+											class="h-3 w-3 accent-white"
+											checked={visible}
+											onchange={(e) => setColumnVisibility(col, (e.currentTarget as HTMLInputElement).checked)}
+										/>
+										<span class="tabular-nums">{metricShortLabel(col)}</span>
+										<span class="ml-auto truncate text-[10px] text-muted-foreground/60">{col}</span>
+									</label>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				</div>
+				<div class="pill-tabs" aria-label="Ops view">
+					{#each ['table', 'chart'] as view (view)}
+						<button
+							type="button"
+							class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
+							onclick={() => (runOpsView = view as 'table' | 'chart')}
+						>{view}</button>
+					{/each}
+				</div>
 			</div>
 		</div>
 
@@ -2063,64 +2119,6 @@
 			{@render opsRail()}
 
 			<div class="flex-1 min-w-0 flex flex-col min-h-0 relative bg-card overflow-hidden">
-				<!-- Floating top-right controls: table-only heatmap + column picker -->
-				{#if runOpsView === 'table'}
-					<div class="absolute top-2.5 right-3 z-30 flex items-center gap-2">
-						<button
-							type="button"
-							aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
-							aria-pressed={runOpsHeatmapEnabled}
-							title={runOpsHeatmapEnabled ? 'Heatmap on' : 'Heatmap off'}
-							class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border text-muted-foreground transition-colors {runOpsHeatmapEnabled ? 'border-white/25 text-foreground' : 'border-white/15 hover:text-foreground hover:bg-white/10'}"
-							onclick={toggleHeatmap}
-						>
-							{#if runOpsHeatmapEnabled}
-								<span class="flex items-center gap-[3px]">
-									<span class="h-2 w-2 rounded-full" style:background-color="rgba(239, 68, 68, 0.7)"></span>
-									<span class="h-2 w-2 rounded-full" style:background-color="rgba(34, 197, 94, 0.7)"></span>
-								</span>
-							{:else}
-								<span class="flex items-center gap-[3px]">
-									<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
-									<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
-								</span>
-							{/if}
-						</button>
-						<div class="relative">
-							<button
-								type="button"
-								aria-label="Toggle column visibility"
-								aria-expanded={runOpsColumnPickerOpen}
-								class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/15 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-								onclick={() => (runOpsColumnPickerOpen = !runOpsColumnPickerOpen)}
-							>
-								<svg viewBox="0 0 16 16" aria-hidden="true" class="h-3 w-3"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
-							</button>
-							{#if runOpsColumnPickerOpen}
-								<div
-									class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
-									role="menu"
-								>
-									<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
-									{#each allMetricColumns as col (col)}
-										{@const visible = !runOpsHiddenColumns.has(col)}
-										<label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-white/5">
-											<input
-												type="checkbox"
-												class="h-3 w-3 accent-white"
-												checked={visible}
-												onchange={(e) => setColumnVisibility(col, (e.currentTarget as HTMLInputElement).checked)}
-											/>
-											<span class="tabular-nums">{metricShortLabel(col)}</span>
-											<span class="ml-auto truncate text-[10px] text-muted-foreground/60">{col}</span>
-										</label>
-									{/each}
-								</div>
-							{/if}
-						</div>
-					</div>
-				{/if}
-
 				{#if runOpsView === 'table'}
 					<div class="overflow-auto flex-1 min-h-0">
 						<table class="w-max min-w-full text-sm leading-[1.35] border-separate border-spacing-0">
@@ -2165,7 +2163,7 @@
 						</table>
 					</div>
 				{:else if selectedOp?.type === 'run'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
 						{#key selectedOp.id}
 							<RunDetailPanel
 								runId={selectedOp.id}
@@ -2179,7 +2177,7 @@
 						{/key}
 					</div>
 				{:else if selectedOp?.type === 'hpo'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
 						<HpoDetailPanel
 							studyId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
@@ -2188,7 +2186,7 @@
 						/>
 					</div>
 				{:else if selectedOp?.type === 'ensemble'}
-					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
 						<EnsembleDetailPanel
 							ensembleId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
