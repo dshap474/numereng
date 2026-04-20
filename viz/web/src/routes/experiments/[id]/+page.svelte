@@ -1345,7 +1345,7 @@
 						</button>
 						{#if runOpsColumnPickerOpen}
 							<div
-								class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
+								class="absolute left-full top-0 z-40 ml-2 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
 								role="menu"
 							>
 								<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
