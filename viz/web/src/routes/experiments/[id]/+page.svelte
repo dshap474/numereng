@@ -190,6 +190,17 @@
 		return runOpsMainMetricColumns[runOpsMainMetricColumns.length - 1];
 	});
 
+	// Metrics where a lower number is preferable — standard deviations and the
+	// drawdown. Everything else defaults to "higher is better" in the tint scale.
+	const METRIC_LOWER_IS_BETTER = new Set<string>([
+		'bmc_std',
+		'corr_std',
+		'fnc_std',
+		'mmc_std',
+		'cwmm_std',
+		'max_drawdown'
+	]);
+
 	interface Operation {
 		op_id: string;
 		op_type: OpType;
@@ -256,6 +267,48 @@
 
 	function opMetricValue(op: Operation, key: string): number | undefined {
 		return metricNumber(op.metrics, key) ?? undefined;
+	}
+
+	// Per-column min/max across the current visible ops, used to drive a
+	// subtle monochrome luminance tint on each metric cell. Computed once per
+	// (sortedOps, metricColumns) change rather than per cell.
+	let metricColumnRanges = $derived.by(() => {
+		const ranges = new Map<string, { min: number; max: number }>();
+		for (const col of metricColumns) {
+			let min = Number.POSITIVE_INFINITY;
+			let max = Number.NEGATIVE_INFINITY;
+			for (const op of sortedOps) {
+				const value = opMetricValue(op, col);
+				if (value == null || Number.isNaN(value)) continue;
+				if (value < min) min = value;
+				if (value > max) max = value;
+			}
+			if (Number.isFinite(min) && Number.isFinite(max)) {
+				ranges.set(col, { min, max });
+			}
+		}
+		return ranges;
+	});
+
+	// Opacity scale: 0 at the worst end of a column, ~HEATMAP_MAX_ALPHA at
+	// the best. Linear. Monochrome (white overlay on the dark table). Returns
+	// an empty string when there's no meaningful range so Svelte leaves the
+	// inline style off entirely.
+	const HEATMAP_MAX_ALPHA = 0.07;
+
+	function metricCellTint(col: string, value: number | undefined | null): string {
+		if (value == null || Number.isNaN(value)) return '';
+		const range = metricColumnRanges.get(col);
+		if (!range) return '';
+		const span = range.max - range.min;
+		if (span <= 0) return '';
+		let ratio = (value - range.min) / span;
+		if (METRIC_LOWER_IS_BETTER.has(col)) {
+			ratio = 1 - ratio;
+		}
+		const alpha = ratio * HEATMAP_MAX_ALPHA;
+		if (alpha <= 0) return '';
+		return `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
 	}
 
 	let selectedOperationItem = $derived.by(() => {
@@ -1235,8 +1288,10 @@
 							</td>
 							{#each metricColumns as col (col)}
 								{@const value = opMetricValue(op, col)}
+								{@const tint = isSelected ? '' : metricCellTint(col, value)}
 								<td
 									class="min-w-[88px] border-b border-border/40 px-3 py-1.5 text-right tabular-nums align-middle {isSelected ? 'bg-primary/10' : ''} {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
+									style:background-color={tint || undefined}
 								>{#if value == null || Number.isNaN(value)}<span class="text-muted-foreground/40">—</span>{:else}{value.toFixed(4)}{/if}</td>
 							{/each}
 						</tr>
