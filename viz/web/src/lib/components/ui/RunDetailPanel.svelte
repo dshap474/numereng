@@ -657,6 +657,16 @@
 				<div class="bg-card border border-border rounded-lg p-6 text-center text-negative text-sm">
 					{performanceState.error}
 				</div>
+			{:else if scoringDashboard == null}
+				<div class="bg-card border border-border rounded-lg p-8 text-center text-sm text-muted-foreground">
+					{#if headerStatus === 'FAILED'}
+						This run did not finish successfully, so there are no performance charts to show.
+					{:else if headerStatus === 'CANCELED'}
+						This run was canceled before scoring finished — no performance data available.
+					{:else}
+						No scoring artifacts are present locally for this run. Pull the run's scoring artifacts to populate the Performance tab.
+					{/if}
+				</div>
 			{:else}
 				{#if performanceTransitioning}
 					<div class="flex justify-end -mb-2">
