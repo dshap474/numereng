@@ -1272,6 +1272,11 @@
 		selectedOp = { id: op.op_id, type: op.op_type };
 	}
 
+	function selectOperationAndShowDetail(op: Operation) {
+		selectOperation(op);
+		runOpsView = 'chart';
+	}
+
 	function opTypeLabel(opType: OpType): string {
 		if (opType === 'hpo') return 'HPO';
 		if (opType === 'ensemble') return 'Ens';
@@ -1299,174 +1304,23 @@
 
 </script>
 
-{#snippet opsTable()}
-	<div class="border border-border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col" aria-label="Operations table">
-		<div class="overflow-auto flex-1 min-h-0">
-			<table class="w-max min-w-full text-sm leading-[1.35] border-separate border-spacing-0">
-				<thead>
-					<tr class="text-left align-middle">
-						<th
-							scope="col"
-							class="sticky left-0 top-0 z-30 w-[260px] min-w-[260px] border-b border-r border-border/70 bg-background px-4 py-2.5 align-middle"
-						>
-							<div class="flex items-center justify-between gap-3">
-								<div>
-									<h2 class="text-sm font-semibold leading-tight">Ops</h2>
-									<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
-								</div>
-								<div class="flex items-center gap-2">
-									<div class="pill-tabs" aria-label="Ops view">
-										{#each ['table', 'chart'] as view (view)}
-											<button
-												type="button"
-												class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
-												onclick={() => (runOpsView = view as 'table' | 'chart')}
-											>{view}</button>
-										{/each}
-									</div>
-									<button
-										type="button"
-										aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
-										aria-pressed={runOpsHeatmapEnabled}
-										title={runOpsHeatmapEnabled ? 'Heatmap on' : 'Heatmap off'}
-										class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border text-muted-foreground transition-colors {runOpsHeatmapEnabled ? 'border-white/25 text-foreground' : 'border-white/15 hover:text-foreground hover:bg-white/10'}"
-										onclick={toggleHeatmap}
-									>
-										{#if runOpsHeatmapEnabled}
-											<span class="flex items-center gap-[3px]">
-												<span class="h-2 w-2 rounded-full" style:background-color="rgba(239, 68, 68, 0.7)"></span>
-												<span class="h-2 w-2 rounded-full" style:background-color="rgba(34, 197, 94, 0.7)"></span>
-											</span>
-										{:else}
-											<span class="flex items-center gap-[3px]">
-												<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
-												<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
-											</span>
-										{/if}
-									</button>
-									<div class="relative">
-										<button
-											type="button"
-											aria-label="Toggle column visibility"
-											aria-expanded={runOpsColumnPickerOpen}
-											class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/15 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-											onclick={() => (runOpsColumnPickerOpen = !runOpsColumnPickerOpen)}
-										>
-											<svg viewBox="0 0 16 16" aria-hidden="true" class="h-3 w-3"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
-										</button>
-										{#if runOpsColumnPickerOpen}
-											<div
-												class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
-												role="menu"
-											>
-												<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
-												{#each allMetricColumns as col (col)}
-													{@const visible = !runOpsHiddenColumns.has(col)}
-													<label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-white/5">
-														<input
-															type="checkbox"
-															class="h-3 w-3 accent-white"
-															checked={visible}
-															onchange={(e) => setColumnVisibility(col, (e.currentTarget as HTMLInputElement).checked)}
-														/>
-														<span class="tabular-nums">{metricShortLabel(col)}</span>
-														<span class="ml-auto truncate text-[10px] text-muted-foreground/60">{col}</span>
-													</label>
-												{/each}
-											</div>
-										{/if}
-									</div>
-								</div>
-							</div>
-						</th>
-						{#each metricColumns as col (col)}
-							<th
-								scope="col"
-								title={metricLabel(col)}
-								class="sticky top-0 z-20 min-w-[88px] border-b border-border/70 bg-background px-3 py-2 align-middle font-medium text-[11px] tracking-wide text-muted-foreground text-right cursor-pointer hover:text-foreground select-none {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
-								onclick={() => toggleSort(col)}
-							>{metricShortLabel(col)}{sortIndicator(col)}</th>
-						{/each}
-					</tr>
-				</thead>
-				<tbody>
-					{#each sortedOps as op (op.op_id)}
-						{@const isSelected = selectedOp?.id === op.op_id && selectedOp?.type === op.op_type}
-						<tr
-							class="group cursor-pointer transition-colors hover:bg-white/[0.03] {isSelected ? '' : 'odd:bg-white/[0.015]'}"
-							onclick={() => selectOperation(op)}
-						>
-							<td
-								class="sticky left-0 z-10 w-[260px] min-w-[260px] border-b border-border/50 px-4 py-2 text-left {isSelected ? 'bg-primary/10 shadow-[inset_-2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'bg-background border-r border-r-border/50 group-hover:bg-card'}"
-							>
-								<div class="flex items-center gap-2">
-									<span class="inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide {opTypeBadgeClass(op.op_type)}">
-										{opTypeLabel(op.op_type)}
-									</span>
-									<div class="min-w-0 flex-1">
-										<div class="truncate font-mono text-[12px] font-medium tabular-nums">{shortId(op.op_id, 12)}</div>
-										<div class="mt-0.5 truncate text-[10px] text-muted-foreground">
-											{op.model_type} · {op.target} · {op.feature_set}
-										</div>
-									</div>
-								</div>
-							</td>
-							{#each metricColumns as col (col)}
-								{@const value = opMetricValue(op, col)}
-								{@const tint = isSelected ? '' : metricCellTint(col, value)}
-								<td
-									class="min-w-[88px] border-b border-border/40 px-3 py-1.5 text-right tabular-nums align-middle {isSelected ? 'bg-primary/10' : ''} {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
-									style:background-color={tint || undefined}
-								>{#if value == null || Number.isNaN(value)}<span class="text-muted-foreground/40">—</span>{:else}{value.toFixed(4)}{/if}</td>
-							{/each}
-						</tr>
-					{:else}
-						<tr>
-							<td
-								colspan={metricColumns.length + 1}
-								class="px-4 py-6 text-center text-sm text-muted-foreground"
-							>
-								No ops available.
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	</div>
-{/snippet}
-
 {#snippet opsRail()}
-	<div class="w-[320px] flex-shrink-0 flex flex-col rounded-lg border border-border bg-card overflow-hidden">
-		<div class="border-b border-border px-4 py-3">
-			<div class="flex items-center justify-between gap-3">
-				<div>
-					<h2 class="text-sm font-semibold leading-tight">Ops</h2>
-					<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
-				</div>
-				<div class="pill-tabs" aria-label="Ops view">
-					{#each ['table', 'chart'] as view (view)}
-						<button
-							type="button"
-							class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
-							onclick={() => (runOpsView = view as 'table' | 'chart')}
-						>{view}</button>
-					{/each}
-				</div>
+	<div class="w-[280px] flex-shrink-0 flex flex-col border-r border-border bg-card overflow-hidden">
+		<div class="flex items-center justify-between border-b border-border px-4" style:height="56px">
+			<div>
+				<h2 class="text-sm font-semibold leading-tight">Ops</h2>
+				<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
 			</div>
-			{#if runOpsView === 'chart' && selectedOperationItem}
-				<p class="mt-2 text-[11px] text-muted-foreground">
-					Selected: {selectedOperationItem.name}
-				</p>
-			{/if}
 		</div>
 
 		<div class="flex-1 min-h-0 overflow-auto divide-y divide-border/50">
 			{#each sortedOps as op (op.op_id)}
+				{@const isSelected = selectedOp?.id === op.op_id && selectedOp?.type === op.op_type}
 				<button
 					type="button"
-					class="w-full border-l-2 px-4 py-2 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
-					onclick={() => selectOperation(op)}
+					class="w-full border-l-2 px-4 text-left transition-colors hover:bg-muted/20 {isSelected ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
+					style:height="56px"
+					onclick={() => selectOperationAndShowDetail(op)}
 				>
 					<div class="flex items-center gap-2">
 						<span class="inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide {opTypeBadgeClass(op.op_type)}">
@@ -1805,7 +1659,7 @@
 		</div>
 
 	{:else}
-		<div class="flex flex-1 min-h-0 px-6 py-4 {SHOW_RUNOPS_SIDEBAR ? 'gap-6' : ''}">
+		<div class="flex flex-1 min-h-0 {SHOW_RUNOPS_SIDEBAR ? 'gap-6 px-6 py-4' : ''}">
 			{#if SHOW_RUNOPS_SIDEBAR}
 			<div class="w-[420px] flex-shrink-0 flex flex-col border border-border rounded-lg overflow-hidden bg-background">
 				<section class="flex flex-col min-h-0 {launchSectionOpen ? 'flex-1' : 'flex-shrink-0'}">
@@ -2197,53 +2051,157 @@
 			</div>
 			{/if}
 
-			{#if runOpsView === 'chart'}
-				{@render opsRail()}
+			{@render opsRail()}
 
-				<div class="flex-1 min-w-0 flex flex-col min-h-0">
-					{#if selectedOp?.type === 'run'}
-						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
-							{#key selectedOp.id}
-								<RunDetailPanel
-									runId={selectedOp.id}
-									experimentId={data.experiment.experiment_id}
-									experimentName={data.experiment.name}
-									runs={data.runs}
-									source={data.source}
-									readOnly={readOnly}
-									onClose={() => (selectedOp = null)}
-								/>
-							{/key}
+			<div class="flex-1 min-w-0 flex flex-col min-h-0 relative bg-card overflow-hidden">
+				<!-- Floating top-right controls: toggle + (table-only) heatmap + column picker -->
+				<div class="absolute top-2.5 right-3 z-30 flex items-center gap-2">
+					<div class="pill-tabs" aria-label="Ops view">
+						{#each ['table', 'chart'] as view (view)}
+							<button
+								type="button"
+								class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
+								onclick={() => (runOpsView = view as 'table' | 'chart')}
+							>{view}</button>
+						{/each}
+					</div>
+					{#if runOpsView === 'table'}
+						<button
+							type="button"
+							aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
+							aria-pressed={runOpsHeatmapEnabled}
+							title={runOpsHeatmapEnabled ? 'Heatmap on' : 'Heatmap off'}
+							class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border text-muted-foreground transition-colors {runOpsHeatmapEnabled ? 'border-white/25 text-foreground' : 'border-white/15 hover:text-foreground hover:bg-white/10'}"
+							onclick={toggleHeatmap}
+						>
+							{#if runOpsHeatmapEnabled}
+								<span class="flex items-center gap-[3px]">
+									<span class="h-2 w-2 rounded-full" style:background-color="rgba(239, 68, 68, 0.7)"></span>
+									<span class="h-2 w-2 rounded-full" style:background-color="rgba(34, 197, 94, 0.7)"></span>
+								</span>
+							{:else}
+								<span class="flex items-center gap-[3px]">
+									<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
+									<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
+								</span>
+							{/if}
+						</button>
+						<div class="relative">
+							<button
+								type="button"
+								aria-label="Toggle column visibility"
+								aria-expanded={runOpsColumnPickerOpen}
+								class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/15 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+								onclick={() => (runOpsColumnPickerOpen = !runOpsColumnPickerOpen)}
+							>
+								<svg viewBox="0 0 16 16" aria-hidden="true" class="h-3 w-3"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
+							</button>
+							{#if runOpsColumnPickerOpen}
+								<div
+									class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
+									role="menu"
+								>
+									<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
+									{#each allMetricColumns as col (col)}
+										{@const visible = !runOpsHiddenColumns.has(col)}
+										<label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-white/5">
+											<input
+												type="checkbox"
+												class="h-3 w-3 accent-white"
+												checked={visible}
+												onchange={(e) => setColumnVisibility(col, (e.currentTarget as HTMLInputElement).checked)}
+											/>
+											<span class="tabular-nums">{metricShortLabel(col)}</span>
+											<span class="ml-auto truncate text-[10px] text-muted-foreground/60">{col}</span>
+										</label>
+									{/each}
+								</div>
+							{/if}
 						</div>
-					{:else if selectedOp?.type === 'hpo'}
-						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+					{/if}
+				</div>
+
+				{#if runOpsView === 'table'}
+					<div class="overflow-auto flex-1 min-h-0">
+						<table class="w-max min-w-full text-sm leading-[1.35] border-separate border-spacing-0">
+							<thead>
+								<tr>
+									{#each metricColumns as col (col)}
+										<th
+											scope="col"
+											title={metricLabel(col)}
+											class="sticky top-0 z-20 min-w-[88px] border-b border-border/70 bg-card px-3 align-middle font-medium text-[11px] tracking-wide text-muted-foreground text-right cursor-pointer hover:text-foreground select-none {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
+											style:height="56px"
+											onclick={() => toggleSort(col)}
+										>{metricShortLabel(col)}{sortIndicator(col)}</th>
+									{/each}
+								</tr>
+							</thead>
+							<tbody>
+								{#each sortedOps as op (op.op_id)}
+									{@const isSelected = selectedOp?.id === op.op_id && selectedOp?.type === op.op_type}
+									<tr
+										class="group cursor-pointer transition-colors hover:bg-white/[0.03] {isSelected ? '' : 'odd:bg-white/[0.015]'}"
+										style:height="56px"
+										onclick={() => selectOperationAndShowDetail(op)}
+									>
+										{#each metricColumns as col (col)}
+											{@const value = opMetricValue(op, col)}
+											{@const tint = isSelected ? '' : metricCellTint(col, value)}
+											<td
+												class="min-w-[88px] border-b border-border/40 px-3 text-right tabular-nums align-middle {isSelected ? 'bg-primary/10' : ''} {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
+												style:background-color={tint || undefined}
+											>{#if value == null || Number.isNaN(value)}<span class="text-muted-foreground/40">—</span>{:else}{value.toFixed(4)}{/if}</td>
+										{/each}
+									</tr>
+								{:else}
+									<tr>
+										<td colspan={metricColumns.length} class="px-4 py-6 text-center text-sm text-muted-foreground">
+											No ops available.
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{:else if selectedOp?.type === 'run'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
+						{#key selectedOp.id}
+							<RunDetailPanel
+								runId={selectedOp.id}
+								experimentId={data.experiment.experiment_id}
+								experimentName={data.experiment.name}
+								runs={data.runs}
+								source={data.source}
+								readOnly={readOnly}
+								onClose={() => (selectedOp = null)}
+							/>
+						{/key}
+					</div>
+				{:else if selectedOp?.type === 'hpo'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
 						<HpoDetailPanel
 							studyId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
 							source={data.source}
 							onClose={() => (selectedOp = null)}
 						/>
-						</div>
-					{:else if selectedOp?.type === 'ensemble'}
-						<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0">
+					</div>
+				{:else if selectedOp?.type === 'ensemble'}
+					<div class="overflow-y-auto overflow-x-hidden flex-1 min-h-0 pt-12">
 						<EnsembleDetailPanel
 							ensembleId={selectedOp.id}
 							experimentId={data.experiment.experiment_id}
 							source={data.source}
 							onClose={() => (selectedOp = null)}
 						/>
-						</div>
-					{:else}
-						<div class="flex flex-1 items-center justify-center rounded-lg border border-border bg-card text-sm text-muted-foreground">
-							Select an op from the left to inspect it.
-						</div>
-					{/if}
-				</div>
-			{:else}
-				<div class="flex-1 min-w-0 flex flex-col min-h-0">
-					{@render opsTable()}
-				</div>
-			{/if}
+					</div>
+				{:else}
+					<div class="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+						Select an op from the left to inspect it.
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>
