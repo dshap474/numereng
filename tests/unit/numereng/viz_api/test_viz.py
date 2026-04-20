@@ -204,7 +204,7 @@ def test_list_experiment_configs_matches_run_with_windows_remote_config_path(tmp
                 "created_at": "2026-04-01T12:00:00+00:00",
                 "config": {
                     "path": (
-                        "C:\\Users\\dansh\\remote-access\\numereng\\.numereng"
+                        "C:\\Users\\<you>\\remote-access\\numereng\\.numereng"
                         "\\experiments/exp-win/configs/r1_seed42.json"
                     )
                 },
@@ -1400,9 +1400,9 @@ def test_get_experiments_overview_synthesizes_missing_experiment_from_live_job(t
                 'run',
                 1,
                 'attempt-synth-live',
-                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'C:\\\\Users\\\\<you>\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
                 'external',
-                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'C:\\\\Users\\\\<you>\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
                 'sha-synth-live',
                 '{}',
                 'run',
@@ -1491,9 +1491,9 @@ def test_get_experiments_overview_synthesizes_missing_experiment_from_live_job(t
                 'run',
                 'running',
                 'testing',
-                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'C:\\\\Users\\\\<you>\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
                 'external',
-                'C:\\\\Users\\\\dansh\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
+                'C:\\\\Users\\\\<you>\\\\remote-access\\\\numereng\\\\.numereng\\\\tmp\\\\remote-configs\\\\synthetic.json',
                 'sha-synth-live',
                 ?,
                 ?,

@@ -42,15 +42,17 @@ just fmt
 # repo hygiene and high-confidence secret scan
 just oss-preflight
 
+# repo-shape and public-boundary checks
+just readiness
+
 # fast gate: format check + lint + scoped ty + non-slow tests
 just test
 
 # full gate: includes slow tests
 just test-all
-
-# build package artifacts
-uv build
 ```
+
+Internal wheel builds still exist for cloud package-transfer workflows, but they are not part of routine OSS readiness for this repo-clone workspace.
 
 Contributor-local agent context lives in:
 
@@ -59,6 +61,8 @@ Contributor-local agent context lives in:
 - `docs/ARCHITECTURE.md`
 
 `AGENTS.local.md` is local-only and should remain untracked. The public repo-root `AGENTS.md` is for end users and agents operating numereng from a cloned checkout.
+
+See [docs/project/public-repo-boundary.md](docs/project/public-repo-boundary.md) for the public repo contract, retained corpus inventory, and local-only surfaces that must stay gitignored.
 
 For targeted work, prefer direct `uv run` commands:
 

@@ -6,9 +6,10 @@
 ## Testing
 
 - [ ] `just oss-preflight`
+- [ ] `just readiness`
 - [ ] `just test`
 - [ ] `just test-all` (if needed)
-- [ ] `uv build` (if packaging or metadata changed)
+- [ ] `uv build --package numereng --wheel --no-build-logs` (only if the internal cloud packaging flow changed)
 
 ## Checklist
 

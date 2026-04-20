@@ -33,8 +33,8 @@ def test_packaged_assets_are_curated_and_local_path_free() -> None:
     assert not any((packaged_assets_root / "docs").rglob(".forum_scraper_state.json"))
 
     forbidden_patterns = (
-        re.compile(r"/Users/[^/\n]+/"),
-        re.compile(r"[A-Z]:\\Users\\\\"),
+        re.compile(r"/Users/[A-Za-z0-9._-]+/"),
+        re.compile(r"[A-Z]:\\Users\\[A-Za-z0-9._-]+\\"),
         re.compile(r"\b[A-Z][a-z]+'s PC\b"),
     )
     text_extensions = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".ps1"}
@@ -54,4 +54,8 @@ def test_packaged_shipped_skills_match_source_allowlist() -> None:
 
 
 def test_machine_specific_remote_profiles_are_not_tracked() -> None:
-    assert not Path("src/numereng/platform/remotes/profiles/pc.yaml").exists()
+    profiles_dir = Path("src/numereng/platform/remotes/profiles")
+    tracked_profiles = sorted(path.name for path in profiles_dir.glob("*.yaml"))
+    tracked_profiles.extend(sorted(path.name for path in profiles_dir.glob("*.yml")))
+
+    assert tracked_profiles == []

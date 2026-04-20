@@ -1,14 +1,16 @@
 # Serve Release Gate
 
+This runbook is for the internal model-upload and cloud packaging surface. It is not part of the public repo-clone OSS readiness contract.
+
 Use this runbook before calling the `serve` / model-upload surface release-ready.
 
 ## Local Gates
 
 1. Run the serving unit and integration coverage:
    - `uv run pytest tests/unit/numereng/features/serving tests/unit/numereng/test_api_serving.py tests/unit/numereng/test_cli_serving.py tests/integration/test_serving_smoke.py -q`
-2. Run the wheel/install smoke:
+2. Run the internal wheel/install smoke:
    - `uv run pytest tests/e2e/test_serving_wheel_install.py -q`
-3. Confirm the CLI help surface is present from an installed wheel:
+3. Confirm the CLI help surface is present from the installed internal wheel:
    - `numereng serve --help`
 4. Confirm a package inspection report is written under:
    - `experiments/<experiment_id>/submission_packages/<package_id>/artifacts/preflight/report.json`

@@ -70,13 +70,13 @@ class CloudAwsError(Exception):
     """Feature-level error for managed AWS cloud orchestration."""
 
 
-DEFAULT_REGION = os.getenv("NUMERENG_AWS_REGION", "us-east-2") or "us-east-2"
-DEFAULT_BUCKET = os.getenv("NUMERENG_S3_BUCKET", "numereng-artifacts") or "numereng-artifacts"
-DEFAULT_ECR_REPOSITORY = os.getenv("NUMERENG_AWS_ECR_REPOSITORY", "numereng-training") or "numereng-training"
-DEFAULT_SAGEMAKER_ROLE_ARN = os.getenv("NUMERENG_AWS_SAGEMAKER_ROLE_ARN", "")
-DEFAULT_BATCH_JOB_QUEUE = os.getenv("NUMERENG_AWS_BATCH_JOB_QUEUE", "")
-DEFAULT_BATCH_JOB_DEFINITION = os.getenv("NUMERENG_AWS_BATCH_JOB_DEFINITION", "")
-DEFAULT_INSTANCE_TYPE = os.getenv("NUMERENG_AWS_SAGEMAKER_INSTANCE_TYPE", "ml.m5.2xlarge") or "ml.m5.2xlarge"
+DEFAULT_REGION = (os.getenv("NUMERENG_AWS_REGION") or "us-east-2").strip()
+DEFAULT_BUCKET = (os.getenv("NUMERENG_S3_BUCKET") or "").strip()
+DEFAULT_ECR_REPOSITORY = (os.getenv("NUMERENG_AWS_ECR_REPOSITORY") or "numereng-training").strip()
+DEFAULT_SAGEMAKER_ROLE_ARN = (os.getenv("NUMERENG_AWS_SAGEMAKER_ROLE_ARN") or "").strip()
+DEFAULT_BATCH_JOB_QUEUE = (os.getenv("NUMERENG_AWS_BATCH_JOB_QUEUE") or "").strip()
+DEFAULT_BATCH_JOB_DEFINITION = (os.getenv("NUMERENG_AWS_BATCH_JOB_DEFINITION") or "").strip()
+DEFAULT_INSTANCE_TYPE = (os.getenv("NUMERENG_AWS_SAGEMAKER_INSTANCE_TYPE") or "ml.m5.2xlarge").strip()
 DEFAULT_RUNTIME_PROFILE: CloudRuntimeProfile = "standard"
 CUDA_RUNTIME_PROFILE: CloudRuntimeProfile = "lgbm-cuda"
 STANDARD_SAGEMAKER_DOCKERFILE = "docker/Dockerfile.sagemaker"
@@ -382,7 +382,7 @@ class CloudAwsManagedService:
         state = self._load_state(request)
         backend = request.backend
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
         run_id = request.run_id or state.run_id
         run_id = self._require(run_id, "run_id")
         runtime_profile = self._resolve_runtime_profile(request.runtime_profile, state)
@@ -987,7 +987,7 @@ class CloudAwsManagedService:
         run_id = request.run_id or state.run_id
         run_id = self._require(run_id, "run_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
 
         output_s3_uri = request.output_s3_uri or state.artifacts.get("output_s3_uri")
         if output_s3_uri is None and state.training_job_name:

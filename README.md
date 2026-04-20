@@ -2,11 +2,21 @@
 
 # numereng
 
-`numereng` is a local-first Numerai workspace: train models, run experiments, compare configs, build ensembles, package production models, and submit — all driven from one repo checkout with one CLI and one read-only dashboard.
+`numereng` is a local-first Numerai workspace repo: train models, run experiments, compare configs, build ensembles, package production models, and submit — all driven from one repo checkout with one CLI and one read-only dashboard.
 
 It is designed for Numerai users who want their experiment state, artifacts, datasets, and dashboards to live inside the project directory and be reproducible from `git clone` + `uv sync`.
 
 `numereng` is a community-built, self-supported tool. It is not affiliated with, endorsed by, or supported by Numerai.
+
+## Public Repo Boundary
+
+`numereng` is currently supported as a repo-clone workspace, not as a public downloadable package. The public contract is:
+
+- clone the repo
+- run `uv sync`
+- keep runtime state under local gitignored paths like `.numereng/`, `.env`, and remote profile YAMLs
+
+See [Public Repo Boundary](docs/project/public-repo-boundary.md) for the retained-corpus inventory and [Numerai Sync Policy](docs/numerai/SYNC_POLICY.md) for the tracked docs mirror policy.
 
 ## Why numereng
 
@@ -173,14 +183,16 @@ For full local training orchestration, use `numereng.api.pipeline`.
 - [Custom Models](docs/numereng/reference/custom-models.md)
 - [Serving & Model Uploads](docs/numereng/workflows/serving.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Public Repo Boundary](docs/project/public-repo-boundary.md)
 - [Agent Usage Guide](AGENTS.md)
 
 ## Contributing
 
 ```bash
 uv sync --extra dev
+just oss-preflight
+just readiness
 just test
-just build
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

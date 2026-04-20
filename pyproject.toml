@@ -1,7 +1,7 @@
 [project]
 name = "numereng"
 version = "0.1.0"
-description = "Numerai workflow package for training, experiments, submissions, ensembles, HPO, cloud runs, and monitoring."
+description = "Local-first Numerai workspace repo for training, experiments, submissions, ensembles, HPO, cloud runs, and monitoring."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -83,6 +83,15 @@ numereng = "numereng.cli:main"
 requires = ["hatchling>=1.26.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".codex/**",
+    "docs/numerai/**",
+    "src/numereng/platform/remotes/profiles/*.yaml",
+    "src/numereng/platform/remotes/profiles/*.yml",
+    "vendor/**",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/numereng", "viz/api/numereng_viz"]
 exclude = [
@@ -92,6 +101,8 @@ exclude = [
     "src/numereng/features/models/custom_models/_OVERVIEW.md",
     "src/numereng/features/models/custom_models/model-implements.md",
     "src/numereng/features/models/custom_models/note.md",
+    "src/numereng/platform/remotes/profiles/*.yaml",
+    "src/numereng/platform/remotes/profiles/*.yml",
 ]
 
 [tool.pytest.ini_options]

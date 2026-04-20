@@ -69,14 +69,14 @@ class CloudEc2Error(Exception):
     """Feature-level error for cloud EC2 orchestration."""
 
 
-DEFAULT_REGION = os.getenv("NUMERENG_AWS_REGION", "us-east-2") or "us-east-2"
-DEFAULT_BUCKET = os.getenv("NUMERENG_S3_BUCKET", "numereng-artifacts") or "numereng-artifacts"
-DEFAULT_IAM_ROLE = os.getenv("NUMERENG_EC2_IAM_ROLE", "numereng-training-role") or "numereng-training-role"
-DEFAULT_SECURITY_GROUP = os.getenv("NUMERENG_EC2_SECURITY_GROUP", "numereng-training") or "numereng-training"
+DEFAULT_REGION = (os.getenv("NUMERENG_AWS_REGION") or "us-east-2").strip()
+DEFAULT_BUCKET = (os.getenv("NUMERENG_S3_BUCKET") or "").strip()
+DEFAULT_IAM_ROLE = (os.getenv("NUMERENG_EC2_IAM_ROLE") or "").strip()
+DEFAULT_SECURITY_GROUP = (os.getenv("NUMERENG_EC2_SECURITY_GROUP") or "").strip()
 DEFAULT_DATA_VERSION = "v5.2"
 
-DEFAULT_CPU_AMI = os.getenv("NUMERENG_EC2_AMI_CPU", "ami-0b97b64b68a731354") or "ami-0b97b64b68a731354"
-DEFAULT_GPU_AMI = os.getenv("NUMERENG_EC2_AMI_GPU", "ami-06aed396fdc6ea5f3") or "ami-06aed396fdc6ea5f3"
+DEFAULT_CPU_AMI = (os.getenv("NUMERENG_EC2_AMI_CPU") or "").strip()
+DEFAULT_GPU_AMI = (os.getenv("NUMERENG_EC2_AMI_GPU") or "").strip()
 DEFAULT_RUNTIME_PROFILE: CloudRuntimeProfile = "standard"
 CUDA_RUNTIME_PROFILE: CloudRuntimeProfile = "lgbm-cuda"
 _CLOUD_PROVIDER = "aws"
@@ -294,9 +294,12 @@ class CloudEc2Service:
 
     def init_iam(self, request: Ec2InitIamRequest) -> CloudEc2Response:
         region = request.region or DEFAULT_REGION
-        bucket = request.bucket or DEFAULT_BUCKET
-        role_name = request.role_name or DEFAULT_IAM_ROLE
-        security_group_name = request.security_group_name or DEFAULT_SECURITY_GROUP
+        bucket = self._require(request.bucket or DEFAULT_BUCKET, "bucket or NUMERENG_S3_BUCKET")
+        role_name = self._require(request.role_name or DEFAULT_IAM_ROLE, "role_name or NUMERENG_EC2_IAM_ROLE")
+        security_group_name = self._require(
+            request.security_group_name or DEFAULT_SECURITY_GROUP,
+            "security_group_name or NUMERENG_EC2_SECURITY_GROUP",
+        )
 
         role_arn = self._iam.ensure_training_role(role_name=role_name, bucket=bucket)
         profile_arn = self._iam.ensure_instance_profile(role_name=role_name)
@@ -318,7 +321,7 @@ class CloudEc2Service:
 
     def setup_data(self, request: Ec2SetupDataRequest) -> CloudEc2Response:
         region = request.region or DEFAULT_REGION
-        bucket = request.bucket or DEFAULT_BUCKET
+        bucket = self._require(request.bucket or DEFAULT_BUCKET, "bucket or NUMERENG_S3_BUCKET")
         data_version = request.data_version or DEFAULT_DATA_VERSION
         cache_root = Path(request.cache_dir or ".numereng/datasets")
         version_dir = cache_root / data_version
@@ -375,12 +378,17 @@ class CloudEc2Service:
         state = self._load_state(request)
         run_id = self._require(request.run_id or state.run_id, "run_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
         data_version = self._resolve_data_version(request.data_version, state)
 
         instance_type = resolve_instance_type(request.tier)
         gpu = is_gpu_instance(instance_type)
-        ami_id = DEFAULT_GPU_AMI if gpu else DEFAULT_CPU_AMI
+        ami_id = self._require(
+            DEFAULT_GPU_AMI if gpu else DEFAULT_CPU_AMI,
+            "NUMERENG_EC2_AMI_GPU" if gpu else "NUMERENG_EC2_AMI_CPU",
+        )
+        role_name = self._require(DEFAULT_IAM_ROLE, "NUMERENG_EC2_IAM_ROLE")
+        security_group_name = self._require(DEFAULT_SECURITY_GROUP, "NUMERENG_EC2_SECURITY_GROUP")
 
         ec2 = self._ec2(region)
         ssm = self._ssm(region)
@@ -392,8 +400,8 @@ class CloudEc2Service:
             user_data=_bootstrap_user_data(data_version=data_version, gpu=gpu),
             run_id=run_id,
             region=region,
-            iam_role_name=DEFAULT_IAM_ROLE,
-            security_group=DEFAULT_SECURITY_GROUP,
+            iam_role_name=role_name,
+            security_group=security_group_name,
             bucket=bucket,
             data_version=data_version,
             use_spot=request.use_spot,
@@ -466,7 +474,7 @@ class CloudEc2Service:
         state = self._load_state(request)
         run_id = self._require(request.run_id or state.run_id, "run_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
 
         s3 = self._s3(region)
         s3.ensure_bucket_exists(bucket=bucket, region=region)
@@ -502,7 +510,7 @@ class CloudEc2Service:
         state = self._load_state(request)
         run_id = self._require(request.run_id or state.run_id, "run_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
         config_path = Path(request.config_path)
         if not config_path.exists():
             raise CloudEc2Error(f"config path does not exist: {config_path}")
@@ -535,7 +543,7 @@ class CloudEc2Service:
         run_id = self._require(request.run_id or state.run_id, "run_id")
         instance_id = self._require(request.instance_id or state.instance_id, "instance_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
         data_version = self._resolve_data_version(request.data_version, state)
 
         ssm = self._ssm(region)
@@ -857,7 +865,7 @@ class CloudEc2Service:
         run_id = self._require(request.run_id or state.run_id, "run_id")
         instance_id = self._require(request.instance_id or state.instance_id, "instance_id")
         region = self._resolve_region(request.region, state)
-        bucket = self._resolve_bucket(request.bucket, state)
+        bucket = self._require(self._resolve_bucket(request.bucket, state), "bucket or NUMERENG_S3_BUCKET")
         output_root = Path(request.output_dir or request.store_root).expanduser().resolve()
         try:
             ensure_allowed_store_target(
@@ -1048,7 +1056,7 @@ class CloudEc2Service:
 
     def s3_list(self, request: Ec2S3ListRequest) -> CloudEc2Response:
         region = request.region or DEFAULT_REGION
-        bucket = request.bucket or DEFAULT_BUCKET
+        bucket = self._require(request.bucket or DEFAULT_BUCKET, "bucket or NUMERENG_S3_BUCKET")
         prefix = request.prefix.lstrip("/")
         keys = self._s3(region).list_keys(bucket=bucket, prefix=prefix)
         return CloudEc2Response(

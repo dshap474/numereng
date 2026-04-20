@@ -15,6 +15,7 @@ This directory is a synced copy of upstream Numerai docs.
 3. This `SYNC_POLICY.md` file is maintained locally.
 4. Do not edit mirrored upstream pages in place; update by re-running sync against upstream.
 5. `docs/numerai/forum/` is a local generated export target used by `numereng numerai forum scrape`; it is not part of upstream mirrored docs pages.
+6. This mirror is retained for repo-clone use and docs browsing, but it is not part of the internal wheel build surface.
 
 ## Sync Commands
 

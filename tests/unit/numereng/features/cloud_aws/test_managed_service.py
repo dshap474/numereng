@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from numereng.features.cloud.aws import managed_service as managed_service_module
 from numereng.features.cloud.aws.adapters import (
     BatchAdapter,
     BatchJobSpec,
@@ -32,6 +33,11 @@ from numereng.features.cloud.aws.managed_contracts import (
 )
 from numereng.features.cloud.aws.managed_service import CloudAwsError, CloudAwsManagedService
 from numereng.platform.run_execution import RUN_EXECUTION_ENV_VAR
+
+
+@pytest.fixture(autouse=True)
+def _configured_cloud_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(managed_service_module, "DEFAULT_BUCKET", "numereng-artifacts")
 
 
 class _FakeEcr(EcrAdapter):
@@ -423,6 +429,34 @@ def test_train_submit_sagemaker_missing_catalog_image_fails_pre_submit(tmp_path:
         service.train_submit(
             AwsTrainSubmitRequest(
                 run_id="run-missing",
+                backend="sagemaker",
+                config_path=str(config_path),
+                role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
+                state_path=str(_state_path(tmp_path)),
+                store_root=str(tmp_path / ".numereng"),
+            )
+        )
+
+
+def test_train_submit_requires_bucket_without_configured_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(managed_service_module, "DEFAULT_BUCKET", "")
+    service, _ecr, _s3, _sagemaker, _batch, _logs, _docker = _build_service()
+    config_path = tmp_path / "train.json"
+    config_path.write_text(
+        (
+            '{"data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"}, '
+            '"model": {"type": "LGBMRegressor", "params": {}}, "training": {}}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CloudAwsError, match="bucket or NUMERENG_S3_BUCKET"):
+        service.train_submit(
+            AwsTrainSubmitRequest(
+                run_id="run-bucketless",
                 backend="sagemaker",
                 config_path=str(config_path),
                 role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",

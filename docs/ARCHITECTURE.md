@@ -828,14 +828,14 @@ Backend packaging/layout:
 - `viz/api.py` is the uvicorn launcher shim.
 - `viz/api/numereng_viz/*` is the authoritative backend package.
 - `src/numereng/features/viz/*` is compatibility-only and should not accumulate new business logic.
-- The wheel ships both `src/numereng` and `viz/api/numereng_viz`.
+- Internal wheel builds used by cloud package-transfer flows include both `src/numereng` and `viz/api/numereng_viz`; public OSS support is repo-clone first, not wheel-first.
 
 Store/remote monitor contract:
 - `numereng.api.build_monitor_snapshot(request)` and `numereng monitor snapshot --workspace <path> --json` build one normalized read-only monitor snapshot for a single numereng store.
 - `numereng.api.remote_*` and `numereng remote ...` provide SSH-backed repo sync, experiment authoring sync, experiment artifact pullback, ad hoc config push, and detached remote launch.
 - Mission control overview merges:
   - the local store snapshot
-  - zero or more SSH remote store snapshots loaded from `src/numereng/platform/remotes/profiles/*.yaml` or `NUMERENG_REMOTE_PROFILES_DIR`
+  - zero or more SSH remote store snapshots loaded from gitignored profile YAMLs under `src/numereng/platform/remotes/profiles/*.yaml` or `NUMERENG_REMOTE_PROFILES_DIR`
 - SSH monitoring is numereng-owned and read-only: the local viz backend runs `numereng monitor snapshot --json` on the remote machine over SSH and merges the returned snapshot.
 - Remote experiment execution is also numereng-owned: detached remote windows launch `numereng experiment run-plan ...`, and `remote experiment status|maintain|stop` operate only on the durable run-plan state file for that exact row window.
 - Remote detail reads stay local-server-owned too: experiment/run/study/ensemble detail routes keep the same frontend paths and add optional `source_kind` + `source_id` query params, while the local viz backend resolves canonical local run artifacts first, keeps a narrow read-only compatibility fallback for older pulled-cache artifacts under `.numereng/cache/remote_ops/pulls`, and only then dispatches remaining misses over SSH with remote Python helpers instead of starting a remote viz API.

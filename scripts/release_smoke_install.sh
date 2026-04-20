@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Internal-only smoke for the wheel used by cloud package-transfer flows.
+# This is not part of the public repo-clone readiness contract.
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_DIR="${1:-$(mktemp -d "${TMPDIR:-/tmp}/numereng-release-smoke.XXXXXX")}"
 PORT="${NUMERENG_RELEASE_SMOKE_PORT:-8618}"
 
 cd "${ROOT_DIR}"
 
-uv build
+uv build --package numereng --wheel --no-build-logs
 WHEEL_PATH="$(ls -1t dist/*.whl | head -n 1)"
 FIND_LINKS_PATH="$(cd dist && pwd -P)"
 

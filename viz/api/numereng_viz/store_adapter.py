@@ -339,7 +339,7 @@ def _config_path_experiment_key(abs_path: str, experiment_id: str) -> str:
 
     Runs materialized from a remote pull carry the remote's absolute config
     path in ``run.json`` (for example a Windows path like
-    ``C:\\Users\\...\\.numereng\\experiments\\<id>\\configs\\r1.json``),
+    ``C:\\Users\\<you>\\.numereng\\experiments\\<id>\\configs\\r1.json``),
     while the local copy of the same config sits under a completely different
     absolute prefix. Both paths share the tail
     ``experiments/<experiment_id>/...``, so we key the reverse lookup by that

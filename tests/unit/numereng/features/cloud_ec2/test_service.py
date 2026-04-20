@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from numereng.features.cloud.aws import service as cloud_ec2_service_module
 from numereng.features.cloud.aws.adapters import (
     Ec2Adapter,
     IamAdapter,
@@ -34,6 +35,15 @@ from numereng.features.cloud.aws.contracts import (
     Ec2TrainStartRequest,
 )
 from numereng.features.cloud.aws.service import CloudEc2Error, CloudEc2Service, _parse_s3_uri
+
+
+@pytest.fixture(autouse=True)
+def _configured_cloud_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_BUCKET", "numereng-artifacts")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_IAM_ROLE", "numereng-training-role")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_SECURITY_GROUP", "numereng-training")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_CPU_AMI", "ami-cpu123")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_GPU_AMI", "ami-gpu123")
 
 
 class _FakeEc2(Ec2Adapter):
@@ -255,6 +265,17 @@ def test_provision_raises_without_run_id() -> None:
 
     with pytest.raises(CloudEc2Error, match="missing required value: run_id"):
         service.provision(Ec2ProvisionRequest(tier="large"))
+
+
+def test_provision_requires_configured_ec2_launch_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, _ec2, _s3, _ssm, _iam = _build_service()
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_IAM_ROLE", "")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_SECURITY_GROUP", "")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_CPU_AMI", "")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_GPU_AMI", "")
+
+    with pytest.raises(CloudEc2Error, match="NUMERENG_EC2_AMI_CPU"):
+        service.provision(Ec2ProvisionRequest(tier="large", run_id="run-1", bucket="bucket-1"))
 
 
 def test_package_build_upload_writes_artifact_uris() -> None:
