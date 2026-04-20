@@ -617,15 +617,6 @@
 						{headerStatus}
 					</span>
 				{/if}
-				{#if onClose}
-					<button
-						type="button"
-						class="rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30"
-						onclick={onClose}
-					>
-						Back to runs
-					</button>
-				{/if}
 				<button
 					type="button"
 					class="rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-muted/30 {copyState === 'copied' ? 'text-positive border-positive/40' : copyState === 'error' ? 'text-negative border-negative/40' : 'text-muted-foreground border-border hover:text-foreground'}"

@@ -6,11 +6,44 @@ import base64
 import os
 import shlex
 from collections.abc import Sequence
-from pathlib import PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from numereng.platform.remotes.contracts import SshRemoteTargetProfile
 
 _PYTHON_EXEC_WRAPPER = "import base64,sys; exec(base64.b64decode(sys.argv.pop(1)).decode())"
+
+
+def _ssh_multiplex_options() -> list[str]:
+    """Return SSH options that enable per-target connection multiplexing.
+
+    ControlMaster=auto lets the first ssh/scp process open a control socket
+    and persist it; subsequent connections reuse that socket and skip the TCP
+    handshake + authentication, which matters when the pull workflow issues
+    hundreds of scp calls in sequence against a laggy link.
+
+    The socket lives under ~/.ssh/numereng-ctl/ and uses `%C` (a hash of
+    user+host+port) so each target has its own socket.
+    """
+
+    control_dir = Path.home() / ".ssh" / "numereng-ctl"
+    control_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        control_dir.chmod(0o700)
+    except OSError:
+        pass
+    control_path = str(control_dir / "%C")
+    return [
+        "-o",
+        "ControlMaster=auto",
+        "-o",
+        f"ControlPath={control_path}",
+        "-o",
+        "ControlPersist=120s",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=4",
+    ]
 
 
 def powershell_single_quote(value: str) -> str:
@@ -39,6 +72,7 @@ def ssh_base_command(target: SshRemoteTargetProfile) -> list[str]:
         "BatchMode=yes",
         "-o",
         f"ConnectTimeout={target.connect_timeout_seconds}",
+        *_ssh_multiplex_options(),
     ]
     identity_file = _env_value(target.identity_file_env)
     if identity_file:
@@ -57,6 +91,7 @@ def scp_base_command(target: SshRemoteTargetProfile) -> list[str]:
         "-B",
         "-o",
         f"ConnectTimeout={target.connect_timeout_seconds}",
+        *_ssh_multiplex_options(),
     ]
     identity_file = _env_value(target.identity_file_env)
     if identity_file:

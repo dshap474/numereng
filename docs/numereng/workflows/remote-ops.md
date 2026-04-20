@@ -56,13 +56,36 @@ uv run numereng remote experiment maintain --target <target_id> --experiment-id 
 uv run numereng remote experiment stop --target <target_id> --experiment-id <experiment_id>
 ```
 
-Pull finished remote runs back into the local store:
+Pull finished remote runs back into the local store. `--mode` is required and selects which artifact subset is copied:
 
 ```bash
+# Dashboard-only: scoring artifacts + root manifest files. ~200 KB/run.
+# Enables the Performance tab; no submit/ensemble/rescore locally.
 uv run numereng remote experiment pull \
   --target <target_id> \
-  --experiment-id <experiment_id>
+  --experiment-id <experiment_id> \
+  --mode scoring
+
+# Full: entire run directory including predictions parquets. ~140 MB/run.
+# Required if you plan to submit, ensemble, or rescore the run locally.
+uv run numereng remote experiment pull \
+  --target <target_id> \
+  --experiment-id <experiment_id> \
+  --mode full
 ```
+
+### Pull modes
+
+| Mode      | What it copies                                                                                      | Typical size per run | Enables locally                          |
+| --------- | --------------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------- |
+| `scoring` | `artifacts/scoring/*` + `run.json`, `resolved.json`, `results.json`, `metrics.json`, `run.log`, `score_provenance.json` | ~200 KB              | dashboard Performance tab, Run Ops metrics |
+| `full`    | entire `.numereng/runs/<run_id>/` subtree including `artifacts/predictions/*`                      | ~140 MB              | everything above plus submit / ensemble / neutralize / rescore |
+
+Mode interactions with already-materialized local runs:
+
+- If local is already **full**, any `--mode` is a no-op (already materialized). Local is never downgraded.
+- If local is **scoring** and you request `--mode scoring`, it's a no-op.
+- If local is **scoring** and you request `--mode full`, the run is re-pulled and the existing local scoring tree is replaced by the full tree (predictions overlayed in). Those run ids come back in `partially_materialized_run_ids` so the caller can tell upgrades apart from fresh pulls.
 
 Push one ad hoc config and run it remotely:
 
@@ -70,6 +93,27 @@ Push one ad hoc config and run it remotely:
 uv run numereng remote config push --target <target_id> --config configs/run.json
 uv run numereng remote run train --target <target_id> --config configs/run.json
 ```
+
+## Recovery: Restoring Missing Local Artifacts
+
+If `store doctor` reports `run_count_mismatch` with `filesystem_runs < indexed_runs`, local artifacts were pruned or lost while SQLite still knows about the runs. The dashboard's Performance tab will render empty because it reads from `artifacts/scoring/*` on disk. If a remote target still has the artifacts, pull them back:
+
+```bash
+# Cheap, dashboard-only fidelity (~200 KB per run)
+uv run numereng remote experiment pull \
+  --target <target_id> \
+  --experiment-id <experiment_id> \
+  --mode scoring
+
+# Full artifacts (~140 MB per run). Required if you plan to submit,
+# ensemble, neutralize, or rescore those runs locally.
+uv run numereng remote experiment pull \
+  --target <target_id> \
+  --experiment-id <experiment_id> \
+  --mode full
+```
+
+Re-run the command per experiment. `scoring` is idempotent and also upgrades to `full` automatically on a later `--mode full` pull. A `full` local run is never downgraded by a subsequent `scoring` pull.
 
 ## What Syncs And What Does Not
 

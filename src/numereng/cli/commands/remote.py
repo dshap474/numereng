@@ -328,7 +328,9 @@ def _parse_index_window(values: dict[str, str]) -> tuple[int, int | None, str | 
 
 
 def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
-    values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--workspace"})
+    values, _, parse_error = _parse_simple_options(
+        args, value_flags={"--target", "--experiment-id", "--mode", "--workspace"}
+    )
     if parse_error == "__help__":
         print(USAGE)
         return 0
@@ -338,6 +340,7 @@ def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
         return 2
     target_id = values.get("--target")
     experiment_id = values.get("--experiment-id")
+    mode = values.get("--mode")
     if target_id is None:
         print("missing required argument: --target", file=sys.stderr)
         print(USAGE, file=sys.stderr)
@@ -346,11 +349,20 @@ def _handle_remote_experiment_pull(args: Sequence[str]) -> int:
         print("missing required argument: --experiment-id", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
+    if mode is None:
+        print("missing required argument: --mode (scoring|full)", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    if mode not in ("scoring", "full"):
+        print(f"invalid --mode value: {mode!r} (expected 'scoring' or 'full')", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
     try:
         payload = api.remote_experiment_pull(
             api.RemoteExperimentPullRequest(
                 target_id=target_id,
                 experiment_id=experiment_id,
+                mode=mode,  # type: ignore[arg-type]
                 workspace_root=values.get("--workspace", "."),
             )
         )

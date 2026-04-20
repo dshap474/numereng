@@ -1,4 +1,4 @@
-"""Codex-first usage guidance for numereng users working from a cloned checkout."""
+"""Agent-first usage guidance for numereng users working from a cloned checkout."""
 
 # numereng User Guide For Agents
 
@@ -92,4 +92,3 @@ If the user just wants to develop Numerai models with numereng, stay in:
 - `.numereng/notes/`
 - `.numereng/datasets/`
 - `docs/numereng/`
-

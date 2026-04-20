@@ -91,8 +91,11 @@ dev/
 !dev/hygiene/*.json
 .codex/rules/
 
-# Tracked README banner asset
-!docs/assets/numereng-banner.png
+# Tracked README screenshots
+!docs/assets/screenshot-dashboard-hero.png
+!docs/assets/screenshot-docs-reader.png
+!docs/assets/screenshot-experiment-report.png
+!docs/assets/screenshot-monitor.png
 
 # Keep numereng OSS issue templates tracked (root ignore has *.github/)
 !.github/

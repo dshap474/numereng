@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -81,6 +82,23 @@ _FINISHED_RUN_REQUIRED_LOCAL_FILES: tuple[str, ...] = (
     "results.json",
     "metrics.json",
 )
+
+# Scoring-mode pull copies only the files the dashboard needs to render the
+# Performance tab — scoring parquet artifacts plus the root manifest/log files.
+# Predictions parquets (~138 MB per run) are intentionally skipped.
+_SCORING_MODE_ROOT_REQUIRED: tuple[str, ...] = (
+    "run.json",
+    "resolved.json",
+    "results.json",
+    "metrics.json",
+)
+_SCORING_MODE_ROOT_OPTIONAL: tuple[str, ...] = (
+    "run.log",
+    "score_provenance.json",
+)
+_SCORING_MODE_SUBDIR: tuple[str, ...] = ("artifacts", "scoring")
+_PREDICTIONS_SUBDIR: tuple[str, ...] = ("artifacts", "predictions")
+PullMode = Literal["scoring", "full"]
 
 
 class RemoteOpsError(Exception):
@@ -293,9 +311,23 @@ def pull_remote_experiment(
     *,
     target_id: str,
     experiment_id: str,
+    mode: PullMode,
     store_root: str | Path = ".numereng",
 ) -> RemoteExperimentPullResult:
-    """Pull one remote experiment's finished runs into canonical local storage."""
+    """Pull one remote experiment's finished runs into canonical local storage.
+
+    ``mode`` selects which files are copied:
+
+    - ``"scoring"``: copies ``artifacts/scoring/`` + the root manifest/log files.
+      Enables the dashboard Performance tab without paying the cost of
+      prediction parquets (~138 MB/run). Cannot be used for submit/ensemble/
+      rescore locally.
+    - ``"full"``: copies the entire run directory including
+      ``artifacts/predictions/``. Required for submit/ensemble/rescore.
+    """
+
+    if mode not in ("scoring", "full"):
+        raise RemoteValidationError(f"remote_experiment_pull_invalid_mode:{mode}")
 
     target = _get_target(target_id)
     init_result = init_store_db(store_root=store_root)
@@ -308,6 +340,7 @@ def pull_remote_experiment(
         target,
         _pull_preflight_python_script(),
         args=[experiment_id, target.store_root],
+        timeout_seconds=max(target.command_timeout_seconds, 300),
     )
     if preflight is None:
         raise RemoteExecutionError("remote_experiment_pull_preflight_failed")
@@ -330,22 +363,30 @@ def pull_remote_experiment(
         if isinstance(item, str) and item.strip()
     )
     already_materialized_run_ids: tuple[str, ...] = ()
+    upgrade_run_ids: tuple[str, ...] = ()
     run_ids_to_copy = materializable_run_ids
 
     if not failures:
-        existing_state = _classify_local_finished_runs(local_runs_root=local_runs_root, run_ids=materializable_run_ids)
+        existing_state = _classify_local_finished_runs(
+            local_runs_root=local_runs_root,
+            run_ids=materializable_run_ids,
+            requested_mode=mode,
+        )
         already_materialized_run_ids = existing_state["already_materialized_run_ids"]
         run_ids_to_copy = existing_state["run_ids_to_copy"]
+        upgrade_run_ids = existing_state["upgrade_run_ids"]
         failures = existing_state["failures"]
     if failures:
         return RemoteExperimentPullResult(
             target_id=target.id,
             experiment_id=experiment_id,
+            pull_mode=mode,
             local_experiment_manifest_path=local_experiment_manifest_path,
             local_runs_root=local_runs_root,
             pulled_at=pulled_at,
             already_materialized_run_ids=already_materialized_run_ids,
             materialized_run_ids=(),
+            partially_materialized_run_ids=(),
             materialized_run_count=0,
             skipped_non_finished_run_ids=skipped_non_finished_run_ids,
             failures=failures,
@@ -353,19 +394,21 @@ def pull_remote_experiment(
 
     materialized_run_ids: tuple[str, ...] = ()
     if run_ids_to_copy:
-        staging_root = _remote_pull_staging_dir(resolved_store_root, experiment_id=experiment_id)
+        staging_root = _remote_pull_staging_dir(resolved_store_root, experiment_id=experiment_id, mode=mode)
         try:
             extracted_runs_root = _copy_remote_runs_to_staging(
                 target=target,
                 remote_store_root=target.store_root,
                 staging_root=staging_root,
                 run_ids=run_ids_to_copy,
+                mode=mode,
             )
             _ensure_staged_runs_present(extracted_runs_root=extracted_runs_root, run_ids=run_ids_to_copy)
             materialized_run_ids = _materialize_staged_runs(
                 store_root=resolved_store_root,
                 staging_runs_root=extracted_runs_root,
                 run_ids=run_ids_to_copy,
+                upgrade_run_ids=set(upgrade_run_ids),
             )
         finally:
             shutil.rmtree(staging_root, ignore_errors=True)
@@ -383,11 +426,13 @@ def pull_remote_experiment(
     return RemoteExperimentPullResult(
         target_id=target.id,
         experiment_id=experiment_id,
+        pull_mode=mode,
         local_experiment_manifest_path=local_experiment_manifest_path,
         local_runs_root=local_runs_root,
         pulled_at=pulled_at,
         already_materialized_run_ids=already_materialized_run_ids,
         materialized_run_ids=materialized_run_ids,
+        partially_materialized_run_ids=upgrade_run_ids,
         materialized_run_count=len(materialized_run_ids),
         skipped_non_finished_run_ids=skipped_non_finished_run_ids,
         failures=(),
@@ -886,10 +931,10 @@ def _remote_experiment_exists(*, target: SshRemoteTargetProfile, experiment_id: 
     return bool(payload and payload.get("exists"))
 
 
-def _remote_pull_staging_dir(store_root: Path, *, experiment_id: str) -> Path:
+def _remote_pull_staging_dir(store_root: Path, *, experiment_id: str, mode: PullMode) -> Path:
     staging_root = store_root / _REMOTE_PULL_STAGING_DIR[0] / _REMOTE_PULL_STAGING_DIR[1] / _REMOTE_PULL_STAGING_DIR[2]
     staging_root.mkdir(parents=True, exist_ok=True)
-    return Path(tempfile.mkdtemp(prefix=f"{_safe_name(experiment_id)}-", dir=staging_root))
+    return Path(tempfile.mkdtemp(prefix=f"{_safe_name(experiment_id)}-{mode}-", dir=staging_root))
 
 
 def _reconcile_local_experiment_manifest(
@@ -1070,21 +1115,40 @@ def _run_remote_snapshot(target: SshRemoteTargetProfile) -> dict[str, Any] | Non
     return _extract_json_object(result.stdout)
 
 
-def _run_remote_python(target: SshRemoteTargetProfile, script_source: str, *, args: list[str]) -> dict[str, Any] | None:
+def _run_remote_python(
+    target: SshRemoteTargetProfile,
+    script_source: str,
+    *,
+    args: list[str],
+    timeout_seconds: int | None = None,
+) -> dict[str, Any] | None:
     command = build_ssh_command(
         target,
         build_remote_python_command(target, script_source, args=args, cwd=target.repo_root),
     )
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=target.command_timeout_seconds,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    return _extract_json_object(result.stdout)
+    effective_timeout = timeout_seconds if timeout_seconds is not None else target.command_timeout_seconds
+    last_result: subprocess.CompletedProcess[str] | None = None
+    for attempt in range(1, 4):
+        try:
+            last_result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=effective_timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == 3:
+                return None
+            time.sleep(min(2.0 * attempt, 10.0))
+            continue
+        if last_result.returncode == 0:
+            return _extract_json_object(last_result.stdout)
+        combined = (last_result.stderr or "") + (last_result.stdout or "")
+        if attempt == 3 or not _is_scp_transient_error(combined):
+            return None
+        time.sleep(min(2.0 * attempt, 10.0))
+    return None
 
 
 def _extract_json_bytes(payload: bytes) -> dict[str, Any]:
@@ -1131,20 +1195,35 @@ def _decode_pull_failures(payload: Any) -> tuple[RemoteExperimentPullFailure, ..
     return tuple(failures)
 
 
+def _detect_local_run_mode(run_dir: Path) -> Literal["missing", "incomplete", "scoring", "full"]:
+    """Classify the on-disk materialization state of one local run directory."""
+    if not run_dir.exists() or not run_dir.is_dir():
+        return "missing"
+    for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES:
+        if not (run_dir / relpath).is_file():
+            return "incomplete"
+    predictions_dir = run_dir / _PREDICTIONS_SUBDIR[0] / _PREDICTIONS_SUBDIR[1]
+    has_predictions = predictions_dir.is_dir() and any(predictions_dir.glob("pred_*.parquet"))
+    return "full" if has_predictions else "scoring"
+
+
 def _classify_local_finished_runs(
     *,
     local_runs_root: Path,
     run_ids: tuple[str, ...],
+    requested_mode: PullMode,
 ) -> dict[str, tuple[str, ...] | tuple[RemoteExperimentPullFailure, ...]]:
     already_materialized_run_ids: list[str] = []
     run_ids_to_copy: list[str] = []
+    upgrade_run_ids: list[str] = []
     failures: list[RemoteExperimentPullFailure] = []
     for run_id in run_ids:
         run_dir = local_runs_root / run_id
-        if not run_dir.exists():
+        local_mode = _detect_local_run_mode(run_dir)
+        if local_mode == "missing":
             run_ids_to_copy.append(run_id)
             continue
-        if not run_dir.is_dir():
+        if run_dir.exists() and not run_dir.is_dir():
             failures.append(
                 RemoteExperimentPullFailure(
                     run_id=run_id,
@@ -1153,12 +1232,14 @@ def _classify_local_finished_runs(
                 )
             )
             continue
-        core_missing = [relpath for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES if not (run_dir / relpath).is_file()]
-        if core_missing:
+        if local_mode == "incomplete":
+            core_missing = tuple(
+                relpath for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES if not (run_dir / relpath).is_file()
+            )
             failures.append(
                 RemoteExperimentPullFailure(
                     run_id=run_id,
-                    missing_files=tuple(core_missing),
+                    missing_files=core_missing,
                     reason="local_run_incomplete",
                 )
             )
@@ -1174,10 +1255,19 @@ def _classify_local_finished_runs(
                 )
             )
             continue
-        already_materialized_run_ids.append(run_id)
+        # Local state is either "scoring" (no predictions) or "full" (predictions present).
+        # - full local + any requested mode -> already materialized (never downgrade)
+        # - scoring local + scoring requested -> already materialized
+        # - scoring local + full requested -> upgrade: re-pull and overlay predictions
+        if local_mode == "full" or (local_mode == "scoring" and requested_mode == "scoring"):
+            already_materialized_run_ids.append(run_id)
+        else:
+            upgrade_run_ids.append(run_id)
+            run_ids_to_copy.append(run_id)
     return {
         "already_materialized_run_ids": tuple(already_materialized_run_ids),
         "run_ids_to_copy": tuple(run_ids_to_copy),
+        "upgrade_run_ids": tuple(upgrade_run_ids),
         "failures": tuple(failures),
     }
 
@@ -1188,17 +1278,58 @@ def _copy_remote_runs_to_staging(
     remote_store_root: str,
     staging_root: Path,
     run_ids: tuple[str, ...],
+    mode: PullMode,
 ) -> Path:
     staging_runs_root = staging_root / "runs"
     staging_runs_root.mkdir(parents=True, exist_ok=True)
     for run_id in run_ids:
         remote_run_dir = remote_path_join(target, remote_store_root, "runs", run_id)
-        _scp_remote_directory(
-            target=target,
-            remote_path=remote_run_dir,
-            destination_root=staging_runs_root,
-        )
+        if mode == "full":
+            _scp_remote_directory(
+                target=target,
+                remote_path=remote_run_dir,
+                destination_root=staging_runs_root,
+            )
+        else:
+            _copy_remote_run_scoring(
+                target=target,
+                remote_run_dir=remote_run_dir,
+                staging_run_dir=staging_runs_root / run_id,
+            )
     return staging_runs_root
+
+
+def _copy_remote_run_scoring(
+    *,
+    target: SshRemoteTargetProfile,
+    remote_run_dir: str,
+    staging_run_dir: Path,
+) -> None:
+    """Copy scoring-mode artifacts for one run: scoring subtree plus root files."""
+    staging_run_dir.mkdir(parents=True, exist_ok=True)
+    (staging_run_dir / _SCORING_MODE_SUBDIR[0]).mkdir(parents=True, exist_ok=True)
+    scoring_remote = remote_path_join(target, remote_run_dir, *_SCORING_MODE_SUBDIR)
+    _scp_remote_directory(
+        target=target,
+        remote_path=scoring_remote,
+        destination_root=staging_run_dir / _SCORING_MODE_SUBDIR[0],
+    )
+    required_paths = tuple(
+        remote_path_join(target, remote_run_dir, filename) for filename in _SCORING_MODE_ROOT_REQUIRED
+    )
+    _scp_remote_files(
+        target=target,
+        remote_paths=required_paths,
+        destination_dir=staging_run_dir,
+        allow_missing=False,
+    )
+    for filename in _SCORING_MODE_ROOT_OPTIONAL:
+        _scp_remote_files(
+            target=target,
+            remote_paths=(remote_path_join(target, remote_run_dir, filename),),
+            destination_dir=staging_run_dir,
+            allow_missing=True,
+        )
 
 
 def _scp_remote_directory(
@@ -1214,18 +1345,90 @@ def _scp_remote_directory(
         _scp_remote_spec(target=target, remote_path=remote_path),
         str(destination_root),
     ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=max(target.command_timeout_seconds, _REMOTE_PULL_COPY_TIMEOUT_SECONDS),
-        check=False,
+    _run_scp_with_retry(target=target, command=command)
+
+
+def _run_scp_with_retry(
+    *,
+    target: SshRemoteTargetProfile,
+    command: list[str],
+    allow_missing: bool = False,
+    max_attempts: int = 3,
+) -> None:
+    """Run one scp invocation with retry-on-transient-failure semantics.
+
+    Remote pulls over laggy SSH links occasionally drop mid-transfer with
+    "Connection closed" or "Operation timed out". Those failures are usually
+    transient; retrying with exponential backoff tolerates them without
+    failing the whole pull. The base scp flags already enable SSH connection
+    multiplexing so retries reuse the existing control socket when possible.
+    """
+    last_stderr = ""
+    last_stdout = ""
+    for attempt in range(1, max_attempts + 1):
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(target.command_timeout_seconds, _REMOTE_PULL_COPY_TIMEOUT_SECONDS),
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        last_stderr = (result.stderr or "").strip()
+        last_stdout = (result.stdout or "").strip()
+        combined = last_stderr + last_stdout
+        if allow_missing and _is_scp_missing_error(combined):
+            return
+        if attempt == max_attempts or not _is_scp_transient_error(combined):
+            break
+        time.sleep(min(2.0 * attempt, 10.0))
+    detail = last_stderr or last_stdout or "remote_scp_failed"
+    raise RemoteExecutionError(f"remote_experiment_pull_copy_failed:{detail}")
+
+
+def _is_scp_transient_error(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "connection closed",
+            "connection reset",
+            "operation timed out",
+            "broken pipe",
+            "lost connection",
+            "connect to host",
+            "timeout",
+        )
     )
-    if result.returncode != 0:
-        stderr = result.stderr.strip()
-        stdout = result.stdout.strip()
-        detail = stderr or stdout or "remote_scp_failed"
-        raise RemoteExecutionError(f"remote_experiment_pull_copy_failed:{detail}")
+
+
+def _scp_remote_files(
+    *,
+    target: SshRemoteTargetProfile,
+    remote_paths: tuple[str, ...],
+    destination_dir: Path,
+    allow_missing: bool,
+) -> None:
+    """SCP one or more remote files into ``destination_dir``.
+
+    When ``allow_missing`` is True, "No such file" errors are swallowed so that
+    legitimately optional files (e.g. ``run.log``) don't fail the whole pull.
+    """
+    if not remote_paths:
+        return
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        *scp_base_command(target),
+        *[_scp_remote_spec(target=target, remote_path=path) for path in remote_paths],
+        str(destination_dir),
+    ]
+    _run_scp_with_retry(target=target, command=command, allow_missing=allow_missing)
+
+
+def _is_scp_missing_error(text: str) -> bool:
+    lowered = text.lower()
+    return "no such file" in lowered or "not found" in lowered or "cannot find" in lowered
 
 
 def _scp_remote_spec(*, target: SshRemoteTargetProfile, remote_path: str) -> str:
@@ -1246,15 +1449,23 @@ def _materialize_staged_runs(
     store_root: Path,
     staging_runs_root: Path,
     run_ids: tuple[str, ...],
+    upgrade_run_ids: set[str] | None = None,
 ) -> tuple[str, ...]:
     local_runs_root = store_root / "runs"
+    upgrade_ids = upgrade_run_ids or set()
     moved_run_ids: list[str] = []
     try:
         for run_id in run_ids:
             source_dir = staging_runs_root / run_id
             destination_dir = local_runs_root / run_id
             if destination_dir.exists():
-                raise RemoteValidationError(f"remote_experiment_pull_local_conflict:{run_id}")
+                if run_id in upgrade_ids:
+                    # Scoring-only local run being upgraded to full: clear the
+                    # stale scoring tree so the atomic rename of the fresh
+                    # (full) staged directory can proceed.
+                    shutil.rmtree(destination_dir)
+                else:
+                    raise RemoteValidationError(f"remote_experiment_pull_local_conflict:{run_id}")
             source_dir.rename(destination_dir)
             moved_run_ids.append(run_id)
     except Exception:
@@ -1689,6 +1900,8 @@ import json
 import sys
 from pathlib import Path
 
+from numereng.features.store import resolve_workspace_layout_from_store_root
+
 
 def main() -> None:
     if len(sys.argv) != 3:
@@ -1709,7 +1922,9 @@ def main() -> None:
 
     experiment_manifest_path = resolved_experiment_dir / "experiment.json"
     try:
-        experiment_manifest = json.loads(experiment_manifest_path.read_text(encoding="utf-8"))
+        # utf-8-sig transparently strips a UTF-8 BOM that some Windows tools
+        # (PowerShell Set-Content, Out-File) prepend to JSON files.
+        experiment_manifest = json.loads(experiment_manifest_path.read_text(encoding="utf-8-sig"))
     except Exception:
         print(
             json.dumps(
@@ -1747,7 +1962,7 @@ def main() -> None:
             failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_missing"})
             continue
         try:
-            run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+            run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8-sig"))
         except Exception:
             failures.append({"run_id": run_id, "missing_files": ["run.json"], "reason": "run_manifest_invalid"})
             continue
@@ -1782,6 +1997,8 @@ def _experiment_exists_python_script() -> str:
 import json
 import sys
 from pathlib import Path
+
+from numereng.features.store import resolve_workspace_layout_from_store_root
 
 
 def main() -> None:

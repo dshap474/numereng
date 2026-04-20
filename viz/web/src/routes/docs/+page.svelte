@@ -1,5 +1,1 @@
-<script lang="ts">
-	import DocCollectionView from '$lib/components/ui/reader/DocCollectionView.svelte';
-</script>
-
-<DocCollectionView variant="numereng" />
+<!-- Handled by viz/web/src/routes/docs/+layout.svelte -->

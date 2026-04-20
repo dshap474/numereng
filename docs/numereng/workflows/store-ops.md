@@ -34,6 +34,10 @@ Clean targeted stray paths:
 uv run numereng store doctor --fix-strays
 ```
 
+### Restoring artifacts that were pruned
+
+If `store doctor` reports `run_count_mismatch` with `filesystem_runs` far below `indexed_runs`, the SQLite index still has run rows but the on-disk `.numereng/runs/<run_id>/` directories are gone. The dashboard's Performance tab shows empty for those runs because it reads scoring parquet files off disk. If the runs originated on a remote target, recover via `remote experiment pull --mode scoring` — see [Remote Operations → Recovery](./remote-ops.md#recovery-restoring-missing-local-artifacts). Do not use `store rebuild` for this; rebuild only reconciles the SQLite index against whatever is already on disk.
+
 ## Repair And Backfill
 
 Backfill missing execution metadata:

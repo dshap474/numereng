@@ -6,7 +6,7 @@ description: Help us improve Numerai and earn NMR!
 
 We need and want your help to improve Numerai so we will aim to be clear and fair with our bounties. The examples listed below are not exhaustive and the bounty amounts are only rough guidelines - the exact amounts depends on the impact and the difficulty of the bug, feedback or exploit. **Actual bounties paid, if any, will be determined by Numerai at its sole discretion.**
 
-Please allow 3-5 business days for a response to reports and an additional 7-10 business days to resolve any reports. We kindly ask for your patience - we are a small team and must prioritize large, high-impact projects - please do not follow up more than once about a report.
+Please allow us 5-10 business days to respont to reports. We kindly ask for your patience - we are a small team and must prioritize high-impact work. Please do not follow up more than once about a report or you may be banned from participating in the program.
 
 {% hint style="warning" %}
 You must have a [Numerai Tournament](https://numer.ai/tournament/) account to receive bounty payment. US persons receiving a bounty valued > $600 USD will be required to submit [W9 taxpayer information](broken-reference/). **Regardless of your tax jurisdiction, you are solely responsible for any tax implications related to any bounty payouts you may receive.**
@@ -103,6 +103,7 @@ Do not submit the following as examples of vulnerabilities. We do not consider t
 * Information from non-sensitive public APIs used in Numerai's public websites such as the APIs serving numer.ai, signals.numer.ai, crypto.numer.ai, forum.numer.ai, etc.
   * This includes GraphQL introspection.
 * Lack of password re-input for actions that already require authentication
+* Sensitive data in `LocalStorage` without a clearly proven attack shown
 * Significant lapse in user judgement:
   * Following user-driven links (e.g. users bio links, forum post links, etc.)
   * Gaining physical access to a victim’s computer/device

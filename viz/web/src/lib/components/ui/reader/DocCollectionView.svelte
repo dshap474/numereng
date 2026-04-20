@@ -158,12 +158,14 @@
 	});
 
 	$effect(() => {
+		void variant;
 		loadTree().then(() => {
 			loading = false;
 		});
 	});
 
 	$effect(() => {
+		void variant;
 		if (selectedPath) {
 			loadContent(selectedPath);
 		}
@@ -269,16 +271,16 @@
 			<div class="reader-content-meta">{selectedPath}</div>
 		</div>
 
-		<div class="reader-segmented-control" aria-label="Docs collection">
+		<div class="pill-tabs" aria-label="Docs collection">
 			<a
 				href="/docs"
-				class={`reader-segment ${variant === 'numereng' ? 'reader-segment-active' : ''}`}
+				class={`pill-tab ${variant === 'numereng' ? 'pill-tab-active' : ''}`}
 			>
 				Numereng
 			</a>
 			<a
 				href="/docs/numerai"
-				class={`reader-segment ${variant === 'numerai' ? 'reader-segment-active' : ''}`}
+				class={`pill-tab ${variant === 'numerai' ? 'pill-tab-active' : ''}`}
 			>
 				Numerai
 			</a>
@@ -290,14 +292,16 @@
 			{error}
 			<p class="mt-2 text-muted-foreground">{variantConfig.emptyHint}</p>
 		</div>
-	{:else if docLoading}
-		<div class="py-6 text-sm text-muted-foreground">Loading document…</div>
 	{:else}
 		{#if docNotice}
 			<div class="reader-alert reader-alert-warning">{docNotice}</div>
 		{/if}
-		<div class="prose-dark reader-prose text-sm">
-			{@html rendered}
-		</div>
+		{#if docLoading && !content}
+			<div class="py-6 text-sm text-muted-foreground">Loading document…</div>
+		{:else}
+			<div class="prose-dark reader-prose text-sm" class:reader-prose-loading={docLoading}>
+				{@html rendered}
+			</div>
+		{/if}
 	{/if}
 </ReaderWorkspace>

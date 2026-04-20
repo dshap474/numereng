@@ -53,7 +53,7 @@ USAGE = (
     "  numereng remote experiment maintain --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]\n"  # noqa: E501
     "  numereng remote experiment stop --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]\n"  # noqa: E501
     "  numereng remote experiment sync --target <id> --experiment-id <id> [--workspace <path>]\n"
-    "  numereng remote experiment pull --target <id> --experiment-id <id> [--workspace <path>]\n"
+    "  numereng remote experiment pull --target <id> --experiment-id <id> --mode <scoring|full> [--workspace <path>]\n"
     "  numereng remote config push --target <id> --config <path.json> [--workspace <path>]\n"
     "  numereng remote run train --target <id> --config <path.json> [--experiment-id <id>] [--sync-repo <auto|always|never>] [--profile <simple|purged_walk_forward|full_history_refit>] [--post-training-scoring <none|core|full|round_core|round_full>] [--workspace <path>]\n"  # noqa: E501
     "  numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]\n"  # noqa: E501

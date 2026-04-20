@@ -103,9 +103,13 @@ class RemoteExperimentSyncResponse(BaseModel):
     remote_marker_path: str
 
 
+RemoteExperimentPullMode = Literal["scoring", "full"]
+
+
 class RemoteExperimentPullRequest(WorkspaceBoundRequest):
     target_id: str
     experiment_id: str
+    mode: RemoteExperimentPullMode
 
 
 class RemoteExperimentPullFailureResponse(BaseModel):
@@ -117,11 +121,13 @@ class RemoteExperimentPullFailureResponse(BaseModel):
 class RemoteExperimentPullResponse(BaseModel):
     target_id: str
     experiment_id: str
+    pull_mode: RemoteExperimentPullMode
     local_experiment_manifest_path: str
     local_runs_root: str
     pulled_at: str
     already_materialized_run_ids: list[str] = Field(default_factory=list)
     materialized_run_ids: list[str] = Field(default_factory=list)
+    partially_materialized_run_ids: list[str] = Field(default_factory=list)
     materialized_run_count: int
     skipped_non_finished_run_ids: list[str] = Field(default_factory=list)
     failures: list[RemoteExperimentPullFailureResponse] = Field(default_factory=list)
@@ -253,6 +259,7 @@ __all__ = [
     "RemoteExperimentMaintainRequest",
     "RemoteExperimentMaintainResponse",
     "RemoteExperimentPullFailureResponse",
+    "RemoteExperimentPullMode",
     "RemoteExperimentPullRequest",
     "RemoteExperimentPullResponse",
     "RemoteExperimentStatusRequest",

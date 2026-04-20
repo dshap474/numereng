@@ -86,11 +86,13 @@ class RemoteExperimentPullResult:
 
     target_id: str
     experiment_id: str
+    pull_mode: str
     local_experiment_manifest_path: Path
     local_runs_root: Path
     pulled_at: str
     already_materialized_run_ids: tuple[str, ...]
     materialized_run_ids: tuple[str, ...]
+    partially_materialized_run_ids: tuple[str, ...]
     materialized_run_count: int
     skipped_non_finished_run_ids: tuple[str, ...]
     failures: tuple[RemoteExperimentPullFailure, ...]

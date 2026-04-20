@@ -1313,13 +1313,11 @@
 				<span class="rounded border border-border/70 px-1.5 py-0.5 tracking-[0.18em]">{sourceLabel}</span>
 			</div>
 		</div>
-		<div class="flex gap-0">
+		<div class="pill-tabs" aria-label="Experiment section">
 		{#each [['analysis', 'Analysis'], ['progress', 'Progress'], ['runops', 'Run Ops']] as [key, label] (key)}
 			<button
 				type="button"
-				class="px-4 py-3.5 text-sm font-medium transition-colors {pageTab === key
-					? 'border-b-2 border-primary text-foreground'
-					: 'text-muted-foreground hover:text-foreground'}"
+				class={`pill-tab ${pageTab === key ? 'pill-tab-active' : ''}`}
 				onclick={() => (pageTab = key as 'analysis' | 'progress' | 'runops')}
 			>{label}</button>
 		{/each}
@@ -1343,13 +1341,11 @@
 				<div class="flex-1 min-h-0 min-w-0 p-4" aria-label="Charts wrapper">
 			<div class="bg-card border border-border rounded-lg h-full flex flex-col" aria-label="Charts section">
 					<div class="flex items-center justify-between border-b border-border px-5 pt-3 pb-0 flex-shrink-0">
-						<div class="flex gap-0">
+						<div class="pill-tabs" aria-label="Chart view">
 							{#each [['charts', 'Benchmark Similarity'], ['composite', 'Payout Proxy'], ['target-analysis', 'Target Analysis']] as [key, label] (key)}
 							<button
 								type="button"
-								class="px-3 py-2 text-xs font-medium transition-colors {chartTab === key
-									? 'border-b-2 border-primary text-foreground'
-									: 'text-muted-foreground hover:text-foreground'}"
+								class={`pill-tab pill-tab-sm ${chartTab === key ? 'pill-tab-active' : ''}`}
 								onclick={() => (chartTab = key as 'charts' | 'composite' | 'target-analysis')}
 							>{label}</button>
 						{/each}
@@ -1473,68 +1469,70 @@
 		</div>
 
 	{:else if pageTab === 'progress'}
+		{@const inFlightCount = progressCounts.queued + progressCounts.training}
+		{@const completionPercent =
+			progressCounts.total > 0
+				? Math.round((progressCounts.completed / progressCounts.total) * 100)
+				: 0}
 		<div class="flex-1 min-h-0 px-6 py-4 overflow-auto">
 			<div class="space-y-4">
-				<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Total Configs</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.total}</div>
+				<div class="rounded-lg border border-border bg-card px-5 py-4 space-y-3">
+					<div class="flex flex-wrap items-center gap-4">
+						<div class="flex items-baseline gap-2 tabular-nums">
+							<span class="text-2xl font-semibold">{progressCounts.completed}</span>
+							<span class="text-sm text-muted-foreground">/ {progressCounts.total} completed</span>
+						</div>
+						<div class="flex-1 min-w-[12rem] h-2 rounded-full bg-white/5 overflow-hidden">
+							<div
+								class="h-full bg-primary transition-all"
+								style:width="{completionPercent}%"
+							></div>
+						</div>
+						<div class="text-sm tabular-nums text-muted-foreground">{completionPercent}%</div>
 					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Not Started</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums">{progressCounts.not_started}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Queued</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-muted-foreground">{progressCounts.queued}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Training</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-sky-300">{progressCounts.training}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Completed</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-positive">{progressCounts.completed}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Failed</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-negative">{progressCounts.failed}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Canceled</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-amber-300">{progressCounts.canceled}</div>
-					</div>
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Stale</div>
-						<div class="mt-1 text-2xl font-semibold tabular-nums text-muted-foreground">{progressCounts.stale}</div>
-					</div>
-				</div>
 
-				<div class="grid gap-4 xl:grid-cols-2">
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Next Pending</div>
-						{#if nextPendingRow}
-							<div class="mt-2 font-mono text-sm">{fileName(nextPendingRow.relative_path)}</div>
-							<div class="mt-1 text-xs text-muted-foreground">
-								{nextPendingRow.model_type} · {nextPendingRow.target} · {nextPendingRow.feature_set}
-							</div>
-						{:else}
-							<div class="mt-2 text-sm text-muted-foreground">All configs have been attempted.</div>
+					<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+						<span class={progressCounts.not_started > 0 ? 'text-foreground' : 'text-muted-foreground/60'}>
+							<span class="tabular-nums">{progressCounts.not_started}</span> not started
+						</span>
+						<span class={inFlightCount > 0 ? 'text-sky-300' : 'text-muted-foreground/60'}>
+							<span class="tabular-nums">{inFlightCount}</span> in flight
+						</span>
+						<span class={progressCounts.failed > 0 ? 'text-negative' : 'text-muted-foreground/60'}>
+							<span class="tabular-nums">{progressCounts.failed}</span> failed
+						</span>
+						{#if progressCounts.canceled > 0}
+							<span class="text-amber-300">
+								<span class="tabular-nums">{progressCounts.canceled}</span> canceled
+							</span>
+						{/if}
+						{#if progressCounts.stale > 0}
+							<span class="text-muted-foreground">
+								<span class="tabular-nums">{progressCounts.stale}</span> stale
+							</span>
 						{/if}
 					</div>
 
-					<div class="rounded-lg border border-border bg-card px-4 py-3">
-						<div class="text-[11px] uppercase tracking-wide text-muted-foreground">Needs Attention</div>
-						{#if nextAttentionRow}
-							<div class="mt-2 font-mono text-sm">{fileName(nextAttentionRow.relative_path)}</div>
-							<div class="mt-1 text-xs text-muted-foreground">
-								{progressStatusLabel(nextAttentionRow.status)} · last job {nextAttentionRow.job_id ? shortId(nextAttentionRow.job_id, 12) : '-'}
-							</div>
-						{:else}
-							<div class="mt-2 text-sm text-muted-foreground">No failed, stale, or canceled configs currently tracked.</div>
-						{/if}
-					</div>
+					{#if nextPendingRow}
+						<div class="text-xs text-muted-foreground">
+							<span class="uppercase tracking-wide">Next pending</span>
+							<span class="mx-2 text-muted-foreground/50">·</span>
+							<span class="font-mono text-foreground">{fileName(nextPendingRow.relative_path)}</span>
+							<span class="mx-2 text-muted-foreground/50">·</span>
+							<span>{nextPendingRow.model_type} · {nextPendingRow.target} · {nextPendingRow.feature_set}</span>
+						</div>
+					{/if}
 				</div>
+
+				{#if nextAttentionRow}
+					<div class="rounded-lg border border-negative/40 bg-negative/5 px-4 py-3">
+						<div class="text-[11px] uppercase tracking-wide text-negative">Needs attention</div>
+						<div class="mt-1 font-mono text-sm">{fileName(nextAttentionRow.relative_path)}</div>
+						<div class="mt-0.5 text-xs text-muted-foreground">
+							{progressStatusLabel(nextAttentionRow.status)} · last job {nextAttentionRow.job_id ? shortId(nextAttentionRow.job_id, 12) : '-'}
+						</div>
+					</div>
+				{/if}
 
 				<div class="rounded-lg border border-border bg-card overflow-hidden">
 					<div class="flex items-center gap-3 border-b border-border px-4 py-3">

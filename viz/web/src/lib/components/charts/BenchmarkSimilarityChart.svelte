@@ -150,7 +150,7 @@
 								{cx}
 								{cy}
 								r={point.is_champion ? 7 : 5}
-								fill={point.is_champion ? 'var(--color-chart-bar-champion)' : 'var(--color-chart-2)'}
+								fill={point.is_champion ? 'var(--color-chart-bar-champion)' : 'var(--color-primary)'}
 								stroke={point.is_champion ? 'var(--color-chart-bar-champion)' : 'var(--color-border)'}
 								stroke-width={point.is_champion ? 2 : 1}
 								opacity={point.is_champion ? 1 : 0.9}
@@ -164,15 +164,5 @@
 				No benchmark-similarity data available.
 			</div>
 		{/if}
-	</div>
-	<div class="mt-4 flex flex-wrap items-center gap-4 border-t border-border pt-3 text-[11px] text-muted-foreground">
-		<div class="flex items-center gap-1.5">
-			<span class="h-2.5 w-2.5 rounded-full" style:background="var(--color-chart-2)"></span>
-			<span>Run or round result</span>
-		</div>
-		<div class="flex items-center gap-1.5">
-			<span class="h-2.5 w-2.5 rounded-full" style:background="var(--color-chart-bar-champion)"></span>
-			<span>Champion run</span>
-		</div>
 	</div>
 </div>

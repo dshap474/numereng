@@ -318,14 +318,17 @@ def test_cli_remote_experiment_pull_success(
     ) -> api_module.RemoteExperimentPullResponse:
         assert request.target_id == "pc"
         assert request.experiment_id == "exp-1"
+        assert request.mode == "full"
         return api_module.RemoteExperimentPullResponse(
             target_id="pc",
             experiment_id="exp-1",
+            pull_mode="full",
             local_experiment_manifest_path="experiments/exp-1/experiment.json",
             local_runs_root=".numereng/runs",
             pulled_at="2026-03-31T00:00:00+00:00",
             already_materialized_run_ids=["run-0"],
             materialized_run_ids=["run-a", "run-b"],
+            partially_materialized_run_ids=[],
             materialized_run_count=2,
             skipped_non_finished_run_ids=["run-c"],
             failures=[],
@@ -333,12 +336,53 @@ def test_cli_remote_experiment_pull_success(
 
     monkeypatch.setattr(api_module, "remote_experiment_pull", fake_remote_experiment_pull)
 
-    exit_code = cli.main(["remote", "experiment", "pull", "--target", "pc", "--experiment-id", "exp-1"])
+    exit_code = cli.main(
+        ["remote", "experiment", "pull", "--target", "pc", "--experiment-id", "exp-1", "--mode", "full"]
+    )
     payload = _parse_stdout_json(capsys.readouterr().out)
 
     assert exit_code == 0
     assert payload["experiment_id"] == "exp-1"
     assert payload["materialized_run_count"] == 2
+    assert payload["pull_mode"] == "full"
+
+
+def test_cli_remote_experiment_pull_requires_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_experiment_pull(
+        request: api_module.RemoteExperimentPullRequest,
+    ) -> api_module.RemoteExperimentPullResponse:
+        raise AssertionError("remote_experiment_pull must not be called when --mode is missing")
+
+    monkeypatch.setattr(api_module, "remote_experiment_pull", fake_remote_experiment_pull)
+
+    exit_code = cli.main(["remote", "experiment", "pull", "--target", "pc", "--experiment-id", "exp-1"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "--mode" in captured.err
+
+
+def test_cli_remote_experiment_pull_invalid_mode_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_remote_experiment_pull(
+        request: api_module.RemoteExperimentPullRequest,
+    ) -> api_module.RemoteExperimentPullResponse:
+        raise AssertionError("remote_experiment_pull must not be called for an invalid --mode value")
+
+    monkeypatch.setattr(api_module, "remote_experiment_pull", fake_remote_experiment_pull)
+
+    exit_code = cli.main(
+        ["remote", "experiment", "pull", "--target", "pc", "--experiment-id", "exp-1", "--mode", "bogus"]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "invalid --mode" in captured.err
 
 
 def test_cli_experiment_run_plan_success(

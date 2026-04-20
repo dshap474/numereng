@@ -334,6 +334,30 @@ def _read_json_dict(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _config_path_experiment_key(abs_path: str, experiment_id: str) -> str:
+    """Extract the experiment-relative suffix of a config path.
+
+    Runs materialized from a remote pull carry the remote's absolute config
+    path in ``run.json`` (for example a Windows path like
+    ``C:\\Users\\...\\.numereng\\experiments\\<id>\\configs\\r1.json``),
+    while the local copy of the same config sits under a completely different
+    absolute prefix. Both paths share the tail
+    ``experiments/<experiment_id>/...``, so we key the reverse lookup by that
+    suffix after normalizing backslashes.
+
+    Returns an empty string if the marker is not found, which disables the
+    match for that entry.
+    """
+    if not abs_path or not experiment_id:
+        return ""
+    normalized = abs_path.replace("\\", "/")
+    marker = f"experiments/{experiment_id}/"
+    idx = normalized.find(marker)
+    if idx < 0:
+        return ""
+    return normalized[idx + len(marker) :]
+
+
 def _first_present_str(payload: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     """Return first present non-empty string value from dict for keys."""
 
@@ -1072,14 +1096,20 @@ class VizStoreAdapter:
         offset: int = 0,
     ) -> dict[str, Any]:
         _ensure_safe_id(experiment_id, label="experiment_id")
+        run_id_by_config_key = self._index_runs_by_config_path(experiment_id)
         items: list[dict[str, Any]] = []
         for path in self._iter_configs(experiment_id):
             item = self._build_config_item(path, experiment_id)
             if runnable_only and not item["is_runnable"]:
                 continue
+            summary = item["summary"]
+            if not summary.get("run_id"):
+                key = _config_path_experiment_key(item["abs_path"], experiment_id)
+                matched_run_id = run_id_by_config_key.get(key) if key else None
+                if matched_run_id:
+                    summary["run_id"] = matched_run_id
             if q:
                 query = q.strip().lower()
-                summary = item["summary"]
                 haystack = " ".join(
                     [
                         item["relative_path"],
@@ -1101,6 +1131,91 @@ class VizStoreAdapter:
             "items": sliced,
             "total": total,
         }
+
+    def _index_runs_by_config_path(self, experiment_id: str) -> dict[str, str]:
+        """Build a map of absolute config path -> latest run_id for one experiment.
+
+        Runs never embed the config path back into the config JSON itself, so
+        when runs are materialized from a remote pull (or any out-of-band path
+        that doesn't rewrite the local config file), ``summary.run_id`` on a
+        config item would otherwise always be empty. This reverse-lookup uses
+        the authoritative link already stored in each run's ``run.json`` under
+        ``config.path``. Ties broken by ``created_at`` descending so the latest
+        run for a given config wins.
+        """
+        mapping: dict[str, str] = {}
+        latest_created_at: dict[str, str] = {}
+
+        def _consider(run_id: str, config_path: object, created_at: object) -> None:
+            if not isinstance(run_id, str) or not run_id:
+                return
+            if not isinstance(config_path, str) or not config_path:
+                return
+            key = _config_path_experiment_key(config_path, experiment_id)
+            if not key:
+                return
+            created_at_str = created_at if isinstance(created_at, str) else ""
+            incumbent = latest_created_at.get(key)
+            if incumbent is not None and incumbent >= created_at_str:
+                return
+            mapping[key] = run_id
+            latest_created_at[key] = created_at_str
+
+        seen: set[str] = set()
+        if self._table_exists("runs"):
+            rows = self._query(
+                """
+                SELECT run_id, created_at, manifest_json
+                FROM runs
+                WHERE experiment_id = ?
+                ORDER BY created_at DESC
+                """,
+                (experiment_id,),
+            )
+            for row in rows:
+                row_dict = dict(row)
+                run_id = row_dict.get("run_id")
+                if not isinstance(run_id, str):
+                    continue
+                seen.add(run_id)
+                manifest = _parse_json_object(row_dict.get("manifest_json"))
+                config_raw = manifest.get("config")
+                config_info = config_raw if isinstance(config_raw, dict) else {}
+                _consider(run_id, config_info.get("path"), row_dict.get("created_at"))
+
+        candidate_run_ids = self._manifest_run_ids(experiment_id)
+        if not candidate_run_ids:
+            runs_dir = self.store_root / "runs"
+            if runs_dir.exists():
+                candidate_run_ids = sorted(child.name for child in runs_dir.iterdir() if child.is_dir())
+
+        for run_id in candidate_run_ids:
+            if run_id in seen:
+                continue
+            run_dir = self._resolve_run_dir(run_id)
+            manifest_path = run_dir / "run.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                payload_raw = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload_raw, dict):
+                continue
+            exp_id = payload_raw.get("experiment_id")
+            if exp_id != experiment_id:
+                lineage_raw = payload_raw.get("lineage")
+                lineage_info = lineage_raw if isinstance(lineage_raw, dict) else {}
+                if lineage_info.get("experiment_id") != experiment_id:
+                    continue
+            manifest_run_id = payload_raw.get("run_id")
+            if not isinstance(manifest_run_id, str):
+                continue
+            config_raw = payload_raw.get("config")
+            config_info = config_raw if isinstance(config_raw, dict) else {}
+            _consider(manifest_run_id, config_info.get("path"), payload_raw.get("created_at"))
+
+        return mapping
 
     def list_all_configs(
         self,

@@ -8,7 +8,13 @@ The `numerai` and `docs` command families cover local Numerai docs sync, dataset
 uv run numereng docs sync numerai
 ```
 
-This syncs the official Numerai docs into `docs/numerai/` in the current checkout.
+This mirrors the official Numerai docs into `docs/numerai/` in the current checkout.
+
+- Source: [`github.com/numerai/docs`](https://github.com/numerai/docs) (shallow clone of `main`)
+- Pulls **everything** from upstream, not just markdown — including images under `docs/numerai/.gitbook/assets/` (PNGs, JPGs, GIFs) used by the dashboard reader
+- Re-running refreshes the mirror to the latest upstream commit. Added files appear, deleted files are removed, edits overwrite local copies. Do not hand-edit files under `docs/numerai/` — they will be wiped on the next sync
+- Local-only files are preserved across syncs: `SYNC_POLICY.md`, `.sync-meta.json`, `.gitignore`, and the `forum/` scrape target
+- Expect a few hundred files on first sync. `.sync-meta.json` records the upstream commit and timestamp
 
 ## Datasets
 

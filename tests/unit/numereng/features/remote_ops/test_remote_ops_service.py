@@ -441,12 +441,16 @@ def test_pull_remote_experiment_materializes_finished_runs_and_reconciles_manife
         lambda **kwargs: _seed_staging_runs(kwargs["staging_root"], {"run-a": run_manifest}),
     )
 
-    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-1", mode="full", store_root=store_root
+    )
 
     assert result.target_id == "pc"
+    assert result.pull_mode == "full"
     assert result.already_materialized_run_ids == ()
     assert result.materialized_run_count == 1
     assert result.materialized_run_ids == ("run-a",)
+    assert result.partially_materialized_run_ids == ()
     assert result.failures == ()
     assert result.local_experiment_manifest_path.is_file()
     manifest = json.loads(result.local_experiment_manifest_path.read_text(encoding="utf-8"))
@@ -486,7 +490,9 @@ def test_pull_remote_experiment_returns_blockers_without_materializing_runs(
         },
     )
 
-    first = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-2", store_root=store_root)
+    first = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-2", mode="full", store_root=store_root
+    )
 
     assert len(first.failures) == 1
     assert first.failures[0].run_id == "run-b"
@@ -506,6 +512,9 @@ def test_pull_remote_experiment_rerun_is_idempotent_for_existing_finished_runs(
     (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
     (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
     (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    predictions_dir = existing_run_dir / "artifacts" / "predictions"
+    predictions_dir.mkdir(parents=True)
+    (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
     remote_manifest = {
         "experiment_id": "exp-3",
         "name": "Remote Experiment",
@@ -533,7 +542,9 @@ def test_pull_remote_experiment_rerun_is_idempotent_for_existing_finished_runs(
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("copy should not run for idempotent re-pull")),
     )
 
-    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-3", store_root=store_root)
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-3", mode="full", store_root=store_root
+    )
 
     assert result.materialized_run_count == 0
     assert result.already_materialized_run_ids == ("run-a",)
@@ -571,7 +582,9 @@ def test_pull_remote_experiment_fails_on_incomplete_existing_run_dir(
         },
     )
 
-    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-4", store_root=store_root)
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-4", mode="full", store_root=store_root
+    )
 
     assert result.materialized_run_count == 0
     assert len(result.failures) == 1
@@ -591,6 +604,9 @@ def test_pull_remote_experiment_only_copies_missing_finished_runs(
     (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
     (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
     (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    predictions_dir = existing_run_dir / "artifacts" / "predictions"
+    predictions_dir.mkdir(parents=True)
+    (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
     remote_manifest = {
         "experiment_id": "exp-5",
         "name": "Remote Experiment",
@@ -630,7 +646,9 @@ def test_pull_remote_experiment_only_copies_missing_finished_runs(
 
     monkeypatch.setattr(remote_service, "_copy_remote_runs_to_staging", _fake_copy)
 
-    result = remote_service.pull_remote_experiment(target_id="pc", experiment_id="exp-5", store_root=store_root)
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-5", mode="full", store_root=store_root
+    )
 
     assert copied_run_ids == ["run-b"]
     assert result.already_materialized_run_ids == ("run-a",)
@@ -639,3 +657,192 @@ def test_pull_remote_experiment_only_copies_missing_finished_runs(
     manifest = json.loads(result.local_experiment_manifest_path.read_text(encoding="utf-8"))
     assert manifest["runs"] == ["run-a", "run-b"]
     assert manifest["metadata"]["remote_pull"]["materialized_finished_run_ids"] == ["run-a", "run-b"]
+
+
+def _seed_staging_runs_scoring(staging_root: Path, run_manifests: dict[str, dict[str, object]]) -> Path:
+    """Seed staging with scoring-mode layout: root files + artifacts/scoring/ subtree."""
+    runs_root = staging_root / "runs"
+    for run_id, manifest in run_manifests.items():
+        run_dir = runs_root / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (run_dir / "resolved.json").write_text(json.dumps({"seed": 7}), encoding="utf-8")
+        (run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+        (run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.08}}), encoding="utf-8")
+        scoring_dir = run_dir / "artifacts" / "scoring"
+        scoring_dir.mkdir(parents=True, exist_ok=True)
+        (scoring_dir / "run_metric_series.parquet").write_bytes(b"\x00")
+        (scoring_dir / "manifest.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    return runs_root
+
+
+def test_pull_remote_experiment_scoring_mode_copies_only_scoring_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    remote_manifest = {
+        "experiment_id": "exp-scoring",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a"],
+        "metadata": {},
+    }
+    run_manifest = {
+        "run_id": "run-a",
+        "status": "FINISHED",
+        "experiment_id": "exp-scoring",
+        "execution": {"backend": "remote_pc"},
+    }
+    captured_modes: list[str] = []
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-scoring\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-scoring",
+        },
+    )
+
+    def _fake_copy(**kwargs: object) -> Path:
+        captured_modes.append(str(kwargs["mode"]))
+        return _seed_staging_runs_scoring(kwargs["staging_root"], {"run-a": run_manifest})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(remote_service, "_copy_remote_runs_to_staging", _fake_copy)
+
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-scoring", mode="scoring", store_root=store_root
+    )
+
+    assert captured_modes == ["scoring"]
+    assert result.pull_mode == "scoring"
+    assert result.materialized_run_ids == ("run-a",)
+    assert result.partially_materialized_run_ids == ()
+    local_run_dir = store_root / "runs" / "run-a"
+    assert (local_run_dir / "run.json").is_file()
+    assert (local_run_dir / "artifacts" / "scoring" / "run_metric_series.parquet").is_file()
+    assert not (local_run_dir / "artifacts" / "predictions").exists()
+
+
+def test_pull_remote_experiment_upgrade_from_scoring_to_full_overwrites(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    existing_run_dir = store_root / "runs" / "run-a"
+    existing_run_dir.mkdir(parents=True)
+    # Scoring-only local state: root JSONs + artifacts/scoring/, no predictions.
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 7}), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    scoring_dir = existing_run_dir / "artifacts" / "scoring"
+    scoring_dir.mkdir(parents=True)
+    (scoring_dir / "run_metric_series.parquet").write_bytes(b"\x00")
+
+    remote_manifest = {
+        "experiment_id": "exp-upgrade",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a"],
+        "metadata": {},
+    }
+    run_manifest = {
+        "run_id": "run-a",
+        "status": "FINISHED",
+        "experiment_id": "exp-upgrade",
+        "execution": {"backend": "remote_pc"},
+    }
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-upgrade\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-upgrade",
+        },
+    )
+
+    def _fake_copy(**kwargs: object) -> Path:
+        # Simulate a full-mode copy: root files + scoring + predictions parquet.
+        staging_root = kwargs["staging_root"]
+        assert isinstance(staging_root, Path)
+        runs_root = _seed_staging_runs(staging_root, {"run-a": run_manifest})
+        predictions_dir = runs_root / "run-a" / "artifacts" / "predictions"
+        predictions_dir.mkdir(parents=True)
+        (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
+        return runs_root
+
+    monkeypatch.setattr(remote_service, "_copy_remote_runs_to_staging", _fake_copy)
+
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-upgrade", mode="full", store_root=store_root
+    )
+
+    assert result.pull_mode == "full"
+    assert result.partially_materialized_run_ids == ("run-a",)
+    assert result.materialized_run_ids == ("run-a",)
+    local_run_dir = store_root / "runs" / "run-a"
+    assert (local_run_dir / "artifacts" / "predictions" / "pred_target_ender_20_small_mod_s7.parquet").is_file()
+
+
+def test_pull_remote_experiment_scoring_mode_skips_when_local_is_full(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    existing_run_dir = store_root / "runs" / "run-a"
+    existing_run_dir.mkdir(parents=True)
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    predictions_dir = existing_run_dir / "artifacts" / "predictions"
+    predictions_dir.mkdir(parents=True)
+    (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
+    remote_manifest = {
+        "experiment_id": "exp-skip-scoring",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a"],
+        "metadata": {},
+    }
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-skip-scoring\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\exp-skip-scoring",
+        },
+    )
+    monkeypatch.setattr(
+        remote_service,
+        "_copy_remote_runs_to_staging",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("copy should not run when local is already full")),
+    )
+
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="exp-skip-scoring", mode="scoring", store_root=store_root
+    )
+
+    assert result.pull_mode == "scoring"
+    assert result.already_materialized_run_ids == ("run-a",)
+    assert result.materialized_run_ids == ()
+    assert result.partially_materialized_run_ids == ()

@@ -205,6 +205,7 @@ def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperi
         result = pull_remote_experiment_record(
             target_id=request.target_id,
             experiment_id=request.experiment_id,
+            mode=request.mode,
             store_root=request.store_root,
         )
     except Exception as exc:
@@ -212,11 +213,13 @@ def remote_experiment_pull(request: RemoteExperimentPullRequest) -> RemoteExperi
     return RemoteExperimentPullResponse(
         target_id=result.target_id,
         experiment_id=result.experiment_id,
+        pull_mode=result.pull_mode,  # type: ignore[arg-type]
         local_experiment_manifest_path=str(result.local_experiment_manifest_path),
         local_runs_root=str(result.local_runs_root),
         pulled_at=result.pulled_at,
         already_materialized_run_ids=list(result.already_materialized_run_ids),
         materialized_run_ids=list(result.materialized_run_ids),
+        partially_materialized_run_ids=list(result.partially_materialized_run_ids),
         materialized_run_count=result.materialized_run_count,
         skipped_non_finished_run_ids=list(result.skipped_non_finished_run_ids),
         failures=[

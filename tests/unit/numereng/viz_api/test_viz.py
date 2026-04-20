@@ -115,6 +115,159 @@ def test_list_experiment_configs_discovers_json_configs(tmp_path: Path) -> None:
     assert payload["items"][0]["summary"]["model_type"] == "LGBMRegressor"
 
 
+def test_list_experiment_configs_backfills_run_id_from_pulled_run_manifest(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    config_dir = tmp_path / "experiments" / "exp-pulled" / "configs"
+    config_dir.mkdir(parents=True)
+    matching_config_path = config_dir / "r1_seed42.json"
+    matching_config_path.write_text(
+        json.dumps(
+            {
+                "model": {"type": "LGBMRegressor"},
+                "data": {"target": "target_20", "feature_set": "small"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    orphan_config_path = config_dir / "r1_seed43.json"
+    orphan_config_path.write_text(
+        json.dumps(
+            {
+                "model": {"type": "LGBMRegressor"},
+                "data": {"target": "target_20", "feature_set": "small"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = store_root / "runs" / "abcdef123456"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "abcdef123456",
+                "experiment_id": "exp-pulled",
+                "status": "FINISHED",
+                "created_at": "2026-04-01T12:00:00+00:00",
+                "config": {"path": str(matching_config_path.resolve())},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.list_experiment_configs("exp-pulled", runnable_only=True)
+
+    by_rel = {item["relative_path"]: item for item in payload["items"]}
+    matched = by_rel[matching_config_path.relative_to(tmp_path).as_posix()]
+    assert matched["summary"]["run_id"] == "abcdef123456"
+
+    orphan = by_rel[orphan_config_path.relative_to(tmp_path).as_posix()]
+    assert orphan["summary"]["run_id"] is None
+
+
+def test_list_experiment_configs_matches_run_with_windows_remote_config_path(tmp_path: Path) -> None:
+    """Pulled runs from a Windows remote carry the remote absolute path in run.json.
+
+    The local config's absolute path is entirely different, but both share the
+    suffix ``experiments/<experiment_id>/...`` — the reverse lookup must match
+    on that suffix, not on absolute equality.
+    """
+    store_root = tmp_path / ".numereng"
+    config_dir = tmp_path / "experiments" / "exp-win" / "configs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "r1_seed42.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "model": {"type": "LGBMRegressor"},
+                "data": {"target": "target_20", "feature_set": "small"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = store_root / "runs" / "abcdef123456"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "abcdef123456",
+                "experiment_id": "exp-win",
+                "status": "FINISHED",
+                "created_at": "2026-04-01T12:00:00+00:00",
+                "config": {
+                    "path": (
+                        "C:\\Users\\dansh\\remote-access\\numereng\\.numereng"
+                        "\\experiments/exp-win/configs/r1_seed42.json"
+                    )
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.list_experiment_configs("exp-win", runnable_only=True)
+
+    assert payload["items"][0]["summary"]["run_id"] == "abcdef123456"
+
+
+def test_list_experiment_configs_preserves_config_embedded_run_id_over_manifest_match(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    config_dir = tmp_path / "experiments" / "exp-mixed" / "configs"
+    config_dir.mkdir(parents=True)
+    config_path = config_dir / "base.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "run_id": "embedded-run-id",
+                "model": {"type": "LGBMRegressor"},
+                "data": {"target": "target_20", "feature_set": "small"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_dir = store_root / "runs" / "different-run-id"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "different-run-id",
+                "experiment_id": "exp-mixed",
+                "status": "FINISHED",
+                "created_at": "2026-04-02T00:00:00+00:00",
+                "config": {"path": str(config_path.resolve())},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    adapter = VizStoreAdapter(
+        VizStoreConfig(
+            store_root=store_root,
+            repo_root=tmp_path,
+        )
+    )
+
+    payload = adapter.list_experiment_configs("exp-mixed", runnable_only=True)
+
+    assert payload["items"][0]["summary"]["run_id"] == "embedded-run-id"
+
+
 def test_list_experiments_hides_archived_but_archived_detail_paths_still_resolve(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     live_dir = tmp_path / "experiments" / "exp-live"
