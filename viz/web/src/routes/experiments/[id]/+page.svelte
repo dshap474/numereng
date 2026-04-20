@@ -73,6 +73,7 @@
 	let runOpsView = $state<'table' | 'chart'>('table');
 	let runOpsColumnPickerOpen = $state(false);
 	let runOpsHiddenColumns = $state<Set<string>>(new Set());
+	let runOpsHeatmapEnabled = $state(true);
 	let launchSectionOpen = $state(true);
 	let queueSectionOpen = $state(true);
 	let monitorSectionOpen = $state(true);
@@ -209,20 +210,43 @@
 		return `numereng:runops:hidden-columns:${experimentId}`;
 	}
 
+	function runOpsHeatmapStorageKey(experimentId: string): string {
+		return `numereng:runops:heatmap:${experimentId}`;
+	}
+
 	$effect(() => {
 		const experimentId = data.experiment.experiment_id;
 		if (typeof window === 'undefined') return;
 		try {
 			const raw = window.localStorage.getItem(runOpsColumnsStorageKey(experimentId));
-			if (!raw) return;
-			const parsed = JSON.parse(raw);
-			if (Array.isArray(parsed)) {
-				runOpsHiddenColumns = new Set(parsed.filter((key) => typeof key === 'string'));
+			if (raw) {
+				const parsed = JSON.parse(raw);
+				if (Array.isArray(parsed)) {
+					runOpsHiddenColumns = new Set(parsed.filter((key) => typeof key === 'string'));
+				}
+			}
+			const heatmapRaw = window.localStorage.getItem(runOpsHeatmapStorageKey(experimentId));
+			if (heatmapRaw === '0' || heatmapRaw === 'false') {
+				runOpsHeatmapEnabled = false;
 			}
 		} catch {
 			// localStorage might be unavailable or corrupted — fall back to defaults.
 		}
 	});
+
+	function toggleHeatmap() {
+		runOpsHeatmapEnabled = !runOpsHeatmapEnabled;
+		if (typeof window !== 'undefined') {
+			try {
+				window.localStorage.setItem(
+					runOpsHeatmapStorageKey(data.experiment.experiment_id),
+					runOpsHeatmapEnabled ? '1' : '0'
+				);
+			} catch {
+				// ignore
+			}
+		}
+	}
 
 	function setColumnVisibility(col: string, visible: boolean) {
 		const next = new Set(runOpsHiddenColumns);
@@ -330,13 +354,17 @@
 		return ranges;
 	});
 
-	// Opacity scale: 0 at the worst end of a column, ~HEATMAP_MAX_ALPHA at
-	// the best. Linear. Monochrome (white overlay on the dark table). Returns
-	// an empty string when there's no meaningful range so Svelte leaves the
-	// inline style off entirely.
-	const HEATMAP_MAX_ALPHA = 0.07;
+	// Cell tint is a subtle red-to-green gradient keyed on the value's rank
+	// within its column. Alpha is a U-shape around the midpoint so median
+	// values stay (nearly) untinted and the extremes speak the loudest.
+	// Only reds/greens are used — the rest of the UI stays monochrome, so the
+	// semantic colors register as a whisper rather than a branding choice.
+	const HEATMAP_MAX_ALPHA = 0.09;
+	const HEATMAP_POSITIVE_RGB = '34, 197, 94'; // emerald-500
+	const HEATMAP_NEGATIVE_RGB = '239, 68, 68'; // red-500
 
 	function metricCellTint(col: string, value: number | undefined | null): string {
+		if (!runOpsHeatmapEnabled) return '';
 		if (value == null || Number.isNaN(value)) return '';
 		const range = metricColumnRanges.get(col);
 		if (!range) return '';
@@ -346,9 +374,12 @@
 		if (METRIC_LOWER_IS_BETTER.has(col)) {
 			ratio = 1 - ratio;
 		}
-		const alpha = ratio * HEATMAP_MAX_ALPHA;
+		const signed = ratio * 2 - 1; // -1 (worst) ... 0 (median) ... 1 (best)
+		const strength = Math.abs(signed);
+		const alpha = strength * HEATMAP_MAX_ALPHA;
 		if (alpha <= 0) return '';
-		return `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+		const rgb = signed >= 0 ? HEATMAP_POSITIVE_RGB : HEATMAP_NEGATIVE_RGB;
+		return `rgba(${rgb}, ${alpha.toFixed(3)})`;
 	}
 
 	let selectedOperationItem = $derived.by(() => {
@@ -1293,6 +1324,26 @@
 											>{view}</button>
 										{/each}
 									</div>
+									<button
+										type="button"
+										aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
+										aria-pressed={runOpsHeatmapEnabled}
+										title={runOpsHeatmapEnabled ? 'Heatmap on' : 'Heatmap off'}
+										class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border text-muted-foreground transition-colors {runOpsHeatmapEnabled ? 'border-white/25 text-foreground' : 'border-white/15 hover:text-foreground hover:bg-white/10'}"
+										onclick={toggleHeatmap}
+									>
+										{#if runOpsHeatmapEnabled}
+											<span class="flex items-center gap-[3px]">
+												<span class="h-2 w-2 rounded-full" style:background-color="rgba(239, 68, 68, 0.7)"></span>
+												<span class="h-2 w-2 rounded-full" style:background-color="rgba(34, 197, 94, 0.7)"></span>
+											</span>
+										{:else}
+											<span class="flex items-center gap-[3px]">
+												<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
+												<span class="h-2 w-2 rounded-full border border-muted-foreground/40"></span>
+											</span>
+										{/if}
+									</button>
 									<div class="relative">
 										<button
 											type="button"
