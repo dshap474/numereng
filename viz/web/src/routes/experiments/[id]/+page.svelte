@@ -71,6 +71,8 @@
 	let benchmarkSimilarityBmcMode = $state<'last200' | 'full'>('last200');
 	let pageTab = $state<'analysis' | 'progress' | 'runops'>('analysis');
 	let runOpsView = $state<'table' | 'chart'>('table');
+	let runOpsColumnPickerOpen = $state(false);
+	let runOpsHiddenColumns = $state<Set<string>>(new Set());
 	let launchSectionOpen = $state(true);
 	let queueSectionOpen = $state(true);
 	let monitorSectionOpen = $state(true);
@@ -174,16 +176,7 @@
 		return RUNOPS_MAIN_METRICS.filter((key) => runOpsAvailableMetricKeys.has(key));
 	});
 
-	let metricColumns = $derived.by(() => {
-		const ordered: string[] = [];
-		const seen = new Set<string>();
-		for (const key of [...RUNOPS_MAIN_METRICS, ...RUNOPS_ALL_SCORING_METRICS]) {
-			if (!runOpsAvailableMetricKeys.has(key) || seen.has(key)) continue;
-			ordered.push(key);
-			seen.add(key);
-		}
-		return ordered;
-	});
+	let metricColumns = $derived.by(() => allMetricColumns.filter((col) => !runOpsHiddenColumns.has(col)));
 
 	let runOpsMetricDividerColumn = $derived.by(() => {
 		if (runOpsMainMetricColumns.length === 0) return null;
@@ -200,6 +193,53 @@
 		'cwmm_std',
 		'max_drawdown'
 	]);
+
+	let allMetricColumns = $derived.by(() => {
+		const ordered: string[] = [];
+		const seen = new Set<string>();
+		for (const key of [...RUNOPS_MAIN_METRICS, ...RUNOPS_ALL_SCORING_METRICS]) {
+			if (!runOpsAvailableMetricKeys.has(key) || seen.has(key)) continue;
+			ordered.push(key);
+			seen.add(key);
+		}
+		return ordered;
+	});
+
+	function runOpsColumnsStorageKey(experimentId: string): string {
+		return `numereng:runops:hidden-columns:${experimentId}`;
+	}
+
+	$effect(() => {
+		const experimentId = data.experiment.experiment_id;
+		if (typeof window === 'undefined') return;
+		try {
+			const raw = window.localStorage.getItem(runOpsColumnsStorageKey(experimentId));
+			if (!raw) return;
+			const parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) {
+				runOpsHiddenColumns = new Set(parsed.filter((key) => typeof key === 'string'));
+			}
+		} catch {
+			// localStorage might be unavailable or corrupted — fall back to defaults.
+		}
+	});
+
+	function setColumnVisibility(col: string, visible: boolean) {
+		const next = new Set(runOpsHiddenColumns);
+		if (visible) next.delete(col);
+		else next.add(col);
+		runOpsHiddenColumns = next;
+		if (typeof window !== 'undefined') {
+			try {
+				window.localStorage.setItem(
+					runOpsColumnsStorageKey(data.experiment.experiment_id),
+					JSON.stringify([...next])
+				);
+			} catch {
+				// ignore
+			}
+		}
+	}
 
 	interface Operation {
 		op_id: string;
@@ -1243,14 +1283,48 @@
 									<h2 class="text-sm font-semibold leading-tight">Ops</h2>
 									<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
 								</div>
-								<div class="pill-tabs" aria-label="Ops view">
-									{#each ['table', 'chart'] as view (view)}
+								<div class="flex items-center gap-2">
+									<div class="pill-tabs" aria-label="Ops view">
+										{#each ['table', 'chart'] as view (view)}
+											<button
+												type="button"
+												class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
+												onclick={() => (runOpsView = view as 'table' | 'chart')}
+											>{view}</button>
+										{/each}
+									</div>
+									<div class="relative">
 										<button
 											type="button"
-											class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
-											onclick={() => (runOpsView = view as 'table' | 'chart')}
-										>{view}</button>
-									{/each}
+											aria-label="Toggle column visibility"
+											aria-expanded={runOpsColumnPickerOpen}
+											class="inline-flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/15 text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+											onclick={() => (runOpsColumnPickerOpen = !runOpsColumnPickerOpen)}
+										>
+											<svg viewBox="0 0 16 16" aria-hidden="true" class="h-3 w-3"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
+										</button>
+										{#if runOpsColumnPickerOpen}
+											<div
+												class="absolute right-0 top-full z-40 mt-1.5 w-56 max-h-80 overflow-auto rounded-lg border border-border bg-card shadow-lg p-2 text-xs"
+												role="menu"
+											>
+												<div class="px-2 pt-1 pb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Columns</div>
+												{#each allMetricColumns as col (col)}
+													{@const visible = !runOpsHiddenColumns.has(col)}
+													<label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-white/5">
+														<input
+															type="checkbox"
+															class="h-3 w-3 accent-white"
+															checked={visible}
+															onchange={(e) => setColumnVisibility(col, (e.currentTarget as HTMLInputElement).checked)}
+														/>
+														<span class="tabular-nums">{metricShortLabel(col)}</span>
+														<span class="ml-auto truncate text-[10px] text-muted-foreground/60">{col}</span>
+													</label>
+												{/each}
+											</div>
+										{/if}
+									</div>
 								</div>
 							</div>
 						</th>
