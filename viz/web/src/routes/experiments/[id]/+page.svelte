@@ -1346,7 +1346,7 @@
 							onclick={() => selectOperation(op)}
 						>
 							<td
-								class="sticky left-0 z-10 w-[260px] min-w-[260px] border-b border-r border-border/50 px-4 py-1.5 text-left {isSelected ? 'bg-card shadow-[inset_2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.04)]' : 'bg-background group-hover:bg-card'}"
+								class="sticky left-0 z-10 w-[260px] min-w-[260px] border-b border-border/50 px-4 py-2 text-left {isSelected ? 'bg-primary/10 shadow-[inset_-2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'bg-background border-r border-r-border/50 group-hover:bg-card'}"
 							>
 								<div class="flex items-center gap-2">
 									<span class="inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide {opTypeBadgeClass(op.op_type)}">
@@ -1414,19 +1414,18 @@
 			{#each sortedOps as op (op.op_id)}
 				<button
 					type="button"
-					class="h-[88px] w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
+					class="w-full border-l-2 px-4 py-2 text-left transition-colors hover:bg-muted/20 {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'border-l-primary bg-primary/10 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.05)]' : 'border-l-transparent'}"
 					onclick={() => selectOperation(op)}
 				>
-					<div class="flex items-start gap-2">
-						<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
+					<div class="flex items-center gap-2">
+						<span class="inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide {opTypeBadgeClass(op.op_type)}">
 							{opTypeLabel(op.op_type)}
 						</span>
 						<div class="min-w-0 flex-1">
-							<div class="truncate text-[12px] font-medium">{op.name}</div>
-							<div class="mt-1 text-[10px] text-muted-foreground">
+							<div class="truncate font-mono text-[12px] font-medium tabular-nums">{shortId(op.op_id, 12)}</div>
+							<div class="mt-0.5 truncate text-[10px] text-muted-foreground">
 								{op.model_type} · {op.target} · {op.feature_set}
 							</div>
-							<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
 						</div>
 					</div>
 				</button>
