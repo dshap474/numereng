@@ -1306,10 +1306,19 @@
 
 {#snippet opsRail()}
 	<div class="w-[280px] flex-shrink-0 flex flex-col border-r border-border bg-card overflow-hidden">
-		<div class="flex items-center justify-between border-b border-border px-4" style:height="56px">
+		<div class="flex items-center justify-between gap-3 border-b border-border px-4" style:height="56px">
 			<div>
 				<h2 class="text-sm font-semibold leading-tight">Ops</h2>
 				<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
+			</div>
+			<div class="pill-tabs" aria-label="Ops view">
+				{#each ['table', 'chart'] as view (view)}
+					<button
+						type="button"
+						class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
+						onclick={() => (runOpsView = view as 'table' | 'chart')}
+					>{view}</button>
+				{/each}
 			</div>
 		</div>
 
@@ -2054,18 +2063,9 @@
 			{@render opsRail()}
 
 			<div class="flex-1 min-w-0 flex flex-col min-h-0 relative bg-card overflow-hidden">
-				<!-- Floating top-right controls: toggle + (table-only) heatmap + column picker -->
-				<div class="absolute top-2.5 right-3 z-30 flex items-center gap-2">
-					<div class="pill-tabs" aria-label="Ops view">
-						{#each ['table', 'chart'] as view (view)}
-							<button
-								type="button"
-								class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
-								onclick={() => (runOpsView = view as 'table' | 'chart')}
-							>{view}</button>
-						{/each}
-					</div>
-					{#if runOpsView === 'table'}
+				<!-- Floating top-right controls: table-only heatmap + column picker -->
+				{#if runOpsView === 'table'}
+					<div class="absolute top-2.5 right-3 z-30 flex items-center gap-2">
 						<button
 							type="button"
 							aria-label={runOpsHeatmapEnabled ? 'Disable heatmap tint' : 'Enable heatmap tint'}
@@ -2118,8 +2118,8 @@
 								</div>
 							{/if}
 						</div>
-					{/if}
-				</div>
+					</div>
+				{/if}
 
 				{#if runOpsView === 'table'}
 					<div class="overflow-auto flex-1 min-h-0">
