@@ -20,7 +20,9 @@
 		DASHBOARD_KEY_METRICS,
 		RUNOPS_ALL_SCORING_METRICS,
 		RUNOPS_MAIN_METRICS,
+		metricLabel,
 		metricNumber,
+		metricShortLabel,
 		targetLabel
 	} from '$lib/metrics/canonical';
 	import {
@@ -1178,21 +1180,21 @@
 		<div class="overflow-auto flex-1 min-h-0">
 			<table class="w-max min-w-full text-sm leading-[1.35] border-separate border-spacing-0">
 				<thead>
-					<tr class="h-[92px] text-left align-middle">
+					<tr class="text-left align-middle">
 						<th
 							scope="col"
-							class="sticky left-0 top-0 z-30 relative overflow-hidden w-[320px] min-w-[320px] border-b border-r border-border bg-background px-4 py-3 align-middle"
+							class="sticky left-0 top-0 z-30 w-[260px] min-w-[260px] border-b border-r border-border/70 bg-background px-4 py-2.5 align-middle"
 						>
-							<div class="flex items-start justify-between gap-3">
+							<div class="flex items-center justify-between gap-3">
 								<div>
-									<h2 class="text-sm font-semibold">Ops</h2>
-									<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
+									<h2 class="text-sm font-semibold leading-tight">Ops</h2>
+									<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
 								</div>
-								<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+								<div class="pill-tabs" aria-label="Ops view">
 									{#each ['table', 'chart'] as view (view)}
 										<button
 											type="button"
-											class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+											class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
 											onclick={() => (runOpsView = view as 'table' | 'chart')}
 										>{view}</button>
 									{/each}
@@ -1202,38 +1204,40 @@
 						{#each metricColumns as col (col)}
 							<th
 								scope="col"
-								class="sticky top-0 z-20 min-w-[128px] border-b border-border bg-background px-3 py-2.5 align-middle font-medium text-xs uppercase tracking-wider text-muted-foreground text-right cursor-pointer hover:text-foreground select-none {runOpsMetricDividerColumn === col ? 'border-r border-border/80' : ''}"
+								title={metricLabel(col)}
+								class="sticky top-0 z-20 min-w-[88px] border-b border-border/70 bg-background px-3 py-2 align-middle font-medium text-[11px] tracking-wide text-muted-foreground text-right cursor-pointer hover:text-foreground select-none {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
 								onclick={() => toggleSort(col)}
-							>{col}{sortIndicator(col)}</th>
+							>{metricShortLabel(col)}{sortIndicator(col)}</th>
 						{/each}
 					</tr>
 				</thead>
-				<tbody class="divide-y divide-border">
+				<tbody>
 					{#each sortedOps as op (op.op_id)}
+						{@const isSelected = selectedOp?.id === op.op_id && selectedOp?.type === op.op_type}
 						<tr
-							class="group h-[88px] cursor-pointer transition-colors"
+							class="group cursor-pointer transition-colors hover:bg-white/[0.03] {isSelected ? '' : 'odd:bg-white/[0.015]'}"
 							onclick={() => selectOperation(op)}
 						>
 							<td
-								class="sticky left-0 z-10 relative overflow-hidden w-[320px] min-w-[320px] border-b border-r border-border px-4 py-3 text-left {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-card shadow-[inset_2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.04)]' : 'bg-background group-hover:bg-card'}"
+								class="sticky left-0 z-10 w-[260px] min-w-[260px] border-b border-r border-border/50 px-4 py-1.5 text-left {isSelected ? 'bg-card shadow-[inset_2px_0_0_0_var(--color-primary),inset_0_0_0_1px_rgba(255,255,255,0.04)]' : 'bg-background group-hover:bg-card'}"
 							>
-								<div class="flex items-start gap-2">
-									<span class="mt-0.5 inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase {opTypeBadgeClass(op.op_type)}">
+								<div class="flex items-center gap-2">
+									<span class="inline-flex rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide {opTypeBadgeClass(op.op_type)}">
 										{opTypeLabel(op.op_type)}
 									</span>
 									<div class="min-w-0 flex-1">
-										<div class="truncate text-[12px] font-medium">{op.name}</div>
-										<div class="mt-1 text-[10px] text-muted-foreground">
+										<div class="truncate font-mono text-[12px] font-medium tabular-nums">{shortId(op.op_id, 12)}</div>
+										<div class="mt-0.5 truncate text-[10px] text-muted-foreground">
 											{op.model_type} · {op.target} · {op.feature_set}
 										</div>
-										<div class="mt-1 font-mono text-[10px] text-muted-foreground">{shortId(op.op_id, 12)}</div>
 									</div>
 								</div>
 							</td>
 							{#each metricColumns as col (col)}
+								{@const value = opMetricValue(op, col)}
 								<td
-									class="min-w-[128px] border-b border-border px-3 py-0 text-right tabular-nums align-middle {selectedOp?.id === op.op_id && selectedOp?.type === op.op_type ? 'bg-primary/10' : 'bg-transparent group-hover:bg-muted/20'} {runOpsMetricDividerColumn === col ? 'border-r border-border/80' : ''}"
-								>{fmt(opMetricValue(op, col))}</td>
+									class="min-w-[88px] border-b border-border/40 px-3 py-1.5 text-right tabular-nums align-middle {isSelected ? 'bg-primary/10' : ''} {runOpsMetricDividerColumn === col ? 'border-r border-border/60' : ''}"
+								>{#if value == null || Number.isNaN(value)}<span class="text-muted-foreground/40">—</span>{:else}{value.toFixed(4)}{/if}</td>
 							{/each}
 						</tr>
 					{:else}
@@ -1254,17 +1258,17 @@
 
 {#snippet opsRail()}
 	<div class="w-[320px] flex-shrink-0 flex flex-col rounded-lg border border-border bg-card overflow-hidden">
-		<div class="h-[92px] border-b border-border px-4 py-3">
+		<div class="border-b border-border px-4 py-3">
 			<div class="flex items-center justify-between gap-3">
 				<div>
-					<h2 class="text-sm font-semibold">Ops</h2>
-					<p class="text-xs text-muted-foreground">{sortedOps.length} total</p>
+					<h2 class="text-sm font-semibold leading-tight">Ops</h2>
+					<p class="text-[11px] text-muted-foreground tabular-nums">{sortedOps.length} total</p>
 				</div>
-				<div class="inline-flex rounded-md border border-border/60 bg-background/25 p-0.5">
+				<div class="pill-tabs" aria-label="Ops view">
 					{#each ['table', 'chart'] as view (view)}
 						<button
 							type="button"
-							class="px-2.5 py-1 rounded text-[11px] capitalize transition-colors {runOpsView === view ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:text-foreground'}"
+							class={`pill-tab pill-tab-sm ${runOpsView === view ? 'pill-tab-active' : ''}`}
 							onclick={() => (runOpsView = view as 'table' | 'chart')}
 						>{view}</button>
 					{/each}

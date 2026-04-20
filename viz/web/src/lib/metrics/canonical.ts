@@ -123,6 +123,49 @@ export function metricLabel(key: string): string {
 	}
 }
 
+export function metricShortLabel(key: string): string {
+	switch (key) {
+		case 'bmc_last_200_eras_mean':
+			return 'BMC 200';
+		case 'bmc_mean':
+			return 'BMC';
+		case 'bmc_std':
+			return 'BMC Std';
+		case 'bmc_sharpe':
+			return 'BMC Sh';
+		case 'corr_mean':
+			return 'CORR';
+		case 'corr_std':
+			return 'CORR Std';
+		case 'corr_sharpe':
+			return 'CORR Sh';
+		case 'fnc_mean':
+			return 'FNC';
+		case 'fnc_std':
+			return 'FNC Std';
+		case 'fnc_sharpe':
+			return 'FNC Sh';
+		case 'mmc_mean':
+			return 'MMC';
+		case 'mmc_std':
+			return 'MMC Std';
+		case 'mmc_sharpe':
+			return 'MMC Sh';
+		case 'mmc_coverage_ratio_rows':
+			return 'MMC Cov';
+		case 'cwmm_mean':
+			return 'CWMM';
+		case 'cwmm_std':
+			return 'CWMM Std';
+		case 'cwmm_sharpe':
+			return 'CWMM Sh';
+		case 'max_drawdown':
+			return 'Max DD';
+		default:
+			return key;
+	}
+}
+
 export function targetLabel(value: {
 	target_payout?: string | null;
 	target_train?: string | null;
