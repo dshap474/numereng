@@ -21,7 +21,7 @@ def _target():
 
 
 def _write_run_plan(store_root: Path, *, experiment_id: str, row_count: int) -> None:
-    experiment_dir = store_root.parent / "experiments" / experiment_id
+    experiment_dir = store_root / "experiments" / experiment_id
     (experiment_dir / "configs").mkdir(parents=True, exist_ok=True)
     rows: list[str] = []
     for index in range(1, row_count + 1):

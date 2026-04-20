@@ -99,7 +99,7 @@ def test_begin_local_training_session_writes_queued_rows(tmp_path: Path) -> None
 
 def test_begin_local_training_session_infers_experiment_id_from_config_path(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    config_path = store_root.parent / "experiments" / "2026-02-22_test-exp" / "configs" / "base.json"
+    config_path = store_root / "experiments" / "2026-02-22_test-exp" / "configs" / "base.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text("{}", encoding="utf-8")
 
@@ -130,7 +130,7 @@ def test_begin_local_training_session_infers_experiment_id_from_config_path(tmp_
 
 def test_local_telemetry_lifecycle_transitions_to_completed(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    config_path = store_root.parent / "experiments" / "2026-02-22_test-exp" / "configs" / "base.json"
+    config_path = store_root / "experiments" / "2026-02-22_test-exp" / "configs" / "base.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text("{}", encoding="utf-8")
 

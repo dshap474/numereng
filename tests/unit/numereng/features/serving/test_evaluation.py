@@ -509,9 +509,7 @@ def test_sync_submission_package_diagnostics_missing_status_retries_until_visibl
     assert result.raw_path is not None and result.raw_path.is_file()
 
 
-def test_sync_submission_package_diagnostics_missing_status_times_out(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_sync_submission_package_diagnostics_missing_status_times_out(tmp_path: Path, monkeypatch: Any) -> None:
     package = _build_package(tmp_path)
     package = save_package(
         replace(

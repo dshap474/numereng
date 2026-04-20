@@ -99,12 +99,7 @@ def _pickle_feature_columns(
     components = getattr(predictor, "_components", None)
     if isinstance(components, list) and components:
         feature_cols = sorted(
-            {
-                str(col)
-                for item in components
-                if isinstance(item, dict)
-                for col in item.get("feature_cols", ())
-            }
+            {str(col) for item in components if isinstance(item, dict) for col in item.get("feature_cols", ())}
         )
         if feature_cols:
             return feature_cols

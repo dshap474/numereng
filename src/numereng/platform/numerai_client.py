@@ -218,8 +218,7 @@ def _normalize_diagnostics_payload(payload: Any) -> dict[str, Any]:
         if not dict_items:
             raise NumeraiClientError("numerai_diagnostics_empty")
         with_timestamps = [
-            (idx, item, _diagnostics_updated_at_sort_key(item.get("updatedAt")))
-            for idx, item in enumerate(dict_items)
+            (idx, item, _diagnostics_updated_at_sort_key(item.get("updatedAt"))) for idx, item in enumerate(dict_items)
         ]
         timestamped = [(idx, item, parsed) for idx, item, parsed in with_timestamps if parsed is not None]
         if timestamped:

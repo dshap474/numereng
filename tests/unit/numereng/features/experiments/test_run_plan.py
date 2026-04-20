@@ -12,7 +12,7 @@ from numereng.features.training import TrainingRunResult
 
 def _setup_experiment_with_plan(store_root: Path, *, experiment_id: str, config_names: list[str]) -> Path:
     experiment_service.create_experiment(store_root=store_root, experiment_id=experiment_id)
-    experiment_dir = store_root.parent / "experiments" / experiment_id
+    experiment_dir = store_root / "experiments" / experiment_id
     for name in config_names:
         config_path = experiment_dir / "configs" / name
         config_path.parent.mkdir(parents=True, exist_ok=True)

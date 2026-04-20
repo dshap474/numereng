@@ -103,7 +103,7 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store_root = tmp_path / ".numereng"
-    experiment_root = store_root.parent / "experiments" / "exp-1"
+    experiment_root = store_root / "experiments" / "exp-1"
     (experiment_root / "configs").mkdir(parents=True)
     (experiment_root / "run_scripts").mkdir(parents=True)
     (experiment_root / "results").mkdir(parents=True)
@@ -146,10 +146,10 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
     result = remote_service.sync_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
 
     assert captured["paths"] == [
-        "experiments/exp-1/EXPERIMENT.md",
-        "experiments/exp-1/run_plan.csv",
-        "experiments/exp-1/configs/base.json",
-        "experiments/exp-1/run_scripts/launch.ps1",
+        ".numereng/experiments/exp-1/EXPERIMENT.md",
+        ".numereng/experiments/exp-1/run_plan.csv",
+        ".numereng/experiments/exp-1/configs/base.json",
+        ".numereng/experiments/exp-1/run_scripts/launch.ps1",
     ]
     assert result.remote_experiment_dir.endswith(r".numereng\experiments\exp-1")
 
@@ -159,7 +159,7 @@ def test_remote_run_train_syncs_repo_and_experiment_for_experiment_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store_root = tmp_path / ".numereng"
-    config_path = store_root.parent / "experiments" / "exp-1" / "configs" / "base.json"
+    config_path = store_root / "experiments" / "exp-1" / "configs" / "base.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text("{}\n", encoding="utf-8")
     sync_calls: list[str] = []
@@ -398,7 +398,7 @@ def test_pull_remote_experiment_materializes_finished_runs_and_reconciles_manife
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store_root = tmp_path / ".numereng"
-    local_experiment_dir = store_root.parent / "experiments" / "exp-1"
+    local_experiment_dir = store_root / "experiments" / "exp-1"
     local_experiment_dir.mkdir(parents=True)
     (local_experiment_dir / "EXPERIMENT.md").write_text("# local doc\n", encoding="utf-8")
 

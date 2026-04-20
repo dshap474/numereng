@@ -97,6 +97,21 @@ class ServingClient(ServingDataClient, SubmissionClient, Protocol):
     def model_upload_docker_images(self) -> list[str]:
         """Return supported model-upload docker images."""
 
+    def diagnostics(self, *, model_id: str, diagnostics_id: str | None = None) -> dict[str, object]:
+        """Return one normalized diagnostics payload."""
+
+    def compute_pickle_status(
+        self,
+        *,
+        pickle_id: str,
+        model_id: str | None = None,
+        unassigned: bool = False,
+    ) -> dict[str, object] | None:
+        """Return one upload-specific compute status payload."""
+
+    def compute_pickle_diagnostics_logs(self, *, pickle_id: str) -> list[dict[str, object]]:
+        """Return diagnostics-trigger logs for one upload."""
+
 
 def create_submission_package(
     *,

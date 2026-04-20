@@ -40,13 +40,23 @@ If `store doctor` reports `run_count_mismatch` with `filesystem_runs` far below 
 
 ## Repair And Backfill
 
-Backfill missing execution metadata:
+Backfill missing execution metadata for exactly one scope:
 
 ```bash
+# one run
+uv run numereng store backfill-run-execution --run-id <run_id>
+
+# all runs
 uv run numereng store backfill-run-execution --all
 ```
 
-Repair lifecycle rows:
+Repair active lifecycle rows only:
+
+```bash
+uv run numereng store repair-run-lifecycles
+```
+
+Widen the sweep to all lifecycle rows:
 
 ```bash
 uv run numereng store repair-run-lifecycles --all
@@ -74,6 +84,8 @@ uv run numereng store materialize-viz-artifacts \
 
 - filesystem artifacts are canonical; SQLite is an index over them
 - use rebuild when broad reconciliation is needed, not repeated one-off indexing
+- `backfill-run-execution` is strict XOR: pass exactly one of `--run-id` or `--all`
+- `repair-run-lifecycles` defaults to active-only repair; `--all` broadens the sweep
 - `--fix-strays` is a cleanup action; do not run it casually on a workspace you have not inspected
 
 ## Read Next

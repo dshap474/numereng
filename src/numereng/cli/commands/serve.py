@@ -310,9 +310,7 @@ def _handle_simple_request(
         "--stage": "stage",
     }
     request_payload = {
-        field: values.get(flag)
-        for flag, field in allowed_keys.items()
-        if flag in values or flag in required
+        field: values.get(flag) for flag, field in allowed_keys.items() if flag in values or flag in required
     }
     request_payload["workspace_root"] = values.get("--workspace", ".")
     if "--wait-diagnostics" in toggles:

@@ -557,7 +557,7 @@ def test_build_submission_pickle_rejects_neutralized_package(tmp_path: Path) -> 
         package_id="pkg-1",
         components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
     )
-    package_path = tmp_path / "experiments" / "exp-1" / "submission_packages" / "pkg-1" / "package.json"
+    package_path = tmp_path / ".numereng" / "experiments" / "exp-1" / "submission_packages" / "pkg-1" / "package.json"
     payload = json.loads(package_path.read_text(encoding="utf-8"))
     payload["neutralization"] = {
         "enabled": True,

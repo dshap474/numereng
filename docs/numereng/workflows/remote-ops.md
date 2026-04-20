@@ -120,7 +120,7 @@ Re-run the command per experiment. `scoring` is idempotent and also upgrades to 
 - `remote repo sync` mirrors the git-visible working tree only.
 - It does **not** sync the full `.numereng/` runtime store.
 - `remote experiment sync` mirrors experiment authoring files only.
-- `remote experiment pull` materializes eligible finished remote runs into local `.numereng/runs/<run_id>/`.
+- `remote experiment pull --mode <scoring|full>` materializes eligible finished remote runs into local `.numereng/runs/<run_id>/`.
 
 ## Local State And Artifacts
 

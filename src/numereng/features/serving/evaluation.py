@@ -43,6 +43,7 @@ from numereng.features.serving.runtime import (
     blend_component_predictions,
 )
 from numereng.features.serving.service import (
+    ServingClient,
     _fit_and_predict_package,
     build_submission_pickle,
     create_serving_client,
@@ -74,7 +75,7 @@ def score_submission_package(
     dataset: PackageEvaluationDataset = "validation",
     runtime: PackageScoreRuntime = "auto",
     stage: PackageScoreStage = "post_training_full",
-    client: Any | None = None,
+    client: ServingClient | None = None,
 ) -> PackageScoreResult:
     """Score one final submission package artifact on local validation data."""
 
@@ -185,9 +186,12 @@ def score_submission_package(
         example_key, example_summary, example_frame, example_meta = example_metric
         summaries[example_key] = example_summary
         metric_frames[example_key] = example_frame
-        joins_payload = score_provenance.setdefault("joins", {})
+        joins_payload = score_provenance.get("joins")
+        normalized_joins: dict[str, object] = {}
         if isinstance(joins_payload, dict):
-            joins_payload["example_predictions"] = example_meta
+            normalized_joins = {str(key): value for key, value in joins_payload.items()}
+        normalized_joins["example_predictions"] = example_meta
+        score_provenance["joins"] = normalized_joins
 
     explicit_summaries = _summaries_payload(
         summaries=summaries,
@@ -293,7 +297,7 @@ def sync_submission_package_diagnostics(
     experiment_id: str,
     package_id: str,
     wait: bool = True,
-    client: Any | None = None,
+    client: ServingClient | None = None,
 ) -> PackageDiagnosticsSyncResult:
     """Persist the latest Numerai diagnostics snapshot after one uploaded package pickle."""
 
@@ -351,7 +355,9 @@ def sync_submission_package_diagnostics(
         summary_path = diagnostics_dir / "summary.json"
         summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True), encoding="utf-8")
 
-        per_era = pd.DataFrame(list(diagnostics_payload.get("perEraDiagnostics", []) or []))
+        per_era_payload = diagnostics_payload.get("perEraDiagnostics")
+        per_era_rows = per_era_payload if isinstance(per_era_payload, list) else []
+        per_era = pd.DataFrame(per_era_rows)
         per_era_path = write_parquet(per_era, diagnostics_dir / "per_era.parquet", index=False)
 
     synced_at = utc_now_iso()

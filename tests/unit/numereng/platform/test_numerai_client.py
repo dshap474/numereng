@@ -52,7 +52,7 @@ class _SuccessfulNumerAPI:
     def model_upload_docker_images(self) -> list[str]:
         return ["ghcr.io/numerai/numerai-inference:py3.11"]
 
-    def diagnostics(self, model_id: str, diagnostics_id: str | None = None) -> dict[str, Any]:
+    def diagnostics(self, model_id: str, diagnostics_id: str | None = None) -> Any:
         return {"id": diagnostics_id or "diag-1", "status": "done", "modelId": model_id}
 
     def raw_query(self, query: str, variables: dict[str, Any], authorization: bool = False) -> dict[str, Any]:
@@ -94,7 +94,7 @@ class _FailingUploadNumerAPI:
         _ = (file_path, model_id, data_version, docker_image)
         raise RuntimeError("boom")
 
-    def diagnostics(self, model_id: str, diagnostics_id: str | None = None) -> dict[str, Any]:
+    def diagnostics(self, model_id: str, diagnostics_id: str | None = None) -> Any:
         _ = (model_id, diagnostics_id)
         raise RuntimeError("boom")
 

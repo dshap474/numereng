@@ -120,7 +120,7 @@ def _write_run(
 
 
 def _write_experiment_manifest(store_root: Path, experiment_id: str, run_ids: list[str]) -> None:
-    experiment_dir = store_root.parent / "experiments" / experiment_id
+    experiment_dir = store_root / "experiments" / experiment_id
     experiment_dir.mkdir(parents=True, exist_ok=True)
     _write_json(experiment_dir / "experiment.json", {"experiment_id": experiment_id, "runs": run_ids})
 

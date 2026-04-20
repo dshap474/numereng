@@ -7,6 +7,7 @@
 - `import numereng.api`
 - `import numereng.api.pipeline`
 - `import numereng.api.contracts`
+- `import numereng.api.cloud`
 
 Do not treat underscore-prefixed modules under `src/numereng/api/` as stable imports.
 
@@ -32,7 +33,9 @@ print(response.run_id)
 print(response.predictions_path)
 ```
 
-## Major Function Groups
+`numereng.api.run_training()` is also stable, but `run_training_pipeline()` is the clearest end-to-end training entry point.
+
+## Stable Function Groups
 
 ### Runs
 
@@ -40,6 +43,11 @@ print(response.predictions_path)
 - `score_run(ScoreRunRequest)`
 - `submit_predictions(SubmissionRequest)`
 - `cancel_run(RunCancelRequest)`
+
+### Docs And Viz
+
+- `sync_docs(DocsSyncRequest | None = None)`
+- `create_viz_app(VizAppRequest | None = None)`
 
 ### Baselines And Dataset Tools
 
@@ -52,6 +60,7 @@ print(response.predictions_path)
 - `experiment_list(ExperimentListRequest | None = None)`
 - `experiment_get(ExperimentGetRequest)`
 - `experiment_train(ExperimentTrainRequest)`
+- `experiment_run_plan(ExperimentRunPlanRequest)`
 - `experiment_report(ExperimentReportRequest)`
 - `experiment_promote(ExperimentPromoteRequest)`
 - `experiment_pack(ExperimentPackRequest)`
@@ -71,10 +80,11 @@ print(response.predictions_path)
 - `hpo_get(HpoStudyGetRequest)`
 - `hpo_trials(HpoStudyTrialsRequest)`
 - `ensemble_build(EnsembleBuildRequest)`
+- `ensemble_select(EnsembleSelectRequest)`
 - `ensemble_list(EnsembleListRequest | None = None)`
 - `ensemble_get(EnsembleGetRequest)`
 
-### Serving And Submission
+### Serving And Neutralization
 
 - `serve_package_create(ServePackageCreateRequest)`
 - `serve_package_inspect(ServePackageInspectRequest)`
@@ -87,7 +97,7 @@ print(response.predictions_path)
 - `serve_pickle_upload(ServePickleUploadRequest)`
 - `neutralize_apply(NeutralizeRequest)`
 
-### Store, Monitor, Remote, Cloud, Numerai
+### Store And Monitor
 
 - `store_init(StoreInitRequest | None = None)`
 - `store_index_run(StoreIndexRequest)`
@@ -97,6 +107,9 @@ print(response.predictions_path)
 - `store_repair_run_lifecycles(StoreRunLifecycleRepairRequest)`
 - `store_materialize_viz_artifacts(StoreMaterializeVizArtifactsRequest)`
 - `build_monitor_snapshot(MonitorSnapshotRequest | None = None)`
+
+### Remote
+
 - `remote_list_targets(RemoteTargetListRequest | None = None)`
 - `remote_bootstrap_viz(RemoteVizBootstrapRequest | None = None)`
 - `remote_doctor(RemoteDoctorRequest)`
@@ -109,12 +122,63 @@ print(response.predictions_path)
 - `remote_experiment_pull(RemoteExperimentPullRequest)`
 - `remote_config_push(RemoteConfigPushRequest)`
 - `remote_train_launch(RemoteTrainLaunchRequest)`
-- cloud EC2, managed AWS, and Modal functions exposed through `numereng.api.cloud` and the top-level facade
+
+### Cloud
+
+Cloud helpers are available from both `numereng.api` and `numereng.api.cloud`.
+
+EC2:
+
+- `cloud_ec2_init_iam(Ec2InitIamRequest)`
+- `cloud_ec2_setup_data(Ec2SetupDataRequest)`
+- `cloud_ec2_provision(Ec2ProvisionRequest)`
+- `cloud_ec2_package_build_upload(Ec2PackageBuildUploadRequest)`
+- `cloud_ec2_config_upload(Ec2ConfigUploadRequest)`
+- `cloud_ec2_push(Ec2PushRequest)`
+- `cloud_ec2_install(Ec2InstallRequest)`
+- `cloud_ec2_train_start(Ec2TrainStartRequest)`
+- `cloud_ec2_train_poll(Ec2TrainPollRequest)`
+- `cloud_ec2_logs(Ec2LogsRequest)`
+- `cloud_ec2_pull(Ec2PullRequest)`
+- `cloud_ec2_terminate(Ec2TerminateRequest)`
+- `cloud_ec2_status(Ec2StatusRequest)`
+- `cloud_ec2_s3_list(Ec2S3ListRequest)`
+- `cloud_ec2_s3_copy(Ec2S3CopyRequest)`
+- `cloud_ec2_s3_remove(Ec2S3RemoveRequest)`
+
+Managed AWS:
+
+- `cloud_aws_image_build_push(AwsImageBuildPushRequest)`
+- `cloud_aws_train_submit(AwsTrainSubmitRequest)`
+- `cloud_aws_train_status(AwsTrainStatusRequest)`
+- `cloud_aws_train_logs(AwsTrainLogsRequest)`
+- `cloud_aws_train_cancel(AwsTrainCancelRequest)`
+- `cloud_aws_train_pull(AwsTrainPullRequest)`
+- `cloud_aws_train_extract(AwsTrainExtractRequest)`
+
+Modal:
+
+- `cloud_modal_deploy(ModalDeployRequest)`
+- `cloud_modal_data_sync(ModalDataSyncRequest)`
+- `cloud_modal_train_submit(ModalTrainSubmitRequest)`
+- `cloud_modal_train_status(ModalTrainStatusRequest)`
+- `cloud_modal_train_logs(ModalTrainLogsRequest)`
+- `cloud_modal_train_cancel(ModalTrainCancelRequest)`
+- `cloud_modal_train_pull(ModalTrainPullRequest)`
+
+### Numerai
+
 - `list_numerai_datasets(NumeraiDatasetListRequest | None = None)`
 - `download_numerai_dataset(NumeraiDatasetDownloadRequest)`
 - `list_numerai_models(NumeraiModelsRequest | None = None)`
 - `get_numerai_current_round(NumeraiCurrentRoundRequest | None = None)`
-- `scrape_numerai_forum(...)`
+- `scrape_numerai_forum(output_dir="docs/numerai/forum", state_path=None, full_refresh=False)`
+
+### Support Utilities
+
+- `get_health()`
+- `run_bootstrap_check(fail=False)`
+- `get_run_lifecycle(RunLifecycleRequest)`
 
 ## Contracts
 
@@ -123,15 +187,27 @@ All stable request and response models live in `numereng.api.contracts`.
 Key examples:
 
 - `TrainRunRequest`
+- `DocsSyncRequest`
 - `ExperimentCreateRequest`
+- `ExperimentRunPlanRequest`
 - `ResearchInitRequest`
 - `HpoStudyCreateRequest`
 - `EnsembleBuildRequest`
+- `EnsembleSelectRequest`
+- `Ec2ProvisionRequest`
+- `AwsTrainSubmitRequest`
+- `ModalTrainSubmitRequest`
 - `ServePackageCreateRequest`
+- `VizAppRequest`
 - `StoreDoctorRequest`
 - `MonitorSnapshotRequest`
+- `RunLifecycleRequest`
 - `RemoteExperimentLaunchRequest`
 
 ## Error Model
 
 Public API functions raise `PackageError` for boundary failures. Feature-internal exceptions are translated before they cross the API boundary.
+
+## Undocumented Exports
+
+`numereng.api` currently re-exports additional compatibility and feature-adapter names such as `*_record`, `*_api`, `*_study`, and raw feature helpers. Those exports are intentionally undocumented here and are not part of the user-facing API contract for this guide.

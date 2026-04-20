@@ -3394,7 +3394,7 @@ def test_run_job_stream_stops_when_second_stage_fetch_fails() -> None:
 
 def test_notes_content_accepts_plus_in_path(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
-    notes_root = tmp_path / "notes"
+    notes_root = store_root / "notes"
     notes_root.mkdir(parents=True)
     target = notes_root / "signals-+-qc.md"
     target.write_text("# Signals\n", encoding="utf-8")
@@ -3414,7 +3414,7 @@ def test_notes_content_accepts_plus_in_path(tmp_path: Path) -> None:
 def test_get_notes_tree_missing_root_returns_empty_without_creating_directory(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)
-    notes_root = tmp_path / "notes"
+    notes_root = store_root / "notes"
     assert not notes_root.exists()
 
     adapter = VizStoreAdapter(
