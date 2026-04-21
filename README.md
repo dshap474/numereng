@@ -1,6 +1,8 @@
-![Numereng](docs/assets/screenshot-dashboard-hero.png)
+![Numereng landing page with live telemetry hero](docs/assets/screenshot-dashboard-hero.png)
 
 # numereng
+
+Built by [dshap474](https://github.com/dshap474).
 
 `numereng` is a local-first Numerai workspace repo: train models, run experiments, compare configs, build ensembles, package production models, and submit — all driven from one repo checkout with one CLI and one read-only dashboard.
 
@@ -55,7 +57,7 @@ Refresh the tracked official Numerai docs mirror from upstream (optional, ~500 f
 uv run numereng docs sync numerai
 ```
 
-![In-app docs reader with the Numereng/Numerai toggle](docs/assets/screenshot-docs-reader.png)
+![Docs reader with Numereng project docs and the bundled Numerai mirror](docs/assets/screenshot-docs-reader.png)
 
 ## Your First Model
 
@@ -114,7 +116,13 @@ uv run numereng run submit --model-name MY_MODEL --run-id <run_id>
 
 See [`docs/numereng/getting-started/first-model.md`](docs/numereng/getting-started/first-model.md) for the full walkthrough.
 
-![Experiment detail — Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-experiment-report.png)
+![Full experiment analysis view for the Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-experiment-report.png)
+
+When one experiment starts to matter, the detail view gives you the full analysis page, the sortable Run Ops table, and a selected-run chart view in one place.
+
+![Full Run Ops table for the Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-run-ops.png)
+
+![Selected-run Run Ops chart view for the Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-run-ops-chart.png)
 
 ## I Want To…
 
@@ -136,7 +144,7 @@ See [`docs/numereng/getting-started/first-model.md`](docs/numereng/getting-start
 | Sync official Numerai docs locally         | `uv run numereng docs sync numerai`              |
 | Scrape the Numerai forum                   | `uv run numereng numerai forum scrape`           |
 
-![Workspace experiments — mission-control list with live systems and recent activity](docs/assets/screenshot-monitor.png)
+![Mission control experiments overview with tracked systems and recent activity](docs/assets/screenshot-monitor-mission-control.png)
 
 ## Workspace Layout
 

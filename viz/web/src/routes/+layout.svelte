@@ -14,6 +14,7 @@
 
 	let onExperimentsRoute = $derived(currentPath.startsWith('/experiments'));
 	let onDocsRoute = $derived(currentPath.startsWith('/docs'));
+	let onNotesRoute = $derived(currentPath.startsWith('/notes'));
 
 	$effect(() => { if (onExperimentsRoute) experimentsExpanded = true; });
 
@@ -75,12 +76,13 @@
 	{/if}
 
 	<aside
-		class="shell-sidebar w-60 flex flex-col flex-shrink-0 h-screen fixed z-30 transition-transform md:relative md:translate-x-0 md:overflow-hidden md:transition-[width] md:duration-200 {sidebarOpen ? 'translate-x-0' : '-translate-x-full'} {sidebarCollapsed ? 'md:w-[4.75rem]' : 'md:w-60'}"
+		data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+		class="shell-sidebar w-60 flex flex-col flex-shrink-0 h-screen fixed z-30 transition-transform md:relative md:translate-x-0 md:overflow-hidden md:transition-[width] md:duration-200 {sidebarOpen ? 'translate-x-0' : '-translate-x-full'} {sidebarCollapsed ? 'md:w-[4.5rem]' : 'md:w-60'}"
 	>
 		<div class="flex min-h-0 flex-1 flex-col px-4 pb-4 pt-[20px]">
 			<a
 				href="/"
-				class="shell-brand-link mb-2 block text-lg font-semibold tracking-tight active:scale-[0.97] {sidebarCollapsed ? 'px-0 text-center' : 'px-3'}"
+				class="shell-brand-link mb-2 block text-lg font-semibold tracking-tight active:scale-[0.97]"
 				aria-label="Numereng"
 				onclick={closeSidebar}
 			>
@@ -88,59 +90,55 @@
 			</a>
 			<div class="min-h-0 flex-1 overflow-y-auto">
 				<nav aria-label="Main navigation">
-				<a
-					href="/docs"
-					aria-current={onDocsRoute ? 'page' : undefined}
-					class="shell-nav-link mt-1 {onDocsRoute ? 'shell-nav-link-active font-medium' : ''} {sidebarCollapsed ? 'justify-center px-0' : ''}"
-					onclick={closeSidebar}
-				>
-					<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-					</svg>
-					{#if !sidebarCollapsed}
-						Docs
-					{/if}
-				</a>
-				<!-- Notes nav item -->
-				<a
-					href="/notes"
-					aria-current={currentPath.startsWith('/notes') ? 'page' : undefined}
-					class="shell-nav-link mt-1 {currentPath.startsWith('/notes') ? 'shell-nav-link-active font-medium' : ''} {sidebarCollapsed ? 'justify-center px-0' : ''}"
-					onclick={closeSidebar}
-				>
-					<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-					</svg>
-					{#if !sidebarCollapsed}
-						Notes
-					{/if}
-				</a>
-				<!-- Experiments nav item with expandable chevron -->
-				<div class="mt-1 group relative">
-					<div
-						class="shell-nav-link shell-nav-link-group {onExperimentsRoute ? 'shell-nav-link-active font-medium' : ''} {showExperimentList ? 'shell-nav-link-group-open' : ''} {sidebarCollapsed ? 'justify-center px-0' : ''}"
+					<a
+						href="/docs"
+						aria-current={onDocsRoute ? 'page' : undefined}
+						class="shell-nav-link mt-1 {onDocsRoute ? 'shell-nav-link-active font-medium' : ''}"
+						onclick={closeSidebar}
 					>
-						<a
-							href="/experiments"
-							aria-current={currentPath === '/experiments' ? 'page' : undefined}
-							class="flex min-w-0 flex-1 items-center gap-2 {sidebarCollapsed ? 'justify-center' : ''}"
-							onclick={closeSidebar}
+						<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+						</svg>
+						<span class="shell-nav-label">Docs</span>
+					</a>
+					<!-- Notes nav item -->
+					<a
+						href="/notes"
+						aria-current={onNotesRoute ? 'page' : undefined}
+						class="shell-nav-link mt-1 {onNotesRoute ? 'shell-nav-link-active font-medium' : ''}"
+						onclick={closeSidebar}
+					>
+						<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+						</svg>
+						<span class="shell-nav-label">Notes</span>
+					</a>
+					<!-- Experiments nav item with expandable chevron -->
+					<div class="mt-1 group relative">
+						<div
+							class="shell-nav-link shell-nav-link-group {onExperimentsRoute ? 'shell-nav-link-active font-medium' : ''} {showExperimentList ? 'shell-nav-link-group-open' : ''}"
 						>
-							<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-								<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
-							</svg>
-							{#if !sidebarCollapsed}
-								<span>Experiments</span>
-							{/if}
-						</a>
-						{#if !sidebarCollapsed && data.experiments.length > 0}
-							<button
-								type="button"
-								aria-label={showExperimentList ? 'Collapse experiments' : 'Expand experiments'}
-								class="shell-nav-chevron-button ml-auto"
-								onclick={() => (experimentsExpanded = !experimentsExpanded)}
+							<a
+								href="/experiments"
+								aria-current={currentPath === '/experiments' ? 'page' : undefined}
+								class="shell-nav-link-main"
+								onclick={closeSidebar}
 							>
-								<svg class="reader-chevron {showExperimentList ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+								<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
+								</svg>
+								<span class="shell-nav-label">Experiments</span>
+							</a>
+							{#if data.experiments.length > 0}
+								<button
+									type="button"
+									aria-label={showExperimentList ? 'Collapse experiments' : 'Expand experiments'}
+									aria-hidden={sidebarCollapsed ? 'true' : undefined}
+									tabindex={sidebarCollapsed ? -1 : 0}
+									class="shell-nav-chevron-button ml-auto {sidebarCollapsed ? 'shell-nav-chevron-button-hidden' : ''}"
+									onclick={() => (experimentsExpanded = !experimentsExpanded)}
+								>
+									<svg class="reader-chevron {showExperimentList ? 'rotate-90' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
 									<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
 								</svg>
 							</button>
