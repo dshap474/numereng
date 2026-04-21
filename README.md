@@ -18,6 +18,8 @@ It is designed for Numerai users who want their experiment state, artifacts, dat
 
 See [Public Repo Boundary](docs/project/public-repo-boundary.md) for the retained-corpus inventory and [Numerai Sync Policy](docs/numerai/SYNC_POLICY.md) for the tracked docs mirror policy.
 
+`docs/numerai/` is a synced mirror of the official Numerai docs from `https://github.com/numerai/docs`, kept in this repo so numereng's local docs reader works out of the box. Mirrored docs remain upstream Numerai content. `numereng` is community-built and is not affiliated with, endorsed by, or supported by Numerai. `docs/numerai/forum/` contains local generated forum exports and is not part of the official mirrored docs.
+
 ## Why numereng
 
 - **Local-first workspace.** All runtime state lives under `.numereng/` in your repo. No global daemon, no cloud account required.
@@ -47,7 +49,7 @@ just viz
 - Dashboard UI: [http://127.0.0.1:5173](http://127.0.0.1:5173)
 - Backend API: [http://127.0.0.1:8502](http://127.0.0.1:8502)
 
-Pull the official Numerai docs into this checkout (optional, ~500 files including images):
+Refresh the tracked official Numerai docs mirror from upstream (optional, ~500 files including images):
 
 ```bash
 uv run numereng docs sync numerai

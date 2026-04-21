@@ -11,11 +11,12 @@ This directory is a synced copy of upstream Numerai docs.
 ## Policy
 
 1. `docs/numerai/` content is synced from upstream and treated as vendor docs.
-2. Local sync metadata can be recorded in `.sync-meta.json` (gitignored) with upstream commit SHA and sync timestamp.
-3. This `SYNC_POLICY.md` file is maintained locally.
-4. Do not edit mirrored upstream pages in place; update by re-running sync against upstream.
-5. `docs/numerai/forum/` is a local generated export target used by `numereng numerai forum scrape`; it is not part of upstream mirrored docs pages.
-6. This mirror is retained for repo-clone use and docs browsing, but it is not part of the internal wheel build surface.
+2. Mirrored docs remain upstream Numerai content; `numereng` is community-built and is not affiliated with, endorsed by, or supported by Numerai.
+3. Local sync metadata can be recorded in `.sync-meta.json` (gitignored) with upstream commit SHA and sync timestamp.
+4. This `SYNC_POLICY.md` file is maintained locally.
+5. Do not edit mirrored upstream pages in place; update by re-running sync against upstream.
+6. `docs/numerai/forum/` is a local generated export target used by `numereng numerai forum scrape`; it is not part of upstream mirrored docs pages.
+7. This mirror is retained for repo-clone use and docs browsing, but it is not part of the internal wheel build surface.
 
 ## Sync Commands
 
