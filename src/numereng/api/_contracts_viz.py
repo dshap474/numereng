@@ -1,12 +1,6 @@
-"""Public contracts for the packaged viz runtime."""
+"""Compatibility facade for viz contracts."""
 
 from __future__ import annotations
 
-from numereng.api._contracts_base import WorkspaceBoundRequest
-
-
-class VizAppRequest(WorkspaceBoundRequest):
-    pass
-
-
-__all__ = ["VizAppRequest"]
+from numereng.api._contracts.viz import *  # noqa: F403
+from numereng.api._contracts.viz import __all__

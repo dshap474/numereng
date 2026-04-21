@@ -145,7 +145,7 @@ include = [
     "src/numereng/features/submission",
     "src/numereng/features/serving",
     "src/numereng/api/contracts.py",
-    "src/numereng/api/_serving.py",
+    "src/numereng/api/_serving",
     "src/numereng/api/pipeline.py",
     "src/numereng/api/_health.py",
     "tests/unit/numereng/config/test_training.py",
