@@ -333,6 +333,7 @@ duplicate_external_trials = read_json("duplicate_external_trials.out.json")
 summary = json.loads(
     (
         workdir
+        / ".numereng"
         / "experiments"
         / "exp-smoke"
         / "hpo"
@@ -359,7 +360,7 @@ assert summary["attempted_trials"] == 2
 assert summary["completed_trials"] == 2
 assert summary["spec"]["sampler"] == {"kind": "random", "seed": 17}
 
-study_root = workdir / "experiments" / "exp-smoke" / "hpo" / "smoke-random-resume"
+study_root = workdir / ".numereng" / "experiments" / "exp-smoke" / "hpo" / "smoke-random-resume"
 assert (study_root / "study_spec.json").is_file()
 assert (study_root / "study_summary.json").is_file()
 assert (study_root / "optuna_journal.log").is_file()
