@@ -221,4 +221,4 @@ def test_numerai_client_crypto_tournament(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_numerai_client_invalid_tournament() -> None:
     with pytest.raises(NumeraiClientError, match="numerai_tournament_not_supported"):
-        NumeraiClient(tournament="invalid", show_progress_bars=False)  # type: ignore[arg-type]
+        NumeraiClient(tournament="invalid", show_progress_bars=False)  # ty: ignore[invalid-argument-type]
