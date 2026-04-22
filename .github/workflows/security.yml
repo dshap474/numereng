@@ -13,7 +13,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # gitleaks-action scans the pushed commit range <first>^..<head>,
           # which needs history on both sides. Default shallow clone breaks
