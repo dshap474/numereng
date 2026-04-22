@@ -10,10 +10,11 @@
 
 Built for Numerai participants who want an end-to-end local workflow for iterating on tournament models — experiment-centric, not just a CLI wrapper. `numereng` is pre-1.0 and community-built; the CLI is stable enough to build on but will continue to evolve.
 
+`numereng` builds on the official Numerai Python packages [`numerapi`](https://github.com/numerai/numerapi) and [`numerai-tools`](https://github.com/numerai/numerai-tools).
+
 ## Contents
 
 - [Features](#features)
-- [How `numereng` Compares](#how-numereng-compares)
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
 - [What You'll See](#what-youll-see)
@@ -37,12 +38,6 @@ Built for Numerai participants who want an end-to-end local workflow for iterati
 - **Remote and cloud training.** SSH-driven remote workstations, EC2, and Modal for when local compute runs out.
 - **Read-only dashboard.** `just viz` gives you a mission-control UI over the current checkout.
 - **Agent-extensible.** Drop custom model wrappers into `src/numereng/features/models/custom_models/` and they are auto-discovered.
-
-## How `numereng` Compares
-
-- **vs. [`numerapi`](https://github.com/numerai/numerapi)** — `numereng` uses `numerapi` under the hood. It adds experiment tracking, scoring, ensembles, serving, and a dashboard.
-- **vs. [`numerblox`](https://github.com/crowdcent/numerblox)** — `numerblox` is a component library. `numereng` is an end-to-end workspace with a CLI and persistent state.
-- **vs. [`numerai-cli`](https://github.com/numerai/numerai-cli)** — `numerai-cli` targets compute-node deployments. `numereng` targets iterative local development with optional remote and cloud offloading.
 
 ## Prerequisites
 
