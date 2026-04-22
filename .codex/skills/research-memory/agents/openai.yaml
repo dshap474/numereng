@@ -1,6 +1,0 @@
-interface:
-  display_name: "skill:ResearchMemory"
-  default_prompt: "Use the research-memory skill to analyze one completed numereng experiment, update .numereng/notes/__RESEARCH_MEMORY__, and recommend the next highest-value experiment."
-
-policy:
-  allow_implicit_invocation: true
