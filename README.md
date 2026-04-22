@@ -40,7 +40,8 @@ Built for Numerai participants who want an end-to-end local workflow for iterati
 - **Serving and hosted uploads.** Freeze production packages and push pickles to Numerai-hosted models.
 - **Remote and cloud training.** SSH-driven remote workstations, EC2, and Modal for when local compute runs out.
 - **Read-only dashboard.** `just viz` gives you a mission-control UI over the current checkout.
-- **Agent-extensible.** Drop custom model wrappers into `src/numereng/features/models/custom_models/` and they are auto-discovered.
+- **Custom models.** Drop model wrappers into `src/numereng/features/models/custom_models/` and they are auto-discovered by the training pipeline.
+- **Agent-extensible.** Drop your own skills into `.codex/skills/` so Claude Code, Codex, or similar agents can be pointed at workflows you author.
 
 ## Prerequisites
 
@@ -141,7 +142,7 @@ Extension and authoring roots (tracked in git):
 
 - `src/numereng/features/models/custom_models/` — drop in a custom model wrapper (auto-discovered)
 - `src/numereng/features/agentic_research/programs/` — author a research program
-- `.agents/skills/` — repo-local agent skills (gitignored)
+- `.codex/skills/` — agent skills (shipped ones are tracked; add your own locally via the directory's gitignore allowlist)
 
 ## Python API
 
@@ -167,12 +168,6 @@ See the [Python API reference](docs/numereng/reference/python-api.md). For full 
 - **`implement-custom-model`** — Add a custom model plugin under `custom_models/` using the existing wrapper and factory patterns.
 - **`store-ops`** — Safely maintain the local store: drift diagnosis, run cleanup and reset, reindex, and postcondition verification.
 - **`numerai-api-ops`** — Run API-only Numerai operations through `numerapi` plus direct GraphQL helpers.
-- **`numerai-docs`** — Read and answer questions from the local mirror of the official Numerai docs and forum.
-- **`numerai-research`** — External-first research combining academic papers and tournament-community insights.
-- **`research-memory`** — Analyze experiment evidence or resynthesize the rolling research-memory notes under `.numereng/notes/`.
-- **`kaggle-gm-workflow`** — 7-phase Kaggle-Grandmaster-style playbook adapted to numereng, from EDA through submission.
-- **`config-schema`** — Compatibility shim for training-config schema questions (defers to `numereng-experiment-ops`).
-- **`remote-pc`** — Template for wiring an agent to your own remote training box (customize before use).
 
 ## Docs
 
