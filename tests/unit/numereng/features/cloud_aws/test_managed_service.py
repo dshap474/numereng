@@ -37,7 +37,7 @@ from numereng.platform.run_execution import RUN_EXECUTION_ENV_VAR
 
 @pytest.fixture(autouse=True)
 def _configured_cloud_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(managed_service_module, "DEFAULT_BUCKET", "numereng-artifacts")
+    monkeypatch.setattr(managed_service_module, "DEFAULT_BUCKET", "example-bucket")
 
 
 class _FakeEcr(EcrAdapter):
@@ -122,7 +122,7 @@ class _FakeSageMaker(SageMakerAdapter):
             job_arn=f"arn:aws:sagemaker:us-east-2:123:training-job/{job_name}",
             status="Completed",
             secondary_status="Completed",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             log_group="/aws/sagemaker/TrainingJobs",
             log_stream_prefix=f"{job_name}/",
         )
@@ -374,7 +374,7 @@ def test_train_submit_trims_execution_env_payload_for_sagemaker(tmp_path: Path) 
     assert execution_payload["kind"] == "cloud"
     assert execution_payload["provider"] == "aws"
     assert execution_payload["backend"] == "sagemaker"
-    assert execution_payload["output_uri"] == f"s3://numereng-artifacts/runs/{long_run_id}/managed-output/"
+    assert execution_payload["output_uri"] == f"s3://example-bucket/runs/{long_run_id}/managed-output/"
     assert execution_payload["metadata"] == {"runtime_profile": "standard"}
     assert "state_path" not in execution_payload
     assert "submitted_at" not in execution_payload
@@ -640,7 +640,7 @@ def test_train_logs_and_pull(tmp_path: Path) -> None:
         AwsTrainSubmitRequest(
             run_id="run-1",
             backend="sagemaker",
-            config_s3_uri="s3://numereng-artifacts/runs/run-1/config/train.json",
+            config_s3_uri="s3://example-bucket/runs/run-1/config/train.json",
             image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
             role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
             state_path=str(state_path),
@@ -667,7 +667,7 @@ def test_train_logs_and_pull(tmp_path: Path) -> None:
     pulled = service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "out"),
             state_path=str(state_path),
             store_root=str(tmp_path / ".numereng"),
@@ -688,7 +688,7 @@ def test_train_pull_skips_unsafe_keys(tmp_path: Path) -> None:
     pulled = service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "out"),
             store_root=str(tmp_path / ".numereng"),
         )
@@ -709,7 +709,7 @@ def test_train_pull_rejects_noncanonical_store_output_dir(tmp_path: Path) -> Non
         service.train_pull(
             AwsTrainPullRequest(
                 run_id="run-1",
-                output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+                output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
                 output_dir=str(store_root / "smoke_live_check"),
                 store_root=str(store_root),
             )
@@ -728,7 +728,7 @@ def test_train_pull_defaults_output_dir_to_cloud_pull(
     pulled = service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             store_root=str(store_root),
         )
     )
@@ -795,7 +795,7 @@ def test_train_extract_extracts_tarball_and_indexes_inner_run(
     pulled = service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "pull"),
             store_root=str(store_root),
         )
@@ -865,7 +865,7 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
             "backend": "sagemaker",
             "provider_job_id": "old-job",
             "image_uri": "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:old-tag",
-            "output_uri": "s3://numereng-artifacts/runs/old-managed-output/",
+            "output_uri": "s3://example-bucket/runs/old-managed-output/",
             "metadata": {"image_digest": "sha256:old"},
         },
     }
@@ -904,7 +904,7 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
                 "run_id": managed_run_id,
                 "backend": "sagemaker",
                 "region": "us-east-2",
-                "bucket": "numereng-artifacts",
+                "bucket": "example-bucket",
                 "image_uri": (
                     "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:sagemaker-standard-current"
                 ),
@@ -913,8 +913,8 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
                 "training_job_name": "job-1",
                 "status": "artifacts_pulled",
                 "artifacts": {
-                    "config_s3_uri": f"s3://numereng-artifacts/runs/{managed_run_id}/config/config.json",
-                    "output_s3_uri": f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/",
+                    "config_s3_uri": f"s3://example-bucket/runs/{managed_run_id}/config/config.json",
+                    "output_s3_uri": f"s3://example-bucket/runs/{managed_run_id}/managed-output/",
                 },
                 "metadata": {
                     "config_label": "config.json",
@@ -929,7 +929,7 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
     service.train_pull(
         AwsTrainPullRequest(
             run_id=managed_run_id,
-            output_s3_uri=f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/",
+            output_s3_uri=f"s3://example-bucket/runs/{managed_run_id}/managed-output/",
             output_dir=str(tmp_path / "pull"),
             state_path=str(state_path),
             store_root=str(store_root),
@@ -955,7 +955,7 @@ def test_train_extract_refreshes_execution_for_existing_same_hash_run(
     execution = refreshed_manifest["execution"]
     assert execution["provider_job_id"] == "job-1"
     assert execution["image_uri"].endswith(":sagemaker-standard-current")
-    assert execution["output_uri"] == f"s3://numereng-artifacts/runs/{managed_run_id}/managed-output/"
+    assert execution["output_uri"] == f"s3://example-bucket/runs/{managed_run_id}/managed-output/"
     assert isinstance(execution["pulled_at"], str)
     assert execution["pulled_at"].endswith("Z")
     assert execution["metadata"]["image_digest"] == "sha256:new"
@@ -1088,7 +1088,7 @@ def test_train_extract_skips_non_runs_members_and_preserves_store_db(
     pulled = service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "pull"),
             store_root=str(store_root),
         )
@@ -1130,7 +1130,7 @@ def test_train_extract_rejects_unsafe_tar_members(
     service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "pull"),
             store_root=str(tmp_path / ".numereng"),
         )
@@ -1177,7 +1177,7 @@ def test_train_extract_rejects_run_dir_conflict(
     service.train_pull(
         AwsTrainPullRequest(
             run_id="run-1",
-            output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
+            output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
             output_dir=str(tmp_path / "pull"),
             store_root=str(store_root),
         )

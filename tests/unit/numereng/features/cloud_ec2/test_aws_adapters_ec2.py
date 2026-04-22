@@ -23,7 +23,7 @@ def _launch_spec(*, use_spot: bool = True, security_group: str = "numereng-train
         region="us-east-2",
         iam_role_name="numereng-training-role",
         security_group=security_group,
-        bucket="numereng-artifacts",
+        bucket="example-bucket",
         data_version="v5.2",
         use_spot=use_spot,
         volume_size_gb=120,

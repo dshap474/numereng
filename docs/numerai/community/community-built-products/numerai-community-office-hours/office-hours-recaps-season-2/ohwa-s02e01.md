@@ -24,7 +24,7 @@ description: June 04, 2020 / Interview with Joakim
 
 **Joakim:** Really just participating in their contests and the challenges they've been having lately and having success there. One key lesson for me has been learning not to overfit because it's **so** easy to overfit.
 
-![](<../../../../.gitbook/assets/overfit (1).png>)
+![](<../../../../.gitbook/assets/overfit.png>)
 
 **Arbitrage:** Awesome. What do you do for a living? Are you doing full-time quant gig work?
 

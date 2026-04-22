@@ -86,7 +86,7 @@ Arbitrage’s first idea: MMC needs its own leaderboard with a rank to brag abou
 
 **Slyfox (in chat):** No payouts for non-staked models.
 
-![No NMR for you](<../../../../.gitbook/assets/soup (1).jpg>)
+![No NMR for you](<../../../../.gitbook/assets/soup.jpg>)
 
 **Arbitrage:** I just got killed on that. But! We can still do what I’m talking about, just on staked models. Payout on stability.
 

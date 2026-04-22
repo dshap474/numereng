@@ -29,8 +29,8 @@ class _FakeBoto3:
 
 
 def test_parse_s3_uri_roundtrip() -> None:
-    bucket, key = sagemaker_entrypoint.parse_s3_uri("s3://numereng-artifacts/runs/run-1/config/config.json")
-    assert bucket == "numereng-artifacts"
+    bucket, key = sagemaker_entrypoint.parse_s3_uri("s3://example-bucket/runs/run-1/config/config.json")
+    assert bucket == "example-bucket"
     assert key == "runs/run-1/config/config.json"
 
 
@@ -137,7 +137,7 @@ def test_stage_required_data_downloads_missing_files(tmp_path: Path, monkeypatch
     data_root = tmp_path / "datasets"
     sagemaker_entrypoint.stage_required_data(
         config_path,
-        env={"NUMERENG_CONFIG_S3_URI": "s3://numereng-artifacts/runs/run-1/config/config.json"},
+        env={"NUMERENG_CONFIG_S3_URI": "s3://example-bucket/runs/run-1/config/config.json"},
         data_root=data_root,
     )
 
@@ -174,7 +174,7 @@ def test_stage_required_data_rejects_quantized_variant(
     with pytest.raises(ValueError, match="dataset_variant_invalid"):
         sagemaker_entrypoint.stage_required_data(
             config_path,
-            env={"NUMERENG_CONFIG_S3_URI": "s3://numereng-artifacts/runs/run-1/config/config.json"},
+            env={"NUMERENG_CONFIG_S3_URI": "s3://example-bucket/runs/run-1/config/config.json"},
             data_root=tmp_path / "datasets",
         )
 
@@ -207,8 +207,8 @@ def test_main_sanitizes_output_dir_after_training(tmp_path: Path, monkeypatch: p
     (output_dir / "numereng.db").write_text("db", encoding="utf-8")
     (output_dir / "results.json").write_text("{}", encoding="utf-8")
 
-    monkeypatch.setenv("NUMERENG_CONFIG_S3_URI", "s3://numereng-artifacts/runs/run-1/config/config.json")
-    monkeypatch.setenv("NUMERENG_OUTPUT_S3_URI", "s3://numereng-artifacts/runs/run-1/managed-output/")
+    monkeypatch.setenv("NUMERENG_CONFIG_S3_URI", "s3://example-bucket/runs/run-1/config/config.json")
+    monkeypatch.setenv("NUMERENG_OUTPUT_S3_URI", "s3://example-bucket/runs/run-1/managed-output/")
     monkeypatch.setenv("NUMERENG_TRAIN_OUTPUT_DIR", str(output_dir))
     monkeypatch.setattr(sagemaker_entrypoint, "resolve_config_path", lambda env=None, channel_dir=None: config_path)
     monkeypatch.setattr(sagemaker_entrypoint, "stage_required_data", lambda config_path, env=None, data_root=None: None)

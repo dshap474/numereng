@@ -90,7 +90,7 @@ Mike P agreed that it seems really difficult to have high Correlation if you hav
 
 **Mike P:** So fun surprise, Elaine here is actually my mom.
 
-![Thank you for joining!](<../../../../.gitbook/assets/elaine (1).gif>)
+![Thank you for joining!](<../../../../.gitbook/assets/elaine.gif>)
 
 **Arbitrage:** Whoa!
 
@@ -250,7 +250,7 @@ Mike P agreed that it seems really difficult to have high Correlation if you hav
 
 **Mike P:** I actually studied computer science after I already knew how to code. I was doing some data science stuff in high school, and then decided it made sense to also study computer science in college. Most people's first coding problem is how to make a list or a `for` loop. Mine was how to slice a numpy array with extra dimensions, so it was totally the wrong way to learn it.
 
-![](<../../../../.gitbook/assets/code (1).gif>)
+![](<../../../../.gitbook/assets/code.gif>)
 
 **Arbitrage:** I know I've said this a few times, but pick a project in your domain and do it in code. Because you know the data, and that's going to help because you'll know what the results should look like. If you could step into my shoes, Mike, what would you ask yourself that I didn't?
 

@@ -39,7 +39,7 @@ from numereng.features.cloud.aws.service import CloudEc2Error, CloudEc2Service, 
 
 @pytest.fixture(autouse=True)
 def _configured_cloud_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_BUCKET", "numereng-artifacts")
+    monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_BUCKET", "example-bucket")
     monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_IAM_ROLE", "numereng-training-role")
     monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_SECURITY_GROUP", "numereng-training")
     monkeypatch.setattr(cloud_ec2_service_module, "DEFAULT_CPU_AMI", "ami-cpu123")
@@ -293,9 +293,16 @@ def test_package_build_upload_writes_artifact_uris() -> None:
 
 def test_config_upload_success_and_missing_file(tmp_path: Path) -> None:
     service, _ec2, _s3, _ssm, _iam = _build_service()
+    state_path = _state_path(tmp_path)
 
     with pytest.raises(CloudEc2Error, match="config path does not exist"):
-        service.config_upload(Ec2ConfigUploadRequest(run_id="run-1", config_path=str(tmp_path / "missing.json")))
+        service.config_upload(
+            Ec2ConfigUploadRequest(
+                run_id="run-1",
+                config_path=str(tmp_path / "missing.json"),
+                state_path=str(state_path),
+            )
+        )
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -303,8 +310,10 @@ def test_config_upload_success_and_missing_file(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    response = service.config_upload(Ec2ConfigUploadRequest(run_id="run-1", config_path=str(config_path)))
-    assert response.result["config_uri"] == "s3://numereng-artifacts/runs/run-1/config.json"
+    response = service.config_upload(
+        Ec2ConfigUploadRequest(run_id="run-1", config_path=str(config_path), state_path=str(state_path))
+    )
+    assert response.result["config_uri"] == "s3://example-bucket/runs/run-1/config.json"
 
 
 def test_push_uses_state_file_for_instance_and_run(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ description: Everything you need to know to make your first Signals submission.
 
 Underlying data used to create signals can be very different (audited financials vs news articles vs images of parking lots), but all Signals submissions must use the same basic format - a list of stock tickers each with an associated numerical value between 0 and 1:
 
-![An example stock market signal](<../.gitbook/assets/group-42-2 (1).png>)
+![An example stock market signal](<../.gitbook/assets/group-42-2.png>)
 
 The list of stock tickers in your submission are defined by the **Numerai Signals stock market universe.** It covers roughly the top 5000 largest stocks in the world and it is updated every day. In general, only a couple low volume stocks will move in or out on a given day.
 

@@ -69,7 +69,7 @@ Arbitrage thought that would be a good idea because it would make it apparent wh
 
 **Quantverse:** I live in Prague, the capitol of the Czech Republic, a small country in Central Europe. It's already like, 10:00 pm now here.
 
-![](<../../../../.gitbook/assets/prague (1).png>)
+![](<../../../../.gitbook/assets/prague.png>)
 
 **Arbitrage:** So Quantverse, what do you do for a living?
 

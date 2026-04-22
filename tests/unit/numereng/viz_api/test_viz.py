@@ -1500,7 +1500,7 @@ def test_get_experiments_overview_synthesizes_missing_experiment_from_live_job(t
                 'local',
                 'worker-local',
                 9604,
-                'Daniels-PC',
+                'test-host',
                 'train_model',
                 '[\"initializing\",\"load_data\"]',
                 52.0,

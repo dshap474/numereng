@@ -100,7 +100,7 @@ You already might be familiar with some of Harsh's work:
 
 **Harsh:** Right.
 
-![](<../../../../.gitbook/assets/compute (1).png>)
+![](<../../../../.gitbook/assets/compute.png>)
 
 **Arbitrage:** Sweet. Harsh, I did want to run through my famous set of questions. You pre-warned me, you said, "I don't really do the data science." I feel like that doesn't matter, I think you have a lot to add. You've been with the team for how long now?
 

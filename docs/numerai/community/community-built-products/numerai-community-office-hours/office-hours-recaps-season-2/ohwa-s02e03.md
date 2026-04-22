@@ -64,7 +64,7 @@ For Season 2 Episode 3, Arbitrage interviewed tournament data scientist [John Sc
 
 **John:** Living in the city for all those years, we love to go explore new food joints. Especially in New York City and Boston. I like fishing, I like the beach, I like ping pong, and recently I've become addicted to audiobooks. I kind of resisted jumping on the bandwagon, and now I can't get the earbuds out of my ears.
 
-![Audiobooks have their own unique risks](<../../../../.gitbook/assets/audiobook (1).jpg>)
+![Audiobooks have their own unique risks](<../../../../.gitbook/assets/audiobook.jpg>)
 
 **Arbitrage:** I can't listen to people talk, I need to see them talk. It's always been a challenge for me to listen to that kind of stuff so I would rather read it. Something about a physical book, too. I don't know, maybe it's because I'm 36 and I'm just on that edge of, 'I grew up with the tech change.' My grandmother had a rotary phone - so I know how to use a rotary phone but anybody who's two or three years younger than I am don't have any idea how to use a rotary phone.
 
@@ -102,7 +102,7 @@ For Season 2 Episode 3, Arbitrage interviewed tournament data scientist [John Sc
 
 **John:** Yeah, I'm sure risk tolerance plays a part of it, but (and I don't want to beat a dead horse) the noise in this data set is insane. Trying to find a signal, or MMC, I say you have to think like a right angle. How do you do that? I'm trying to figure it out too... Can you imagine if I tied emotion to it when I was trading cotton? We're talking about an illiquid market with wide markets and I'm holding hundreds of thousands of contracts. You can imagine the mark to market there. It takes a lot to rattle me.
 
-![Good ol' reliable cotton](<../../../../.gitbook/assets/cotton (1).png>)
+![Good ol' reliable cotton](<../../../../.gitbook/assets/cotton.png>)
 
 **Arbitrage:** That's a good point, and something I talk about in chat too with [Sorios](https://numer.ai/sorios). That account is swinging houses around, and personally I couldn't do that. Not where I am now as a PhD student (which is another reason why you shouldn't go back to school). But yeah he's swinging houses around and I just couldn't tell my girlfriend, "hey, I lost a house today." That's just me - risk is relative. Thank you for mentioning that - I think it's important to have this discussion in front of other people so they can understand what I mean by that. A little bit about your workflow - what programming language do you use and why do you use it?
 
@@ -142,7 +142,7 @@ _Author's note: Arbitrage occasionally goes by the irl handle Jon._
 
 **John:** I guess we all think alike.
 
-![Notebook appreciation post](<../../../../.gitbook/assets/notebooks (1).png>)
+![Notebook appreciation post](<../../../../.gitbook/assets/notebooks.png>)
 
 **Arbitrage:** I got a Bloomberg notebook, a red & black ... Oh! You're a finance guy so you know about red & black.
 
@@ -170,7 +170,7 @@ _Author's note: Arbitrage occasionally goes by the irl handle Jon._
 
 **Arbitrage:** Yeah - that's a good one. Ant, make sure you write that down, that's a good one.
 
-![Author's note: I got you.](<../../../../.gitbook/assets/billboard (1).jpg>)
+![Author's note: I got you.](<../../../../.gitbook/assets/billboard.jpg>)
 
 **Arbitrage:** This one is always controversial. I'm sorry, I don't mean to be controversial for your first time with us. Who is your favorite team member?
 
@@ -238,7 +238,7 @@ _Author's note: Same._
 
 **Arbitrage:** Sunrise is a very special time in South Florida. Dawn patrol, baby! Get out on a long board and just ride. That's what I used to do. I skipped a lot of high school to go surfing. My parents were like, "it was a miracle you graduated high school- don't do that again." Then I went to college, flunked out the first time because I was partying too much, so I closely resemble what you said earlier about not partying so much. But that's life, right? Look where I am now.
 
-![](<../../../../.gitbook/assets/rank (1).png>)
+![](<../../../../.gitbook/assets/rank.png>)
 
 **Arbitrage:** I think I'm alright. And you're doing well, too, so it all works out. And the other one you said was, 'interesting career story' - give us one!
 

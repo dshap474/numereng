@@ -15,9 +15,9 @@ def test_managed_state_store_roundtrip(tmp_path: Path) -> None:
         run_id="run-1",
         backend="sagemaker",
         region="us-east-2",
-        bucket="numereng-artifacts",
+        bucket="example-bucket",
         status="InProgress",
-        artifacts={"output_s3_uri": "s3://numereng-artifacts/runs/run-1/managed-output/"},
+        artifacts={"output_s3_uri": "s3://example-bucket/runs/run-1/managed-output/"},
     )
 
     store.save(state_path, state)

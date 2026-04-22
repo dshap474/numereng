@@ -221,7 +221,7 @@ Richard Craib : *sqrt(12)
 
 **Yuki:** It's a difficult question. But, if I were you, I would ask tips for the _real_ market.
 
-![Did someone say "real" market?](<../../../../.gitbook/assets/ooooo (1).gif>)
+![Did someone say "real" market?](<../../../../.gitbook/assets/ooooo.gif>)
 
 **Arbitrage:** I definitely have kind of avoided that. So Yuki, what are your tips for the real stock market?
 

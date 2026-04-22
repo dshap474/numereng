@@ -56,7 +56,7 @@ After what was totally not product placement for a popular brand of flavored car
 
 **JRB:** I don't really like Python that much -
 
-![](<../../../../.gitbook/assets/gasp (1).gif>)
+![](<../../../../.gitbook/assets/gasp.gif>)
 
 **JRB:** I used to work on making Python faster at Facebook for Instagram. I think I know a little bit too much about the internals of Python to like it. But it's super convenient for the tournament. So I just use Python for the tournament.
 

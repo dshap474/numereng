@@ -263,7 +263,7 @@ def test_deploy_persists_state(tmp_path: Path) -> None:
             cpu=2.0,
             memory_mb=8192,
             data_volume_name="numereng-v52",
-            metadata={"owner": "daniel"},
+            metadata={"owner": "alice"},
             state_path=str(state_path),
         )
     )
@@ -279,7 +279,7 @@ def test_deploy_persists_state(tmp_path: Path) -> None:
     assert response.state.artifacts == {}
     assert response.state.ecr_image_uri == "123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:latest"
     assert response.state.data_volume_name == "numereng-v52"
-    assert response.state.metadata["owner"] == "daniel"
+    assert response.state.metadata["owner"] == "alice"
     assert adapter.deploy_payloads
     assert adapter.deploy_payloads[0]["aws_profile"] == "default"
     assert adapter.deploy_payloads[0]["data_volume_name"] == "numereng-v52"
@@ -330,7 +330,7 @@ def test_data_sync_uploads_config_required_files_and_persists_state(
         ModalDataSyncRequest(
             config_path=str(config_path),
             volume_name="numereng-v52",
-            metadata={"owner": "daniel"},
+            metadata={"owner": "alice"},
             state_path=str(state_path),
         )
     )
@@ -338,7 +338,7 @@ def test_data_sync_uploads_config_required_files_and_persists_state(
     assert response.action == "cloud.modal.data.sync"
     assert response.state is not None
     assert response.state.data_volume_name == "numereng-v52"
-    assert response.state.metadata["owner"] == "daniel"
+    assert response.state.metadata["owner"] == "alice"
     assert response.state.metadata["data_sync_dataset_variant"] == "non_downsampled"
     assert response.state.data_manifest["v5.2/train.parquet"].endswith("/.numereng/datasets/v5.2/train.parquet")
     assert response.state.data_manifest["v5.2/validation.parquet"].endswith(

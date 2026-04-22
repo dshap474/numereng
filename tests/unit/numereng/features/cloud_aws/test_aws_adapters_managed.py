@@ -102,9 +102,9 @@ def test_sagemaker_start_training_builds_expected_request(
         job_name="neng-sm-run-1-123",
         image_uri="123456789012.dkr.ecr.us-east-2.amazonaws.com/numereng-training:v1",
         role_arn="arn:aws:iam::123456789012:role/numereng-sagemaker",
-        input_config_uri="s3://numereng-artifacts/runs/run-1/config/train.json",
-        output_s3_uri="s3://numereng-artifacts/runs/run-1/managed-output/",
-        checkpoint_s3_uri="s3://numereng-artifacts/runs/run-1/checkpoints/",
+        input_config_uri="s3://example-bucket/runs/run-1/config/train.json",
+        output_s3_uri="s3://example-bucket/runs/run-1/managed-output/",
+        checkpoint_s3_uri="s3://example-bucket/runs/run-1/checkpoints/",
         instance_type="ml.m5.2xlarge",
         instance_count=1,
         volume_size_gb=100,
@@ -127,13 +127,13 @@ def test_sagemaker_start_training_builds_expected_request(
                 "DataSource": {
                     "S3DataSource": {
                         "S3DataType": "S3Prefix",
-                        "S3Uri": "s3://numereng-artifacts/runs/run-1/config/train.json",
+                        "S3Uri": "s3://example-bucket/runs/run-1/config/train.json",
                         "S3DataDistributionType": "FullyReplicated",
                     }
                 },
             }
         ],
-        "OutputDataConfig": {"S3OutputPath": "s3://numereng-artifacts/runs/run-1/managed-output/"},
+        "OutputDataConfig": {"S3OutputPath": "s3://example-bucket/runs/run-1/managed-output/"},
         "ResourceConfig": {
             "InstanceType": "ml.m5.2xlarge",
             "InstanceCount": 1,
@@ -150,7 +150,7 @@ def test_sagemaker_start_training_builds_expected_request(
             {"Key": "RunId", "Value": "run-1"},
         ],
         "CheckpointConfig": {
-            "S3Uri": "s3://numereng-artifacts/runs/run-1/checkpoints/",
+            "S3Uri": "s3://example-bucket/runs/run-1/checkpoints/",
             "LocalPath": "/opt/ml/checkpoints",
         },
     }

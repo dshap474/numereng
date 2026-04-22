@@ -2370,7 +2370,7 @@ def test_cli_cloud_modal_deploy_success(
         assert request.cpu == 2.0
         assert request.memory_mb == 8192
         assert request.data_volume_name == "numereng-v52"
-        assert request.metadata == {"owner": "daniel"}
+        assert request.metadata == {"owner": "alice"}
         assert request.state_path == "tmp/modal-deploy.json"
         return api_module.CloudModalResponse(
             action="cloud.modal.deploy",
@@ -2406,7 +2406,7 @@ def test_cli_cloud_modal_deploy_success(
             "--data-volume-name",
             "numereng-v52",
             "--metadata",
-            "owner=daniel",
+            "owner=alice",
             "--state-path",
             "tmp/modal-deploy.json",
         ]
@@ -2431,7 +2431,7 @@ def test_cli_cloud_modal_data_sync_success(
         assert request.volume_name == "numereng-v52"
         assert request.create_if_missing is False
         assert request.force is True
-        assert request.metadata == {"owner": "daniel"}
+        assert request.metadata == {"owner": "alice"}
         assert request.state_path == "tmp/modal-data.json"
         return api_module.CloudModalResponse(
             action="cloud.modal.data.sync",
@@ -2454,7 +2454,7 @@ def test_cli_cloud_modal_data_sync_success(
             "--force",
             "--no-create-if-missing",
             "--metadata",
-            "owner=daniel",
+            "owner=alice",
             "--state-path",
             "tmp/modal-data.json",
         ]
@@ -2483,7 +2483,7 @@ def test_cli_cloud_modal_train_submit_success(
         assert request.app_name == "numereng-train"
         assert request.function_name == "train_remote"
         assert request.environment_name == "prod"
-        assert request.metadata == {"team": "ml", "owner": "daniel"}
+        assert request.metadata == {"team": "ml", "owner": "alice"}
         assert request.state_path == "tmp/modal_state.json"
         return api_module.CloudModalResponse(
             action="cloud.modal.train.submit",
@@ -2510,7 +2510,7 @@ def test_cli_cloud_modal_train_submit_success(
             "--environment-name",
             "prod",
             "--metadata",
-            "team=ml,owner=daniel",
+            "team=ml,owner=alice",
             "--state-path",
             "tmp/modal_state.json",
         ]
