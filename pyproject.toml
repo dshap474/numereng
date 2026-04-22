@@ -133,6 +133,9 @@ extend-exclude = [".agents", ".venv-test"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
 [tool.ty.environment]
 python-version = "3.12"
 root = ["./src"]

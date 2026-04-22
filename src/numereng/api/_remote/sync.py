@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numereng.api._remote as remote_api_module
-
 from numereng.api._remote.mappers import pull_failure_response
 from numereng.api.contracts import (
     RemoteConfigPushRequest,

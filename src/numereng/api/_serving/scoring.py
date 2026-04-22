@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numereng.api._serving as serving_api_module
-
 from numereng.api._serving.responses import package_diagnostics_response, package_response
 from numereng.api.contracts import (
     ServePackageScoreRequest,

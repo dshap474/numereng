@@ -1,11 +1,11 @@
 # <experiment-id>
 
-**Reviewed**: <YYYY-MM-DD>  
-**Interpretation context**: `<chronological rebuild as of YYYY-MM-DD | current-state ingest>`  
-**Overall evidence posture**: `<frontier-grade|mixed|supporting>`  
-**Evidence risk**: `<low|medium|high>`  
-**Primary metric**: `bmc_last_200_eras.mean`  
-**Tie-break**: `bmc.mean`  
+**Reviewed**: <YYYY-MM-DD>
+**Interpretation context**: `<chronological rebuild as of YYYY-MM-DD | current-state ingest>`
+**Overall evidence posture**: `<frontier-grade|mixed|supporting>`
+**Evidence risk**: `<low|medium|high>`
+**Primary metric**: `bmc_last_200_eras.mean`
+**Tie-break**: `bmc.mean`
 **Source snapshot**: `<experiment.updated_at=...>`
 
 ## Original Result Summary

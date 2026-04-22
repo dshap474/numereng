@@ -1,9 +1,9 @@
 # CURRENT
 
-**Updated**: <YYYY-MM-DD>  
-**Primary metric**: `bmc_last_200_eras.mean`  
-**Tie-break**: `bmc.mean`  
-**Decision policy**: information gain first, then expected upside, then cost / operability  
+**Updated**: <YYYY-MM-DD>
+**Primary metric**: `bmc_last_200_eras.mean`
+**Tie-break**: `bmc.mean`
+**Decision policy**: information gain first, then expected upside, then cost / operability
 **Frontier freshness**: `<fresh|aging|stale>`
 
 ## Summary Snapshot

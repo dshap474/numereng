@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from numereng.api._agentic_research.responses import phase_response, round_response
-from numereng.api.contracts import ResearchBestRunResponse, ResearchRunRequest, ResearchRunResponse, ResearchStatusRequest, ResearchStatusResponse
+from numereng.api.contracts import (
+    ResearchBestRunResponse,
+    ResearchRunRequest,
+    ResearchRunResponse,
+    ResearchStatusRequest,
+    ResearchStatusResponse,
+)
 from numereng.features.agentic_research import (
     AgenticResearchError,
     AgenticResearchNotInitializedError,

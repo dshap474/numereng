@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from numereng.api._serving.live import serve_live_build, serve_live_submit
+from numereng.api._serving.packages import serve_package_create, serve_package_inspect, serve_package_list
+from numereng.api._serving.pickle import serve_pickle_build, serve_pickle_upload
+from numereng.api._serving.scoring import serve_package_score, serve_package_sync_diagnostics
 from numereng.features.serving import (
     PackageDiagnosticsSyncResult,
     ServingBlendRule,
@@ -28,11 +32,6 @@ from numereng.features.submission import (
     SubmissionModelUploadFileNotFoundError,
     SubmissionModelUploadFormatUnsupportedError,
 )
-
-from numereng.api._serving.live import serve_live_build, serve_live_submit
-from numereng.api._serving.packages import serve_package_create, serve_package_inspect, serve_package_list
-from numereng.api._serving.pickle import serve_pickle_build, serve_pickle_upload
-from numereng.api._serving.scoring import serve_package_score, serve_package_sync_diagnostics
 
 __all__ = [
     "serve_live_build",

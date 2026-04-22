@@ -31,5 +31,5 @@
 
 ## Evidence Log
 
-- <YYYY-MM-DD>: <claim delta>.  
+- <YYYY-MM-DD>: <claim delta>.
   Source: <...>

@@ -2,6 +2,7 @@ set shell := ["sh", "-cu"]
 
 bootstrap:
     uv sync --extra dev
+    uv run pre-commit install --install-hooks
 
 fmt:
     uv run ruff check --fix-only .

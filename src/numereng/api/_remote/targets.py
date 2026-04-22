@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numereng.api._remote as remote_api_module
-
 from numereng.api._remote.mappers import bootstrap_target_response, target_response
 from numereng.api.contracts import (
     RemoteDoctorRequest,

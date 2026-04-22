@@ -11,17 +11,22 @@ repos:
         args:
           - --maxkb=750
       - id: check-json
-        exclude: ^\.codex/skills/numereng-experiment-ops/assets/training-config-template\.json$
+        exclude: |
+          (?x)^(
+            \.codex/skills/numereng-experiment-ops/assets/training-config-template\.json
+            |src/numereng/assets/shipped_skills/numereng-experiment-ops/assets/training-config-template\.json
+          )$
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
       - id: end-of-file-fixer
-        exclude: ^docs/
+        exclude: ^(docs/|src/numereng/assets/viz_static/)
       - id: mixed-line-ending
         args:
           - --fix=lf
+        exclude: ^(docs/|src/numereng/assets/viz_static/)
       - id: trailing-whitespace
-        exclude: ^docs/
+        exclude: ^(docs/|src/numereng/assets/viz_static/)
   - repo: local
     hooks:
       - id: ruff-format-check
@@ -36,14 +41,14 @@ repos:
         pass_filenames: false
       - id: oss-preflight
         name: oss preflight
-        entry: make oss-preflight
+        entry: just oss-preflight
         language: system
         pass_filenames: false
   - repo: local
     hooks:
       - id: numereng-fast-gate
         name: numereng fast gate
-        entry: make test
+        entry: just test
         language: system
         pass_filenames: false
         stages:

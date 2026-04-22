@@ -58,7 +58,9 @@ def experiment_archive(request: ExperimentArchiveRequest) -> ExperimentArchiveRe
     from numereng import api as api_module
 
     try:
-        result = api_module.archive_experiment_record(store_root=request.store_root, experiment_id=request.experiment_id)
+        result = api_module.archive_experiment_record(
+            store_root=request.store_root, experiment_id=request.experiment_id
+        )
     except (ExperimentNotFoundError, ExperimentValidationError, ExperimentError) as exc:
         raise PackageError(str(exc)) from exc
     return ExperimentArchiveResponse(

@@ -15,9 +15,7 @@ from ._lazy_exports import (
 )
 
 # === Contract re-exports - keep request/response models eager and explicit ===
-CONTRACT_EXPORTS = tuple(
-    name for name in _contracts.__all__ if name not in ROOT_CONTRACT_EXPORT_EXCLUDES
-)
+CONTRACT_EXPORTS = tuple(name for name in _contracts.__all__ if name not in ROOT_CONTRACT_EXPORT_EXCLUDES)
 for contract_name in CONTRACT_EXPORTS:
     globals()[contract_name] = getattr(_contracts, contract_name)
 
