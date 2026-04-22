@@ -120,6 +120,10 @@ uv run numereng run submit --model-name <model-name> --run-id <run-id>
 
 ![Full experiment analysis view for the Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-experiment-report.png)
 
+![Run Ops table for the March 6 Small LGBM All-Targets experiment](docs/assets/screenshot-experiment-run-ops-table.png)
+
+![Run Ops chart drilldown for the top March 6 Small LGBM run](docs/assets/screenshot-experiment-run-ops-chart.png)
+
 The full walkthrough — including the config schema, scoring, and submission — is in [`docs/numereng/getting-started/first-model.md`](docs/numereng/getting-started/first-model.md).
 
 ## Workspace Layout
