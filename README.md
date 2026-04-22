@@ -118,9 +118,15 @@ uv run numereng experiment report --id 2026-04-19_baseline
 uv run numereng run submit --model-name <model-name> --run-id <run-id>
 ```
 
+The experiment report starts with the high-level readout: current winner, resolved ambiguity, plateau rules, and the score-vs-scale chart for the runs in the experiment.
+
 ![Full experiment analysis view for the Small LGBM All-Targets 3-Seed Baseline](docs/assets/screenshot-experiment-report.png)
 
+From there, Run Ops turns the same experiment into a dense comparison table. It keeps every run side by side, so you can sort by live metrics, inspect feature choices, and spot candidates worth opening.
+
 ![Run Ops table for the March 6 Small LGBM All-Targets experiment](docs/assets/screenshot-experiment-run-ops-table.png)
+
+Opening a run gives you the per-run drilldown: performance cards, cumulative diagnostics, artifacts, and lifecycle details in one place before you decide whether to keep iterating or submit.
 
 ![Run Ops chart drilldown for the top March 6 Small LGBM run](docs/assets/screenshot-experiment-run-ops-chart.png)
 
