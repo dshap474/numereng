@@ -48,7 +48,14 @@ repos:
     hooks:
       - id: numereng-fast-gate
         name: numereng fast gate
-        entry: just test
+        entry: just ci
+        language: system
+        pass_filenames: false
+        stages:
+          - pre-push
+      - id: numereng-hpo-smoke
+        name: numereng hpo smoke
+        entry: just hpo-smoke
         language: system
         pass_filenames: false
         stages:
