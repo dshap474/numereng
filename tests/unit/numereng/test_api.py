@@ -2140,7 +2140,7 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
             best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
             agentic_research_dir=Path("/tmp/agentic_research"),
             state_path=Path("/tmp/agentic_research/state.json"),
-            ledger_path=Path("/tmp/agentic_research/ledger.jsonl"),
+            decision_path=Path("/tmp/agentic_research/rounds/decision.json"),
             program_path=Path("/tmp/agentic_research/PROGRAM.md"),
         ),
     )

@@ -9,8 +9,8 @@
 ## First checks
 
 1. Inspect `experiments/<id>/agentic_research/state.json`.
-2. Inspect `experiments/<id>/agentic_research/ledger.jsonl`.
-3. Inspect the most recent `rounds/rNNN.md` notes file and `rounds/decision.json`.
+2. Inspect `experiments/<id>/agentic_research/rounds/decision.json`.
+3. Inspect the most recent `rounds/rNNN.md` notes file.
 4. If the planner failed, inspect `rounds/rNNN.debug.*`.
 
 ## Contract reminders
@@ -19,7 +19,6 @@
 - The mutable surface is config JSON, not Python code.
 - `rounds/decision.json` is the append-only mechanical contract.
 - `rounds/rNNN.md` is the readable round summary.
-- `ledger.jsonl` is the compact cross-round history.
 
 ## Common recovery paths
 

@@ -41,7 +41,7 @@ Source map:
 - `src/numereng/features/baseline/*`: shared benchmark baseline construction from persisted run predictions; canonical outputs live under `.numereng/datasets/baselines/<name>/` and can promote the active benchmark artifact.
 - `src/numereng/features/feature_neutralization/*`: prediction neutralization with a vectorized least-squares core; numereng preserves its run/file artifact workflow, `era|global` modes, and optional rank output while matching `numerai-tools` intercept handling.
 - `src/numereng/features/experiments/*`: experiment manifests + archive-aware path resolution + source-owned run-plan execution state + train linkage + promote/report + deferred round scoring.
-- `src/numereng/features/agentic_research/*`: minimal config-research loop. `PROGRAM.md` is the LLM policy; `run.py` is the deterministic runner. The LLM reads experiment configs, reports, notes, recent ledger rows, and research memory, then returns one JSON decision. Python validates allowed config paths, materializes a child config, trains, scores, and records artifacts under `.numereng/experiments/<id>/agentic_research/`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`.
+- `src/numereng/features/agentic_research/*`: minimal config-research loop. `PROGRAM.md` is the LLM policy; `run.py` is the deterministic runner. The LLM reads experiment configs, reports, notes, recent decision rows, and research memory, then returns one JSON decision. Python validates allowed config paths, materializes a child config, trains, scores, and records artifacts under `.numereng/experiments/<id>/agentic_research/`. Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`.
 - `src/numereng/features/agentic_research/TEST-PROGRAM.md`: quick smoke-test prompt. Experiments opt into it with `metadata.agentic_research_program = "TEST-PROGRAM.md"`.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build plus experiment-aware ensemble selection (candidate freeze from all available runs per target by default, pruning, equal-weight screening, exact weighted sweep) and persistence.
@@ -113,7 +113,6 @@ Key artifacts:
 - `.numereng/runs/<run_id>/artifacts/model/manifest.json`
 - `.numereng/experiments/<experiment_id>/run_scripts/*`
 - `.numereng/experiments/<experiment_id>/agentic_research/state.json`
-- `.numereng/experiments/<experiment_id>/agentic_research/ledger.jsonl`
 - `.numereng/experiments/<experiment_id>/agentic_research/rounds/decision.json`
 - `.numereng/experiments/<experiment_id>/agentic_research/rounds/rNNN.md`
   - failure-only debug artifacts use `rounds/rNNN.debug.*`
@@ -148,7 +147,7 @@ Wiring map:
   `cli research status|run -> api.research_status|research_run -> features.agentic_research.get_research_status|run_research`
   - `research run` initializes state on first use; there is no program catalog or init command
   - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`); checked-in default is `codex-exec`
-  - `state.json` and `ledger.jsonl` persist lightweight state and round history
+  - `state.json` persists lightweight supervisor state; `rounds/decision.json` persists round history
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime uses the user’s ambient Codex config and environment; agentic research does not create a separate learner `CODEX_HOME`
   - the mutable surface is experiment config JSON; the LLM is not allowed to edit Python source
   - the planner returns one JSON object with `action`, learning fields, `parent_config`, and config changes; Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, and writes one child config

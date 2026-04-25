@@ -15,7 +15,7 @@ from numereng.features.agentic_research import (
     AgenticResearchValidationError,
 )
 from numereng.features.experiments import ExperimentError
-from numereng.features.training import (
+from numereng.features.training.errors import (
     TrainingConfigError,
     TrainingDataError,
     TrainingError,
@@ -46,7 +46,7 @@ def research_status(request: ResearchStatusRequest) -> ResearchStatusResponse:
         best_overall=_best_response(result.best_overall),
         agentic_research_dir=str(result.agentic_research_dir),
         state_path=str(result.state_path),
-        ledger_path=str(result.ledger_path),
+        decision_path=str(result.decision_path),
         program_path=str(result.program_path),
     )
 

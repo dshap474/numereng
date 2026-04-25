@@ -3,7 +3,7 @@
 Use `numereng research` when you want numereng to run a simple autonomous config loop:
 
 1. run a deterministic ML round
-2. send the resulting configs, metrics, notes, and recent research ledger to the LLM
+2. send the resulting configs, metrics, notes, and recent decision log to the LLM
 3. let the LLM choose one small config mutation
 4. validate, train, score, and record the next round
 
@@ -47,7 +47,6 @@ uv run numereng experiment report --id 2026-04-18_research-root
 Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 
 - `state.json`
-- `ledger.jsonl`
 - `rounds/decision.json` as an append-only JSON-lines decision/result log
 - `rounds/rNNN.md` as the human-readable notes for each round
 - `rounds/rNNN.debug.*` only on LLM/Codex failure

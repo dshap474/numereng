@@ -126,9 +126,11 @@ def test_run_research_runs_baseline_before_llm(
     assert result.rounds[0].run_id == "run-1"
     assert (experiment.manifest_path.parent / "configs" / "r001_baseline_seed.json").is_file()
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
-    assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").is_file()
     assert result.rounds[0].artifact_dir == artifact_dir
-    assert (artifact_dir / "decision.json").is_file()
+    assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").exists() is False
+    decisions = (artifact_dir / "decision.json").read_text(encoding="utf-8").splitlines()
+    assert len(decisions) == 1
+    assert json.loads(decisions[0])["round_label"] == "r001"
     assert (artifact_dir / "r001.md").is_file()
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
@@ -206,7 +208,9 @@ def test_run_research_materializes_llm_config_mutation(
     assert payload["model"]["params"]["learning_rate"] == 0.02
     assert result.rounds[0].metric_value == 0.13
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
-    assert (artifact_dir / "decision.json").is_file()
+    decisions = (artifact_dir / "decision.json").read_text(encoding="utf-8").splitlines()
+    assert len(decisions) == 1
+    assert json.loads(decisions[0])["decision"]["action"] == "run"
     assert (artifact_dir / "r001.md").is_file()
     assert "A slightly larger learning rate is worth testing." in (artifact_dir / "r001.md").read_text(encoding="utf-8")
     assert not (artifact_dir / "r001").exists()

@@ -234,7 +234,6 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
       configs/*.json
       agentic_research/
         state.json
-        ledger.jsonl
         rounds/
           decision.json
           rNNN.md
@@ -521,7 +520,6 @@ cli research status|run
   -> features.agentic_research.get_research_status|run_research
       - persist supervisor state under:
           .numereng/experiments/<root>/agentic_research/state.json
-          .numereng/experiments/<root>/agentic_research/ledger.jsonl
           .numereng/experiments/<root>/agentic_research/rounds/decision.json
           .numereng/experiments/<root>/agentic_research/rounds/rNNN.md
       - `research run` initializes state on first use
@@ -532,7 +530,7 @@ cli research status|run
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - `codex-exec` inherits the user’s normal Codex configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
-      - the LLM sees configs, report rows, experiment notes, recent ledger rows, and research memory
+      - the LLM sees configs, report rows, experiment notes, recent decision rows, and research memory
       - the LLM returns one JSON decision: run or stop
       - Python validates allowed config paths, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
       - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation

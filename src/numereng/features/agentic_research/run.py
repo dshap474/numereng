@@ -36,7 +36,6 @@ PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
 PROGRAM_METADATA_KEY = "agentic_research_program"
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
-LEDGER_FILENAME = "ledger.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
 SCORING_STAGE = "post_training_full"
@@ -112,7 +111,7 @@ class ResearchStatusResult:
     best_overall: ResearchBestRun
     agentic_research_dir: Path
     state_path: Path
-    ledger_path: Path
+    decision_path: Path
     program_path: Path
 
 
@@ -377,7 +376,6 @@ def _train_score_record_round(
         "completed_at": _utc_now_iso(),
     }
     _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
-    _append_ledger(_ledger_path(experiment), round_payload)
     _append_decision_log(_decision_log_path(experiment), round_payload)
 
     state.update(
@@ -430,7 +428,6 @@ def _record_stop_round(
         "completed_at": _utc_now_iso(),
     }
     _write_round_notes(artifact_dir=artifact_dir, round_payload=payload)
-    _append_ledger(_ledger_path(experiment), payload)
     _append_decision_log(_decision_log_path(experiment), payload)
     state.update(
         {
@@ -481,7 +478,7 @@ def _build_context(
         "state": state,
         "configs": _config_context(experiment),
         "report": _report_context(report),
-        "recent_rounds": _recent_ledger(_ledger_path(experiment), limit=8),
+        "recent_rounds": _recent_decisions(_decision_log_path(experiment), limit=8),
         "experiment_notes": _read_text(experiment.manifest_path.parent / "EXPERIMENT.md", limit=MAX_CONTEXT_CHARS),
         "research_memory": _read_text(root / "notes" / "__RESEARCH_MEMORY__" / "CURRENT.md", limit=MAX_CONTEXT_CHARS),
     }
@@ -853,7 +850,7 @@ def _status_result(
         best_overall=best,
         agentic_research_dir=auto_dir,
         state_path=auto_dir / STATE_FILENAME,
-        ledger_path=auto_dir / LEDGER_FILENAME,
+        decision_path=_decision_log_path(experiment),
         program_path=_program_path(experiment),
     )
 
@@ -934,10 +931,6 @@ def _state_path(experiment: ExperimentRecord) -> Path:
     return _agentic_dir(experiment) / STATE_FILENAME
 
 
-def _ledger_path(experiment: ExperimentRecord) -> Path:
-    return _agentic_dir(experiment) / LEDGER_FILENAME
-
-
 def _decision_log_path(experiment: ExperimentRecord) -> Path:
     return _rounds_dir(experiment) / "decision.json"
 
@@ -958,7 +951,7 @@ def _save_state(experiment: ExperimentRecord, state: dict[str, object]) -> None:
     _write_json(_state_path(experiment), state)
 
 
-def _recent_ledger(path: Path, *, limit: int) -> list[dict[str, object]]:
+def _recent_decisions(path: Path, *, limit: int) -> list[dict[str, object]]:
     if not path.is_file():
         return []
     rows: list[dict[str, object]] = []
@@ -972,12 +965,6 @@ def _recent_ledger(path: Path, *, limit: int) -> list[dict[str, object]]:
         if isinstance(payload, dict):
             rows.append(payload)
     return rows[-limit:]
-
-
-def _append_ledger(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
 
 
 def _append_decision_log(path: Path, payload: dict[str, object]) -> None:
