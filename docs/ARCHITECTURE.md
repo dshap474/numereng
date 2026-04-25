@@ -236,11 +236,10 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
         state.json
         ledger.jsonl
         rounds/rN/
-          round.json
-          context.json
-          prompt.md
           decision.json
-          learning.md
+          context.json
+          notes.md
+          debug/*          # only on LLM/Codex failure
         hpo/<study_id>/...
         ensembles/<ensemble_id>/...
       _archive/

@@ -114,7 +114,7 @@ Key artifacts:
 - `.numereng/experiments/<experiment_id>/agentic_research/state.json`
 - `.numereng/experiments/<experiment_id>/agentic_research/ledger.jsonl`
 - `.numereng/experiments/<experiment_id>/agentic_research/rounds/rN/*`
-  - canonical round artifacts are `context.json`, `prompt.md`, `decision.json`, `learning.md`, and `round.json`
+  - canonical round artifacts are `decision.json`, `notes.md`, and `context.json` for LLM rounds; `debug/*` is written only on LLM/Codex failure
 - `.numereng/experiments/_archive/<experiment_id>/...`
 
 Wiring map:

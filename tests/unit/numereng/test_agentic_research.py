@@ -113,7 +113,13 @@ def test_run_research_runs_baseline_before_llm(
     assert result.rounds[0].action == "baseline"
     assert result.rounds[0].run_id == "run-1"
     assert (experiment.manifest_path.parent / "configs" / "r001_baseline_seed.json").is_file()
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001"
     assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").is_file()
+    assert (artifact_dir / "decision.json").is_file()
+    assert (artifact_dir / "notes.md").is_file()
+    assert not (artifact_dir / "context.json").exists()
+    assert not (artifact_dir / "round.json").exists()
+    assert not (artifact_dir / "learning.md").exists()
 
 
 def test_run_research_materializes_llm_config_mutation(
@@ -185,7 +191,19 @@ def test_run_research_materializes_llm_config_mutation(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["model"]["params"]["learning_rate"] == 0.02
     assert result.rounds[0].metric_value == 0.13
-    assert (experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001" / "prompt.md").is_file()
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001"
+    assert (artifact_dir / "context.json").is_file()
+    assert (artifact_dir / "decision.json").is_file()
+    assert (artifact_dir / "notes.md").is_file()
+    assert "A slightly larger learning rate is worth testing." in (artifact_dir / "notes.md").read_text(
+        encoding="utf-8"
+    )
+    assert not (artifact_dir / "prompt.md").exists()
+    assert not (artifact_dir / "llm_response.txt").exists()
+    assert not (artifact_dir / "codex_stdout.jsonl").exists()
+    assert not (artifact_dir / "codex_stderr.txt").exists()
+    assert not (artifact_dir / "round.json").exists()
+    assert not (artifact_dir / "learning.md").exists()
 
 
 def test_call_codex_exec_uses_configured_model_and_reasoning(
@@ -226,6 +244,43 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     assert cmd[cmd.index("-c") + 1] == 'model_reasoning_effort="high"'
     assert response == '{"action": "stop"}'
     assert captured["input"] == "choose next run"
+    assert not (tmp_path / "codex_stdout.jsonl").exists()
+    assert not (tmp_path / "codex_stderr.txt").exists()
+
+
+def test_call_codex_exec_writes_debug_artifacts_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(
+        cmd: list[str],
+        *,
+        input: str,
+        text: bool,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        _ = (cmd, input, text, capture_output, check)
+        return subprocess.CompletedProcess(args=cmd, returncode=1, stdout='{"event":"failed"}', stderr="boom")
+
+    monkeypatch.setattr(research_module.subprocess, "run", fake_run)
+
+    with pytest.raises(research_module.AgenticResearchError, match="agentic_research_codex_failed"):
+        research_module._call_codex_exec(
+            prompt="choose next run",
+            artifact_dir=tmp_path,
+            config=OpenRouterConfig(
+                active_model_source="codex-exec",
+                active_model="gpt-5.5",
+                active_model_reasoning_effort="high",
+            ),
+        )
+
+    debug_dir = tmp_path / "debug"
+    assert (debug_dir / "prompt.md").read_text(encoding="utf-8") == "choose next run"
+    assert (debug_dir / "codex_stdout.jsonl").read_text(encoding="utf-8") == '{"event":"failed"}'
+    assert (debug_dir / "codex_stderr.txt").read_text(encoding="utf-8") == "boom"
+    assert "agentic_research_codex_failed" in (debug_dir / "error.txt").read_text(encoding="utf-8")
 
 
 def test_parse_decision_rejects_disallowed_change_path() -> None:

@@ -48,13 +48,12 @@ Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 
 - `state.json`
 - `ledger.jsonl`
-- `rounds/rNNN/context.json`
-- `rounds/rNNN/prompt.md`
 - `rounds/rNNN/decision.json`
-- `rounds/rNNN/learning.md`
-- `rounds/rNNN/round.json`
+- `rounds/rNNN/context.json` for LLM rounds
+- `rounds/rNNN/notes.md`
+- `rounds/rNNN/debug/*` only on LLM/Codex failure
 
-These files are the durable record of what evidence the LLM saw, what it decided, what config was materialized, and how the round scored.
+JSON files are the machine contract and replay surface. Markdown files are the human-readable audit trail.
 
 ## High-Risk Gotchas
 
