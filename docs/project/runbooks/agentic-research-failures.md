@@ -3,21 +3,20 @@
 ## Symptoms
 
 - `numereng research run` stops after planner errors
-- a round bundle is missing `round.json` or `round.md`
-- planner traces exist but the child config or follow-on train step did not materialize
+- a round bundle is missing `round.json`, `decision.json`, or `learning.md`
+- a prompt/decision exists but the child config or follow-on train step did not materialize
 
 ## First checks
 
-1. Inspect `experiments/<id>/agentic_research/program.json`.
-2. Inspect `experiments/<id>/agentic_research/lineage.json`.
-3. Inspect `experiments/<id>/agentic_research/llm_trace.jsonl` and `llm_trace.md`.
-4. Inspect the most recent `rounds/rN/round.json` and `round.md`.
+1. Inspect `experiments/<id>/agentic_research/state.json`.
+2. Inspect `experiments/<id>/agentic_research/ledger.jsonl`.
+3. Inspect the most recent `rounds/rN/context.json`, `prompt.md`, `decision.json`, and `round.json`.
 
 ## Contract reminders
 
 - Numerai rounds are config-centric and materialize at most one child config per autonomous iteration.
-- Planner traces are append-only.
-- Round bundles are canonical; older transport-specific artifacts are not the durable contract.
+- The mutable surface is config JSON, not Python code.
+- Round bundles are canonical; `ledger.jsonl` is the compact cross-round history.
 
 ## Common recovery paths
 

@@ -3544,138 +3544,48 @@ def test_cli_research_commands_success(
 ) -> None:
     monkeypatch.setattr(
         api_module,
-        "research_init",
-        lambda request: api_module.ResearchInitResponse(
-            root_experiment_id=request.experiment_id,
-            program_id=request.program_id or "numerai-experiment-loop",
-            program_title="Numerai Experiment Loop",
-            status="initialized",
-            active_experiment_id=request.experiment_id,
-            active_path_id="p00",
-            improvement_threshold=0.0002,
-            current_phase=None,
-            agentic_research_dir="/tmp/agentic_research",
-            program_path="/tmp/agentic_research/program.json",
-            lineage_path="/tmp/agentic_research/lineage.json",
-            session_program_path="/tmp/agentic_research/session_program.md",
-        ),
-    )
-    monkeypatch.setattr(
-        api_module,
-        "research_program_list",
-        lambda request: api_module.ResearchProgramListResponse(
-            programs=[
-                api_module.ResearchProgramCatalogEntryResponse(
-                    program_id="numerai-experiment-loop",
-                    title="Numerai Experiment Loop",
-                    description="Builtin numerai loop.",
-                    source="builtin",
-                    planner_contract="config_mutation",
-                    phase_aware=False,
-                    source_path="/tmp/numerai-experiment-loop.md",
-                )
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        api_module,
-        "research_program_show",
-        lambda request: api_module.ResearchProgramShowResponse(
-            program_id=request.program_id,
-            title="Numerai Experiment Loop",
-            description="Builtin numerai loop.",
-            source="builtin",
-            planner_contract="config_mutation",
-            scoring_stage="post_training_full",
-            metric_policy=api_module.ResearchProgramMetricPolicyResponse(
-                primary="bmc_last_200_eras.mean",
-                tie_break="bmc.mean",
-                sanity_checks=["corr.mean"],
-            ),
-            round_policy=api_module.ResearchProgramRoundPolicyResponse(
-                plateau_non_improving_rounds=2,
-                require_scale_confirmation=True,
-                scale_confirmation_rounds=1,
-            ),
-            improvement_threshold_default=0.0002,
-            config_policy=api_module.ResearchProgramConfigPolicyResponse(
-                allowed_paths=["model.params.*"],
-                min_candidate_configs=None,
-                max_candidate_configs=1,
-                min_changes=1,
-                max_changes=2,
-            ),
-            phases=[],
-            source_path="/tmp/numerai-experiment-loop.md",
-            raw_markdown=(
-                "---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n"
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        api_module,
         "research_status",
         lambda request: api_module.ResearchStatusResponse(
-            root_experiment_id=request.experiment_id,
-            program_id="numerai-experiment-loop",
-            program_title="Numerai Experiment Loop",
+            experiment_id=request.experiment_id,
             status="running",
-            active_experiment_id=request.experiment_id,
-            active_path_id="p00",
             next_round_number=2,
             total_rounds_completed=1,
-            total_paths_created=1,
-            improvement_threshold=0.0002,
             last_checkpoint="round_completed",
             stop_reason=None,
             best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
-            current_round=None,
-            current_phase=None,
-            program_path="/tmp/agentic_research/program.json",
-            lineage_path="/tmp/agentic_research/lineage.json",
-            session_program_path="/tmp/agentic_research/session_program.md",
+            agentic_research_dir="/tmp/agentic_research",
+            state_path="/tmp/agentic_research/state.json",
+            ledger_path="/tmp/agentic_research/ledger.jsonl",
+            program_path="/tmp/agentic_research/PROGRAM.md",
         ),
     )
     monkeypatch.setattr(
         api_module,
         "research_run",
         lambda request: api_module.ResearchRunResponse(
-            root_experiment_id=request.experiment_id,
-            program_id="numerai-experiment-loop",
-            program_title="Numerai Experiment Loop",
+            experiment_id=request.experiment_id,
             status="stopped",
-            active_experiment_id=request.experiment_id,
-            active_path_id="p00",
             next_round_number=3,
             total_rounds_completed=2,
-            total_paths_created=1,
             last_checkpoint="stopped",
             stop_reason="max_rounds_reached",
-            current_phase=None,
+            best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
+            rounds=[
+                api_module.ResearchRoundResponse(
+                    round_number=2,
+                    round_label="r002",
+                    action="run",
+                    status="completed",
+                    config_path="/tmp/configs/r002.json",
+                    run_id="run-5",
+                    metric_value=0.124,
+                    learning="lower learning rate helped",
+                    artifact_dir="/tmp/agentic_research/rounds/r002",
+                )
+            ],
             interrupted=False,
         ),
     )
-
-    exit_code = cli.main(
-        [
-            "research",
-            "init",
-            "--experiment-id",
-            "2026-02-22_test-exp",
-            "--program",
-            "numerai-experiment-loop",
-        ]
-    )
-    assert exit_code == 0
-    assert _parse_stdout_json(capsys.readouterr().out)["active_path_id"] == "p00"
-
-    exit_code = cli.main(["research", "program", "list"])
-    assert exit_code == 0
-    assert "numerai-experiment-loop" in capsys.readouterr().out
-
-    exit_code = cli.main(["research", "program", "show", "--program", "numerai-experiment-loop"])
-    assert exit_code == 0
-    assert "program_id: numerai-experiment-loop" in capsys.readouterr().out
 
     exit_code = cli.main(["research", "status", "--experiment-id", "2026-02-22_test-exp"])
     assert exit_code == 0
@@ -3683,20 +3593,7 @@ def test_cli_research_commands_success(
 
     exit_code = cli.main(["research", "run", "--experiment-id", "2026-02-22_test-exp", "--max-rounds", "1"])
     assert exit_code == 0
-    assert _parse_stdout_json(capsys.readouterr().out)["stop_reason"] == "max_rounds_reached"
-
-    exit_code = cli.main(
-        [
-            "research",
-            "init",
-            "--experiment-id",
-            "2026-02-22_test-exp",
-            "--program",
-            "numerai-experiment-loop",
-        ]
-    )
-    assert exit_code == 0
-    assert _parse_stdout_json(capsys.readouterr().out)["program_id"] == "numerai-experiment-loop"
+    assert "r002 | run | run_id=run-5 | metric=0.124000" in capsys.readouterr().out
 
 
 def test_cli_baseline_build_success(

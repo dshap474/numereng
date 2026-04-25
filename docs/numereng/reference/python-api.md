@@ -67,9 +67,6 @@ print(response.predictions_path)
 - `experiment_archive(ExperimentArchiveRequest)`
 - `experiment_unarchive(ExperimentUnarchiveRequest)`
 - `experiment_score_round(ExperimentScoreRoundRequest)`
-- `research_program_list(ResearchProgramListRequest | None = None)`
-- `research_program_show(ResearchProgramShowRequest)`
-- `research_init(ResearchInitRequest)`
 - `research_status(ResearchStatusRequest)`
 - `research_run(ResearchRunRequest)`
 
@@ -190,7 +187,7 @@ Key examples:
 - `DocsSyncRequest`
 - `ExperimentCreateRequest`
 - `ExperimentRunPlanRequest`
-- `ResearchInitRequest`
+- `ResearchRunRequest`
 - `HpoStudyCreateRequest`
 - `EnsembleBuildRequest`
 - `EnsembleSelectRequest`

@@ -7,7 +7,7 @@ The repo checkout is the workspace.
 These are the repo-local extension directories you are expected to read and edit directly:
 
 - `src/numereng/features/models/custom_models/`: built-in and default-discovered custom model wrappers
-- `src/numereng/features/agentic_research/programs/`: built-in research program markdown
+- `src/numereng/features/agentic_research/PROGRAM.md`: agentic config-research prompt policy
 - `.agents/skills/`: local custom skills; gitignored by default
 
 ## Runtime Store
@@ -80,5 +80,5 @@ For a scored run, the canonical runtime artifacts live under `.numereng/runs/<ru
 - Use `--workspace` only when you intentionally need to target another checkout's runtime store or docs mirror paths.
 - Training and HPO configs are JSON-only.
 - `src/numereng/features/models/custom_models/` is the canonical runtime discovery root for custom model plugins.
-- `src/numereng/features/agentic_research/programs/` is the default research program catalog root.
+- `src/numereng/features/agentic_research/PROGRAM.md` is the agentic config-research policy.
 - Managed runtime scratch state stays under `.numereng/`.

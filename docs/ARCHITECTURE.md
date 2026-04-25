@@ -175,7 +175,7 @@ Command families:
 ## 6. Runtime Persistence Model
 Numereng has two path surfaces:
 
-- source-tree extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/programs/`
+- source-tree extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/PROGRAM.md`
 - local ignored custom-skill path: `.agents/skills/`
 - optional synced vendor docs path: `docs/numerai/` (manual local mirror)
 - repo-root dev files: `pyproject.toml`, `.python-version`, `.venv/`
@@ -206,7 +206,9 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
   docs/
     numerai/                     # optional local mirror from `numereng docs sync numerai`
   src/numereng/features/models/custom_models/
-  src/numereng/features/agentic_research/programs/
+  src/numereng/features/agentic_research/
+    PROGRAM.md
+    run.py
   .agents/
     skills/
   .numereng/
@@ -231,14 +233,14 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
             pickle/model.pkl
       configs/*.json
       agentic_research/
-        program.json
-        session_program.md
-        lineage.json
+        state.json
+        ledger.jsonl
         rounds/rN/
           round.json
-          round.md
-          llm_trace.jsonl
-          llm_trace.md
+          context.json
+          prompt.md
+          decision.json
+          learning.md
         hpo/<study_id>/...
         ensembles/<ensemble_id>/...
       _archive/
@@ -516,52 +518,25 @@ cli experiment archive|unarchive
 
 ### 7.5 Agentic Research
 ```text
-cli research program list|show
-  -> api.research_program_list|api.research_program_show
-  -> features.agentic_research.list_research_programs|get_research_program
-
-cli research init|status|run
-  -> api.research_init|api.research_status|api.research_run
-  -> features.agentic_research.init_research|get_research_status|run_research
+cli research status|run
+  -> api.research_status|api.research_run
+  -> features.agentic_research.get_research_status|run_research
       - persist supervisor state under:
-          .numereng/experiments/<root>/agentic_research/program.json
-          .numereng/experiments/<root>/agentic_research/session_program.md
-          .numereng/experiments/<root>/agentic_research/lineage.json
+          .numereng/experiments/<root>/agentic_research/state.json
+          .numereng/experiments/<root>/agentic_research/ledger.jsonl
           .numereng/experiments/<root>/agentic_research/rounds/rN/*
-      - `research init` requires one persisted `program_id`
-      - the default tracked program lives under `src/numereng/features/agentic_research/programs/numerai-experiment-loop.md`
-      - local custom programs can be dropped into `src/numereng/features/agentic_research/programs/*.md`; that folder includes a README and `.gitignore` so extra programs stay untracked by default
-      - each program markdown file contains YAML frontmatter plus the full planner prompt body
-      - runtime layout is localized into `run.py` plus `utils/planning.py`, `utils/mutation.py`, `utils/programs.py`, `utils/store.py`, `utils/llm.py`, and `utils/types.py`
-      - `program.json` stores the canonical `program_snapshot`; runtime resume uses that snapshot, not the live program catalog
-      - `session_program.md` stores the exact markdown selected at init time for auditability
-      - legacy sessions that only stored `strategy` are auto-migrated to a normalized program snapshot on load/save
-      - phase-aware programs persist `current_phase` in program state and surface it in API/CLI status
+      - `research run` initializes state on first use
+      - the prompt policy lives in `src/numereng/features/agentic_research/PROGRAM.md`
+      - runtime layout is localized into `PROGRAM.md` plus `run.py`
       - select planner compute source from `src/numereng/config/openrouter/active-model.py`
       - checked-in default: `ACTIVE_MODEL_SOURCE=codex-exec`
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - `codex-exec` inherits the user’s normal Codex configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
-      - programs define policy and prompt surface only; Python still validates configs, writes files, trains, scores, persists lineage, and resumes sessions
-      - `numerai-experiment-loop` is config-centric:
-        - Python selects one parent config from the active-path lineage using the program metric policy
-        - the planner sees one parent mutable-config snapshot built only from allowed mutation paths, the effective scoring stage, one compact lineage summary, and only the current program context
-        - the planner returns a minimal `RATIONALE:` + `CHANGES:` text block instead of a dense planner JSON object
-        - Python parses dotted `config.path = <json-literal>` edits, clones the parent config, validates the child `TrainingConfig`, names it deterministically, and retries once on invalid or duplicate mutations
-        - each numerai autonomous iteration writes and trains at most one child config; the config file is the unit of evolution
-      - phase-aware custom programs can still use the structured planner JSON contract
-        - the JSON schema is generated from the persisted program definition instead of loaded from strategy assets
-      - persist planner trace entries per round at `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.jsonl` and render the same chronological stream into `.numereng/experiments/<root>/agentic_research/rounds/rN/llm_trace.md`
-      - persist one canonical round bundle per round at `rounds/rN/round.json` and `rounds/rN/round.md`
-      - round bundles and planner traces record `program_id`, `program_sha256`, and `session_program_path`
-      - the round markdown is deliberately compact: round status, parent selection, mutation lineage, scored outcome, and links back to the full planner trace for that round
-      - numerai rounds persist mutation lineage in the round bundle (`parent_run_id`, `parent_config_filename`, `parent_selection_reason`, `change_set`, `llm_rationale`)
-      - numerai mutation rounds now write one child config into the active experiment, train it, deferred-score the round, and persist one bundled round record instead of many transport-specific files
-      - legacy per-round `codex_*`, `planned_configs.json`, `report.json`, `round_summary.json`, and per-round trace copies are removed when the bundle is written
-      - track plateau streak on the program primary metric using the configured tie-break metric
-      - let program phase policy decide whether the next round stays in the current phase, advances phase, or completes the campaign
-      - after the configured non-improving round threshold, optionally force the configured scale-confirmation round(s); if the path still fails, create a fresh child experiment and continue there
-      - write lineage backlinks into experiment manifest metadata so root and child paths remain auditable
+      - the LLM sees configs, report rows, experiment notes, recent ledger rows, and research memory
+      - the LLM returns one JSON decision: run or stop
+      - Python validates allowed config paths, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
+      - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation
 ```
 
 ### 7.6 HPO

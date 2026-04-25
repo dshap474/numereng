@@ -56,11 +56,8 @@ See:
 
 ### Agentic Research
 
-- `numereng research program list [--format <table|json>] [--workspace <path>]`
-- `numereng research program show --program <id> [--format <table|json>] [--workspace <path>]`
-- `numereng research init --experiment-id <id> --program <id> [--workspace <path>]`
 - `numereng research status --experiment-id <id> [--format <table|json>] [--workspace <path>]`
-- `numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--workspace <path>]`
+- `numereng research run --experiment-id <id> [--max-rounds <n>] [--workspace <path>]`
 
 See:
 - [Agentic Research](../workflows/agentic-research.md)

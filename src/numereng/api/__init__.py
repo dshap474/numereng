@@ -45,18 +45,6 @@ def _agentic_research_feature_module():
     return import_module("numereng.features.agentic_research")
 
 
-def research_init(*args, **kwargs):
-    return _agentic_research_api_module().research_init(*args, **kwargs)
-
-
-def research_program_list(*args, **kwargs):
-    return _agentic_research_api_module().research_program_list(*args, **kwargs)
-
-
-def research_program_show(*args, **kwargs):
-    return _agentic_research_api_module().research_program_show(*args, **kwargs)
-
-
 def research_run(*args, **kwargs):
     return _agentic_research_api_module().research_run(*args, **kwargs)
 
@@ -65,23 +53,11 @@ def research_status(*args, **kwargs):
     return _agentic_research_api_module().research_status(*args, **kwargs)
 
 
-def get_research_program_record(*args, **kwargs):
-    return _agentic_research_feature_module().get_research_program(*args, **kwargs)
-
-
-def get_research_program_status(*args, **kwargs):
+def get_research_status(*args, **kwargs):
     return _agentic_research_feature_module().get_research_status(*args, **kwargs)
 
 
-def init_research_program(*args, **kwargs):
-    return _agentic_research_feature_module().init_research(*args, **kwargs)
-
-
-def list_research_program_records(*args, **kwargs):
-    return _agentic_research_feature_module().list_research_programs(*args, **kwargs)
-
-
-def run_research_program(*args, **kwargs):
+def run_research(*args, **kwargs):
     return _agentic_research_feature_module().run_research(*args, **kwargs)
 
 

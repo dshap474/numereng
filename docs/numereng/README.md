@@ -39,7 +39,7 @@ uv run numereng docs sync numerai
 Repo-local extension roots:
 
 - `src/numereng/features/models/custom_models/` for custom model wrappers
-- `src/numereng/features/agentic_research/programs/` for research-program markdown
+- `src/numereng/features/agentic_research/PROGRAM.md` for agentic config-research policy
 - `.agents/skills/` for local custom skills; this path is gitignored
 
 Repo-local runtime state:

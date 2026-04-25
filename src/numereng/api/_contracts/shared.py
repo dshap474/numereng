@@ -16,8 +16,6 @@ NeutralizationMode = Literal["era", "global"]
 ScoringStage = Literal["all", "run_metric_series", "post_fold", "post_training_core", "post_training_full"]
 ExperimentScoreRoundStage = Literal["post_training_core", "post_training_full"]
 ResearchSupervisorStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
-ResearchProgramSource = Literal["builtin", "user", "legacy_builtin"]
-ResearchPlannerContract = Literal["config_mutation", "structured_json"]
 ExperimentStatus = Literal["draft", "active", "complete", "archived"]
 TrainingProfile = Literal["simple", "purged_walk_forward", "full_history_refit"]
 TrainingEngineMode = Literal["official", "custom", "full_history"]
@@ -52,8 +50,6 @@ __all__ = [
     "NeutralizationMode",
     "NumeraiTournament",
     "PostTrainingScoringPolicy",
-    "ResearchPlannerContract",
-    "ResearchProgramSource",
     "ResearchSupervisorStatus",
     "ScoringStage",
     "TrainingEngineMode",

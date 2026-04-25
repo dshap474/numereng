@@ -21,11 +21,8 @@ USAGE = (
     "  numereng experiment promote --id <id> [--run <run_id>] [--metric <metric_key>] [--workspace <path>]\n"
     "  numereng experiment report --id <id> [--metric <metric_key>] [--limit <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng experiment pack --id <id> [--workspace <path>]\n"
-    "  numereng research program list [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research program show --program <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research init --experiment-id <id> --program <id> [--workspace <path>]\n"
     "  numereng research status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research run --experiment-id <id> [--max-rounds <n>] [--max-paths <n>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng research run --experiment-id <id> [--max-rounds <n>] [--workspace <path>]\n"
     "  numereng hpo create (--study-config <path.json> | (--study-id <id> --study-name <name> --config <path.json> --search-space <json|path>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--timeout-seconds <n>] [--max-completed-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]\n"

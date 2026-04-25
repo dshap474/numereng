@@ -4,17 +4,13 @@ from __future__ import annotations
 
 # === Research wrapper exports - kept eager so `import numereng.api` stays lightweight ===
 RESEARCH_API_EXPORTS = (
-    "research_init",
-    "research_program_list",
-    "research_program_show",
     "research_run",
     "research_status",
 )
 
 RESEARCH_FEATURE_EXPORTS = (
-    "get_research_program_status",
-    "init_research_program",
-    "run_research_program",
+    "get_research_status",
+    "run_research",
 )
 
 ROOT_CONTRACT_EXPORT_EXCLUDES = (

@@ -1,58 +1,17 @@
+"""Tests for the minimal agentic config-research loop."""
+
 from __future__ import annotations
 
 import json
-import subprocess
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from numereng.features.agentic_research.run import init_research, run_research
-from numereng.features.agentic_research.utils.llm import (
-    default_codex_command,
-    run_codex_planner,
-)
-from numereng.features.agentic_research.utils.mutation import (
-    build_candidate_filename,
-    materialize_mutation_config,
-    parse_mutation_response,
-    render_mutation_prompt,
-    select_parent_config,
-)
-from numereng.features.agentic_research.utils.planning import (
-    force_action_for_path,
-    materialize_config_payload,
-    planner_reference_config_dirs,
-    select_reference_configs,
-    should_pivot_path,
-    update_path_after_round,
-    validate_decision,
-)
-from numereng.features.agentic_research.utils.programs import (
-    list_program_catalog,
-    load_program_definition,
-    load_program_details,
-    render_prompt_template,
-    render_validation_feedback_block,
-)
-from numereng.features.agentic_research.utils.store import (
-    load_lineage_state,
-    load_program_state,
-    save_lineage_state,
-    save_program_state,
-    session_program_path,
-)
-from numereng.features.agentic_research.utils.types import (
-    CodexConfigPayload,
-    CodexDecision,
-    CodexPlannerExecution,
-    RawPlannerExecution,
-    ResearchBestRun,
-    ResearchLineageLink,
-    ResearchLineageState,
-    ResearchPathState,
-    ResearchPhaseState,
-    ResearchProgramState,
+from numereng.features.agentic_research import run as research_module
+from numereng.features.agentic_research.run import (
+    AgenticResearchValidationError,
+    get_research_status,
+    run_research,
 )
 from numereng.features.experiments import (
     ExperimentReport,
@@ -61,1593 +20,183 @@ from numereng.features.experiments import (
     ExperimentTrainResult,
     create_experiment,
 )
-from numereng.features.store import resolve_workspace_layout_from_store_root
+
+EXPERIMENT_ID = "2026-02-22_test-exp"
 
 
-def _valid_training_config() -> dict[str, object]:
-    return {
-        "data": {
-            "data_version": "v5.2",
-            "dataset_variant": "non_downsampled",
-            "dataset_scope": "train_plus_validation",
-            "feature_set": "small",
-            "target_col": "target_ender_20",
-            "target_horizon": "20d",
-            "era_col": "era",
-            "id_col": "id",
-            "benchmark_source": {
-                "source": "active",
-                "predictions_path": None,
-                "pred_col": "prediction",
-                "name": None,
-            },
-            "meta_model_data_path": None,
-            "meta_model_col": "numerai_meta_model",
-            "embargo_eras": None,
-            "baselines_dir": None,
-        },
-        "preprocessing": {
-            "nan_missing_all_twos": False,
-            "missing_value": 2.0,
-        },
-        "model": {
-            "type": "LGBMRegressor",
-            "params": {
-                "n_estimators": 10,
-                "learning_rate": 0.01,
-                "max_depth": 6,
-                "num_leaves": 64,
-                "colsample_bytree": 0.1,
-                "random_state": 42,
-            },
-            "x_groups": ["features"],
-            "data_needed": None,
-            "module_path": None,
-            "target_transform": None,
-            "benchmark": None,
-            "baseline": None,
-        },
-        "training": {
-            "engine": {
-                "profile": "purged_walk_forward",
-                "mode": None,
-                "window_size_eras": None,
-                "embargo_eras": None,
-            },
-            "resources": {
-                "parallel_folds": 1,
-                "parallel_backend": "joblib",
-                "memmap_enabled": True,
-                "max_threads_per_worker": "default",
-                "sklearn_working_memory_mib": None,
-            },
-            "cache": {
-                "mode": "deterministic",
-                "cache_fold_specs": True,
-                "cache_features": True,
-                "cache_labels": True,
-                "cache_fold_matrices": False,
-            },
-        },
-        "output": {
-            "output_dir": None,
-            "baselines_dir": None,
-            "predictions_name": "val_predictions_scout",
-            "results_name": None,
-        },
+def _write_training_config(path: Path, *, learning_rate: float = 0.01) -> None:
+    payload: dict[str, object] = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+        "model": {"type": "LGBMRegressor", "params": {"learning_rate": learning_rate}},
+        "training": {},
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _decision() -> CodexDecision:
-    return CodexDecision(
-        experiment_question="Which target variant should win this round?",
-        winner_criteria="Highest bmc_last_200_eras.mean with bmc.mean tie-break.",
-        decision_rationale="Keep the sweep narrow and benchmark-relative.",
-        next_action="continue",
-        path_hypothesis="Tree models around Ender20 remain the best root path.",
-        path_slug="ender20-tree-path",
-        configs=[
-            CodexConfigPayload(filename="base.json", rationale="Base", overrides={}),
-            CodexConfigPayload(
-                filename="lr.json",
-                rationale="Lower LR",
-                overrides={"model": {"params": {"learning_rate": 0.005}}},
-            ),
-            CodexConfigPayload(
-                filename="leaves.json",
-                rationale="More leaves",
-                overrides={"model": {"params": {"num_leaves": 96}}},
-            ),
-            CodexConfigPayload(
-                filename="features.json",
-                rationale="Feature variant",
-                overrides={"data": {"feature_set": "medium"}},
-            ),
-        ],
-        phase_action=None,
-        phase_transition_rationale=None,
+def _report(*rows: ExperimentReportRow) -> ExperimentReport:
+    return ExperimentReport(
+        experiment_id=EXPERIMENT_ID,
+        metric="bmc_last_200_eras.mean",
+        total_runs=len(rows),
+        champion_run_id=None,
+        rows=rows,
     )
 
 
-def _planner_execution(decision: CodexDecision | None = None) -> CodexPlannerExecution:
-    resolved = decision or _decision()
-    return CodexPlannerExecution(
-        decision=resolved,
-        attempts=[],
-        stdout_jsonl='{"type":"thread.started","thread_id":"thread_123"}\n',
-        stderr_text="",
-        last_message={
-            "experiment_question": resolved.experiment_question,
-            "winner_criteria": resolved.winner_criteria,
-            "decision_rationale": resolved.decision_rationale,
-            "next_action": resolved.next_action,
-            "path_hypothesis": resolved.path_hypothesis,
-            "path_slug": resolved.path_slug,
-            "phase_action": resolved.phase_action,
-            "phase_transition_rationale": resolved.phase_transition_rationale,
-            "configs": [
-                {
-                    "filename": item.filename,
-                    "rationale": item.rationale,
-                    "overrides": item.overrides,
-                }
-                for item in resolved.configs
-            ],
-        },
-        raw_response_text='{"next_action":"continue"}',
+def _row(run_id: str, value: float) -> ExperimentReportRow:
+    return ExperimentReportRow(
+        run_id=run_id,
+        status="FINISHED",
+        created_at="2026-02-22T00:00:00+00:00",
+        metric_value=value,
+        corr_mean=0.01,
+        mmc_mean=0.02,
+        cwmm_mean=0.03,
+        bmc_mean=0.04,
+        bmc_last_200_eras_mean=value,
+        is_champion=False,
     )
 
 
-def _raw_planner_execution(
-    response_text: str,
-    *,
-    stdout_jsonl: str | None = None,
-) -> RawPlannerExecution:
-    return RawPlannerExecution(
-        attempts=[],
-        stdout_jsonl=response_text if stdout_jsonl is None else stdout_jsonl,
-        stderr_text="",
-        raw_response_text=response_text,
-    )
+def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+
+    status = get_research_status(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    assert status.status == "initialized"
+    assert status.next_round_number == 1
+    assert status.program_path.name == "PROGRAM.md"
 
 
-def _seed_config(store_root: Path, experiment_id: str, filename: str = "base.json") -> Path:
-    config_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id / "configs"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / filename
-    config_path.write_text(json.dumps(_valid_training_config(), indent=2, sort_keys=True), encoding="utf-8")
-    return config_path
-
-
-def _experiments_root(store_root: Path) -> Path:
-    return resolve_workspace_layout_from_store_root(store_root).experiments_root
-
-
-def _write_phase_aware_program(directory: Path, program_id: str = "kaggle-gm-loop") -> Path:
-    path = directory / f"{program_id}.md"
-    path.write_text(
-        "---\n"
-        f"id: {program_id}\n"
-        "title: Kaggle GM Loop\n"
-        "description: Phase-aware structured custom program.\n"
-        "planner_contract: structured_json\n"
-        "scoring_stage: post_training_full\n"
-        "metric_policy:\n"
-        "  primary: bmc_last_200_eras.mean\n"
-        "  tie_break: bmc.mean\n"
-        "round_policy:\n"
-        "  plateau_non_improving_rounds: 2\n"
-        "  require_scale_confirmation: true\n"
-        "  scale_confirmation_rounds: 1\n"
-        "improvement_threshold_default: 0.0002\n"
-        "config_policy:\n"
-        "  allowed_paths:\n"
-        "    - data.feature_set\n"
-        "    - model.params.*\n"
-        "  min_candidate_configs: 4\n"
-        "  max_candidate_configs: 5\n"
-        "phases:\n"
-        "  - phase_id: phase1_eda_baseline\n"
-        "    title: Phase 1 - EDA & Baseline\n"
-        "    summary: Establish the baseline.\n"
-        "    gate: Stable baseline.\n"
-        "  - phase_id: phase2_diversity_campaign\n"
-        "    title: Phase 2 - Diversity\n"
-        "    summary: Explore diverse candidates.\n"
-        "    gate: Diverse candidate set.\n"
-        "---\n"
-        "Context:\n"
-        "$CONTEXT_JSON\n\n"
-        "$VALIDATION_FEEDBACK_BLOCK\n",
-        encoding="utf-8",
-    )
-    return path
-
-
-def test_state_roundtrip(tmp_path: Path) -> None:
-    program = ResearchProgramState(
-        root_experiment_id="2026-03-20_root-exp",
-        program_experiment_id="2026-03-20_root-exp",
-        program_id="numerai-experiment-loop",
-        program_title="Numerai Experiment Loop",
-        status="initialized",
-        active_path_id="p00",
-        active_experiment_id="2026-03-20_root-exp",
-        next_round_number=1,
-        total_rounds_completed=0,
-        total_paths_created=1,
-        improvement_threshold=0.0002,
-        scoring_stage="post_training_full",
-        codex_command=default_codex_command(),
-        last_checkpoint="initialized",
-        stop_reason=None,
-        current_round=None,
-        current_phase=None,
-        best_overall=ResearchBestRun(),
-        paths=[
-            ResearchPathState(
-                path_id="p00",
-                experiment_id="2026-03-20_root-exp",
-                parent_experiment_id=None,
-                generation=0,
-                hypothesis="root",
-                status="active",
-                pivot_reason=None,
-                source_round=None,
-                rounds_completed=0,
-                plateau_streak=0,
-                scale_confirmation_used=False,
-                needs_scale_confirmation=False,
-                best_run_id=None,
-                created_at="2026-03-20T00:00:00+00:00",
-                updated_at="2026-03-20T00:00:00+00:00",
-            )
-        ],
-        created_at="2026-03-20T00:00:00+00:00",
-        updated_at="2026-03-20T00:00:00+00:00",
-    )
-    lineage = ResearchLineageState(
-        root_experiment_id="2026-03-20_root-exp",
-        program_experiment_id="2026-03-20_root-exp",
-        active_path_id="p00",
-        links=[
-            ResearchLineageLink(
-                path_id="p00",
-                experiment_id="2026-03-20_root-exp",
-                parent_experiment_id=None,
-                generation=0,
-                source_round=None,
-                pivot_reason=None,
-                created_at="2026-03-20T00:00:00+00:00",
-            )
-        ],
-    )
-    program_state_path = tmp_path / "program.json"
-    lineage_state_path = tmp_path / "lineage.json"
-
-    save_program_state(program_state_path, program)
-    save_lineage_state(lineage_state_path, lineage)
-
-    loaded_program = load_program_state(program_state_path)
-    loaded_lineage = load_lineage_state(lineage_state_path)
-
-    assert loaded_program.root_experiment_id == "2026-03-20_root-exp"
-    assert loaded_program.program_id == "numerai-experiment-loop"
-    assert loaded_program.paths[0].path_id == "p00"
-    assert loaded_program.codex_command == default_codex_command()
-    assert loaded_lineage.links[0].experiment_id == "2026-03-20_root-exp"
-
-
-def test_program_catalog_loads_default_builtin_program() -> None:
-    entries = {item.program_id: item for item in list_program_catalog()}
-    numerai = entries["numerai-experiment-loop"]
-
-    assert numerai.planner_contract == "config_mutation"
-    assert numerai.phase_aware is False
-    assert numerai.source == "builtin"
-    assert "kaggle-gm-loop" not in entries
-
-
-def test_program_catalog_loads_user_program_and_env_override(
+def test_run_research_runs_baseline_before_llm(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    custom_program = user_dir / "custom-loop.md"
-    custom_program.write_text(
-        "---\n"
-        "id: custom-loop\n"
-        "title: Custom Loop\n"
-        "description: Test program.\n"
-        "planner_contract: config_mutation\n"
-        "scoring_stage: post_training_core\n"
-        "metric_policy:\n"
-        "  primary: bmc_last_200_eras.mean\n"
-        "  tie_break: bmc.mean\n"
-        "round_policy:\n"
-        "  plateau_non_improving_rounds: 3\n"
-        "  require_scale_confirmation: false\n"
-        "  scale_confirmation_rounds: 0\n"
-        "improvement_threshold_default: 0.001\n"
-        "config_policy:\n"
-        "  allowed_paths:\n"
-        "    - model.params.learning_rate\n"
-        "  max_candidate_configs: 1\n"
-        "  min_changes: 1\n"
-        "  max_changes: 1\n"
-        "---\n"
-        "Context:\n"
-        "$CONTEXT_JSON\n\n"
-        "$VALIDATION_FEEDBACK_BLOCK\n",
-        encoding="utf-8",
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    reports: list[ExperimentReport | None] = [None, _report(_row("run-1", 0.12))]
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: reports.pop(0) if reports else _report(_row("run-1", 0.12)),
     )
-    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
-
-    entries = {item.program_id: item for item in list_program_catalog()}
-    details = load_program_details("custom-loop")
-
-    assert entries["custom-loop"].source == "user"
-    assert details.definition.source == "user"
-    assert details.definition.scoring_stage == "post_training_core"
-    assert details.definition.config_policy.allowed_paths == ("model.params.learning_rate",)
-
-
-def test_program_catalog_rejects_id_filename_mismatch(tmp_path: Path) -> None:
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    (user_dir / "alt-numerai.md").write_text(
-        load_program_details("numerai-experiment-loop").raw_markdown,
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="agentic_research_program_id_filename_mismatch"):
-        list_program_catalog(user_dir=user_dir)
-
-
-def test_load_program_details_requires_common_placeholders(tmp_path: Path) -> None:
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    broken = user_dir / "broken-loop.md"
-    broken.write_text(
-        "---\n"
-        "id: broken-loop\n"
-        "title: Broken\n"
-        "description: Broken.\n"
-        "planner_contract: config_mutation\n"
-        "scoring_stage: post_training_full\n"
-        "metric_policy:\n"
-        "  primary: bmc_last_200_eras.mean\n"
-        "  tie_break: bmc.mean\n"
-        "round_policy:\n"
-        "  plateau_non_improving_rounds: 2\n"
-        "  require_scale_confirmation: true\n"
-        "  scale_confirmation_rounds: 1\n"
-        "improvement_threshold_default: 0.0002\n"
-        "config_policy:\n"
-        "  allowed_paths:\n"
-        "    - model.params.learning_rate\n"
-        "  max_candidate_configs: 1\n"
-        "  min_changes: 1\n"
-        "  max_changes: 1\n"
-        "---\n"
-        "Only one placeholder.\n"
-        "$CONTEXT_JSON\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValueError, match="agentic_research_program_placeholder_missing"):
-        load_program_details("broken-loop", user_dir=user_dir)
-
-
-def test_load_program_state_requires_strategy(tmp_path: Path) -> None:
-    path = tmp_path / "program.json"
-    path.write_text(
-        json.dumps(
-            {
-                "root_experiment_id": "2026-03-20_root-exp",
-                "program_experiment_id": "2026-03-20_root-exp",
-                "status": "initialized",
-            }
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-1",
+            predictions_path=store_root / "runs" / "run-1" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-1" / "results.json",
         ),
-        encoding="utf-8",
     )
-
-    with pytest.raises(ValueError, match="agentic_research_program_selector_missing"):
-        load_program_state(path)
-
-
-def test_load_program_state_legacy_strategy_auto_snapshots(tmp_path: Path) -> None:
-    path = tmp_path / "program.json"
-    path.write_text(
-        json.dumps(
-            {
-                "root_experiment_id": "2026-03-20_root-exp",
-                "program_experiment_id": "2026-03-20_root-exp",
-                "strategy": "numerai-experiment-loop",
-                "status": "initialized",
-                "active_path_id": "p00",
-                "active_experiment_id": "2026-03-20_root-exp",
-                "next_round_number": 1,
-                "total_rounds_completed": 0,
-                "total_paths_created": 1,
-                "improvement_threshold": 0.0002,
-                "scoring_stage": "post_training_full",
-                "codex_command": default_codex_command(),
-                "last_checkpoint": "initialized",
-                "best_overall": {},
-                "paths": [],
-                "created_at": "2026-03-20T00:00:00+00:00",
-                "updated_at": "2026-03-20T00:00:00+00:00",
-            }
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_full",
+            run_ids=("run-1",),
         ),
-        encoding="utf-8",
     )
 
-    state = load_program_state(path)
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
-    assert state.program_id == "numerai-experiment-loop"
-    assert state.program_source == "legacy_builtin"
-    assert state.program_snapshot.program_id == "numerai-experiment-loop"
-    assert state.program_sha256
+    assert result.rounds[0].action == "baseline"
+    assert result.rounds[0].run_id == "run-1"
+    assert (experiment.manifest_path.parent / "configs" / "r001_baseline_seed.json").is_file()
+    assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").is_file()
 
 
-def test_run_codex_planner_parses_jsonl_and_last_message(
+def test_run_research_materializes_llm_config_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen_env: dict[str, str] | None = None
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
 
-    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        nonlocal seen_env
-        command = list(args[0]) if args else []
-        seen_env = kwargs.get("env")
-        output_index = command.index("-o")
-        output_path = Path(command[output_index + 1])
-        output_path.write_text(
+    reports = [
+        _report(_row("run-0", 0.10)),
+        _report(_row("run-1", 0.13), _row("run-0", 0.10)),
+    ]
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: reports.pop(0) if reports else _report(_row("run-1", 0.13)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
             json.dumps(
                 {
-                    "experiment_question": "q",
-                    "winner_criteria": "w",
-                    "decision_rationale": "r",
-                    "next_action": "continue",
-                    "path_hypothesis": "h",
-                    "path_slug": "slug",
-                    "configs": [
-                        {"filename": "base.json", "rationale": "Base", "overrides": []},
+                    "action": "run",
+                    "learning": "Lower variance looked useful.",
+                    "belief_update": "A slightly larger learning rate is worth testing.",
+                    "next_hypothesis": "A higher learning rate improves BMC without hurting sanity checks.",
+                    "parent_config": "seed.json",
+                    "changes": [
                         {
-                            "filename": "b.json",
-                            "rationale": "b",
-                            "overrides": [
-                                {
-                                    "path": "model.params.learning_rate",
-                                    "value_json": "0.005",
-                                }
-                            ],
-                        },
-                        {
-                            "filename": "c.json",
-                            "rationale": "c",
-                            "overrides": [
-                                {
-                                    "path": "data.feature_set",
-                                    "value_json": '"medium"',
-                                }
-                            ],
-                        },
-                        {
-                            "filename": "d.json",
-                            "rationale": "d",
-                            "overrides": [
-                                {
-                                    "path": "model.params.num_leaves",
-                                    "value_json": "96",
-                                }
-                            ],
-                        },
+                            "path": "model.params.learning_rate",
+                            "value": 0.02,
+                            "reason": "The baseline underfit at 0.01.",
+                        }
                     ],
+                    "stop_reason": None,
                 }
             ),
-            encoding="utf-8",
-        )
-        stdout = "\n".join(
-            [
-                json.dumps({"type": "thread.started", "thread_id": "thread_2"}),
-                json.dumps(
-                    {
-                        "type": "response.completed",
-                        "response": {
-                            "usage": {
-                                "input_tokens": 123,
-                                "cached_input_tokens": 45,
-                                "output_tokens": 67,
-                            }
-                        },
-                    }
-                ),
-            ]
-        )
-        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setenv("CODEX_HOME", "/tmp/test-normal-codex-home")
-    schema_path = tmp_path / "schema.json"
-    schema_path.write_text('{"type":"object","properties":{},"additionalProperties":true}', encoding="utf-8")
-
-    execution = run_codex_planner(
-        prompt="hello",
-        command=default_codex_command(),
-        schema_path=schema_path,
-        artifact_dir=tmp_path,
+            "test",
+        ),
     )
-
-    assert execution.decision.next_action == "continue"
-    assert len(execution.decision.configs) == 4
-    assert len(execution.attempts) == 1
-    assert execution.attempts[-1].thread_id == "thread_2"
-    assert execution.attempts[-1].input_tokens == 123
-    assert execution.attempts[-1].cached_input_tokens == 45
-    assert execution.attempts[-1].output_tokens == 67
-    assert "thread.started" in execution.raw_response_text
-    assert seen_env is not None
-    assert seen_env.get("CODEX_HOME") == "/tmp/test-normal-codex-home"
-
-
-def test_render_prompt_template_requires_explicit_placeholder_replacement(tmp_path: Path) -> None:
-    template_path = tmp_path / "prompt.md"
-    template_path.write_text("Prompt\n$NAME\n$VALUE\n", encoding="utf-8")
-
-    rendered = render_prompt_template(template_path, {"NAME": "alpha", "VALUE": "42"})
-
-    assert rendered == "Prompt\nalpha\n42\n"
-
-    with pytest.raises(ValueError, match="agentic_research_prompt_placeholders_unresolved"):
-        render_prompt_template(template_path, {"NAME": "alpha"})
-
-
-def test_render_validation_feedback_block_is_inline_and_trimmed() -> None:
-    assert render_validation_feedback_block(None) == ""
-    assert render_validation_feedback_block("   ") == ""
-    assert render_validation_feedback_block("  bad path  ") == (
-        "Validation feedback from the last attempt:\nbad path\nFix the issue and return a valid response."
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-1",
+            predictions_path=store_root / "runs" / "run-1" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-1" / "results.json",
+        ),
     )
-
-
-def test_parse_mutation_response_accepts_path_equals_json_literal() -> None:
-    proposal = parse_mutation_response(
-        "RATIONALE:\n"
-        "Tighten LR while keeping the rest stable.\n\n"
-        "CHANGES:\n"
-        "config.model.params.learning_rate = 0.005\n"
-        'config.data.feature_set = "medium"'
-    )
-
-    assert proposal.rationale.startswith("Tighten LR")
-    assert [item.path for item in proposal.changes] == [
-        "model.params.learning_rate",
-        "data.feature_set",
-    ]
-    assert proposal.changes[0].value == 0.005
-    assert proposal.changes[1].value == "medium"
-
-
-def test_parse_mutation_response_rejects_invalid_or_disallowed_paths() -> None:
-    with pytest.raises(ValueError, match="agentic_research_mutation_value_invalid:model.params.learning_rate"):
-        parse_mutation_response("RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = nope")
-
-    with pytest.raises(ValueError, match="agentic_research_mutation_path_not_allowed:output.output_dir"):
-        parse_mutation_response('RATIONALE:\nTest.\n\nCHANGES:\nconfig.output.output_dir = "/tmp/out"')
-
-
-def test_validate_decision_requires_4_to_5_configs(tmp_path: Path) -> None:
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    _write_phase_aware_program(user_dir)
-    with pytest.raises(ValueError, match="agentic_research_codex_config_count_invalid"):
-        validate_decision(
-            CodexDecision(
-                experiment_question="q",
-                winner_criteria="w",
-                decision_rationale="r",
-                next_action="continue",
-                path_hypothesis="h",
-                path_slug="slug",
-                configs=[],
-            ),
-            definition=replace(load_program_definition("kaggle-gm-loop", user_dir=user_dir), phases=()),
-            current_phase=None,
-        )
-
-
-def test_validate_decision_requires_phase_action_for_phase_aware_strategy(tmp_path: Path) -> None:
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    _write_phase_aware_program(user_dir)
-    with pytest.raises(ValueError, match="agentic_research_codex_phase_action_invalid"):
-        validate_decision(
-            CodexDecision(
-                experiment_question="q",
-                winner_criteria="w",
-                decision_rationale="r",
-                next_action="continue",
-                path_hypothesis="h",
-                path_slug="slug",
-                configs=_decision().configs,
-            ),
-            definition=load_program_definition("kaggle-gm-loop", user_dir=user_dir),
-            current_phase=ResearchPhaseState(
-                phase_id="phase1_eda_baseline",
-                phase_title="Phase 1 - EDA & Baseline",
-                status="active",
-                round_count=0,
-                transition_rationale=None,
-                started_at="2026-03-20T00:00:00+00:00",
-                updated_at="2026-03-20T00:00:00+00:00",
-            ),
-        )
-
-
-def test_materialize_config_payload_rejects_disallowed_paths() -> None:
-    with pytest.raises(ValueError, match="agentic_research_override_path_not_allowed:output.output_dir"):
-        materialize_config_payload(
-            base_config=_valid_training_config(),
-            overrides={"output": {"output_dir": "/tmp/out"}},
-        )
-
-
-def test_select_reference_configs_falls_back_to_validated_default(tmp_path: Path) -> None:
-    base_config, source, examples = select_reference_configs(config_dirs=[tmp_path / "missing"])
-
-    assert source == "built_in_fallback"
-    assert base_config["data"]["data_version"] == "v5.2"
-    assert len(examples) == 2
-    assert examples[1]["materialized_config"]["model"]["params"]["learning_rate"] == 0.005
-
-
-def test_materialize_mutation_config_retries_duplicate_fingerprint(tmp_path: Path) -> None:
-    experiment = create_experiment(store_root=tmp_path, experiment_id="2026-03-20_cfg-exp")
-    config_dir = tmp_path / "experiments" / experiment.experiment_id / "configs"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    parent_path = config_dir / "base.json"
-    parent_path.write_text(json.dumps(_valid_training_config(), indent=2, sort_keys=True), encoding="utf-8")
-    parent = select_parent_config(
-        root=tmp_path,
-        experiment=experiment,
-        report=None,
-        config_dirs=[config_dir],
-    )
-    assert parent.selection_reason == "latest_valid_config_fallback"
-
-    with pytest.raises(ValueError, match="agentic_research_candidate_duplicate"):
-        materialize_mutation_config(
-            round_label="r1",
-            config_dir=config_dir,
-            parent=parent,
-            proposal=parse_mutation_response(
-                "RATIONALE:\nKeep it identical.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.01"
-            ),
-            comparison_dirs=[config_dir],
-        )
-
-
-def test_build_candidate_filename_is_deterministic() -> None:
-    proposal = parse_mutation_response("RATIONALE:\nTest.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005")
-
-    filename = build_candidate_filename(
-        round_label="r7",
-        config_dir=Path("/tmp"),
-        parent_filename="base.json",
-        proposal=proposal,
-    )
-
-    assert filename == "r7_base__model-params-learning-rate-0p005.json"
-
-
-def test_render_mutation_prompt_uses_mutable_snapshot_and_effective_scoring_stage(tmp_path: Path) -> None:
-    definition = load_program_definition("numerai-experiment-loop")
-    experiment = create_experiment(store_root=tmp_path, experiment_id="2026-03-20_prompt-exp")
-    config_path = _seed_config(tmp_path, experiment.experiment_id)
-    payload = _valid_training_config()
-    payload["training"]["post_training_scoring"] = "none"
-    parent = select_parent_config(
-        root=tmp_path,
-        experiment=experiment,
-        report=None,
-        config_dirs=[config_path.parent],
-    )
-    parent = replace(parent, config_payload=payload)
-
-    prompt = render_mutation_prompt(
-        definition=definition,
-        parent=parent,
-        recent_round_summaries=[],
-        validation_feedback=None,
-    )
-
-    assert '"effective_scoring_stage": "post_training_full"' in prompt
-    assert '"mutable_config"' in prompt
-    assert '"n_estimators": 10' in prompt
-    assert '"post_training_scoring"' not in prompt
-    assert '"benchmark_source"' not in prompt
-
-
-def test_select_parent_config_prefers_best_scored_run_reason(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id="2026-03-20_best-parent-exp")
-    config_path = _seed_config(store_root, experiment.experiment_id)
-    run_dir = store_root / "runs" / "run-1"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "run.json").write_text(
-        json.dumps({"config": {"path": str(config_path)}}, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    report = ExperimentReport(
-        experiment_id=experiment.experiment_id,
-        metric="bmc_last_200_eras.mean",
-        total_runs=1,
-        champion_run_id=None,
-        rows=(
-            ExperimentReportRow(
-                run_id="run-1",
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.12,
-                corr_mean=0.03,
-                mmc_mean=0.01,
-                cwmm_mean=0.02,
-                bmc_mean=0.11,
-                bmc_last_200_eras_mean=0.12,
-                is_champion=False,
-            ),
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_full",
+            run_ids=("run-1",),
         ),
     )
 
-    parent = select_parent_config(
-        root=store_root,
-        experiment=experiment,
-        report=report,
-        config_dirs=[config_path.parent],
-    )
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
-    assert parent.run_id == "run-1"
-    assert parent.selection_reason == "best_scored_run_in_report"
-
-
-def test_planner_reference_config_dirs_include_full_lineage(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
-    child_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_child-exp")
-    grandchild_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_grandchild-exp")
-    now = "2026-03-20T00:00:00+00:00"
-    state = ResearchProgramState(
-        root_experiment_id=root_exp.experiment_id,
-        program_experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-        program_title="Numerai Experiment Loop",
-        status="running",
-        active_path_id="p02",
-        active_experiment_id=grandchild_exp.experiment_id,
-        next_round_number=3,
-        total_rounds_completed=2,
-        total_paths_created=3,
-        improvement_threshold=0.0002,
-        scoring_stage="post_training_full",
-        codex_command=default_codex_command(),
-        last_checkpoint="round_created",
-        stop_reason=None,
-        current_round=None,
-        current_phase=None,
-        best_overall=ResearchBestRun(),
-        paths=[
-            ResearchPathState(
-                path_id="p00",
-                experiment_id=root_exp.experiment_id,
-                parent_experiment_id=None,
-                generation=0,
-                hypothesis="root",
-                status="completed",
-                pivot_reason=None,
-                source_round=None,
-                rounds_completed=1,
-                plateau_streak=0,
-                scale_confirmation_used=False,
-                needs_scale_confirmation=False,
-                best_run_id=None,
-                created_at=now,
-                updated_at=now,
-            ),
-            ResearchPathState(
-                path_id="p01",
-                experiment_id=child_exp.experiment_id,
-                parent_experiment_id=root_exp.experiment_id,
-                generation=1,
-                hypothesis="child",
-                status="completed",
-                pivot_reason="plateau",
-                source_round="r1",
-                rounds_completed=1,
-                plateau_streak=0,
-                scale_confirmation_used=False,
-                needs_scale_confirmation=False,
-                best_run_id=None,
-                created_at=now,
-                updated_at=now,
-            ),
-            ResearchPathState(
-                path_id="p02",
-                experiment_id=grandchild_exp.experiment_id,
-                parent_experiment_id=child_exp.experiment_id,
-                generation=2,
-                hypothesis="grandchild",
-                status="active",
-                pivot_reason="plateau",
-                source_round="r2",
-                rounds_completed=0,
-                plateau_streak=0,
-                scale_confirmation_used=False,
-                needs_scale_confirmation=False,
-                best_run_id=None,
-                created_at=now,
-                updated_at=now,
-            ),
-        ],
-        created_at=now,
-        updated_at=now,
-    )
-
-    config_dirs = planner_reference_config_dirs(
-        root=store_root,
-        state=state,
-        active_path=state.paths[-1],
-    )
-
-    assert config_dirs == [
-        _experiments_root(store_root) / grandchild_exp.experiment_id / "configs",
-        _experiments_root(store_root) / child_exp.experiment_id / "configs",
-        _experiments_root(store_root) / root_exp.experiment_id / "configs",
-    ]
+    config_path = result.rounds[0].config_path
+    assert config_path is not None
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["model"]["params"]["learning_rate"] == 0.02
+    assert result.rounds[0].metric_value == 0.13
+    assert (experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001" / "prompt.md").is_file()
 
 
-def test_plateau_logic_requires_scale_confirmation_before_pivot() -> None:
-    path = ResearchPathState(
-        path_id="p00",
-        experiment_id="2026-03-20_root-exp",
-        parent_experiment_id=None,
-        generation=0,
-        hypothesis="root",
-        status="active",
-        pivot_reason=None,
-        source_round=None,
-        rounds_completed=0,
-        plateau_streak=1,
-        scale_confirmation_used=False,
-        needs_scale_confirmation=False,
-        best_run_id=None,
-        created_at="2026-03-20T00:00:00+00:00",
-        updated_at="2026-03-20T00:00:00+00:00",
-    )
-
-    updated = update_path_after_round(path=path, round_best=None, improved=False)
-
-    assert updated.plateau_streak == 2
-    assert force_action_for_path(updated) == "scale"
-    assert should_pivot_path(updated) is False
-
-    after_scale = replace(updated, scale_confirmation_used=True, needs_scale_confirmation=False)
-    assert should_pivot_path(after_scale) is True
-
-
-def test_init_research_persists_session_program_markdown(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
-
-    result = init_research(
-        store_root=store_root,
-        experiment_id=experiment.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    assert result.program_id == "numerai-experiment-loop"
-    assert result.session_program_path == session_program_path(result.agentic_research_dir)
-    assert (
-        result.session_program_path.read_text(encoding="utf-8")
-        == load_program_details("numerai-experiment-loop").raw_markdown
-    )
-
-
-def test_run_research_executes_one_full_round(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_root-exp")
-    _seed_config(store_root, root_exp.experiment_id)
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    run_ids: list[str] = []
-
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
-        lambda **_: _raw_planner_execution(
-            "RATIONALE:\n"
-            "Lower learning rate slightly while keeping the rest of the config stable.\n\n"
-            "CHANGES:\n"
-            "config.model.params.learning_rate = 0.005"
-        ),
-    )
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
+def test_parse_decision_rejects_disallowed_change_path() -> None:
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
+        research_module._parse_decision(
+            json.dumps(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "output.results_name", "value": "bad", "reason": "not allowed"}],
+                    "stop_reason": None,
+                }
             )
-            for idx, run_id in enumerate(run_ids)
         )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    assert result.stop_reason == "max_rounds_reached"
-    program_path = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
-    state = load_program_state(program_path)
-    assert state.total_rounds_completed == 1
-    assert state.next_round_number == 2
-    assert state.best_overall.run_id == "run-1"
-    assert state.program_id == "numerai-experiment-loop"
-    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    assert (round_dir / "round.json").is_file()
-    assert (round_dir / "round.md").is_file()
-    assert (round_dir / "llm_trace.jsonl").is_file()
-    assert (round_dir / "llm_trace.md").is_file()
-    assert not (round_dir / "codex_prompt.txt").exists()
-    assert not (round_dir / "codex_usage.json").exists()
-    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
-    assert "attempts" in round_payload["planner"]["usage"]
-    assert "prompt_text" not in round_payload["planner"]
-    assert "raw_response_text" not in round_payload["planner"]
-    assert "parsed_response" not in round_payload["planner"]
-    assert round_payload["planner"]["llm_trace_markdown_path"].endswith("rounds/r1/llm_trace.md")
-    assert round_payload["lineage"]["parent_selection_reason"] == "latest_valid_config_fallback"
-    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
-    assert "### Sent To LLM" in trace_markdown
-    assert "### Raw LLM Response" in trace_markdown
-    assert "### Parsed Final Response" in trace_markdown
-    assert "`codex-exec`" in trace_markdown
-    assert "schema-valid JSON object" not in trace_markdown
-    assert "config.model.params.learning_rate = 0.005" in trace_markdown
-    trace_lines = [
-        json.loads(line)
-        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert len(trace_lines) == 1
-    assert trace_lines[0]["status"] == "succeeded"
-    assert trace_lines[0]["planner_source"] == "codex-exec"
-    assert trace_lines[0]["round_label"] == "r1"
-    assert trace_lines[0]["parsed_response"]["changes"][0]["path"] == "model.params.learning_rate"
-    assert '"effective_scoring_stage": "post_training_full"' in trace_lines[0]["prompt_text"]
-    assert '"post_training_scoring"' not in trace_lines[0]["prompt_text"]
-    assert round_payload["lineage"]["parent_config_filename"] == "base.json"
-    assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
-    assert round_payload["results"]["best_row"]["run_id"] == "run-1"
-    round_markdown = (round_dir / "round.md").read_text(encoding="utf-8")
-    assert "## Sent To LLM" not in round_markdown
-    assert "## Raw LLM Response" not in round_markdown
-    assert "## Parsed Final Response" not in round_markdown
-    assert "## Trace" in round_markdown
-    assert "latest_valid_config_fallback" in round_markdown
-
-
-def test_run_research_stops_cleanly_when_parent_config_missing(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_empty-exp")
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    assert result.stop_reason == "codex_planning_failed"
-    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
-    assert round_payload["planner"]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
-    trace_lines = [
-        json.loads(line)
-        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert len(trace_lines) == 1
-    assert trace_lines[0]["status"] == "failed"
-    assert trace_lines[0]["error"] == f"agentic_research_parent_config_missing:{root_exp.experiment_id}"
-    assert trace_lines[0]["attempts"] == []
-    assert trace_lines[0]["prompt_text"] == ""
-    assert trace_lines[0]["raw_response_text"] == ""
-    assert "prompt_text" not in round_payload["planner"]
-
-
-def test_run_research_trace_prefers_raw_response_text(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_trace-exp")
-    _seed_config(store_root, root_exp.experiment_id)
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    run_ids: list[str] = []
-    raw_response = (
-        "RATIONALE:\n"
-        "Use the raw response body in the persisted trace.\n\n"
-        "CHANGES:\n"
-        "config.model.params.learning_rate = 0.005"
-    )
-    transport_stream = '{"type":"thread.delta","delta":"transport"}\n'
-
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
-        lambda **_: _raw_planner_execution(raw_response, stdout_jsonl=transport_stream),
-    )
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
-            )
-            for idx, run_id in enumerate(run_ids)
-        )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    trace_lines = [
-        json.loads(line)
-        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert trace_lines[0]["raw_response_text"] == raw_response
-    assert trace_lines[0]["raw_response_text"] != transport_stream
-    trace_markdown = (round_dir / "llm_trace.md").read_text(encoding="utf-8")
-    assert raw_response in trace_markdown
-    assert transport_stream not in trace_markdown
-    round_markdown = (round_dir / "round.md").read_text(encoding="utf-8")
-    assert raw_response not in round_markdown
-    assert transport_stream not in round_markdown
-
-
-def test_run_research_retries_once_when_mutation_is_duplicate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_duplicate-exp")
-    _seed_config(store_root, root_exp.experiment_id)
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    run_ids: list[str] = []
-    planner_calls = {"count": 0}
-
-    def fake_raw_planner(**_: object) -> RawPlannerExecution:
-        planner_calls["count"] += 1
-        if planner_calls["count"] == 1:
-            return _raw_planner_execution(
-                "RATIONALE:\nKeep the parent identical.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.01"
-            )
-        return _raw_planner_execution(
-            "RATIONALE:\n"
-            "Lower learning rate to create a real child.\n\n"
-            "CHANGES:\n"
-            "config.model.params.learning_rate = 0.005"
-        )
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
-            )
-            for idx, run_id in enumerate(run_ids)
-        )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.run_codex_raw_planner", fake_raw_planner)
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    assert planner_calls["count"] == 2
-    round_dir = _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "rounds" / "r1"
-    round_payload = json.loads((round_dir / "round.json").read_text(encoding="utf-8"))
-    trace_lines = [
-        json.loads(line)
-        for line in (round_dir / "llm_trace.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert "agentic_research_candidate_duplicate" in trace_lines[0]["prompt_text"]
-    assert round_payload["lineage"]["change_set"] == [{"path": "model.params.learning_rate", "value": 0.005}]
-
-
-def test_run_research_resumes_after_interrupt(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_resume-exp")
-    _seed_config(store_root, root_exp.experiment_id)
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    run_ids: list[str] = []
-    score_calls = {"count": 0}
-
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.utils.planning.run_codex_raw_planner",
-        lambda **_: _raw_planner_execution(
-            "RATIONALE:\nNudge learning rate down.\n\nCHANGES:\nconfig.model.params.learning_rate = 0.005"
-        ),
-    )
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        score_calls["count"] += 1
-        if score_calls["count"] == 1:
-            raise KeyboardInterrupt()
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
-            )
-            for idx, run_id in enumerate(run_ids)
-        )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    first = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-    assert first.interrupted is True
-    interrupted_state = load_program_state(
-        _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
-    )
-    assert interrupted_state.current_round is not None
-    assert interrupted_state.current_round.next_config_index == 1
-
-    second = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-    assert second.interrupted is False
-    resumed_state = load_program_state(
-        _experiments_root(store_root) / root_exp.experiment_id / "agentic_research" / "program.json"
-    )
-    assert resumed_state.total_rounds_completed == 1
-
-
-def test_init_research_sets_phase_for_kaggle_strategy(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_kaggle-exp")
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    _write_phase_aware_program(user_dir)
-    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
-
-    result = init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="kaggle-gm-loop",
-    )
-
-    assert result.program_id == "kaggle-gm-loop"
-    assert result.current_phase is not None
-    assert result.current_phase.phase_id == "phase1_eda_baseline"
-
-
-def test_run_research_advances_kaggle_phase_when_planner_requests_it(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_kaggle-loop-exp")
-    user_dir = tmp_path / "programs"
-    user_dir.mkdir(parents=True)
-    _write_phase_aware_program(user_dir)
-    monkeypatch.setenv("NUMERENG_AGENTIC_RESEARCH_PROGRAMS_DIR", str(user_dir))
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="kaggle-gm-loop",
-    )
-
-    run_ids: list[str] = []
-    decision = replace(
-        _decision(),
-        phase_action="advance",
-        phase_transition_rationale="The baseline is established; move into the diversity campaign.",
-    )
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.utils.planning.run_codex_planner",
-        lambda **_: _planner_execution(decision),
-    )
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
-            )
-            for idx, run_id in enumerate(run_ids)
-        )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    assert result.current_phase is not None
-    assert result.current_phase.phase_id == "phase2_diversity_campaign"
-    assert result.current_phase.round_count == 1
-
-
-def test_run_research_uses_openrouter_planner_when_configured(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store_root = tmp_path / ".numereng"
-    root_exp = create_experiment(store_root=store_root, experiment_id="2026-03-20_openrouter-exp")
-    _seed_config(store_root, root_exp.experiment_id)
-    init_research(
-        store_root=store_root,
-        experiment_id=root_exp.experiment_id,
-        program_id="numerai-experiment-loop",
-    )
-
-    run_ids: list[str] = []
-    planner_calls = {"openrouter": 0}
-
-    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.active_model_source", lambda: "openrouter")
-
-    def fake_openrouter_planner(**_: object) -> RawPlannerExecution:
-        planner_calls["openrouter"] += 1
-        return _raw_planner_execution(
-            "RATIONALE:\nIncrease leaves modestly.\n\nCHANGES:\nconfig.model.params.num_leaves = 96"
-        )
-
-    def fail_codex_planner(**_: object) -> RawPlannerExecution:
-        raise AssertionError("codex planner should not run when openrouter is selected")
-
-    monkeypatch.setattr(
-        "numereng.features.agentic_research.utils.planning.run_openrouter_raw_planner",
-        fake_openrouter_planner,
-    )
-    monkeypatch.setattr("numereng.features.agentic_research.utils.planning.run_codex_raw_planner", fail_codex_planner)
-
-    def fake_train_experiment(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        config_path: str | Path,
-    ) -> ExperimentTrainResult:
-        _ = (store_root, experiment_id)
-        run_id = f"run-{len(run_ids) + 1}"
-        run_ids.append(run_id)
-        return ExperimentTrainResult(
-            experiment_id=experiment_id,
-            run_id=run_id,
-            predictions_path=Path(config_path).with_suffix(".predictions.parquet"),
-            results_path=Path(config_path).with_suffix(".results.json"),
-        )
-
-    def fake_score_round(
-        *,
-        store_root: str | Path,
-        experiment_id: str,
-        round: str,
-        stage: str,
-    ) -> ExperimentScoreRoundResult:
-        _ = (store_root, experiment_id, stage)
-        return ExperimentScoreRoundResult(
-            experiment_id=experiment_id,
-            round=round,
-            stage="post_training_full",
-            run_ids=tuple(run_ids),
-        )
-
-    def fake_report(*, store_root: str | Path, experiment_id: str, metric: str, limit: int) -> ExperimentReport:
-        _ = (store_root, experiment_id, metric, limit)
-        rows = tuple(
-            ExperimentReportRow(
-                run_id=run_id,
-                status="FINISHED",
-                created_at="2026-03-20T00:00:00+00:00",
-                metric_value=0.10 + (idx * 0.01),
-                corr_mean=0.01,
-                mmc_mean=0.02,
-                cwmm_mean=0.03,
-                bmc_mean=0.04 + (idx * 0.01),
-                bmc_last_200_eras_mean=0.10 + (idx * 0.01),
-                is_champion=False,
-            )
-            for idx, run_id in enumerate(run_ids)
-        )
-        return ExperimentReport(
-            experiment_id=experiment_id,
-            metric="bmc_last_200_eras.mean",
-            total_runs=len(rows),
-            champion_run_id=None,
-            rows=rows,
-        )
-
-    monkeypatch.setattr("numereng.features.agentic_research.run.train_experiment", fake_train_experiment)
-    monkeypatch.setattr("numereng.features.agentic_research.run.score_experiment_round", fake_score_round)
-    monkeypatch.setattr("numereng.features.agentic_research.run.report_experiment", fake_report)
-
-    result = run_research(store_root=store_root, experiment_id=root_exp.experiment_id, max_rounds=1)
-
-    assert result.status == "stopped"
-    assert planner_calls["openrouter"] == 1

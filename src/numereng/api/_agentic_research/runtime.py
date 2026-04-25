@@ -1,10 +1,10 @@
-"""Agentic research runtime API handlers."""
+"""Agentic config-research API handlers."""
 
 from __future__ import annotations
 
-from numereng.api._agentic_research.responses import phase_response, round_response
 from numereng.api.contracts import (
     ResearchBestRunResponse,
+    ResearchRoundResponse,
     ResearchRunRequest,
     ResearchRunResponse,
     ResearchStatusRequest,
@@ -12,7 +12,6 @@ from numereng.api.contracts import (
 )
 from numereng.features.agentic_research import (
     AgenticResearchError,
-    AgenticResearchNotInitializedError,
     AgenticResearchValidationError,
 )
 from numereng.features.experiments import ExperimentError
@@ -27,60 +26,42 @@ from numereng.platform.errors import PackageError
 
 
 def research_status(request: ResearchStatusRequest) -> ResearchStatusResponse:
-    """Load the current status for one agentic research supervisor."""
+    """Load the current status for one config-research loop."""
     from numereng import api as api_module
 
     try:
-        result = api_module.get_research_program_status(
+        result = api_module.get_research_status(
             store_root=request.store_root,
             experiment_id=request.experiment_id,
         )
-    except (AgenticResearchNotInitializedError, AgenticResearchError, ExperimentError, ValueError) as exc:
+    except (AgenticResearchError, ExperimentError, ValueError) as exc:
         raise PackageError(str(exc)) from exc
     return ResearchStatusResponse(
-        root_experiment_id=result.root_experiment_id,
-        program_id=result.program_id,
-        program_title=result.program_title,
+        experiment_id=result.experiment_id,
         status=result.status,
-        active_experiment_id=result.active_experiment_id,
-        active_path_id=result.active_path_id,
         next_round_number=result.next_round_number,
         total_rounds_completed=result.total_rounds_completed,
-        total_paths_created=result.total_paths_created,
-        improvement_threshold=result.improvement_threshold,
         last_checkpoint=result.last_checkpoint,
         stop_reason=result.stop_reason,
-        best_overall=ResearchBestRunResponse(
-            experiment_id=result.best_overall.experiment_id,
-            run_id=result.best_overall.run_id,
-            bmc_last_200_eras_mean=result.best_overall.bmc_last_200_eras_mean,
-            bmc_mean=result.best_overall.bmc_mean,
-            corr_mean=result.best_overall.corr_mean,
-            mmc_mean=result.best_overall.mmc_mean,
-            cwmm_mean=result.best_overall.cwmm_mean,
-            updated_at=result.best_overall.updated_at,
-        ),
-        current_round=round_response(result.current_round),
-        current_phase=phase_response(result.current_phase),
+        best_overall=_best_response(result.best_overall),
+        agentic_research_dir=str(result.agentic_research_dir),
+        state_path=str(result.state_path),
+        ledger_path=str(result.ledger_path),
         program_path=str(result.program_path),
-        lineage_path=str(result.lineage_path),
-        session_program_path=str(result.session_program_path),
     )
 
 
 def research_run(request: ResearchRunRequest) -> ResearchRunResponse:
-    """Run one foreground agentic research loop."""
+    """Run one foreground config-research loop."""
     from numereng import api as api_module
 
     try:
-        result = api_module.run_research_program(
+        result = api_module.run_research(
             store_root=request.store_root,
             experiment_id=request.experiment_id,
             max_rounds=request.max_rounds,
-            max_paths=request.max_paths,
         )
     except (
-        AgenticResearchNotInitializedError,
         AgenticResearchValidationError,
         AgenticResearchError,
         ExperimentError,
@@ -93,17 +74,39 @@ def research_run(request: ResearchRunRequest) -> ResearchRunResponse:
     ) as exc:
         raise PackageError(str(exc)) from exc
     return ResearchRunResponse(
-        root_experiment_id=result.root_experiment_id,
-        program_id=result.program_id,
-        program_title=result.program_title,
+        experiment_id=result.experiment_id,
         status=result.status,
-        active_experiment_id=result.active_experiment_id,
-        active_path_id=result.active_path_id,
         next_round_number=result.next_round_number,
         total_rounds_completed=result.total_rounds_completed,
-        total_paths_created=result.total_paths_created,
         last_checkpoint=result.last_checkpoint,
         stop_reason=result.stop_reason,
-        current_phase=phase_response(result.current_phase),
+        best_overall=_best_response(result.best_overall),
+        rounds=[
+            ResearchRoundResponse(
+                round_number=item.round_number,
+                round_label=item.round_label,
+                action=item.action,
+                status=item.status,
+                config_path=str(item.config_path) if item.config_path is not None else None,
+                run_id=item.run_id,
+                metric_value=item.metric_value,
+                learning=item.learning,
+                artifact_dir=str(item.artifact_dir),
+            )
+            for item in result.rounds
+        ],
         interrupted=result.interrupted,
+    )
+
+
+def _best_response(best: object) -> ResearchBestRunResponse:
+    return ResearchBestRunResponse(
+        experiment_id=getattr(best, "experiment_id", None),
+        run_id=getattr(best, "run_id", None),
+        bmc_last_200_eras_mean=getattr(best, "bmc_last_200_eras_mean", None),
+        bmc_mean=getattr(best, "bmc_mean", None),
+        corr_mean=getattr(best, "corr_mean", None),
+        mmc_mean=getattr(best, "mmc_mean", None),
+        cwmm_mean=getattr(best, "cwmm_mean", None),
+        updated_at=getattr(best, "updated_at", None),
     )

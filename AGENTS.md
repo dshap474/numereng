@@ -41,7 +41,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `.numereng/remote_ops/`: remote orchestration state
 - `docs/numerai/`: tracked synced Numerai docs mirror for local browsing; see `docs/numerai/SYNC_POLICY.md`
 - `src/numereng/features/models/custom_models/`: default custom model discovery root
-- `src/numereng/features/agentic_research/programs/`: default research-program catalog
+- `src/numereng/features/agentic_research/PROGRAM.md`: prompt policy for config-mutation research
 - `src/numereng/platform/remotes/profiles/`: local-only remote profile directory; keep real YAMLs gitignored
 - `.agents/skills/`: local custom skills; gitignored
 
@@ -84,7 +84,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - Neutralization source is XOR: exactly one of `run_id` or `predictions_path`.
 - Training and HPO configs are JSON-only and reject unknown keys.
 - `experiment train` is the correct path for experiment-linked round scoring policies.
-- `research init` requires `--program` and persists the selected program snapshot into the experiment.
+- `research run` is self-initializing and mutates experiment configs through `PROGRAM.md` plus the deterministic runner.
 - `serve pickle build` and `serve pickle upload` are stricter than local live builds; do not assume local success implies hosted-upload success.
 - Remote and cloud commands can create or pull runtime state; confirm the target experiment or run before launching them.
 - If a change touches tracked repo content, run `just oss-preflight` and `just readiness` before treating the work as clean.

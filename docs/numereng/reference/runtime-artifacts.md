@@ -13,7 +13,7 @@ Numereng-managed runtime state lives under:
 Repo-local extension roots live under:
 
 - `src/numereng/features/models/custom_models/`
-- `src/numereng/features/agentic_research/programs/`
+- `src/numereng/features/agentic_research/PROGRAM.md`
 - `.agents/skills/` for local custom skills
 
 ## Store Roots

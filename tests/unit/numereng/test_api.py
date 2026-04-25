@@ -67,12 +67,6 @@ from numereng.api import (
     RemoteTrainLaunchResponse,
     RemoteVizBootstrapRequest,
     RemoteVizBootstrapResponse,
-    ResearchInitRequest,
-    ResearchInitResponse,
-    ResearchProgramListRequest,
-    ResearchProgramListResponse,
-    ResearchProgramShowRequest,
-    ResearchProgramShowResponse,
     ResearchRunRequest,
     ResearchRunResponse,
     ResearchStatusRequest,
@@ -125,9 +119,6 @@ from numereng.api import (
     remote_list_targets,
     remote_repo_sync,
     remote_train_launch,
-    research_init,
-    research_program_list,
-    research_program_show,
     research_run,
     research_status,
     run_bootstrap_check,
@@ -145,17 +136,9 @@ from numereng.api import (
 )
 from numereng.features.agentic_research import (
     ResearchBestRun,
-    ResearchInitResult,
+    ResearchRoundResult,
     ResearchRunResult,
     ResearchStatusResult,
-)
-from numereng.features.agentic_research.utils.types import (
-    ResearchProgramCatalogEntry,
-    ResearchProgramConfigPolicy,
-    ResearchProgramDefinition,
-    ResearchProgramDetails,
-    ResearchProgramMetricPolicy,
-    ResearchProgramRoundPolicy,
 )
 from numereng.features.cloud.aws import CloudAwsError, CloudEc2Error
 from numereng.features.cloud.modal import CloudModalError
@@ -2144,159 +2127,60 @@ def test_experiment_train_translates_validation_error(monkeypatch: pytest.Monkey
 
 
 def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_init_research_program(
-        *,
-        store_root: str,
-        experiment_id: str,
-        program_id: str,
-        improvement_threshold: float | None,
-    ) -> ResearchInitResult:
-        _ = store_root
-        return ResearchInitResult(
-            root_experiment_id=experiment_id,
-            program_id=program_id,
-            program_title="Numerai Experiment Loop",
-            status="initialized",
-            active_experiment_id=experiment_id,
-            active_path_id="p00",
-            improvement_threshold=improvement_threshold or 0.0002,
-            current_phase=None,
-            agentic_research_dir=Path("/tmp/agentic_research"),
-            program_path=Path("/tmp/agentic_research/program.json"),
-            lineage_path=Path("/tmp/agentic_research/lineage.json"),
-            session_program_path=Path("/tmp/agentic_research/session_program.md"),
-        )
-
     monkeypatch.setattr(
         api_module,
-        "init_research_program",
-        fake_init_research_program,
-    )
-    monkeypatch.setattr(
-        api_module,
-        "get_research_program_status",
+        "get_research_status",
         lambda *, store_root, experiment_id: ResearchStatusResult(
-            root_experiment_id=experiment_id,
-            program_id="numerai-experiment-loop",
-            program_title="Numerai Experiment Loop",
+            experiment_id=experiment_id,
             status="running",
-            active_experiment_id=experiment_id,
-            active_path_id="p00",
             next_round_number=2,
             total_rounds_completed=1,
-            total_paths_created=1,
-            improvement_threshold=0.0002,
             last_checkpoint="round_completed",
             stop_reason=None,
             best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
-            current_round=None,
-            current_phase=None,
-            program_path=Path("/tmp/agentic_research/program.json"),
-            lineage_path=Path("/tmp/agentic_research/lineage.json"),
-            session_program_path=Path("/tmp/agentic_research/session_program.md"),
+            agentic_research_dir=Path("/tmp/agentic_research"),
+            state_path=Path("/tmp/agentic_research/state.json"),
+            ledger_path=Path("/tmp/agentic_research/ledger.jsonl"),
+            program_path=Path("/tmp/agentic_research/PROGRAM.md"),
         ),
     )
     monkeypatch.setattr(
         api_module,
-        "run_research_program",
-        lambda *, store_root, experiment_id, max_rounds, max_paths: ResearchRunResult(
-            root_experiment_id=experiment_id,
-            program_id="numerai-experiment-loop",
-            program_title="Numerai Experiment Loop",
+        "run_research",
+        lambda *, store_root, experiment_id, max_rounds: ResearchRunResult(
+            experiment_id=experiment_id,
             status="stopped",
-            active_experiment_id=experiment_id,
-            active_path_id="p00",
             next_round_number=3,
             total_rounds_completed=2,
-            total_paths_created=1,
             last_checkpoint="stopped",
             stop_reason="max_rounds_reached",
-            current_phase=None,
+            best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
+            rounds=(
+                ResearchRoundResult(
+                    round_number=2,
+                    round_label="r002",
+                    action="run",
+                    status="completed",
+                    config_path=Path("/tmp/configs/r002.json"),
+                    run_id="run-5",
+                    metric_value=0.124,
+                    learning="lower learning rate helped",
+                    artifact_dir=Path("/tmp/agentic_research/rounds/r002"),
+                ),
+            ),
             interrupted=False,
         ),
     )
 
-    init_payload = research_init(
-        ResearchInitRequest(
-            experiment_id="2026-02-22_test-exp",
-            program_id="numerai-experiment-loop",
-        )
-    )
-    assert isinstance(init_payload, ResearchInitResponse)
-    assert init_payload.active_path_id == "p00"
-    assert init_payload.program_id == "numerai-experiment-loop"
-
     status_payload = research_status(ResearchStatusRequest(experiment_id="2026-02-22_test-exp"))
     assert isinstance(status_payload, ResearchStatusResponse)
-    assert status_payload.program_title == "Numerai Experiment Loop"
+    assert status_payload.experiment_id == "2026-02-22_test-exp"
     assert status_payload.best_overall.run_id == "run-4"
 
     run_payload = research_run(ResearchRunRequest(experiment_id="2026-02-22_test-exp", max_rounds=1))
     assert isinstance(run_payload, ResearchRunResponse)
-    assert run_payload.program_id == "numerai-experiment-loop"
+    assert run_payload.rounds[0].round_label == "r002"
     assert run_payload.stop_reason == "max_rounds_reached"
-
-
-def test_research_program_catalog_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        api_module,
-        "list_research_program_records",
-        lambda user_programs_dir=None: (
-            ResearchProgramCatalogEntry(
-                program_id="numerai-experiment-loop",
-                title="Numerai Experiment Loop",
-                description="Builtin numerai loop.",
-                source="builtin",
-                planner_contract="config_mutation",
-                phase_aware=False,
-                source_path="/tmp/numerai-experiment-loop.md",
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        api_module,
-        "get_research_program_record",
-        lambda program_id, user_programs_dir=None: ResearchProgramDetails(
-            definition=ResearchProgramDefinition(
-                program_id=program_id,
-                title="Numerai Experiment Loop",
-                description="Builtin numerai loop.",
-                source="builtin",
-                planner_contract="config_mutation",
-                scoring_stage="post_training_full",
-                metric_policy=ResearchProgramMetricPolicy(
-                    primary="bmc_last_200_eras.mean",
-                    tie_break="bmc.mean",
-                    sanity_checks=("corr.mean",),
-                ),
-                round_policy=ResearchProgramRoundPolicy(
-                    plateau_non_improving_rounds=2,
-                    require_scale_confirmation=True,
-                    scale_confirmation_rounds=1,
-                ),
-                improvement_threshold_default=0.0002,
-                config_policy=ResearchProgramConfigPolicy(
-                    allowed_paths=("model.params.*",),
-                    max_candidate_configs=1,
-                    min_changes=1,
-                    max_changes=2,
-                ),
-                prompt_template="Context:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n",
-                source_path="/tmp/numerai-experiment-loop.md",
-            ),
-            raw_markdown=(
-                "---\nid: numerai-experiment-loop\n---\nContext:\n$CONTEXT_JSON\n\n$VALIDATION_FEEDBACK_BLOCK\n"
-            ),
-        ),
-    )
-
-    list_payload = research_program_list(ResearchProgramListRequest())
-    show_payload = research_program_show(ResearchProgramShowRequest(program_id="numerai-experiment-loop"))
-
-    assert isinstance(list_payload, ResearchProgramListResponse)
-    assert list_payload.programs[0].program_id == "numerai-experiment-loop"
-    assert isinstance(show_payload, ResearchProgramShowResponse)
-    assert show_payload.planner_contract == "config_mutation"
 
 
 def test_store_init_success(monkeypatch: pytest.MonkeyPatch) -> None:
