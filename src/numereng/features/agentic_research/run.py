@@ -33,6 +33,7 @@ ResearchStatus = Literal["initialized", "running", "interrupted", "stopped", "fa
 ResearchAction = Literal["baseline", "run", "stop"]
 
 PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
+PROGRAM_METADATA_KEY = "agentic_research_program"
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 LEDGER_FILENAME = "ledger.jsonl"
@@ -245,7 +246,8 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         )
 
     context = _build_context(root=root, experiment=experiment, report=report, state=state)
-    prompt = _render_prompt(context)
+    program_path = _program_path(experiment)
+    prompt = _render_prompt(context, program_path=program_path)
     _write_json(artifact_dir / "context.json", context)
 
     try:
@@ -476,9 +478,9 @@ def _build_context(
     }
 
 
-def _render_prompt(context: dict[str, object]) -> str:
+def _render_prompt(context: dict[str, object], *, program_path: Path = PROGRAM_PATH) -> str:
     context_json = json.dumps(context, indent=2, sort_keys=True, default=str)
-    return program_markdown().replace("{{CONTEXT_JSON}}", context_json)
+    return program_path.read_text(encoding="utf-8").replace("{{CONTEXT_JSON}}", context_json)
 
 
 def _call_research_llm(*, prompt: str, artifact_dir: Path) -> tuple[str, str]:
@@ -839,7 +841,7 @@ def _status_result(
         agentic_research_dir=auto_dir,
         state_path=auto_dir / STATE_FILENAME,
         ledger_path=auto_dir / LEDGER_FILENAME,
-        program_path=PROGRAM_PATH,
+        program_path=_program_path(experiment),
     )
 
 
@@ -894,6 +896,21 @@ def _stopped_by_llm(state: dict[str, object]) -> bool:
 
 def _agentic_dir(experiment: ExperimentRecord) -> Path:
     return experiment.manifest_path.parent / AGENTIC_DIRNAME
+
+
+def _program_path(experiment: ExperimentRecord) -> Path:
+    raw = experiment.metadata.get(PROGRAM_METADATA_KEY)
+    if raw is None:
+        return PROGRAM_PATH
+    if not isinstance(raw, str) or not raw.strip():
+        raise AgenticResearchValidationError("agentic_research_program_invalid")
+    name = raw.strip()
+    if Path(name).name != name or not name.endswith(".md"):
+        raise AgenticResearchValidationError(f"agentic_research_program_invalid:{name}")
+    path = Path(__file__).with_name(name)
+    if not path.is_file():
+        raise AgenticResearchValidationError(f"agentic_research_program_missing:{name}")
+    return path
 
 
 def _state_path(experiment: ExperimentRecord) -> Path:

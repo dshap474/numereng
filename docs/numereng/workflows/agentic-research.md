@@ -62,6 +62,7 @@ JSON files are the machine contract and replay surface. Markdown files are the h
 - Candidate configs must validate as `TrainingConfig`.
 - Duplicate configs are rejected before training.
 - Planner backend selection is controlled by `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`.
+- The default prompt is `PROGRAM.md`; an experiment can set `metadata.agentic_research_program` to another built-in program markdown file such as `TEST-PROGRAM.md`.
 - `research run` still relies on the normal training/scoring stack, so broken configs or missing datasets fail the same way they would in manual workflows.
 
 ## Read Next
