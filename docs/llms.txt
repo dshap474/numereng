@@ -113,6 +113,7 @@ Key artifacts:
 - `.numereng/runs/<run_id>/artifacts/model/manifest.json`
 - `.numereng/experiments/<experiment_id>/run_scripts/*`
 - `.numereng/experiments/<experiment_id>/agentic_research/state.json`
+- `.numereng/experiments/<experiment_id>/agentic_research/trace.jsonl`
 - `.numereng/experiments/<experiment_id>/agentic_research/rounds/decision.json`
 - `.numereng/experiments/<experiment_id>/agentic_research/rounds/rNNN.md`
   - failure-only debug artifacts use `rounds/rNNN.debug.*`
@@ -147,7 +148,7 @@ Wiring map:
   `cli research status|run -> api.research_status|research_run -> features.agentic_research.get_research_status|run_research`
   - `research run` initializes state on first use; there is no program catalog or init command
   - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`); checked-in default is `codex-exec`
-  - `state.json` persists lightweight supervisor state; `rounds/decision.json` persists round history
+  - `state.json` persists lightweight supervisor state; `trace.jsonl` persists the full LLM trace; `rounds/decision.json` persists compact round history
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime uses the user’s ambient Codex config and environment; agentic research does not create a separate learner `CODEX_HOME`
   - the mutable surface is experiment config JSON; the LLM is not allowed to edit Python source
   - the planner returns one JSON object with `action`, learning fields, `parent_config`, and config changes; Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, and writes one child config

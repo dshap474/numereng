@@ -62,6 +62,10 @@ def _row(run_id: str, value: float) -> ExperimentReportRow:
     )
 
 
+def _trace_events(path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
 def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
@@ -70,6 +74,7 @@ def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
 
     assert status.status == "initialized"
     assert status.next_round_number == 1
+    assert status.trace_path == store_root / "experiments" / EXPERIMENT_ID / "agentic_research" / "trace.jsonl"
     assert status.program_path.name == "PROGRAM.md"
 
 
@@ -128,6 +133,7 @@ def test_run_research_runs_baseline_before_llm(
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert result.rounds[0].artifact_dir == artifact_dir
     assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").exists() is False
+    assert not (experiment.manifest_path.parent / "agentic_research" / "trace.jsonl").exists()
     decisions = (artifact_dir / "decision.json").read_text(encoding="utf-8").splitlines()
     assert len(decisions) == 1
     assert json.loads(decisions[0])["round_label"] == "r001"
@@ -221,6 +227,74 @@ def test_run_research_materializes_llm_config_mutation(
     assert not (artifact_dir / "codex_stderr.txt").exists()
     assert not (artifact_dir / "round.json").exists()
     assert not (artifact_dir / "learning.md").exists()
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    assert [item["event"] for item in trace] == [
+        "prompt_rendered",
+        "llm_response",
+        "decision_parsed",
+        "config_written",
+        "round_completed",
+    ]
+    assert trace[0]["round_label"] == "r001"
+    prompt_payload = cast(dict[str, object], trace[0]["payload"])
+    assert "seed.json" in str(prompt_payload["prompt"])
+    response_payload = cast(dict[str, object], trace[1]["payload"])
+    assert response_payload["model_source"] == "test"
+    assert "Lower variance looked useful." in str(response_payload["raw_response"])
+    parsed_payload = cast(dict[str, object], trace[2]["payload"])
+    parsed_decision = cast(dict[str, object], parsed_payload["decision"])
+    assert parsed_decision["belief_update"] == "A slightly larger learning rate is worth testing."
+    completed_payload = cast(dict[str, object], trace[-1]["payload"])
+    assert completed_payload["run_id"] == "run-1"
+    assert completed_payload["metric_value"] == 0.13
+
+
+def test_run_research_traces_decision_parse_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-0", 0.10)))
+    monkeypatch.setattr(research_module, "_call_research_llm", lambda **_: ("not json", "test"))
+
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_json_missing"):
+        run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    assert [item["event"] for item in trace] == ["prompt_rendered", "llm_response", "decision_parse_failed"]
+    failure_payload = cast(dict[str, object], trace[-1]["payload"])
+    assert failure_payload["raw_response"] == "not json"
+    assert failure_payload["error"] == "agentic_research_json_missing"
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
+    assert (artifact_dir / "r001.debug.prompt.md").is_file()
+    assert (artifact_dir / "r001.debug.llm_response.txt").read_text(encoding="utf-8") == "not json"
+
+
+def test_run_research_traces_llm_call_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-0", 0.10)))
+
+    def fail_llm(**_: object) -> tuple[str, str]:
+        raise research_module.AgenticResearchError("agentic_research_codex_failed:1:boom")
+
+    monkeypatch.setattr(research_module, "_call_research_llm", fail_llm)
+
+    with pytest.raises(research_module.AgenticResearchError, match="agentic_research_codex_failed"):
+        run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    assert [item["event"] for item in trace] == ["prompt_rendered", "llm_call_failed"]
+    failure_payload = cast(dict[str, object], trace[-1]["payload"])
+    assert failure_payload["error"] == "agentic_research_codex_failed:1:boom"
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
+    assert "agentic_research_codex_failed" in (artifact_dir / "r001.debug.error.txt").read_text(encoding="utf-8")
 
 
 def test_call_codex_exec_uses_configured_model_and_reasoning(

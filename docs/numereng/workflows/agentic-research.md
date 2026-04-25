@@ -47,11 +47,12 @@ uv run numereng experiment report --id 2026-04-18_research-root
 Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 
 - `state.json`
+- `trace.jsonl` as the append-only prompt/response/event trace for debugging
 - `rounds/decision.json` as an append-only JSON-lines decision/result log
 - `rounds/rNNN.md` as the human-readable notes for each round
 - `rounds/rNNN.debug.*` only on LLM/Codex failure
 
-JSON files are the machine contract and replay surface. Markdown files are the human-readable audit trail.
+`trace.jsonl` is for debugging and improving the loop; it is not fed back into future prompts by default. `rounds/decision.json` is the compact machine memory. Markdown files are the human-readable audit trail.
 
 ## High-Risk Gotchas
 

@@ -47,6 +47,7 @@ class ResearchStatusResponse(BaseModel):
     best_overall: ResearchBestRunResponse
     agentic_research_dir: str
     state_path: str
+    trace_path: str
     decision_path: str
     program_path: str
 

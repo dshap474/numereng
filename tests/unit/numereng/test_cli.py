@@ -3555,6 +3555,7 @@ def test_cli_research_commands_success(
             best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
             agentic_research_dir="/tmp/agentic_research",
             state_path="/tmp/agentic_research/state.json",
+            trace_path="/tmp/agentic_research/trace.jsonl",
             decision_path="/tmp/agentic_research/rounds/decision.json",
             program_path="/tmp/agentic_research/PROGRAM.md",
         ),

@@ -36,6 +36,7 @@ PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
 PROGRAM_METADATA_KEY = "agentic_research_program"
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
+TRACE_FILENAME = "trace.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
 SCORING_STAGE = "post_training_full"
@@ -111,6 +112,7 @@ class ResearchStatusResult:
     best_overall: ResearchBestRun
     agentic_research_dir: Path
     state_path: Path
+    trace_path: Path
     decision_path: Path
     program_path: Path
 
@@ -247,6 +249,13 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     context = _build_context(root=root, experiment=experiment, report=report, state=state)
     program_path = _program_path(experiment)
     prompt = _render_prompt(context, program_path=program_path)
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="prompt_rendered",
+        payload={"program_path": str(program_path), "prompt": prompt},
+    )
 
     try:
         raw_response, model_source = _call_research_llm(
@@ -255,11 +264,32 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             round_label=round_label,
         )
     except Exception as exc:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="llm_call_failed",
+            payload={"error": str(exc)},
+        )
         _write_failure_debug(artifact_dir=artifact_dir, round_label=round_label, prompt=prompt, error=str(exc))
         raise
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="llm_response",
+        payload={"model_source": model_source, "raw_response": raw_response},
+    )
     try:
         decision = _parse_decision(raw_response)
     except Exception as exc:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="decision_parse_failed",
+            payload={"raw_response": raw_response, "error": str(exc)},
+        )
         _write_failure_debug(
             artifact_dir=artifact_dir,
             round_label=round_label,
@@ -268,24 +298,57 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             error=str(exc),
         )
         raise
+    decision_payload = _decision_payload(decision, model_source=model_source)
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="decision_parsed",
+        payload={"decision": decision_payload},
+    )
 
     if decision.action == "stop":
-        return _record_stop_round(
+        result = _record_stop_round(
             experiment=experiment,
             state=state,
             decision=decision,
-            decision_payload=_decision_payload(decision, model_source=model_source),
+            decision_payload=decision_payload,
             round_number=round_number,
             round_label=round_label,
             artifact_dir=artifact_dir,
         )
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="round_stopped",
+            payload={"stop_reason": decision.stop_reason},
+        )
+        return result
 
-    config_path = _materialize_decision_config(
-        experiment=experiment,
+    try:
+        config_path = _materialize_decision_config(
+            experiment=experiment,
+            round_label=round_label,
+            decision=decision,
+        )
+    except Exception as exc:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="config_materialization_failed",
+            payload={"decision": decision_payload, "error": str(exc)},
+        )
+        raise
+    _append_trace(
+        experiment,
+        round_number=round_number,
         round_label=round_label,
-        decision=decision,
+        event="config_written",
+        payload={"config_path": str(config_path)},
     )
-    return _train_score_record_round(
+    result = _train_score_record_round(
         root=root,
         experiment=experiment,
         state=state,
@@ -295,8 +358,20 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         config_path=config_path,
         artifact_dir=artifact_dir,
         learning=decision.learning,
-        decision_payload=_decision_payload(decision, model_source=model_source),
+        decision_payload=decision_payload,
     )
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="round_completed",
+        payload={
+            "config_path": str(result.config_path) if result.config_path is not None else None,
+            "run_id": result.run_id,
+            "metric_value": result.metric_value,
+        },
+    )
+    return result
 
 
 def _run_baseline_round(
@@ -850,6 +925,7 @@ def _status_result(
         best_overall=best,
         agentic_research_dir=auto_dir,
         state_path=auto_dir / STATE_FILENAME,
+        trace_path=auto_dir / TRACE_FILENAME,
         decision_path=_decision_log_path(experiment),
         program_path=_program_path(experiment),
     )
@@ -931,6 +1007,10 @@ def _state_path(experiment: ExperimentRecord) -> Path:
     return _agentic_dir(experiment) / STATE_FILENAME
 
 
+def _trace_path(experiment: ExperimentRecord) -> Path:
+    return _agentic_dir(experiment) / TRACE_FILENAME
+
+
 def _decision_log_path(experiment: ExperimentRecord) -> Path:
     return _rounds_dir(experiment) / "decision.json"
 
@@ -971,6 +1051,27 @@ def _append_decision_log(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+
+
+def _append_trace(
+    experiment: ExperimentRecord,
+    *,
+    round_number: int,
+    round_label: str,
+    event: str,
+    payload: dict[str, object],
+) -> None:
+    row: dict[str, object] = {
+        "created_at": _utc_now_iso(),
+        "round_number": round_number,
+        "round_label": round_label,
+        "event": event,
+        "payload": payload,
+    }
+    path = _trace_path(experiment)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
 
 
 def _write_round_notes(*, artifact_dir: Path, round_payload: dict[str, object]) -> None:
