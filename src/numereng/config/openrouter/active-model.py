@@ -4,4 +4,5 @@ ACTIVE_MODEL_SOURCE=codex-exec|openrouter
 """
 
 ACTIVE_MODEL_SOURCE = "codex-exec"
-ACTIVE_MODEL = "openai/gpt-4.1-mini"
+ACTIVE_MODEL = "gpt-5.5"
+ACTIVE_MODEL_REASONING_EFFORT = "high"

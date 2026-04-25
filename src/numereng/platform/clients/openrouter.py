@@ -8,7 +8,7 @@ import os
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -19,6 +19,7 @@ JsonDict = dict[str, Any]
 _INFERENCE_PATHS = {"/chat/completions", "/completions", "/responses"}
 _ACTIVE_MODEL_PATH = Path(__file__).resolve().parents[2] / "config" / "openrouter" / "active-model.py"
 OpenRouterModelSource = Literal["codex-exec", "openrouter"]
+ModelReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class OpenRouterConfig:
 
     active_model_source: OpenRouterModelSource
     active_model: str | None
+    active_model_reasoning_effort: ModelReasoningEffort | None = None
 
 
 def load_openrouter_config() -> OpenRouterConfig:
@@ -49,11 +51,21 @@ def load_openrouter_config() -> OpenRouterConfig:
         raise OpenRouterClientError("openrouter_active_model_source_invalid")
 
     active_model = getattr(module, "ACTIVE_MODEL", None)
-    if active_model is None:
-        return OpenRouterConfig(active_model_source=source, active_model=None)
-    if not isinstance(active_model, str) or not active_model.strip():
+    if active_model is not None and (not isinstance(active_model, str) or not active_model.strip()):
         raise OpenRouterClientError("openrouter_active_model_invalid")
-    return OpenRouterConfig(active_model_source=source, active_model=active_model.strip())
+
+    reasoning_effort = getattr(module, "ACTIVE_MODEL_REASONING_EFFORT", None)
+    if reasoning_effort is not None:
+        if not isinstance(reasoning_effort, str) or reasoning_effort not in {"low", "medium", "high", "xhigh"}:
+            raise OpenRouterClientError("openrouter_active_model_reasoning_effort_invalid")
+
+    return OpenRouterConfig(
+        active_model_source=cast(OpenRouterModelSource, source),
+        active_model=active_model.strip() if active_model is not None else None,
+        active_model_reasoning_effort=cast(ModelReasoningEffort, reasoning_effort)
+        if reasoning_effort is not None
+        else None,
+    )
 
 
 def active_model_source() -> OpenRouterModelSource:

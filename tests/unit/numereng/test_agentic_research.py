@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -20,6 +22,7 @@ from numereng.features.experiments import (
     ExperimentTrainResult,
     create_experiment,
 )
+from numereng.platform.clients.openrouter import OpenRouterConfig
 
 EXPERIMENT_ID = "2026-02-22_test-exp"
 
@@ -183,6 +186,46 @@ def test_run_research_materializes_llm_config_mutation(
     assert payload["model"]["params"]["learning_rate"] == 0.02
     assert result.rounds[0].metric_value == 0.13
     assert (experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001" / "prompt.md").is_file()
+
+
+def test_call_codex_exec_uses_configured_model_and_reasoning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(
+        cmd: list[str],
+        *,
+        input: str,
+        text: bool,
+        capture_output: bool,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["cmd"] = cmd
+        captured["input"] = input
+        _ = (text, capture_output, check)
+        output_path = Path(cmd[cmd.index("-o") + 1])
+        output_path.write_text('{"action": "stop"}', encoding="utf-8")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(research_module.subprocess, "run", fake_run)
+
+    response = research_module._call_codex_exec(
+        prompt="choose next run",
+        artifact_dir=tmp_path,
+        config=OpenRouterConfig(
+            active_model_source="codex-exec",
+            active_model="gpt-5.5",
+            active_model_reasoning_effort="high",
+        ),
+    )
+
+    cmd = cast(list[str], captured["cmd"])
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
+    assert cmd[cmd.index("-c") + 1] == 'model_reasoning_effort="high"'
+    assert response == '{"action": "stop"}'
+    assert captured["input"] == "choose next run"
 
 
 def test_parse_decision_rejects_disallowed_change_path() -> None:

@@ -65,14 +65,22 @@ def test_load_openrouter_config_reads_active_source_and_model(
 ) -> None:
     config_path = tmp_path / "active-model.py"
     config_path.write_text(
-        'ACTIVE_MODEL_SOURCE = "codex-exec"\nACTIVE_MODEL = "openai/gpt-4o-mini"\n',
+        "\n".join(
+            [
+                'ACTIVE_MODEL_SOURCE = "codex-exec"',
+                'ACTIVE_MODEL = "gpt-5.5"',
+                'ACTIVE_MODEL_REASONING_EFFORT = "high"',
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(openrouter_module, "_ACTIVE_MODEL_PATH", config_path)
 
     assert load_openrouter_config() == OpenRouterConfig(
         active_model_source="codex-exec",
-        active_model="openai/gpt-4o-mini",
+        active_model="gpt-5.5",
+        active_model_reasoning_effort="high",
     )
     assert active_model_source() == "codex-exec"
 

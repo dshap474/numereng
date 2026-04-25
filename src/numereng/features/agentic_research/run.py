@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from numereng.config.training import TrainingConfig, load_training_config_json
 from numereng.features.experiments import (
@@ -26,7 +26,7 @@ from numereng.features.experiments import (
 from numereng.features.store import resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata
 from numereng.features.training.run_store import compute_config_hash
-from numereng.platform.clients.openrouter import OpenRouterClient, active_model_source
+from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterConfig, load_openrouter_config
 from numereng.platform.errors import OpenRouterClientError
 
 ResearchStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
@@ -299,7 +299,7 @@ def _run_baseline_round(
     payload = load_training_config_json(parent_path)
     _write_json(config_path, payload)
     learning = f"Baseline round from `{parent_path.name}` before asking the LLM for mutations."
-    decision_payload = {
+    decision_payload: dict[str, object] = {
         "action": "baseline",
         "parent_config": parent_path.name,
         "changes": [],
@@ -347,7 +347,7 @@ def _train_score_record_round(
     row = _row_for_run(report, trained.run_id)
     metric_value = getattr(row, PRIMARY_METRIC_FIELD) if row is not None else None
     best = _best_run_from_report(report)
-    round_payload = {
+    round_payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
         "action": action,
@@ -399,7 +399,7 @@ def _record_stop_round(
     artifact_dir: Path,
 ) -> ResearchRoundResult:
     learning = decision.learning or decision.stop_reason or "LLM stopped the research loop."
-    payload = {
+    payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
         "action": "stop",
@@ -474,21 +474,22 @@ def _render_prompt(context: dict[str, object]) -> str:
 
 
 def _call_research_llm(*, prompt: str, artifact_dir: Path) -> tuple[str, str]:
-    source = active_model_source()
-    if source == "openrouter":
-        return _call_openrouter(prompt), "openrouter"
-    return _call_codex_exec(prompt=prompt, artifact_dir=artifact_dir), "codex-exec"
+    config = load_openrouter_config()
+    if config.active_model_source == "openrouter":
+        return _call_openrouter(prompt, config=config), "openrouter"
+    return _call_codex_exec(prompt=prompt, artifact_dir=artifact_dir, config=config), "codex-exec"
 
 
-def _call_openrouter(prompt: str) -> str:
+def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:
+    payload: dict[str, object] = {
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+    }
+    if config.active_model_reasoning_effort is not None:
+        payload["reasoning"] = {"effort": config.active_model_reasoning_effort}
     try:
-        response = OpenRouterClient(timeout_seconds=180.0).chat_completions(
-            payload={
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-            }
-        )
+        response = OpenRouterClient(timeout_seconds=180.0).chat_completions(payload=payload)
     except OpenRouterClientError as exc:
         raise AgenticResearchError(str(exc)) from exc
     choices = response.get("choices")
@@ -501,22 +502,30 @@ def _call_openrouter(prompt: str) -> str:
     return content
 
 
-def _call_codex_exec(*, prompt: str, artifact_dir: Path) -> str:
+def _call_codex_exec(*, prompt: str, artifact_dir: Path, config: OpenRouterConfig) -> str:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
     cmd = [
         "codex",
         "exec",
-        "--skip-git-repo-check",
-        "--ephemeral",
-        "--json",
-        "--color",
-        "never",
-        "-",
-        "-o",
-        str(output_path),
     ]
+    if config.active_model is not None:
+        cmd.extend(["--model", config.active_model])
+    if config.active_model_reasoning_effort is not None:
+        cmd.extend(["-c", f'model_reasoning_effort="{config.active_model_reasoning_effort}"'])
+    cmd.extend(
+        [
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--json",
+            "--color",
+            "never",
+            "-",
+            "-o",
+            str(output_path),
+        ]
+    )
     completed = subprocess.run(cmd, input=prompt, text=True, capture_output=True, check=False)
     _write_text(artifact_dir / "codex_stdout.jsonl", completed.stdout)
     _write_text(artifact_dir / "codex_stderr.txt", completed.stderr)
@@ -533,9 +542,10 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path) -> str:
 
 def _parse_decision(raw_response: str) -> ResearchDecision:
     payload = _extract_json_object(raw_response)
-    action = payload.get("action")
-    if action not in {"run", "stop"}:
+    action_raw = payload.get("action")
+    if action_raw not in {"run", "stop"}:
         raise AgenticResearchValidationError("agentic_research_action_invalid")
+    action = cast(Literal["run", "stop"], action_raw)
     changes = tuple(_parse_change(item) for item in _as_list(payload.get("changes")))
     decision = ResearchDecision(
         action=action,
@@ -559,13 +569,14 @@ def _parse_decision(raw_response: str) -> ResearchDecision:
 def _parse_change(payload: object) -> ResearchChange:
     if not isinstance(payload, dict):
         raise AgenticResearchValidationError("agentic_research_change_invalid")
-    path = _required_str(payload, "path")
+    parsed = cast(dict[str, object], payload)
+    path = _required_str(parsed, "path")
     if not _change_path_allowed(path):
         raise AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{path}")
     return ResearchChange(
         path=path,
-        value=deepcopy(payload.get("value")),
-        reason=_required_str(payload, "reason"),
+        value=deepcopy(parsed.get("value")),
+        reason=_required_str(parsed, "reason"),
     )
 
 
@@ -618,7 +629,7 @@ def _assign_dotted(payload: dict[str, object], parts: list[str], value: object) 
         child = cursor.get(part)
         if not isinstance(child, dict):
             raise AgenticResearchValidationError(f"agentic_research_change_target_not_mapping:{'.'.join(parts)}")
-        cursor = child
+        cursor = cast(dict[str, object], child)
     cursor[parts[-1]] = value
 
 
@@ -649,14 +660,20 @@ def _mutable_config_view(payload: dict[str, object]) -> dict[str, object]:
     for path in ALLOWED_CHANGE_PATHS:
         if path.endswith(".*"):
             prefix = path[:-2]
-            value = _get_dotted(payload, prefix.split("."))
+            parts = _split_path(prefix)
+            value = _get_dotted(payload, parts)
             if value is not None:
-                _assign_view(view, prefix.split("."), value)
+                _assign_view(view, parts, value)
             continue
-        value = _get_dotted(payload, path.split("."))
+        parts = _split_path(path)
+        value = _get_dotted(payload, parts)
         if value is not None:
-            _assign_view(view, path.split("."), value)
+            _assign_view(view, parts, value)
     return view
+
+
+def _split_path(path: str) -> list[str]:
+    return path.split(".")
 
 
 def _get_dotted(payload: dict[str, object], parts: list[str]) -> object | None:
@@ -664,17 +681,21 @@ def _get_dotted(payload: dict[str, object], parts: list[str]) -> object | None:
     for part in parts:
         if not isinstance(cursor, dict) or part not in cursor:
             return None
-        cursor = cursor[part]
+        parsed = cast(dict[str, object], cursor)
+        cursor = parsed[part]
     return cursor
 
 
 def _assign_view(payload: dict[str, object], parts: list[str], value: object) -> None:
     cursor = payload
     for part in parts[:-1]:
-        child = cursor.setdefault(part, {})
+        child = cursor.get(part)
+        if child is None:
+            child = {}
+            cursor[part] = child
         if not isinstance(child, dict):
             return
-        cursor = child
+        cursor = cast(dict[str, object], child)
     cursor[parts[-1]] = value
 
 
@@ -834,20 +855,23 @@ def _best_from_state(state: dict[str, object]) -> ResearchBestRun:
     payload = state.get("best_overall")
     if not isinstance(payload, dict):
         return ResearchBestRun()
+    best = cast(dict[str, object], payload)
     return ResearchBestRun(
-        experiment_id=_optional_str(payload.get("experiment_id")),
-        run_id=_optional_str(payload.get("run_id")),
-        bmc_last_200_eras_mean=_optional_float(payload.get("bmc_last_200_eras_mean")),
-        bmc_mean=_optional_float(payload.get("bmc_mean")),
-        corr_mean=_optional_float(payload.get("corr_mean")),
-        mmc_mean=_optional_float(payload.get("mmc_mean")),
-        cwmm_mean=_optional_float(payload.get("cwmm_mean")),
-        updated_at=_optional_str(payload.get("updated_at")),
+        experiment_id=_optional_str(best.get("experiment_id")),
+        run_id=_optional_str(best.get("run_id")),
+        bmc_last_200_eras_mean=_optional_float(best.get("bmc_last_200_eras_mean")),
+        bmc_mean=_optional_float(best.get("bmc_mean")),
+        corr_mean=_optional_float(best.get("corr_mean")),
+        mmc_mean=_optional_float(best.get("mmc_mean")),
+        cwmm_mean=_optional_float(best.get("cwmm_mean")),
+        updated_at=_optional_str(best.get("updated_at")),
     )
 
 
 def _status_value(value: object) -> ResearchStatus:
-    return value if value in {"initialized", "running", "interrupted", "stopped", "failed"} else "initialized"
+    if value in {"initialized", "running", "interrupted", "stopped", "failed"}:
+        return cast(ResearchStatus, value)
+    return "initialized"
 
 
 def _stopped_by_llm(state: dict[str, object]) -> bool:
@@ -975,7 +999,7 @@ def _as_int(value: object, *, default: int) -> int:
 
 
 def _as_list(value: object) -> list[object]:
-    return value if isinstance(value, list) else []
+    return cast(list[object], value) if isinstance(value, list) else []
 
 
 def _utc_now_iso() -> str:
