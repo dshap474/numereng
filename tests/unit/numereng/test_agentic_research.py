@@ -125,10 +125,12 @@ def test_run_research_runs_baseline_before_llm(
     assert result.rounds[0].action == "baseline"
     assert result.rounds[0].run_id == "run-1"
     assert (experiment.manifest_path.parent / "configs" / "r001_baseline_seed.json").is_file()
-    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001"
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").is_file()
+    assert result.rounds[0].artifact_dir == artifact_dir
     assert (artifact_dir / "decision.json").is_file()
-    assert (artifact_dir / "notes.md").is_file()
+    assert (artifact_dir / "r001.md").is_file()
+    assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
     assert not (artifact_dir / "round.json").exists()
     assert not (artifact_dir / "learning.md").exists()
@@ -203,13 +205,12 @@ def test_run_research_materializes_llm_config_mutation(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["model"]["params"]["learning_rate"] == 0.02
     assert result.rounds[0].metric_value == 0.13
-    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001"
-    assert (artifact_dir / "context.json").is_file()
+    artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert (artifact_dir / "decision.json").is_file()
-    assert (artifact_dir / "notes.md").is_file()
-    assert "A slightly larger learning rate is worth testing." in (artifact_dir / "notes.md").read_text(
-        encoding="utf-8"
-    )
+    assert (artifact_dir / "r001.md").is_file()
+    assert "A slightly larger learning rate is worth testing." in (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    assert not (artifact_dir / "r001").exists()
+    assert not (artifact_dir / "context.json").exists()
     assert not (artifact_dir / "prompt.md").exists()
     assert not (artifact_dir / "llm_response.txt").exists()
     assert not (artifact_dir / "codex_stdout.jsonl").exists()
@@ -244,6 +245,7 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     response = research_module._call_codex_exec(
         prompt="choose next run",
         artifact_dir=tmp_path,
+        round_label="r001",
         config=OpenRouterConfig(
             active_model_source="codex-exec",
             active_model="gpt-5.5",
@@ -281,6 +283,7 @@ def test_call_codex_exec_writes_debug_artifacts_on_failure(
         research_module._call_codex_exec(
             prompt="choose next run",
             artifact_dir=tmp_path,
+            round_label="r002",
             config=OpenRouterConfig(
                 active_model_source="codex-exec",
                 active_model="gpt-5.5",
@@ -288,11 +291,10 @@ def test_call_codex_exec_writes_debug_artifacts_on_failure(
             ),
         )
 
-    debug_dir = tmp_path / "debug"
-    assert (debug_dir / "prompt.md").read_text(encoding="utf-8") == "choose next run"
-    assert (debug_dir / "codex_stdout.jsonl").read_text(encoding="utf-8") == '{"event":"failed"}'
-    assert (debug_dir / "codex_stderr.txt").read_text(encoding="utf-8") == "boom"
-    assert "agentic_research_codex_failed" in (debug_dir / "error.txt").read_text(encoding="utf-8")
+    assert (tmp_path / "r002.debug.prompt.md").read_text(encoding="utf-8") == "choose next run"
+    assert (tmp_path / "r002.debug.codex_stdout.jsonl").read_text(encoding="utf-8") == '{"event":"failed"}'
+    assert (tmp_path / "r002.debug.codex_stderr.txt").read_text(encoding="utf-8") == "boom"
+    assert "agentic_research_codex_failed" in (tmp_path / "r002.debug.error.txt").read_text(encoding="utf-8")
 
 
 def test_parse_decision_rejects_disallowed_change_path() -> None:

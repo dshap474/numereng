@@ -231,7 +231,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
     round_number = _as_int(state.get("next_round_number"), default=1)
     round_label = f"r{round_number:03d}"
-    artifact_dir = _agentic_dir(experiment) / "rounds" / round_label
+    artifact_dir = _rounds_dir(experiment)
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     report = _safe_report(root=root, experiment_id=experiment_id)
@@ -248,19 +248,27 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     context = _build_context(root=root, experiment=experiment, report=report, state=state)
     program_path = _program_path(experiment)
     prompt = _render_prompt(context, program_path=program_path)
-    _write_json(artifact_dir / "context.json", context)
 
     try:
-        raw_response, model_source = _call_research_llm(prompt=prompt, artifact_dir=artifact_dir)
+        raw_response, model_source = _call_research_llm(
+            prompt=prompt,
+            artifact_dir=artifact_dir,
+            round_label=round_label,
+        )
     except Exception as exc:
-        _write_failure_debug(artifact_dir=artifact_dir, prompt=prompt, error=str(exc))
+        _write_failure_debug(artifact_dir=artifact_dir, round_label=round_label, prompt=prompt, error=str(exc))
         raise
     try:
         decision = _parse_decision(raw_response)
     except Exception as exc:
-        _write_failure_debug(artifact_dir=artifact_dir, prompt=prompt, raw_response=raw_response, error=str(exc))
+        _write_failure_debug(
+            artifact_dir=artifact_dir,
+            round_label=round_label,
+            prompt=prompt,
+            raw_response=raw_response,
+            error=str(exc),
+        )
         raise
-    _write_json(artifact_dir / "decision.json", _decision_payload(decision, model_source=model_source))
 
     if decision.action == "stop":
         return _record_stop_round(
@@ -315,7 +323,6 @@ def _run_baseline_round(
         "changes": [],
         "learning": learning,
     }
-    _write_json(artifact_dir / "decision.json", decision_payload)
     return _train_score_record_round(
         root=root,
         experiment=experiment,
@@ -371,6 +378,7 @@ def _train_score_record_round(
     }
     _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
     _append_ledger(_ledger_path(experiment), round_payload)
+    _append_decision_log(_decision_log_path(experiment), round_payload)
 
     state.update(
         {
@@ -423,6 +431,7 @@ def _record_stop_round(
     }
     _write_round_notes(artifact_dir=artifact_dir, round_payload=payload)
     _append_ledger(_ledger_path(experiment), payload)
+    _append_decision_log(_decision_log_path(experiment), payload)
     state.update(
         {
             "status": "stopped",
@@ -483,11 +492,14 @@ def _render_prompt(context: dict[str, object], *, program_path: Path = PROGRAM_P
     return program_path.read_text(encoding="utf-8").replace("{{CONTEXT_JSON}}", context_json)
 
 
-def _call_research_llm(*, prompt: str, artifact_dir: Path) -> tuple[str, str]:
+def _call_research_llm(*, prompt: str, artifact_dir: Path, round_label: str) -> tuple[str, str]:
     config = load_openrouter_config()
     if config.active_model_source == "openrouter":
         return _call_openrouter(prompt, config=config), "openrouter"
-    return _call_codex_exec(prompt=prompt, artifact_dir=artifact_dir, config=config), "codex-exec"
+    return (
+        _call_codex_exec(prompt=prompt, artifact_dir=artifact_dir, round_label=round_label, config=config),
+        "codex-exec",
+    )
 
 
 def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:
@@ -512,7 +524,7 @@ def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:
     return content
 
 
-def _call_codex_exec(*, prompt: str, artifact_dir: Path, config: OpenRouterConfig) -> str:
+def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, config: OpenRouterConfig) -> str:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
@@ -540,6 +552,7 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, config: OpenRouterConfi
     if completed.returncode != 0:
         _write_failure_debug(
             artifact_dir=artifact_dir,
+            round_label=round_label,
             prompt=prompt,
             codex_stdout=completed.stdout,
             codex_stderr=completed.stderr,
@@ -898,6 +911,10 @@ def _agentic_dir(experiment: ExperimentRecord) -> Path:
     return experiment.manifest_path.parent / AGENTIC_DIRNAME
 
 
+def _rounds_dir(experiment: ExperimentRecord) -> Path:
+    return _agentic_dir(experiment) / "rounds"
+
+
 def _program_path(experiment: ExperimentRecord) -> Path:
     raw = experiment.metadata.get(PROGRAM_METADATA_KEY)
     if raw is None:
@@ -919,6 +936,10 @@ def _state_path(experiment: ExperimentRecord) -> Path:
 
 def _ledger_path(experiment: ExperimentRecord) -> Path:
     return _agentic_dir(experiment) / LEDGER_FILENAME
+
+
+def _decision_log_path(experiment: ExperimentRecord) -> Path:
+    return _rounds_dir(experiment) / "decision.json"
 
 
 def _load_state(path: Path) -> dict[str, object] | None:
@@ -954,6 +975,12 @@ def _recent_ledger(path: Path, *, limit: int) -> list[dict[str, object]]:
 
 
 def _append_ledger(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
+
+
+def _append_decision_log(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
@@ -1003,7 +1030,8 @@ def _write_round_notes(*, artifact_dir: Path, round_payload: dict[str, object]) 
     stop_reason = _optional_str(round_payload.get("stop_reason")) or _optional_str(decision_payload.get("stop_reason"))
     if stop_reason is not None:
         lines.extend(["", "## Stop Reason", stop_reason])
-    _write_text(artifact_dir / "notes.md", "\n".join(lines).rstrip() + "\n")
+    round_label = str(round_payload.get("round_label") or "round")
+    _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
 def _notes_value(value: object) -> str:
@@ -1015,21 +1043,22 @@ def _notes_value(value: object) -> str:
 def _write_failure_debug(
     *,
     artifact_dir: Path,
+    round_label: str,
     prompt: str,
     error: str,
     raw_response: str | None = None,
     codex_stdout: str | None = None,
     codex_stderr: str | None = None,
 ) -> None:
-    debug_dir = artifact_dir / "debug"
-    _write_text(debug_dir / "prompt.md", prompt)
-    _write_text(debug_dir / "error.txt", error.strip() + "\n")
+    prefix = artifact_dir / f"{round_label}.debug"
+    _write_text(Path(f"{prefix}.prompt.md"), prompt)
+    _write_text(Path(f"{prefix}.error.txt"), error.strip() + "\n")
     if raw_response is not None:
-        _write_text(debug_dir / "llm_response.txt", raw_response)
+        _write_text(Path(f"{prefix}.llm_response.txt"), raw_response)
     if codex_stdout is not None:
-        _write_text(debug_dir / "codex_stdout.jsonl", codex_stdout)
+        _write_text(Path(f"{prefix}.codex_stdout.jsonl"), codex_stdout)
     if codex_stderr is not None:
-        _write_text(debug_dir / "codex_stderr.txt", codex_stderr)
+        _write_text(Path(f"{prefix}.codex_stderr.txt"), codex_stderr)
 
 
 def _write_json(path: Path, payload: object) -> None:

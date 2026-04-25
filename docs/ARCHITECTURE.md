@@ -235,11 +235,10 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
       agentic_research/
         state.json
         ledger.jsonl
-        rounds/rN/
+        rounds/
           decision.json
-          context.json
-          notes.md
-          debug/*          # only on LLM/Codex failure
+          rNNN.md
+          rNNN.debug.*     # only on LLM/Codex failure
         hpo/<study_id>/...
         ensembles/<ensemble_id>/...
       _archive/
@@ -523,7 +522,8 @@ cli research status|run
       - persist supervisor state under:
           .numereng/experiments/<root>/agentic_research/state.json
           .numereng/experiments/<root>/agentic_research/ledger.jsonl
-          .numereng/experiments/<root>/agentic_research/rounds/rN/*
+          .numereng/experiments/<root>/agentic_research/rounds/decision.json
+          .numereng/experiments/<root>/agentic_research/rounds/rNNN.md
       - `research run` initializes state on first use
       - the prompt policy lives in `src/numereng/features/agentic_research/PROGRAM.md`
       - runtime layout is localized into `PROGRAM.md` plus `run.py`

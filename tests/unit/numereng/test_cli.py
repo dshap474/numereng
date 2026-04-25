@@ -3580,7 +3580,7 @@ def test_cli_research_commands_success(
                     run_id="run-5",
                     metric_value=0.124,
                     learning="lower learning rate helped",
-                    artifact_dir="/tmp/agentic_research/rounds/r002",
+                    artifact_dir="/tmp/agentic_research/rounds",
                 )
             ],
             interrupted=False,

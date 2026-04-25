@@ -2165,7 +2165,7 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
                     run_id="run-5",
                     metric_value=0.124,
                     learning="lower learning rate helped",
-                    artifact_dir=Path("/tmp/agentic_research/rounds/r002"),
+                    artifact_dir=Path("/tmp/agentic_research/rounds"),
                 ),
             ),
             interrupted=False,
