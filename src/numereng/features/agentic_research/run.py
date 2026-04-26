@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 from copy import deepcopy
@@ -601,7 +603,7 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
     cmd = [
-        "codex",
+        _resolve_codex_executable(),
         "exec",
     ]
     if config.active_model is not None:
@@ -638,6 +640,12 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
             output_path.unlink()
         except OSError:
             pass
+
+
+def _resolve_codex_executable() -> str:
+    if os.name == "nt":
+        return shutil.which("codex.cmd") or shutil.which("codex.exe") or shutil.which("codex") or "codex.cmd"
+    return shutil.which("codex") or "codex"
 
 
 def _parse_decision(raw_response: str) -> ResearchDecision:

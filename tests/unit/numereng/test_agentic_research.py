@@ -340,6 +340,20 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     assert not (tmp_path / "codex_stderr.txt").exists()
 
 
+def test_resolve_codex_executable_prefers_windows_cmd(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_which(name: str) -> str | None:
+        calls.append(name)
+        return "C:\\tools\\npm\\codex.cmd" if name == "codex.cmd" else None
+
+    monkeypatch.setattr(research_module.os, "name", "nt")
+    monkeypatch.setattr(research_module.shutil, "which", fake_which)
+
+    assert research_module._resolve_codex_executable().endswith("codex.cmd")
+    assert calls == ["codex.cmd"]
+
+
 def test_call_codex_exec_writes_debug_artifacts_on_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

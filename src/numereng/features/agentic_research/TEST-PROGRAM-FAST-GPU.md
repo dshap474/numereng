@@ -23,9 +23,10 @@ Stay inside these caps for every proposed run:
 - `model.type` must remain `LGBMRegressor`.
 - `data.feature_set` must remain `small`.
 - `model.params.device_type` must remain `gpu`.
-- `model.params.n_estimators` must be at most `100`.
-- `model.params.num_leaves` must be at most `15`.
-- `model.params.max_depth` must be at most `4`.
+- `model.params.n_estimators` must be at most `30`.
+- `model.params.num_leaves` must be at most `8`.
+- `model.params.max_depth` must be at most `3`.
+- `model.params.colsample_bytree` must be at most `0.1`.
 - `training.resources.parallel_folds` must be `1`.
 
 If all useful next mutations would violate these caps, return `action: "stop"`.
