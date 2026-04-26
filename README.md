@@ -148,10 +148,11 @@ The repo checkout is the workspace. Runtime state is local and gitignored:
 └── numereng.db    # SQLite store index
 ```
 
-Extension and authoring roots (tracked in git):
+Extension and authoring roots:
 
 - `src/numereng/features/models/custom_models/` — drop in a custom model wrapper (auto-discovered)
-- `src/numereng/features/agentic_research/programs/` — author a research program
+- `src/numereng/features/agentic_research/PROGRAM.md` — tracked base agentic research program
+- `src/numereng/features/agentic_research/custom_programs/` — local custom research programs (gitignored)
 - `.codex/skills/` — agent skills (shipped ones are tracked; add your own locally via the directory's gitignore allowlist)
 
 ## Python API

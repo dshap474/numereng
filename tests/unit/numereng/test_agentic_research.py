@@ -84,9 +84,13 @@ def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
     assert status.program_path.name == "PROGRAM.md"
 
 
-def test_status_uses_experiment_metadata_program(tmp_path: Path) -> None:
+def test_status_uses_experiment_metadata_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store_root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    custom_program_dir = tmp_path / "custom_programs"
+    custom_program_dir.mkdir()
+    (custom_program_dir / "TEST-PROGRAM.md").write_text("Test program", encoding="utf-8")
+    monkeypatch.setattr(research_module, "CUSTOM_PROGRAM_DIR", custom_program_dir)
     manifest = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
     manifest["metadata"] = {"agentic_research_program": "TEST-PROGRAM.md"}
     experiment.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -94,6 +98,7 @@ def test_status_uses_experiment_metadata_program(tmp_path: Path) -> None:
     status = get_research_status(store_root=store_root, experiment_id=EXPERIMENT_ID)
 
     assert status.program_path.name == "TEST-PROGRAM.md"
+    assert status.program_path.parent == custom_program_dir
 
 
 def test_run_research_runs_baseline_before_llm(

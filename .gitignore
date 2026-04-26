@@ -10,10 +10,7 @@
 /AGENTS.local.md
 src/numereng/features/models/custom_models/*
 !src/numereng/features/models/custom_models/template_model.py
-src/numereng/features/agentic_research/programs/*
-!src/numereng/features/agentic_research/programs/.gitignore
-!src/numereng/features/agentic_research/programs/README.md
-!src/numereng/features/agentic_research/programs/numerai-experiment-loop.md
+src/numereng/features/agentic_research/custom_programs/
 
 
 # Data directories (downloaded and generated files)

@@ -25,6 +25,14 @@ src/numereng/features/agentic_research/PROGRAM.md
 
 It defines the objective, allowed config paths, and required JSON decision format. The deterministic Python runner renders that prompt with live experiment context.
 
+Custom prompt programs belong in:
+
+```text
+src/numereng/features/agentic_research/custom_programs/
+```
+
+That directory is local-only and gitignored. Experiments opt into one by setting `metadata.agentic_research_program` to the custom Markdown filename.
+
 ## Run The Loop
 
 ```bash
@@ -61,7 +69,7 @@ Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 - Candidate configs must validate as `TrainingConfig`.
 - Duplicate configs are rejected before training.
 - Planner backend selection is controlled by `ACTIVE_MODEL_SOURCE=codex-exec|openrouter`.
-- The default prompt is `PROGRAM.md`; an experiment can set `metadata.agentic_research_program` to another built-in program markdown file such as `TEST-PROGRAM.md`.
+- The default prompt is tracked as `PROGRAM.md`; an experiment can set `metadata.agentic_research_program` to a local file under `custom_programs/`.
 - `research run` still relies on the normal training/scoring stack, so broken configs or missing datasets fail the same way they would in manual workflows.
 
 ## Read Next

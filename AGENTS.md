@@ -42,6 +42,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `docs/numerai/`: tracked synced Numerai docs mirror for local browsing; see `docs/numerai/SYNC_POLICY.md`
 - `src/numereng/features/models/custom_models/`: default custom model discovery root
 - `src/numereng/features/agentic_research/PROGRAM.md`: prompt policy for config-mutation research
+- `src/numereng/features/agentic_research/custom_programs/`: local-only custom agentic research prompts
 - `src/numereng/platform/remotes/profiles/`: local-only remote profile directory; keep real YAMLs gitignored
 - `.agents/skills/`: local custom skills; gitignored
 

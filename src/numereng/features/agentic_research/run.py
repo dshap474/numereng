@@ -36,6 +36,7 @@ ResearchStatus = Literal["initialized", "running", "interrupted", "stopped", "fa
 ResearchAction = Literal["baseline", "run", "stop"]
 
 PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
+CUSTOM_PROGRAM_DIR = Path(__file__).with_name("custom_programs")
 PROGRAM_METADATA_KEY = "agentic_research_program"
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
@@ -1052,7 +1053,9 @@ def _program_path(experiment: ExperimentRecord) -> Path:
     name = raw.strip()
     if Path(name).name != name or not name.endswith(".md"):
         raise AgenticResearchValidationError(f"agentic_research_program_invalid:{name}")
-    path = Path(__file__).with_name(name)
+    if name == PROGRAM_PATH.name:
+        return PROGRAM_PATH
+    path = CUSTOM_PROGRAM_DIR / name
     if not path.is_file():
         raise AgenticResearchValidationError(f"agentic_research_program_missing:{name}")
     return path
