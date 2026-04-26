@@ -680,7 +680,8 @@ def _load_round_config_stems(*, experiment_dir: Path, round: str) -> tuple[str, 
                     if not isinstance(config_path, str) or not config_path.strip():
                         continue
                     stem = Path(config_path).stem
-                    if stem.startswith(f"{round}_"):
+                    row_round = row.get("round")
+                    if (isinstance(row_round, str) and row_round.strip() == round) or stem.startswith(f"{round}_"):
                         stems.append(stem)
         except OSError as exc:
             raise ExperimentError(f"experiment_run_plan_read_failed:{run_plan_path}") from exc

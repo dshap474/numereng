@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import subprocess
 from pathlib import Path
@@ -64,6 +65,11 @@ def _row(run_id: str, value: float) -> ExperimentReportRow:
 
 def _trace_events(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _run_plan_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
 
 
 def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
@@ -138,6 +144,18 @@ def test_run_research_runs_baseline_before_llm(
     assert len(decisions) == 1
     assert json.loads(decisions[0])["round_label"] == "r001"
     assert json.loads(decisions[0])["decision"]["generated_config"] == "config_001.json"
+    run_plan_rows = _run_plan_rows(experiment.manifest_path.parent / "run_plan.csv")
+    assert run_plan_rows == [
+        {
+            "plan_index": "1",
+            "round": "r001",
+            "seed": "",
+            "target": "",
+            "horizon": "",
+            "config_path": str(experiment.manifest_path.parent / "configs" / "config_001.json"),
+            "score_stage_default": "post_training_full",
+        }
+    ]
     assert (artifact_dir / "r001.md").is_file()
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
@@ -253,6 +271,21 @@ def test_run_research_materializes_llm_config_mutation(
 
 def test_round_config_filename_stays_short() -> None:
     assert research_module._round_config_filename("r004") == "config_004.json"
+
+
+def test_record_round_config_in_run_plan_is_idempotent(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    config_path = experiment.manifest_path.parent / "configs" / "config_004.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    research_module._record_round_config_in_run_plan(experiment=experiment, round_label="r004", config_path=config_path)
+    research_module._record_round_config_in_run_plan(experiment=experiment, round_label="r004", config_path=config_path)
+
+    rows = _run_plan_rows(experiment.manifest_path.parent / "run_plan.csv")
+    assert len(rows) == 1
+    assert rows[0]["round"] == "r004"
+    assert rows[0]["config_path"] == str(config_path)
 
 
 def test_run_research_traces_decision_parse_failure(

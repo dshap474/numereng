@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import re
@@ -42,6 +43,7 @@ TRACE_FILENAME = "trace.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
 SCORING_STAGE = "post_training_full"
+RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 MAX_CONTEXT_CHARS = 12_000
 ALLOWED_CHANGE_PATHS = (
     "data.feature_set",
@@ -426,6 +428,7 @@ def _train_score_record_round(
     learning: str,
     decision_payload: dict[str, object],
 ) -> ResearchRoundResult:
+    _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
     with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
@@ -710,6 +713,51 @@ def _materialize_decision_config(*, experiment: ExperimentRecord, round_label: s
 def _round_config_filename(round_label: str) -> str:
     suffix = round_label.removeprefix("r")
     return f"config_{suffix}.json" if suffix.isdigit() else f"{round_label}_config.json"
+
+
+def _record_round_config_in_run_plan(*, experiment: ExperimentRecord, round_label: str, config_path: Path) -> None:
+    path = experiment.manifest_path.parent / "run_plan.csv"
+    rows: list[dict[str, str]] = []
+    fieldnames: list[str] = []
+    if path.is_file():
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = list(reader.fieldnames or [])
+            rows = [{key: value or "" for key, value in row.items()} for row in reader]
+
+    for field in RUN_PLAN_FIELDS:
+        if field not in fieldnames:
+            fieldnames.append(field)
+
+    config_stem = config_path.stem
+    for row in rows:
+        if row.get("round", "").strip() == round_label and Path(row.get("config_path", "")).stem == config_stem:
+            return
+
+    rows.append(
+        {
+            **{field: "" for field in fieldnames},
+            "plan_index": str(_next_run_plan_index(rows)),
+            "round": round_label,
+            "config_path": str(config_path),
+            "score_stage_default": SCORING_STAGE,
+        }
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _next_run_plan_index(rows: list[dict[str, str]]) -> int:
+    indexes: list[int] = []
+    for row in rows:
+        try:
+            indexes.append(int(row.get("plan_index", "")))
+        except ValueError:
+            continue
+    return max(indexes, default=len(rows)) + 1
 
 
 def _first_config_path(experiment: ExperimentRecord) -> Path:

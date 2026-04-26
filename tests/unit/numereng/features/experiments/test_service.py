@@ -488,6 +488,51 @@ def test_score_experiment_round_resolves_round_run_ids(
     ]
 
 
+def test_score_experiment_round_uses_explicit_run_plan_round(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-02-22_test-exp"
+    service_module.create_experiment(store_root=store_root, experiment_id=experiment_id)
+
+    experiment_dir = store_root / "experiments" / experiment_id
+    config_path = experiment_dir / "configs" / "config_004.json"
+    config_path.write_text("{}", encoding="utf-8")
+    (experiment_dir / "run_plan.csv").write_text(
+        "\n".join(
+            [
+                "plan_index,round,seed,target,horizon,config_path,score_stage_default",
+                f"1,r004,,,,{config_path},post_training_full",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = experiment_dir / "experiment.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["status"] = "active"
+    manifest["runs"] = ["run-short"]
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    _write_run_artifacts(store_root, "run-short", config_path=str(config_path))
+
+    scored_batches: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        service_module,
+        "score_run_batch",
+        lambda *, run_ids, store_root, stage: scored_batches.append(tuple(run_ids)) or (),
+    )
+
+    result = service_module.score_experiment_round(
+        store_root=store_root,
+        experiment_id=experiment_id,
+        round="r004",
+        stage="post_training_full",
+    )
+
+    assert result.run_ids == ("run-short",)
+    assert scored_batches == [("run-short",)]
+
+
 def test_score_experiment_round_skips_failed_and_missing_prediction_runs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
