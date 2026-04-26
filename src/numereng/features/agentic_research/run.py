@@ -388,7 +388,7 @@ def _run_baseline_round(
     parent_path = _first_config_path(experiment)
     config_dir = experiment.manifest_path.parent / "configs"
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = _unique_config_path(config_dir, f"{round_label}_baseline_{_slug(parent_path.stem)}.json")
+    config_path = _unique_config_path(config_dir, _round_config_filename(round_label))
     payload = load_training_config_json(parent_path)
     _write_json(config_path, payload)
     learning = f"Baseline round from `{parent_path.name}` before asking the LLM for mutations."
@@ -701,16 +701,15 @@ def _materialize_decision_config(*, experiment: ExperimentRecord, round_label: s
     existing_hashes = _existing_config_hashes(config_dir)
     if candidate_hash in existing_hashes:
         raise AgenticResearchValidationError(f"agentic_research_candidate_duplicate:{candidate_hash[:12]}")
-    filename = _candidate_filename(round_label=round_label, parent_name=parent_path.stem, changes=decision.changes)
+    filename = _round_config_filename(round_label)
     path = _unique_config_path(config_dir, filename)
     _write_json(path, validated)
     return path
 
 
-def _candidate_filename(*, round_label: str, parent_name: str, changes: tuple[ResearchChange, ...]) -> str:
-    change_slug = "__".join(_slug(change.path.replace(".", "_")) for change in changes)
-    stem = f"{round_label}_{_slug(parent_name)}__{change_slug}"[:170].rstrip("_-")
-    return f"{stem or round_label}.json"
+def _round_config_filename(round_label: str) -> str:
+    suffix = round_label.removeprefix("r")
+    return f"config_{suffix}.json" if suffix.isdigit() else f"{round_label}_config.json"
 
 
 def _first_config_path(experiment: ExperimentRecord) -> Path:
@@ -1191,10 +1190,6 @@ def _unique_config_path(config_dir: Path, filename: str) -> Path:
         if not candidate.exists():
             return candidate
         index += 1
-
-
-def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "config"
 
 
 def _required_str(payload: dict[str, object], key: str) -> str:

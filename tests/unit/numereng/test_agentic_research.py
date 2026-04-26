@@ -129,7 +129,7 @@ def test_run_research_runs_baseline_before_llm(
 
     assert result.rounds[0].action == "baseline"
     assert result.rounds[0].run_id == "run-1"
-    assert (experiment.manifest_path.parent / "configs" / "r001_baseline_seed.json").is_file()
+    assert (experiment.manifest_path.parent / "configs" / "config_001.json").is_file()
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert result.rounds[0].artifact_dir == artifact_dir
     assert (experiment.manifest_path.parent / "agentic_research" / "ledger.jsonl").exists() is False
@@ -137,6 +137,7 @@ def test_run_research_runs_baseline_before_llm(
     decisions = (artifact_dir / "decision.json").read_text(encoding="utf-8").splitlines()
     assert len(decisions) == 1
     assert json.loads(decisions[0])["round_label"] == "r001"
+    assert json.loads(decisions[0])["decision"]["generated_config"] == "config_001.json"
     assert (artifact_dir / "r001.md").is_file()
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
@@ -210,6 +211,7 @@ def test_run_research_materializes_llm_config_mutation(
 
     config_path = result.rounds[0].config_path
     assert config_path is not None
+    assert config_path.name == "config_001.json"
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["model"]["params"]["learning_rate"] == 0.02
     assert result.rounds[0].metric_value == 0.13
@@ -247,6 +249,10 @@ def test_run_research_materializes_llm_config_mutation(
     completed_payload = cast(dict[str, object], trace[-1]["payload"])
     assert completed_payload["run_id"] == "run-1"
     assert completed_payload["metric_value"] == 0.13
+
+
+def test_round_config_filename_stays_short() -> None:
+    assert research_module._round_config_filename("r004") == "config_004.json"
 
 
 def test_run_research_traces_decision_parse_failure(
