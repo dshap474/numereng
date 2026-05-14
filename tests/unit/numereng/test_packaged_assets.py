@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from numereng.assets import assets_root, shipped_skill_ids, shipped_skills_root
@@ -54,8 +55,17 @@ def test_packaged_shipped_skills_match_source_allowlist() -> None:
 
 
 def test_machine_specific_remote_profiles_are_not_tracked() -> None:
-    profiles_dir = Path("src/numereng/platform/remotes/profiles")
-    tracked_profiles = sorted(path.name for path in profiles_dir.glob("*.yaml"))
-    tracked_profiles.extend(sorted(path.name for path in profiles_dir.glob("*.yml")))
+    result = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "src/numereng/platform/remotes/profiles/*.yaml",
+            "src/numereng/platform/remotes/profiles/*.yml",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked_profiles = sorted(Path(line).name for line in result.stdout.splitlines() if line)
 
     assert tracked_profiles == []
