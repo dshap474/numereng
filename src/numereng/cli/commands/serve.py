@@ -346,12 +346,18 @@ def _parse_json_value(
     if raw is None:
         return cast(dict[str, object] | list[object] | None, default), None
     candidate = raw.strip()
-    path = Path(candidate).expanduser()
-    text = path.read_text(encoding="utf-8") if path.is_file() else candidate
     try:
-        payload = json.loads(text)
+        payload = json.loads(candidate)
     except json.JSONDecodeError:
-        return None, "invalid JSON payload"
+        try:
+            path = Path(candidate).expanduser()
+            text = path.read_text(encoding="utf-8") if path.is_file() else candidate
+        except OSError:
+            return None, "invalid JSON payload"
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return None, "invalid JSON payload"
     if expect == "dict" and not isinstance(payload, dict):
         return None, "expected JSON object"
     if expect == "list" and not isinstance(payload, list):

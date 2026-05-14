@@ -44,7 +44,8 @@ from numereng.features.hpo.repo import get_study, list_studies, list_trials, sav
 from numereng.features.hpo.runner_optuna import HpoOptunaError, HpoOptunaStudyResult, run_optuna_study
 from numereng.features.hpo.search_space import HpoSearchSpaceError, apply_param_overrides, resolve_search_space
 from numereng.features.scoring.metrics import DEFAULT_META_MODEL_COL
-from numereng.features.scoring.models import PostTrainingScoringRequest
+from numereng.features.scoring.models import CanonicalScoringStage, PostTrainingScoringRequest
+from numereng.features.scoring.run_service import score_run as score_existing_run
 from numereng.features.scoring.service import run_post_training_scoring
 from numereng.features.store import StoreError, index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata, get_launch_metadata
@@ -59,6 +60,16 @@ _DEFAULT_HPO_METRIC = "bmc_last_200_eras.mean"
 _LEGACY_POST_FOLD_OBJECTIVE_METRIC = "post_fold_champion_objective"
 _POST_FOLD_CORR_WEIGHT = 0.25
 _POST_FOLD_BMC_WEIGHT = 2.25
+_CORE_SCORING_METRIC_PREFIXES = ("bmc", "corr", "cwmm", "mmc")
+_CORE_SCORING_METRIC_ROOTS = {"avg_corr_with_benchmark", "max_drawdown"}
+_FULL_SCORING_METRIC_PREFIXES = ("feature_exposure", "feature_neutral", "fnc")
+_HPO_METRIC_ALIASES = {
+    "avg_corr_with_benchmark": (
+        "bmc.avg_corr_with_benchmark",
+        "bmc_last_200_eras.avg_corr_with_benchmark",
+    ),
+    "max_drawdown": ("corr.max_drawdown",),
+}
 
 
 class HpoError(Exception):
@@ -961,9 +972,46 @@ def _resolve_trial_metric(
             run_id=training_result.run_id,
             results_path=training_result.results_path,
         )
-    if request.objective.metric == _DEFAULT_HPO_METRIC:
-        return _extract_metric_value(results_path=training_result.results_path, metric=_DEFAULT_HPO_METRIC)
-    return _extract_metric_value(results_path=training_result.results_path, metric=request.objective.metric)
+    return _extract_metric_value_with_auto_scoring(
+        metric=request.objective.metric,
+        training_result=training_result,
+        store_root=store_root,
+    )
+
+
+def _extract_metric_value_with_auto_scoring(
+    *,
+    metric: str,
+    training_result: TrainingRunResult,
+    store_root: Path,
+) -> float:
+    try:
+        return _extract_metric_value(results_path=training_result.results_path, metric=metric)
+    except HpoExecutionError as exc:
+        if str(exc) != f"hpo_metric_not_found:{metric}":
+            raise
+        required_stage = _auto_scoring_stage_for_metric(metric)
+        if required_stage is None:
+            raise
+
+    try:
+        score_existing_run(run_id=training_result.run_id, store_root=store_root, stage=required_stage)
+    except Exception as exc:
+        raise HpoExecutionError(f"hpo_auto_scoring_failed:{training_result.run_id}:{required_stage}:{exc}") from exc
+
+    return _extract_metric_value(results_path=training_result.results_path, metric=metric)
+
+
+def _auto_scoring_stage_for_metric(metric: str) -> CanonicalScoringStage | None:
+    root = metric.strip()
+    while root.startswith("metrics."):
+        root = root.removeprefix("metrics.")
+    root = root.split(".", maxsplit=1)[0]
+    if root.startswith(_FULL_SCORING_METRIC_PREFIXES):
+        return "post_training_full"
+    if root in _CORE_SCORING_METRIC_ROOTS or root.startswith(_CORE_SCORING_METRIC_PREFIXES):
+        return "post_training_core"
+    return None
 
 
 def _extract_metric_value(*, results_path: Path, metric: str) -> float:
@@ -975,9 +1023,7 @@ def _extract_metric_value(*, results_path: Path, metric: str) -> float:
     except (OSError, json.JSONDecodeError) as exc:
         raise HpoExecutionError("hpo_results_invalid") from exc
 
-    value = _metric_lookup(payload, metric)
-    if value is None and not metric.startswith("metrics."):
-        value = _metric_lookup(payload, f"metrics.{metric}")
+    value = _lookup_hpo_metric_value(payload=payload, metric=metric)
     if value is None:
         raise HpoExecutionError(f"hpo_metric_not_found:{metric}")
     return value
@@ -1078,9 +1124,7 @@ def _extract_metric_value_from_predictions(
     if metric == _LEGACY_POST_FOLD_OBJECTIVE_METRIC:
         value = _legacy_post_fold_objective_from_payload(metrics_payload)
     else:
-        value = _metric_lookup({"metrics": metrics_payload}, metric)
-        if value is None and not metric.startswith("metrics."):
-            value = _metric_lookup({"metrics": metrics_payload}, f"metrics.{metric}")
+        value = _lookup_hpo_metric_value(payload={"metrics": metrics_payload}, metric=metric)
     if value is None:
         raise HpoExecutionError(f"hpo_metric_not_found:{metric}")
     return value
@@ -1190,6 +1234,31 @@ def _metric_lookup(payload: dict[str, Any], metric: str) -> float | None:
     if isinstance(cursor, (int, float)):
         return float(cursor)
     return None
+
+
+def _lookup_hpo_metric_value(*, payload: dict[str, Any], metric: str) -> float | None:
+    value = _metric_lookup(payload, metric)
+    if value is not None:
+        return value
+    if not metric.startswith("metrics."):
+        value = _metric_lookup(payload, f"metrics.{metric}")
+        if value is not None:
+            return value
+    for alias in _hpo_metric_aliases(metric):
+        value = _metric_lookup(payload, alias)
+        if value is not None:
+            return value
+        value = _metric_lookup(payload, f"metrics.{alias}")
+        if value is not None:
+            return value
+    return None
+
+
+def _hpo_metric_aliases(metric: str) -> tuple[str, ...]:
+    normalized = metric.strip()
+    if "." in normalized:
+        return ()
+    return _HPO_METRIC_ALIASES.get(normalized, ())
 
 
 def _utc_now_iso() -> str:

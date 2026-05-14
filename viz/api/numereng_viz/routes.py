@@ -122,6 +122,20 @@ def create_router(service: VizService) -> APIRouter:
     def list_experiments() -> JSONResponse:
         return _cached_response(service.list_experiments(), max_age=30)
 
+    @router.get("/submissions")
+    def list_submissions() -> JSONResponse:
+        return _cached_response(service.list_submissions(), max_age=30)
+
+    @router.get("/submissions/{model_name}")
+    def get_submission(model_name: str) -> JSONResponse:
+        try:
+            payload = service.get_submission(model_name)
+        except (ValueError, LookupError, FileNotFoundError) as exc:
+            _raise_service_http_error(exc)
+        if payload is None:
+            raise HTTPException(404, f"Submission {model_name} not found")
+        return _cached_response(payload, max_age=30)
+
     @router.get("/experiments/overview")
     def get_experiments_overview(include_remote: bool = True) -> JSONResponse:
         return _nocache_response(service.get_experiments_overview(include_remote=include_remote))

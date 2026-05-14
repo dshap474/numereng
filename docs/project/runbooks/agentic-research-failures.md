@@ -20,7 +20,8 @@
 - The mutable surface is config JSON, not Python code.
 - `trace.jsonl` is the append-only prompt/response/event trace for debugging.
 - `rounds/decision.json` is the append-only mechanical contract.
-- `rounds/rNNN.md` is the readable round summary.
+- `rounds/rNNN.md` is the cumulative readable research state; the latest one is loaded into the next prompt.
+- Successful LLM responses contain `decision_form` plus `round_markdown`; Python writes the strict decision log.
 
 ## Common recovery paths
 

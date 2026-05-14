@@ -658,6 +658,325 @@ def test_create_study_reuses_existing_finished_deterministic_run(
     assert indexed_calls == [run_id]
 
 
+@pytest.mark.parametrize(
+    ("objective_metric", "scored_metrics", "expected_value", "expected_stage", "run_id"),
+    [
+        (
+            "bmc_last_200_eras.mean",
+            {"bmc_last_200_eras": {"mean": 0.17}},
+            0.17,
+            "post_training_core",
+            "run-needs-core",
+        ),
+        ("fnc.mean", {"fnc": {"mean": 0.03}}, 0.03, "post_training_full", "run-needs-full"),
+        ("max_drawdown", {"corr": {"max_drawdown": -0.12}}, -0.12, "post_training_core", "run-max-dd"),
+        (
+            "avg_corr_with_benchmark",
+            {"bmc": {"avg_corr_with_benchmark": 0.34}},
+            0.34,
+            "post_training_core",
+            "run-benchmark-corr",
+        ),
+    ],
+)
+def test_create_study_auto_scores_missing_metric(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    objective_metric: str,
+    scored_metrics: dict[str, object],
+    expected_value: float,
+    expected_stage: str,
+    run_id: str,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    config_path = tmp_path / "base.json"
+    _write_base_config(config_path)
+    run_results: dict[str, Path] = {}
+    score_calls: list[tuple[str, str]] = []
+
+    def fake_run_training(**kwargs: Any) -> TrainingRunResult:
+        _ = kwargs
+        results_path = tmp_path / f"{run_id}_results.json"
+        results_path.write_text(json.dumps({"metrics": {"status": "deferred"}}), encoding="utf-8")
+        predictions_path = tmp_path / f"{run_id}_preds.parquet"
+        predictions_path.write_bytes(b"PAR1")
+        run_results[run_id] = results_path
+        return TrainingRunResult(run_id=run_id, predictions_path=predictions_path, results_path=results_path)
+
+    def fake_score_existing_run(*, run_id: str, store_root: Path, stage: str) -> None:
+        _ = store_root
+        score_calls.append((run_id, stage))
+        run_results[run_id].write_text(json.dumps({"metrics": scored_metrics}), encoding="utf-8")
+
+    def fake_run_optuna_study(**kwargs: Any) -> HpoOptunaStudyResult:
+        value = kwargs["objective_callback"](0, {"model.params.learning_rate": 0.01})
+        return HpoOptunaStudyResult(
+            best_trial_number=0,
+            best_value=value,
+            attempted_trials=1,
+            completed_trials=1,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
+
+    monkeypatch.setattr(service_module, "run_training", fake_run_training)
+    monkeypatch.setattr(service_module, "score_existing_run", fake_score_existing_run)
+    monkeypatch.setattr(service_module, "run_optuna_study", fake_run_optuna_study)
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    result = service_module.create_study(
+        store_root=store_root,
+        request=_study_request(
+            study_id=f"study-auto-{run_id}",
+            config_path=config_path,
+            max_trials=1,
+            objective=HpoObjectiveSpec(metric=objective_metric),
+        ),
+    )
+
+    assert result.status == "completed"
+    assert result.best_value == pytest.approx(expected_value)
+    assert score_calls == [(run_id, expected_stage)]
+
+
+def test_extract_metric_value_supports_metric_aliases_and_explicit_paths(tmp_path: Path) -> None:
+    results_path = tmp_path / "results.json"
+    results_path.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "max_drawdown": -0.01,
+                    "corr": {"max_drawdown": -0.12},
+                    "bmc": {"avg_corr_with_benchmark": 0.34},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert service_module._extract_metric_value(results_path=results_path, metric="metrics.max_drawdown") == -0.01
+    assert service_module._extract_metric_value(results_path=results_path, metric="corr.max_drawdown") == -0.12
+    assert service_module._extract_metric_value(
+        results_path=results_path,
+        metric="bmc.avg_corr_with_benchmark",
+    ) == pytest.approx(0.34)
+
+
+@pytest.mark.parametrize(
+    ("metric", "summary_key", "summary_row", "expected_value"),
+    [
+        ("max_drawdown", "corr", {"max_drawdown": -0.21}, -0.21),
+        ("avg_corr_with_benchmark", "bmc", {"avg_corr_with_benchmark": 0.41}, 0.41),
+    ],
+)
+def test_extract_metric_value_from_predictions_uses_hpo_metric_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    metric: str,
+    summary_key: str,
+    summary_row: dict[str, float],
+    expected_value: float,
+) -> None:
+    import pandas as pd
+
+    config_path = tmp_path / "base.json"
+    predictions_path = tmp_path / "neutralized.parquet"
+    _write_base_config(config_path)
+    predictions_path.write_bytes(b"PAR1")
+
+    def fake_run_post_training_scoring(**kwargs: Any) -> object:
+        _ = kwargs
+        return type(
+            "FakeScoringResult",
+            (),
+            {"summaries": {summary_key: pd.DataFrame([summary_row], index=["prediction"])}},
+        )()
+
+    monkeypatch.setattr(service_module, "resolve_benchmark_source", lambda **kwargs: object())
+    monkeypatch.setattr(service_module, "run_post_training_scoring", fake_run_post_training_scoring)
+
+    value = service_module._extract_metric_value_from_predictions(
+        predictions_path=predictions_path,
+        trial_config_path=config_path,
+        metric=metric,
+        scoring_client=object(),
+    )
+
+    assert value == pytest.approx(expected_value)
+
+
+def test_create_study_auto_scores_missing_core_metric_on_existing_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    config_path = tmp_path / "base.json"
+    _write_base_config(config_path)
+
+    run_id = "run-existing-unscored"
+    run_dir = store_root / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(json.dumps({"status": "FINISHED"}), encoding="utf-8")
+    results_path = run_dir / "results.json"
+    results_path.write_text(json.dumps({"metrics": {"status": "deferred"}}), encoding="utf-8")
+
+    preview = TrainingRunPreview(
+        run_id=run_id,
+        run_hash="hash-existing-unscored",
+        config_hash="cfg-existing-unscored",
+        run_dir=run_dir,
+        predictions_path=run_dir / "predictions.parquet",
+        results_path=results_path,
+        scoring_dir=run_dir / "artifacts" / "scoring",
+        run_manifest_path=run_dir / "run.json",
+    )
+    score_calls: list[tuple[str, str]] = []
+
+    def fake_score_existing_run(*, run_id: str, store_root: Path, stage: str) -> None:
+        _ = store_root
+        score_calls.append((run_id, stage))
+        results_path.write_text(
+            json.dumps({"metrics": {"bmc_last_200_eras": {"mean": 0.19}}}),
+            encoding="utf-8",
+        )
+
+    def fake_run_optuna_study(**kwargs: Any) -> HpoOptunaStudyResult:
+        value = kwargs["objective_callback"](0, {"model.params.learning_rate": 0.01})
+        return HpoOptunaStudyResult(
+            best_trial_number=0,
+            best_value=value,
+            attempted_trials=1,
+            completed_trials=1,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
+
+    monkeypatch.setattr(service_module, "preview_training_run", lambda **kwargs: preview)
+    monkeypatch.setattr(
+        service_module,
+        "run_training",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("run_training should not be called")),
+    )
+    monkeypatch.setattr(service_module, "score_existing_run", fake_score_existing_run)
+    monkeypatch.setattr(service_module, "run_optuna_study", fake_run_optuna_study)
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    result = service_module.create_study(
+        store_root=store_root,
+        request=_study_request(study_id="study-reuse-unscored", config_path=config_path, max_trials=1),
+    )
+
+    assert result.status == "completed"
+    assert result.best_run_id == run_id
+    assert result.best_value == pytest.approx(0.19)
+    assert score_calls == [(run_id, "post_training_core")]
+
+
+def test_create_study_legacy_post_fold_objective_does_not_auto_score(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    config_path = tmp_path / "base.json"
+    _write_base_config(config_path)
+
+    def fake_run_training(**kwargs: Any) -> TrainingRunResult:
+        _ = kwargs
+        run_id = "run-post-fold"
+        results_path = tmp_path / "results_post_fold.json"
+        results_path.write_text(json.dumps({"metrics": {"status": "deferred"}}), encoding="utf-8")
+        predictions_path = tmp_path / "preds_post_fold.parquet"
+        predictions_path.write_bytes(b"PAR1")
+        _write_post_fold_snapshots(store_root, run_id=run_id, objective_value=0.21)
+        return TrainingRunResult(run_id=run_id, predictions_path=predictions_path, results_path=results_path)
+
+    def fake_run_optuna_study(**kwargs: Any) -> HpoOptunaStudyResult:
+        value = kwargs["objective_callback"](0, {"model.params.learning_rate": 0.01})
+        return HpoOptunaStudyResult(
+            best_trial_number=0,
+            best_value=value,
+            attempted_trials=1,
+            completed_trials=1,
+            failed_trials=0,
+            stop_reason="max_trials_reached",
+        )
+
+    monkeypatch.setattr(service_module, "run_training", fake_run_training)
+    monkeypatch.setattr(
+        service_module,
+        "score_existing_run",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("score_existing_run should not be called")),
+    )
+    monkeypatch.setattr(service_module, "run_optuna_study", fake_run_optuna_study)
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    result = service_module.create_study(
+        store_root=store_root,
+        request=_study_request(
+            study_id="study-post-fold-no-auto-score",
+            config_path=config_path,
+            max_trials=1,
+            objective=HpoObjectiveSpec(metric="post_fold_champion_objective"),
+        ),
+    )
+
+    assert result.status == "completed"
+    assert result.best_value == pytest.approx(0.21)
+
+
+def test_create_study_unknown_missing_metric_still_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    config_path = tmp_path / "base.json"
+    _write_base_config(config_path)
+
+    def fake_run_training(**kwargs: Any) -> TrainingRunResult:
+        _ = kwargs
+        results_path = tmp_path / "results_unknown.json"
+        results_path.write_text(json.dumps({"metrics": {"status": "deferred"}}), encoding="utf-8")
+        predictions_path = tmp_path / "preds_unknown.parquet"
+        predictions_path.write_bytes(b"PAR1")
+        return TrainingRunResult(run_id="run-unknown", predictions_path=predictions_path, results_path=results_path)
+
+    def fake_run_optuna_study(**kwargs: Any) -> HpoOptunaStudyResult:
+        try:
+            kwargs["objective_callback"](0, {"model.params.learning_rate": 0.01})
+        except Exception:
+            pass
+        return HpoOptunaStudyResult(
+            best_trial_number=None,
+            best_value=None,
+            attempted_trials=1,
+            completed_trials=0,
+            failed_trials=1,
+            stop_reason="all_trials_failed",
+        )
+
+    monkeypatch.setattr(service_module, "run_training", fake_run_training)
+    monkeypatch.setattr(
+        service_module,
+        "score_existing_run",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("score_existing_run should not be called")),
+    )
+    monkeypatch.setattr(service_module, "run_optuna_study", fake_run_optuna_study)
+    monkeypatch.setattr(service_module, "index_run", lambda **kwargs: None)
+
+    result = service_module.create_study(
+        store_root=store_root,
+        request=_study_request(
+            study_id="study-unknown-metric",
+            config_path=config_path,
+            max_trials=1,
+            objective=HpoObjectiveSpec(metric="custom_metric.mean"),
+        ),
+    )
+
+    assert result.status == "failed"
+    assert result.trials[0].error_message == "hpo_metric_not_found:custom_metric.mean"
+
+
 def test_create_study_fails_loudly_for_non_reusable_existing_run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

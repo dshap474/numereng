@@ -54,6 +54,54 @@ def test_cli_serve_package_create_success(
     assert payload["package_id"] == "pkg-1"
 
 
+def test_cli_serve_package_create_accepts_inline_components_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        api_module,
+        "serve_package_create",
+        lambda request: api_module.ServePackageResponse(
+            package_id=request.package_id,
+            experiment_id=request.experiment_id,
+            tournament="classic",
+            data_version=request.data_version,
+            package_path=str(tmp_path / "pkg-1"),
+            status="created",
+            components=request.components,
+            blend_rule=request.blend_rule,
+            neutralization=request.neutralization,
+            artifacts={},
+            created_at="2026-04-11T00:00:00Z",
+            updated_at="2026-04-11T00:00:00Z",
+            provenance={},
+        ),
+    )
+
+    exit_code = main(
+        [
+            "serve",
+            "package",
+            "create",
+            "--experiment-id",
+            "exp-1",
+            "--package-id",
+            "pkg-1",
+            "--components",
+            json.dumps(
+                [
+                    {"component_id": "a", "run_id": "run-a", "weight": 0.5},
+                    {"component_id": "b", "run_id": "run-b", "weight": 0.5},
+                ]
+            ),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert exit_code == 0
+    assert [item["run_id"] for item in payload["components"]] == ["run-a", "run-b"]
+
+
 def test_cli_serve_live_build_success(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     package = api_module.ServePackageResponse(
         package_id="pkg-1",

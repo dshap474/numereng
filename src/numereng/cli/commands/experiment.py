@@ -278,16 +278,17 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         try:
-            payload = api.experiment_run_plan(
-                api.ExperimentRunPlanRequest(
-                    experiment_id=experiment_id,
-                    start_index=start_index,
-                    end_index=end_index,
-                    score_stage=score_stage,
-                    resume="--resume" in toggles,
-                    workspace_root=values.get("--workspace", "."),
+            with bind_launch_metadata(source="cli.experiment.run-plan", operation_type="run", job_type="run"):
+                payload = api.experiment_run_plan(
+                    api.ExperimentRunPlanRequest(
+                        experiment_id=experiment_id,
+                        start_index=start_index,
+                        end_index=end_index,
+                        score_stage=score_stage,
+                        resume="--resume" in toggles,
+                        workspace_root=values.get("--workspace", "."),
+                    )
                 )
-            )
         except ValidationError as exc:
             print(_validation_error_message(exc), file=sys.stderr)
             print(USAGE, file=sys.stderr)

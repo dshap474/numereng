@@ -3760,3 +3760,17 @@ def test_service_run_manifest_falls_back_to_unique_remote_source(tmp_path: Path)
     payload = service.get_run_manifest("run-remote")
 
     assert payload == {"run_id": "run-remote", "status": "RUNNING"}
+
+
+def test_list_submissions_ignores_empty_placeholder_dirs(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    submissions_root = store_root / "submissions"
+    (submissions_root / "empty_model").mkdir(parents=True)
+    populated = submissions_root / "populated_model"
+    populated.mkdir()
+    (populated / "submission.json").write_text(json.dumps({"model_name": "populated_model"}), encoding="utf-8")
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.list_submissions()
+
+    assert [item["model_name"] for item in payload["items"]] == ["populated_model"]

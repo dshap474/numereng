@@ -10,6 +10,7 @@ CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "datasets",
     "cloud",
     "experiments",
+    "submissions",
     "notes",
     "cache",
     "tmp",
@@ -39,6 +40,7 @@ class WorkspaceLayout:
     workspace_root: Path
     store_root: Path
     experiments_root: Path
+    submissions_root: Path
     notes_root: Path
     custom_models_root: Path
     agentic_research_root: Path
@@ -77,6 +79,7 @@ def resolve_workspace_layout(workspace_root: str | Path = ".") -> WorkspaceLayou
         workspace_root=resolved_workspace_root,
         store_root=store_root,
         experiments_root=store_root / "experiments",
+        submissions_root=store_root / "submissions",
         notes_root=store_root / "notes",
         custom_models_root=_BUILTIN_CUSTOM_MODELS_ROOT,
         agentic_research_root=_BUILTIN_AGENTIC_RESEARCH_ROOT,
@@ -96,6 +99,7 @@ def resolve_workspace_layout_from_store_root(store_root: str | Path = CANONICAL_
         workspace_root=layout.workspace_root,
         store_root=resolved_store_root,
         experiments_root=layout.experiments_root,
+        submissions_root=resolved_store_root / "submissions",
         notes_root=layout.notes_root,
         custom_models_root=layout.custom_models_root,
         agentic_research_root=layout.agentic_research_root,

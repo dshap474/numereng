@@ -532,10 +532,10 @@ cli research status|run
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - `codex-exec` inherits the user’s normal Codex configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
-      - the LLM sees configs, report rows, experiment notes, recent decision rows, and research memory
-      - the LLM returns one JSON decision: run or stop
+      - the LLM sees configs, report rows, experiment notes, recent decision rows, research memory, and the latest rolling round markdown
+      - the LLM returns schema-constrained `decision_form` plus cumulative `round_markdown`
       - `trace.jsonl` keeps the full prompt/raw-response/event trace for debugging, but is not fed back into future prompts
-      - Python validates allowed config paths, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
+      - Python validates allowed config paths, writes the strict machine decision, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
       - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation
 ```
 

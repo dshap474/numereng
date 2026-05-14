@@ -159,6 +159,14 @@ class ResearchDecision:
     stop_reason: str | None
 
 
+@dataclass(frozen=True)
+class ResearchLLMResponse:
+    """Validated LLM response: research form plus cumulative round memo."""
+
+    decision: ResearchDecision
+    round_markdown: str
+
+
 def get_research_status(
     *,
     store_root: str | Path = ".numereng",
@@ -286,7 +294,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         payload={"model_source": model_source, "raw_response": raw_response},
     )
     try:
-        decision = _parse_decision(raw_response)
+        llm_response = _parse_llm_response(raw_response)
     except Exception as exc:
         _append_trace(
             experiment,
@@ -303,6 +311,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             error=str(exc),
         )
         raise
+    decision = llm_response.decision
     decision_payload = _decision_payload(decision, model_source=model_source)
     _append_trace(
         experiment,
@@ -321,6 +330,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             round_number=round_number,
             round_label=round_label,
             artifact_dir=artifact_dir,
+            round_markdown=llm_response.round_markdown,
         )
         _append_trace(
             experiment,
@@ -364,6 +374,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         artifact_dir=artifact_dir,
         learning=decision.learning,
         decision_payload=decision_payload,
+        round_markdown=llm_response.round_markdown,
     )
     _append_trace(
         experiment,
@@ -428,6 +439,7 @@ def _train_score_record_round(
     artifact_dir: Path,
     learning: str,
     decision_payload: dict[str, object],
+    round_markdown: str | None = None,
 ) -> ResearchRoundResult:
     _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
@@ -456,7 +468,15 @@ def _train_score_record_round(
         "decision": decision_payload,
         "completed_at": _utc_now_iso(),
     }
-    _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
+    if round_markdown is None:
+        _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
+    else:
+        _write_llm_round_markdown(
+            artifact_dir=artifact_dir,
+            round_label=round_label,
+            round_markdown=round_markdown,
+            round_payload=round_payload,
+        )
     _append_decision_log(_decision_log_path(experiment), round_payload)
 
     state.update(
@@ -494,6 +514,7 @@ def _record_stop_round(
     round_number: int,
     round_label: str,
     artifact_dir: Path,
+    round_markdown: str,
 ) -> ResearchRoundResult:
     learning = decision.learning or decision.stop_reason or "LLM stopped the research loop."
     payload: dict[str, object] = {
@@ -508,7 +529,12 @@ def _record_stop_round(
         "decision": decision_payload,
         "completed_at": _utc_now_iso(),
     }
-    _write_round_notes(artifact_dir=artifact_dir, round_payload=payload)
+    _write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label=round_label,
+        round_markdown=round_markdown,
+        round_payload=payload,
+    )
     _append_decision_log(_decision_log_path(experiment), payload)
     state.update(
         {
@@ -560,6 +586,7 @@ def _build_context(
         "configs": _config_context(experiment),
         "report": _report_context(report),
         "recent_rounds": _recent_decisions(_decision_log_path(experiment), limit=8),
+        "latest_round_markdown": _latest_round_markdown(experiment),
         "experiment_notes": _read_text(experiment.manifest_path.parent / "EXPERIMENT.md", limit=MAX_CONTEXT_CHARS),
         "research_memory": _read_text(root / "notes" / "__RESEARCH_MEMORY__" / "CURRENT.md", limit=MAX_CONTEXT_CHARS),
     }
@@ -606,6 +633,9 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
     artifact_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
+    with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False) as handle:
+        schema_path = Path(handle.name)
+    _write_json(schema_path, _llm_response_schema())
     cmd = [
         _resolve_codex_executable(),
         "exec",
@@ -618,6 +648,8 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
         [
             "--skip-git-repo-check",
             "--ephemeral",
+            "--output-schema",
+            str(schema_path),
             "--json",
             "--color",
             "never",
@@ -626,22 +658,27 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
             str(output_path),
         ]
     )
-    completed = subprocess.run(cmd, input=prompt, text=True, capture_output=True, check=False)
-    if completed.returncode != 0:
-        _write_failure_debug(
-            artifact_dir=artifact_dir,
-            round_label=round_label,
-            prompt=prompt,
-            codex_stdout=completed.stdout,
-            codex_stderr=completed.stderr,
-            error=f"agentic_research_codex_failed:{completed.returncode}:{completed.stderr.strip()}",
-        )
-        raise AgenticResearchError(f"agentic_research_codex_failed:{completed.returncode}:{completed.stderr.strip()}")
     try:
+        completed = subprocess.run(cmd, input=prompt, text=True, capture_output=True, check=False)
+        if completed.returncode != 0:
+            error = f"agentic_research_codex_failed:{completed.returncode}:{completed.stderr.strip()}"
+            _write_failure_debug(
+                artifact_dir=artifact_dir,
+                round_label=round_label,
+                prompt=prompt,
+                codex_stdout=completed.stdout,
+                codex_stderr=completed.stderr,
+                error=error,
+            )
+            raise AgenticResearchError(error)
         return output_path.read_text(encoding="utf-8")
     finally:
         try:
             output_path.unlink()
+        except OSError:
+            pass
+        try:
+            schema_path.unlink()
         except OSError:
             pass
 
@@ -652,8 +689,22 @@ def _resolve_codex_executable() -> str:
     return shutil.which("codex") or "codex"
 
 
-def _parse_decision(raw_response: str) -> ResearchDecision:
+def _parse_llm_response(raw_response: str) -> ResearchLLMResponse:
     payload = _extract_json_object(raw_response)
+    decision_form = payload.get("decision_form")
+    if not isinstance(decision_form, dict):
+        raise AgenticResearchValidationError("agentic_research_decision_form_missing")
+    return ResearchLLMResponse(
+        decision=_parse_decision_object(cast(dict[str, object], decision_form)),
+        round_markdown=_required_str(payload, "round_markdown"),
+    )
+
+
+def _parse_decision(raw_response: str) -> ResearchDecision:
+    return _parse_decision_object(_extract_json_object(raw_response))
+
+
+def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
     action_raw = payload.get("action")
     if action_raw not in {"run", "stop"}:
         raise AgenticResearchValidationError("agentic_research_action_invalid")
@@ -676,6 +727,73 @@ def _parse_decision(raw_response: str) -> ResearchDecision:
     if decision.action == "stop" and not decision.stop_reason:
         raise AgenticResearchValidationError("agentic_research_stop_reason_missing")
     return decision
+
+
+def _llm_response_schema() -> dict[str, object]:
+    value_schema: dict[str, object] = {
+        "anyOf": [
+            {"type": "string"},
+            {"type": "number"},
+            {"type": "integer"},
+            {"type": "boolean"},
+            {"type": "null"},
+            {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "number"},
+                        {"type": "integer"},
+                        {"type": "boolean"},
+                        {"type": "null"},
+                    ]
+                },
+            },
+        ]
+    }
+    decision_schema: dict[str, object] = {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["run", "stop"]},
+            "learning": {"type": "string"},
+            "belief_update": {"type": "string"},
+            "next_hypothesis": {"type": ["string", "null"]},
+            "parent_config": {"type": ["string", "null"]},
+            "changes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "value": value_schema,
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["path", "value", "reason"],
+                    "additionalProperties": False,
+                },
+            },
+            "stop_reason": {"type": ["string", "null"]},
+        },
+        "required": [
+            "action",
+            "learning",
+            "belief_update",
+            "next_hypothesis",
+            "parent_config",
+            "changes",
+            "stop_reason",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "decision_form": decision_schema,
+            "round_markdown": {"type": "string"},
+        },
+        "required": ["decision_form", "round_markdown"],
+        "additionalProperties": False,
+    }
 
 
 def _parse_change(payload: object) -> ResearchChange:
@@ -1073,6 +1191,16 @@ def _decision_log_path(experiment: ExperimentRecord) -> Path:
     return _rounds_dir(experiment) / "decision.json"
 
 
+def _latest_round_markdown(experiment: ExperimentRecord) -> str | None:
+    rounds_dir = _rounds_dir(experiment)
+    if not rounds_dir.is_dir():
+        return None
+    candidates = [path for path in rounds_dir.glob("r*.md") if re.fullmatch(r"r\d{3}\.md", path.name)]
+    if not candidates:
+        return None
+    return _read_text(sorted(candidates)[-1], limit=MAX_CONTEXT_CHARS)
+
+
 def _load_state(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
@@ -1177,6 +1305,30 @@ def _write_round_notes(*, artifact_dir: Path, round_payload: dict[str, object]) 
     if stop_reason is not None:
         lines.extend(["", "## Stop Reason", stop_reason])
     round_label = str(round_payload.get("round_label") or "round")
+    _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
+
+
+def _write_llm_round_markdown(
+    *,
+    artifact_dir: Path,
+    round_label: str,
+    round_markdown: str,
+    round_payload: dict[str, object],
+) -> None:
+    lines = [
+        round_markdown.rstrip(),
+        "",
+        "## Execution Result",
+        f"- Action: {round_payload.get('action')}",
+        f"- Status: {round_payload.get('status')}",
+        f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
+        f"- Config: {_notes_value(round_payload.get('config_path'))}",
+        f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
+        f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
+    ]
+    stop_reason = _optional_str(round_payload.get("stop_reason"))
+    if stop_reason is not None:
+        lines.append(f"- Stop reason: {stop_reason}")
     _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 

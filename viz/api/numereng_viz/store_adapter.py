@@ -955,6 +955,9 @@ class VizStoreAdapter:
     def _experiments_root(self) -> Path:
         return resolve_workspace_layout_from_store_root(self.store_root).experiments_root
 
+    def _submissions_root(self) -> Path:
+        return resolve_workspace_layout_from_store_root(self.store_root).submissions_root
+
     def _workspace_root(self) -> Path:
         return resolve_workspace_layout_from_store_root(self.store_root).workspace_root
 
@@ -1708,6 +1711,116 @@ class VizStoreAdapter:
                 }
             )
         return items
+
+    def _resolve_submission_dir(self, model_name: str) -> Path:
+        _ensure_safe_id(model_name, label="model_name")
+        return self._submissions_root() / model_name
+
+    def _iter_submission_names(self) -> list[str]:
+        root = self._submissions_root()
+        if not root.is_dir():
+            return []
+        names: list[str] = []
+        for item in root.iterdir():
+            if not item.is_dir() or item.name.startswith("."):
+                continue
+            if not _SAFE_ID.match(item.name):
+                continue
+            if not ((item / "submission.json").is_file() or (item / "live_rounds.parquet").is_file()):
+                continue
+            names.append(item.name)
+        return sorted(names)
+
+    def _read_submission_rounds(self, model_name: str) -> list[dict[str, Any]]:
+        path = self._resolve_submission_dir(model_name) / "live_rounds.parquet"
+        if not path.exists():
+            return []
+        records = _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
+        return sorted(records, key=lambda row: str(row.get("round") or row.get("round_number") or ""), reverse=True)
+
+    def _submission_summary(
+        self,
+        *,
+        model_name: str,
+        metadata: dict[str, Any],
+        rounds: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        resolved_count = 0
+        resolving_count = 0
+        for row in rounds:
+            state = str(row.get("state") or row.get("status") or "").lower()
+            if state == "resolved":
+                resolved_count += 1
+            elif state == "resolving":
+                resolving_count += 1
+
+        refresh = metadata.get("refresh") if isinstance(metadata.get("refresh"), dict) else {}
+        live_summary = metadata.get("latest_live_summary")
+        if not isinstance(live_summary, dict):
+            live_summary = {}
+        source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+        offline_snapshot = metadata.get("offline_snapshot")
+        if not isinstance(offline_snapshot, dict):
+            offline_snapshot = {}
+
+        latest_round = rounds[0] if rounds else None
+        latest_scored_round = next(
+            (
+                row
+                for row in rounds
+                if any(row.get(metric) is not None for metric in ("mmc20", "corr20", "mmc60", "corr60"))
+            ),
+            None,
+        )
+        return {
+            "model_name": model_name,
+            "model_id": _to_non_empty_str(metadata.get("model_id"))
+            or _to_non_empty_str(metadata.get("numerai_model_id")),
+            "status": _to_non_empty_str(metadata.get("status")) or _to_non_empty_str(live_summary.get("status")),
+            "role": _to_non_empty_str(metadata.get("role")),
+            "source": source,
+            "offline_snapshot": offline_snapshot,
+            "latest_live_summary": live_summary,
+            "latest_refresh_at": _to_non_empty_str(refresh.get("pulled_at"))
+            or _to_non_empty_str(metadata.get("pulled_at"))
+            or _to_non_empty_str(metadata.get("updated_at")),
+            "round_count": len(rounds),
+            "resolved_round_count": resolved_count,
+            "resolving_round_count": resolving_count,
+            "latest_round": latest_round,
+            "latest_scored_round": latest_scored_round,
+        }
+
+    def _format_submission(self, model_name: str, *, include_rounds: bool) -> dict[str, Any]:
+        submission_dir = self._resolve_submission_dir(model_name)
+        metadata = _read_json_dict(submission_dir / "submission.json")
+        rounds = self._read_submission_rounds(model_name)
+        summary = self._submission_summary(model_name=model_name, metadata=metadata, rounds=rounds)
+        payload = {
+            "model_name": model_name,
+            "path": str(submission_dir),
+            "metadata": metadata,
+            "summary": summary,
+        }
+        if include_rounds:
+            payload["rounds"] = rounds
+        return payload
+
+    def list_submissions(self) -> dict[str, Any]:
+        items = [
+            self._format_submission(model_name, include_rounds=False) for model_name in self._iter_submission_names()
+        ]
+        return {
+            "items": items,
+            "total": len(items),
+            "root": str(self._submissions_root()),
+        }
+
+    def get_submission(self, model_name: str) -> dict[str, Any] | None:
+        submission_dir = self._resolve_submission_dir(model_name)
+        if not submission_dir.is_dir():
+            return None
+        return self._format_submission(model_name, include_rounds=True)
 
     def get_experiment(self, experiment_id: str) -> dict[str, Any] | None:
         _ensure_safe_id(experiment_id, label="experiment_id")

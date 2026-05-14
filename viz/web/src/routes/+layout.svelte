@@ -15,6 +15,7 @@
 	let onExperimentsRoute = $derived(currentPath.startsWith('/experiments'));
 	let onDocsRoute = $derived(currentPath.startsWith('/docs'));
 	let onNotesRoute = $derived(currentPath.startsWith('/notes'));
+	let onSubmissionsRoute = $derived(currentPath.startsWith('/submissions'));
 
 	$effect(() => { if (onExperimentsRoute) experimentsExpanded = true; });
 
@@ -102,18 +103,29 @@
 						<span class="shell-nav-label">Docs</span>
 					</a>
 					<!-- Notes nav item -->
-					<a
-						href="/notes"
-						aria-current={onNotesRoute ? 'page' : undefined}
-						class="shell-nav-link mt-1 {onNotesRoute ? 'shell-nav-link-active font-medium' : ''}"
-						onclick={closeSidebar}
+						<a
+							href="/notes"
+							aria-current={onNotesRoute ? 'page' : undefined}
+							class="shell-nav-link mt-1 {onNotesRoute ? 'shell-nav-link-active font-medium' : ''}"
+							onclick={closeSidebar}
 					>
 						<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
-						</svg>
-						<span class="shell-nav-label">Notes</span>
-					</a>
-					<!-- Experiments nav item with expandable chevron -->
+							</svg>
+							<span class="shell-nav-label">Notes</span>
+						</a>
+						<a
+							href="/submissions"
+							aria-current={onSubmissionsRoute ? 'page' : undefined}
+							class="shell-nav-link mt-1 {onSubmissionsRoute ? 'shell-nav-link-active font-medium' : ''}"
+							onclick={closeSidebar}
+						>
+							<svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v1.25A2.25 2.25 0 005.25 20h13.5A2.25 2.25 0 0021 17.75V16.5M7.5 8.25L12 3.75m0 0l4.5 4.5M12 3.75v12" />
+							</svg>
+							<span class="shell-nav-label">Submissions</span>
+						</a>
+						<!-- Experiments nav item with expandable chevron -->
 					<div class="mt-1 group relative">
 						<div
 							class="shell-nav-link shell-nav-link-group {onExperimentsRoute ? 'shell-nav-link-active font-medium' : ''} {showExperimentList ? 'shell-nav-link-group-open' : ''}"

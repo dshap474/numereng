@@ -11,6 +11,8 @@ surface.
 - `experiments/<experiment_id>/configs/*.json`
 - `experiments/<experiment_id>/run_plan.csv`
 - `experiments/<experiment_id>/run_scripts/*`
+- optional `experiments/<experiment_id>/analysis/`
+- optional `experiments/<experiment_id>/deployment/<deployment_id>/`
 - `.numereng/runs/<run_id>/`
 - `.numereng/numereng.db`
 
@@ -22,12 +24,14 @@ surface.
 - `run_scripts/` is the canonical home for experiment-local launchers and recovery helpers.
 - `EXPERIMENT.md` is the durable narrative for findings, decisions, anti-patterns, and next steps.
 - `EXPERIMENT.pack.md` is a generated snapshot that embeds `EXPERIMENT.md` plus one dashboard-aligned scalar run-metrics table; it excludes per-era/time-series metrics.
+- Optional `analysis/` and `deployment/<deployment_id>/` areas hold experiment-local decision evidence and handoff artifacts. Load `references/experiment-local-artifacts.md` for that contract.
+- Use `experiment-finalize` for completed-report rewrite and pack rendering once scoring artifacts are complete.
 
 ## Valid Command Families
 
 - `numereng experiment create|list|details|train|promote|report|pack ...`
 - `numereng run train ...`
-- `numereng remote experiment pull --target <target_id> --experiment-id <id>`
+- `numereng remote experiment pull --target <target_id> --experiment-id <id> --mode <scoring|full>`
 - `numereng ensemble build|list|details ...`
 - `numereng hpo create ...`
 - `numereng store init|index|rebuild|doctor ...`
@@ -64,7 +68,7 @@ canonical run store until they are pulled back explicitly.
 
 Use:
 
-- `numereng remote experiment pull --target <target_id> --experiment-id <id>`
+- `numereng remote experiment pull --target <target_id> --experiment-id <id> --mode <scoring|full>`
 
 Contract:
 
@@ -72,3 +76,4 @@ Contract:
 - only `FINISHED` remote runs materialize locally
 - successful pullback writes canonical local run dirs under `.numereng/runs/<run_id>/`
 - rerunning the same pull is idempotent and should no-op for already materialized runs
+- use `--mode scoring` for metrics/reporting artifacts and `--mode full` only when prediction parquets are needed

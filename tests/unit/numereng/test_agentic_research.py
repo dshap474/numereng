@@ -63,6 +63,10 @@ def _row(run_id: str, value: float) -> ExperimentReportRow:
     )
 
 
+def _llm_response(decision_form: dict[str, object], *, round_markdown: str = "# r001 Research State\n\nMemo.") -> str:
+    return json.dumps({"decision_form": decision_form, "round_markdown": round_markdown})
+
+
 def _trace_events(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
@@ -189,7 +193,7 @@ def test_run_research_materializes_llm_config_mutation(
         research_module,
         "_call_research_llm",
         lambda **_: (
-            json.dumps(
+            _llm_response(
                 {
                     "action": "run",
                     "learning": "Lower variance looked useful.",
@@ -204,7 +208,8 @@ def test_run_research_materializes_llm_config_mutation(
                         }
                     ],
                     "stop_reason": None,
-                }
+                },
+                round_markdown="# r001 Research State\n\nThe baseline underfit. Try a modest learning-rate lift.",
             ),
             "test",
         ),
@@ -243,7 +248,11 @@ def test_run_research_materializes_llm_config_mutation(
     assert len(decisions) == 1
     assert json.loads(decisions[0])["decision"]["action"] == "run"
     assert (artifact_dir / "r001.md").is_file()
-    assert "A slightly larger learning rate is worth testing." in (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    round_notes = (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    assert "The baseline underfit. Try a modest learning-rate lift." in round_notes
+    assert "## Execution Result" in round_notes
+    assert "Run ID: run-1" in round_notes
+    assert "bmc_last_200_eras_mean: 0.13" in round_notes
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
     assert not (artifact_dir / "prompt.md").exists()
@@ -291,6 +300,27 @@ def test_record_round_config_in_run_plan_is_idempotent(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["round"] == "r004"
     assert rows[0]["config_path"] == str(config_path)
+
+
+def test_context_includes_only_latest_round_markdown(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    rounds_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
+    rounds_dir.mkdir(parents=True)
+    (rounds_dir / "r001.md").write_text("old memo", encoding="utf-8")
+    (rounds_dir / "r002.md").write_text("latest memo", encoding="utf-8")
+    (rounds_dir / "r999.debug.prompt.md").write_text("debug prompt", encoding="utf-8")
+
+    context = research_module._build_context(
+        root=store_root,
+        experiment=experiment,
+        report=_report(_row("run-0", 0.10)),
+        state={},
+    )
+
+    assert context["latest_round_markdown"] == "latest memo"
+    assert "old memo" not in json.dumps(context)
+    assert "debug prompt" not in json.dumps(context)
 
 
 def test_run_research_traces_decision_parse_failure(
@@ -358,8 +388,23 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
         captured["cmd"] = cmd
         captured["input"] = input
         _ = (text, capture_output, check)
+        schema_path = Path(cmd[cmd.index("--output-schema") + 1])
+        captured["schema"] = json.loads(schema_path.read_text(encoding="utf-8"))
         output_path = Path(cmd[cmd.index("-o") + 1])
-        output_path.write_text('{"action": "stop"}', encoding="utf-8")
+        output_path.write_text(
+            _llm_response(
+                {
+                    "action": "stop",
+                    "learning": "done",
+                    "belief_update": "done",
+                    "next_hypothesis": None,
+                    "parent_config": None,
+                    "changes": [],
+                    "stop_reason": "done",
+                }
+            ),
+            encoding="utf-8",
+        )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="{}", stderr="")
 
     monkeypatch.setattr(research_module.subprocess, "run", fake_run)
@@ -378,8 +423,13 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     cmd = cast(list[str], captured["cmd"])
     assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
     assert cmd[cmd.index("-c") + 1] == 'model_reasoning_effort="high"'
-    assert response == '{"action": "stop"}'
+    assert "--output-schema" in cmd
+    schema = cast(dict[str, object], captured["schema"])
+    assert "decision_form" in cast(dict[str, object], schema["properties"])
+    assert json.loads(response)["decision_form"]["action"] == "stop"
     assert captured["input"] == "choose next run"
+    assert not list(tmp_path.glob(".codex_schema_*.json"))
+    assert not list(tmp_path.glob(".codex_output_*.txt"))
     assert not (tmp_path / "codex_stdout.jsonl").exists()
     assert not (tmp_path / "codex_stderr.txt").exists()
 
@@ -445,6 +495,30 @@ def test_parse_decision_rejects_disallowed_change_path() -> None:
                     "parent_config": "seed.json",
                     "changes": [{"path": "output.results_name", "value": "bad", "reason": "not allowed"}],
                     "stop_reason": None,
+                }
+            )
+        )
+
+
+def test_parse_llm_response_requires_decision_form() -> None:
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_decision_form_missing"):
+        research_module._parse_llm_response(json.dumps({"round_markdown": "# Memo"}))
+
+
+def test_parse_llm_response_requires_round_markdown() -> None:
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_field_missing:round_markdown"):
+        research_module._parse_llm_response(
+            json.dumps(
+                {
+                    "decision_form": {
+                        "action": "stop",
+                        "learning": "x",
+                        "belief_update": "x",
+                        "next_hypothesis": None,
+                        "parent_config": None,
+                        "changes": [],
+                        "stop_reason": "x",
+                    }
                 }
             )
         )

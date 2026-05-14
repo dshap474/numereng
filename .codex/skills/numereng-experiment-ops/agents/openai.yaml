@@ -1,4 +1,6 @@
-name: "skill:NumerengExperimentOps"
+name: "skill::NumerengExperimentOps"
 
 interface:
-  display_name: "skill:NumerengExperimentOps"
+  display_name: "skill::NumerengExperimentOps"
+  short_description: "Operate numereng experiment layout, commands, scoring artifacts, and pullback contracts."
+  default_prompt: "Use $numereng-experiment-ops to follow the numereng experiment contract: layout, commands, scoring/pullback artifacts, and handoff boundaries. Use $experiment-finalize for completed reports and packs."

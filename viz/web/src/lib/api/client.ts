@@ -32,6 +32,53 @@ export interface Experiment {
 	tags: string[];
 }
 
+export interface SubmissionRound {
+	round?: number | string | null;
+	round_number?: number | string | null;
+	state?: string | null;
+	status?: string | null;
+	close_date?: string | null;
+	resolve_date?: string | null;
+	mmc20?: number | null;
+	corr20?: number | null;
+	mmc60?: number | null;
+	corr60?: number | null;
+	[key: string]: unknown;
+}
+
+export interface SubmissionSummary {
+	model_name: string;
+	model_id?: string | null;
+	status?: string | null;
+	role?: string | null;
+	source: Record<string, unknown>;
+	offline_snapshot: Record<string, unknown>;
+	latest_live_summary: Record<string, unknown>;
+	latest_refresh_at?: string | null;
+	round_count: number;
+	resolved_round_count: number;
+	resolving_round_count: number;
+	latest_round?: SubmissionRound | null;
+	latest_scored_round?: SubmissionRound | null;
+}
+
+export interface SubmissionItem {
+	model_name: string;
+	path: string;
+	metadata: Record<string, unknown>;
+	summary: SubmissionSummary;
+}
+
+export interface SubmissionDetail extends SubmissionItem {
+	rounds: SubmissionRound[];
+}
+
+export interface SubmissionListResponse {
+	items: SubmissionItem[];
+	total: number;
+	root: string;
+}
+
 export interface ExperimentOverviewSummary {
 	total_experiments: number;
 	active_experiments: number;
@@ -673,6 +720,9 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 				fetchFn
 			),
 		listExperiments: () => get<Experiment[]>('/experiments', fetchFn),
+		listSubmissions: () => get<SubmissionListResponse>('/submissions', fetchFn),
+		getSubmission: (modelName: string) =>
+			get<SubmissionDetail>(`/submissions/${encodeURIComponent(modelName)}`, fetchFn),
 		getExperimentsOverview: (params?: { include_remote?: boolean }) =>
 			get<ExperimentOverviewResponse>(
 				`/experiments/overview${query({ include_remote: params?.include_remote })}`,

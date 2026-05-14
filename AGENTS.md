@@ -88,6 +88,8 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `research run` is self-initializing and mutates experiment configs through `PROGRAM.md` plus the deterministic runner.
 - `serve pickle build` and `serve pickle upload` are stricter than local live builds; do not assume local success implies hosted-upload success.
 - Remote and cloud commands can create or pull runtime state; confirm the target experiment or run before launching them.
+- `remote experiment pull` requires explicit `--mode scoring|full`; use `scoring` for metrics/reporting artifacts only.
+- Use `--mode full` only when prediction parquets are needed for submit, ensemble, package, or local rescore work.
 - If a change touches tracked repo content, run `just oss-preflight` and `just readiness` before treating the work as clean.
 
 ## High-Signal Commands
