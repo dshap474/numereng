@@ -129,6 +129,7 @@ class LoadedServingArtifact:
 
     component: FittedComponent
     model_type: str
+    data_version: str
     model_upload_compatible: bool
     uses_custom_module: bool
 
@@ -384,6 +385,7 @@ def load_run_backed_component(
     return LoadedServingArtifact(
         component=fitted,
         model_type=manifest.model_type,
+        data_version=manifest.data_version,
         model_upload_compatible=manifest.model_upload_compatible,
         uses_custom_module=manifest.uses_custom_module,
     )

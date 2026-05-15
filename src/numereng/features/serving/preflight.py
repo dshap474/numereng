@@ -46,6 +46,49 @@ def inspect_submission_package(
         component_warnings: list[str] = []
         artifact_backed = component.run_id is not None
         artifact_ready = False
+        artifact_checked = False
+        loaded_artifact = None
+        if artifact_backed:
+            artifact_checked = True
+            try:
+                loaded_artifact = load_run_backed_component(workspace_root=workspace_root, component=component)
+            except Exception as exc:
+                artifact_blockers.append(str(exc))
+                model_blockers.append("serving_model_upload_requires_persisted_model_artifact")
+            else:
+                artifact_ready = True
+                if loaded_artifact.model_type == "LGBMRegressor" and find_spec("lightgbm") is None:
+                    local_blockers.append("serving_component_dependency_missing:lightgbm")
+                    model_blockers.append("serving_component_dependency_missing:lightgbm")
+                if find_spec("cloudpickle") is None:
+                    model_blockers.append("serving_model_upload_dependency_missing:cloudpickle")
+                if not loaded_artifact.model_upload_compatible:
+                    model_blockers.append("serving_model_upload_artifact_declared_local_only")
+                if loaded_artifact.uses_custom_module:
+                    model_blockers.append("serving_model_upload_custom_modules_not_supported")
+                if loaded_artifact.component.baseline_predictions_path is not None:
+                    model_blockers.append("serving_model_upload_baseline_inputs_not_supported")
+                if package.data_version != loaded_artifact.data_version:
+                    component_warnings.append("serving_package_component_data_version_mismatch")
+
+                component_reports.append(
+                    ServingComponentInspection(
+                        component_id=component.component_id,
+                        local_live_compatible=not local_blockers,
+                        model_upload_compatible=not model_blockers,
+                        artifact_backed=True,
+                        artifact_ready=True,
+                        local_live_blockers=tuple(local_blockers),
+                        model_upload_blockers=tuple(model_blockers),
+                        artifact_blockers=tuple(artifact_blockers),
+                        warnings=tuple(component_warnings),
+                    )
+                )
+                package_local_blockers.extend(local_blockers)
+                package_model_blockers.extend(model_blockers)
+                package_artifact_blockers.extend(artifact_blockers)
+                warnings.extend(component_warnings)
+                continue
         try:
             config_path = source_config_path(
                 workspace_root=workspace_root,
@@ -57,7 +100,9 @@ def inspect_submission_package(
                 component=component,
                 config_path=config_path,
             )
-        except ServingUnsupportedConfigError as exc:
+        except Exception as exc:
+            if not isinstance(exc, ServingUnsupportedConfigError) and not (artifact_backed and artifact_blockers):
+                raise
             local_blockers.append(str(exc))
             model_blockers.append(str(exc))
             component_reports.append(
@@ -89,21 +134,11 @@ def inspect_submission_package(
         if plan.data_key.data_version != package.data_version:
             component_warnings.append("serving_package_component_data_version_mismatch")
         if artifact_backed:
-            try:
-                loaded = load_run_backed_component(workspace_root=workspace_root, component=component)
-            except Exception as exc:
-                artifact_blockers.append(str(exc))
+            if not artifact_checked:
+                artifact_blockers.append("serving_model_artifact_not_checked")
                 model_blockers.append("serving_model_upload_requires_persisted_model_artifact")
-            else:
-                artifact_ready = True
-                if not loaded.model_upload_compatible:
-                    model_blockers.append("serving_model_upload_artifact_declared_local_only")
-                if loaded.uses_custom_module:
-                    model_blockers.append("serving_model_upload_custom_modules_not_supported")
-                if loaded.component.baseline_predictions_path is not None:
-                    model_blockers.append("serving_model_upload_baseline_inputs_not_supported")
-                if package.data_version != plan.data_key.data_version:
-                    component_warnings.append("serving_package_component_data_version_mismatch")
+            if package.data_version != plan.data_key.data_version:
+                component_warnings.append("serving_package_component_data_version_mismatch")
         else:
             artifact_blockers.append("serving_component_config_backed_only")
             model_blockers.append("serving_model_upload_requires_persisted_model_artifact")

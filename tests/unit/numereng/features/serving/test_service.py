@@ -191,12 +191,20 @@ def _write_config(
     return config_path
 
 
-def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
+def _write_run_backed_component(
+    tmp_path: Path,
+    *,
+    run_id: str,
+    data_version: str = "v5.2",
+    baseline_predictions_path: str | None = None,
+    model_upload_compatible: bool = True,
+    uses_custom_module: bool = False,
+) -> str:
     run_dir = tmp_path / ".numereng" / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     resolved_config = {
         "data": {
-            "data_version": "v5.2",
+            "data_version": data_version,
             "dataset_variant": "non_downsampled",
             "feature_set": "small",
             "target_col": "target",
@@ -232,15 +240,18 @@ def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
         manifest=ModelArtifactManifest(
             run_id=run_id,
             model_type="LGBMRegressor",
-            data_version="v5.2",
+            data_version=data_version,
             dataset_variant="non_downsampled",
             feature_set="small",
             target_col="target",
             era_col="era",
             id_col="id",
             feature_cols=("feature_a", "feature_b"),
-            model_upload_compatible=True,
-            uses_custom_module=False,
+            baseline_col="benchmark" if baseline_predictions_path is not None else None,
+            baseline_name="active" if baseline_predictions_path is not None else None,
+            baseline_predictions_path=baseline_predictions_path,
+            model_upload_compatible=model_upload_compatible,
+            uses_custom_module=uses_custom_module,
         ),
     )
     return run_id
@@ -469,6 +480,118 @@ def test_inspect_package_marks_artifact_backed_lgbm_as_not_verified_before_pickl
     assert result.model_upload_compatible is True
     assert result.pickle_upload_ready is False
     assert result.deployment_classification == "artifact_backed_live_ready"
+
+
+def test_inspect_package_uses_artifact_before_stale_resolved_config(tmp_path: Path) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
+    run_dir = tmp_path / ".numereng" / "runs" / run_id
+    resolved = json.loads((run_dir / "resolved.json").read_text(encoding="utf-8"))
+    resolved["data"]["loading"] = {"legacy": True}
+    resolved["data"]["benchmark_model"] = "legacy_benchmark"
+    (run_dir / "resolved.json").write_text(json.dumps(resolved), encoding="utf-8")
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert result.local_live_compatible is True
+    assert result.model_upload_compatible is True
+    assert result.artifact_ready is True
+    assert not result.local_live_blockers
+    assert not result.artifact_blockers
+
+
+def test_inspect_package_missing_artifact_falls_back_to_config_validation(tmp_path: Path) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
+    model_path = tmp_path / ".numereng" / "runs" / run_id / "artifacts" / "model" / "model.pkl"
+    model_path.unlink()
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert result.local_live_compatible is True
+    assert result.model_upload_compatible is False
+    assert result.artifact_ready is False
+    assert "serving_model_artifact_missing" in result.artifact_blockers
+    assert "serving_model_upload_requires_persisted_model_artifact" in result.model_upload_blockers
+
+
+def test_inspect_package_missing_artifact_reports_stale_config_blocker(tmp_path: Path) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
+    run_dir = tmp_path / ".numereng" / "runs" / run_id
+    (run_dir / "artifacts" / "model" / "model.pkl").unlink()
+    resolved = json.loads((run_dir / "resolved.json").read_text(encoding="utf-8"))
+    resolved["data"]["loading"] = {"legacy": True}
+    (run_dir / "resolved.json").write_text(json.dumps(resolved), encoding="utf-8")
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert result.local_live_compatible is False
+    assert result.model_upload_compatible is False
+    assert result.artifact_ready is False
+    assert "serving_model_artifact_missing" in result.artifact_blockers
+    assert any("training_config_schema_invalid:data.loading" in item for item in result.local_live_blockers)
+
+
+@pytest.mark.parametrize(
+    ("run_kwargs", "expected_blocker"),
+    [
+        ({"uses_custom_module": True}, "serving_model_upload_custom_modules_not_supported"),
+        (
+            {"baseline_predictions_path": ".numereng/datasets/baselines/active_benchmark/predictions.parquet"},
+            "serving_model_upload_baseline_inputs_not_supported",
+        ),
+    ],
+)
+def test_inspect_package_keeps_artifact_safety_blockers(
+    tmp_path: Path,
+    run_kwargs: dict[str, object],
+    expected_blocker: str,
+) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm", **run_kwargs)
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert result.local_live_compatible is True
+    assert result.model_upload_compatible is False
+    assert result.artifact_ready is True
+    assert expected_blocker in result.model_upload_blockers
+
+
+def test_inspect_package_warns_when_artifact_data_version_mismatches_package(tmp_path: Path) -> None:
+    run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm", data_version="v5.1")
+    create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="lgbm", weight=1.0, run_id=run_id),),
+        data_version="v5.2",
+    )
+
+    result = inspect_package(workspace_root=tmp_path, experiment_id="exp-1", package_id="pkg-1")
+
+    assert "serving_package_component_data_version_mismatch" in result.warnings
 
 
 def test_build_submission_pickle_rejects_local_only_package(tmp_path: Path) -> None:
