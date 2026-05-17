@@ -67,6 +67,12 @@ def _llm_response(decision_form: dict[str, object], *, round_markdown: str = "# 
     return json.dumps({"decision_form": decision_form, "round_markdown": round_markdown})
 
 
+def _set_experiment_metadata(manifest_path: Path, metadata: dict[str, object]) -> None:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["metadata"] = {**payload.get("metadata", {}), **metadata}
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def _trace_events(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
@@ -135,7 +141,7 @@ def test_run_research_runs_baseline_before_llm(
         lambda **_: ExperimentScoreRoundResult(
             experiment_id=EXPERIMENT_ID,
             round="r001",
-            stage="post_training_full",
+            stage="post_training_core",
             run_ids=("run-1",),
         ),
     )
@@ -162,7 +168,7 @@ def test_run_research_runs_baseline_before_llm(
             "target": "",
             "horizon": "",
             "config_path": str(experiment.manifest_path.parent / "configs" / "config_001.json"),
-            "score_stage_default": "post_training_full",
+            "score_stage_default": "post_training_core",
         }
     ]
     assert (artifact_dir / "r001.md").is_file()
@@ -230,7 +236,7 @@ def test_run_research_materializes_llm_config_mutation(
         lambda **_: ExperimentScoreRoundResult(
             experiment_id=EXPERIMENT_ID,
             round="r001",
-            stage="post_training_full",
+            stage="post_training_core",
             run_ids=("run-1",),
         ),
     )
@@ -333,17 +339,28 @@ def test_run_research_traces_decision_parse_failure(
     monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-0", 0.10)))
     monkeypatch.setattr(research_module, "_call_research_llm", lambda **_: ("not json", "test"))
 
-    with pytest.raises(AgenticResearchValidationError, match="agentic_research_json_missing"):
-        run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
+    assert len(result.rounds) == 1
+    assert result.rounds[0].status == "failed"
+    assert "agentic_research_json_missing" in result.rounds[0].learning
     trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
-    assert [item["event"] for item in trace] == ["prompt_rendered", "llm_response", "decision_parse_failed"]
-    failure_payload = cast(dict[str, object], trace[-1]["payload"])
+    assert [item["event"] for item in trace] == [
+        "prompt_rendered",
+        "llm_response",
+        "decision_parse_failed",
+        "round_failed",
+    ]
+    failure_payload = cast(dict[str, object], trace[-2]["payload"])
     assert failure_payload["raw_response"] == "not json"
     assert failure_payload["error"] == "agentic_research_json_missing"
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert (artifact_dir / "r001.debug.prompt.md").is_file()
     assert (artifact_dir / "r001.debug.llm_response.txt").read_text(encoding="utf-8") == "not json"
+    failure_memo = (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    assert "## Execution Result" in failure_memo
+    assert "Status: failed" in failure_memo
+    assert "agentic_research_json_missing" in failure_memo
 
 
 def test_run_research_traces_llm_call_failure(
@@ -360,13 +377,19 @@ def test_run_research_traces_llm_call_failure(
 
     monkeypatch.setattr(research_module, "_call_research_llm", fail_llm)
 
-    with pytest.raises(research_module.AgenticResearchError, match="agentic_research_codex_failed"):
-        run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
+    assert len(result.rounds) == 1
+    assert result.rounds[0].status == "failed"
+    assert "agentic_research_codex_failed" in result.rounds[0].learning
     trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
-    assert [item["event"] for item in trace] == ["prompt_rendered", "llm_call_failed"]
-    failure_payload = cast(dict[str, object], trace[-1]["payload"])
-    assert failure_payload["error"] == "agentic_research_codex_failed:1:boom"
+    assert [item["event"] for item in trace] == [
+        "prompt_rendered",
+        "llm_call_failed",
+        "round_failed",
+    ]
+    llm_payload = cast(dict[str, object], trace[1]["payload"])
+    assert llm_payload["error"] == "agentic_research_codex_failed:1:boom"
     artifact_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
     assert "agentic_research_codex_failed" in (artifact_dir / "r001.debug.error.txt").read_text(encoding="utf-8")
 
@@ -384,9 +407,15 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
         text: bool,
         capture_output: bool,
         check: bool,
+        timeout: float | None = None,
+        encoding: str | None = None,
+        errors: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         captured["cmd"] = cmd
         captured["input"] = input
+        captured["timeout"] = timeout
+        captured["encoding"] = encoding
+        captured["errors"] = errors
         _ = (text, capture_output, check)
         schema_path = Path(cmd[cmd.index("--output-schema") + 1])
         captured["schema"] = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -424,6 +453,9 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
     assert cmd[cmd.index("-c") + 1] == 'model_reasoning_effort="high"'
     assert "--output-schema" in cmd
+    assert captured["timeout"] == research_module.CODEX_TIMEOUT_SECONDS
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "replace"
     schema = cast(dict[str, object], captured["schema"])
     assert "decision_form" in cast(dict[str, object], schema["properties"])
     assert json.loads(response)["decision_form"]["action"] == "stop"
@@ -459,8 +491,11 @@ def test_call_codex_exec_writes_debug_artifacts_on_failure(
         text: bool,
         capture_output: bool,
         check: bool,
+        timeout: float | None = None,
+        encoding: str | None = None,
+        errors: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        _ = (cmd, input, text, capture_output, check)
+        _ = (cmd, input, text, capture_output, check, timeout, encoding, errors)
         return subprocess.CompletedProcess(args=cmd, returncode=1, stdout='{"event":"failed"}', stderr="boom")
 
     monkeypatch.setattr(research_module.subprocess, "run", fake_run)
@@ -481,6 +516,52 @@ def test_call_codex_exec_writes_debug_artifacts_on_failure(
     assert (tmp_path / "r002.debug.codex_stdout.jsonl").read_text(encoding="utf-8") == '{"event":"failed"}'
     assert (tmp_path / "r002.debug.codex_stderr.txt").read_text(encoding="utf-8") == "boom"
     assert "agentic_research_codex_failed" in (tmp_path / "r002.debug.error.txt").read_text(encoding="utf-8")
+
+
+def test_materialize_rejects_value_outside_program_cap(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {"agentic_research_value_caps": {"model.params.learning_rate": [0.01, 0.30]}},
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(research_module.ResearchChange(path="model.params.learning_rate", value=0.9, reason="over the cap"),),
+        stop_reason=None,
+    )
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_value_out_of_range"):
+        research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+
+
+def test_materialize_rejects_path_outside_program_allowed_list(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {"agentic_research_allowed_change_paths": ["model.params.learning_rate"]},
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(
+            research_module.ResearchChange(path="model.params.num_leaves", value=8, reason="not in narrowed list"),
+        ),
+        stop_reason=None,
+    )
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
+        research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
 
 
 def test_parse_decision_rejects_disallowed_change_path() -> None:

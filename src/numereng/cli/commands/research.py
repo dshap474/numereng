@@ -25,6 +25,8 @@ def _print_research_status_table(payload: api.ResearchStatusResponse) -> None:
     print(f"next_round_number: {payload.next_round_number}")
     print(f"total_rounds_completed: {payload.total_rounds_completed}")
     print(f"last_checkpoint: {payload.last_checkpoint}")
+    print(f"last_round_label: {payload.last_round_label or 'none'}")
+    print(f"last_run_id: {payload.last_run_id or 'none'}")
     print(f"stop_reason: {payload.stop_reason or 'none'}")
     print(f"best_run_id: {payload.best_overall.run_id or 'none'}")
     if payload.best_overall.bmc_last_200_eras_mean is not None:

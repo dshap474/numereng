@@ -75,36 +75,82 @@ The context may include `latest_round_markdown`. This is the rolling research st
 previous round. Carry forward its important information into the new `round_markdown`, but update it
 with the current evidence and next decision.
 
+The context window is finite. `report.rows` shows up to the most recent 25 runs and
+`recent_rounds` shows the last 8 decisions. Older history lives only in the rolling memo.
+Treat the rolling memo as your long-term memory: anything you do not write into it is gone.
+
 Do not rely on memory for exact scores when report/config context provides current facts. Use
 markdown for synthesis and judgment; use report/config data for exact values.
 
 ## Boundaries
 
 You may only request changes to paths listed in `allowed_change_paths` in the context. Python
-rejects every other path, validates the resulting `TrainingConfig`, rejects duplicates, trains,
-scores, and records the result.
+rejects every other path, validates the resulting `TrainingConfig`, rejects duplicates by config
+hash, trains, scores, and records the result.
+
+A duplicate-by-hash proposal is a wasted round; check your tried-configs ledger in the rolling
+memo before proposing. Experiment metadata may further narrow allowed paths or impose numeric
+value caps that Python enforces silently; if a proposal is rejected for an unexpected reason,
+read `experiment_notes` for the focused contract.
 
 Do not emit shell commands. Do not invent output filenames. Do not edit Python code. Do not
 hand-write the final machine `decision.json`; Python creates it.
 
+## Budget And Phased Strategy
+
+The context includes `state.next_round_number` and `state.total_rounds_completed`. Use them to
+phase your search. The total budget is not exposed; infer phase from progress, the size of
+`report.rows`, and your plateau counter.
+
+| Phase | Trigger | Behavior |
+| --- | --- | --- |
+| Explore | Early rounds; sparse `report.rows`; no clear incumbent | Cover the surface broadly. Vary 1-3 axes. Prioritize coverage over winning. |
+| Refine | A stable top-3 has emerged | Sweep around the top-3 incumbents one variable at a time. |
+| Exploit | Top-1 is consistent and a plateau is forming | Small perturbations near the leader. Test stability rather than chase new wins. |
+
+Tag the current phase in your rolling memo and update it deliberately. Do not stay in `Explore`
+indefinitely; transitioning is part of the job.
+
+## Stop Criteria
+
+Return `action: "stop"` when any of the following is true. A clean stop is more useful than
+rounds of churn.
+
+- **Plateau:** 25 consecutive `run` rounds have not improved `bmc_last_200_eras_mean` by more
+  than `3e-4` over the incumbent.
+- **Cycling:** 5 consecutive proposals have been rejected as duplicates by hash.
+- **Exhausted hypothesis:** You cannot articulate a new hypothesis beyond restating prior
+  beliefs.
+- **Surface change required:** The next useful step would require leaving `allowed_change_paths`
+  or the experiment's fixed surface; name the handoff in `stop_reason`.
+
+The plateau and cycling counters live in your rolling memo. Increment them deliberately each
+round. Reset the plateau counter when a real improvement (> noise floor) is recorded; reset the
+cycling counter after any successful run.
+
 ## Round Markdown
 
-Return `round_markdown` as the cumulative research state after your decision. It should be readable
-by a human and useful as the only markdown memory loaded next round.
+Return `round_markdown` as the cumulative research state after your decision. It is your only
+long-term memory between rounds; structure it deliberately.
 
-Include:
+Required sections in the memo (in any order, but include all):
 
-- current best config and why it is best
-- confirmed versus unconfirmed beliefs
-- what has been tried and should not be repeated
-- what this decision is testing
-- pending confirmation needs
-- important caveats about seed variance or metric conflicts
-- the next open question or handoff
+1. **Phase** — one of `explore`, `refine`, `exploit` (see Budget And Phased Strategy).
+2. **Incumbent leaderboard** — top 5 by `bmc_last_200_eras_mean`, with `run_id` and the key
+   parameter values that distinguish them.
+3. **Tried-configs ledger** — a compact list of (parameter-tuple → primary metric) for every run
+   recorded so far. Use this to avoid proposing duplicates.
+4. **Plateau counter** — `N consecutive rounds since last improvement > 3e-4`. Increment or
+   reset based on the latest round's result.
+5. **Dup-rejection counter** — `N consecutive duplicate-by-hash rejections`. Reset on any
+   successful run.
+6. **Beliefs** — confirmed vs unconfirmed, with the evidence each rests on.
+7. **What this decision tests** — the specific next hypothesis.
+8. **Open questions and caveats** — seed variance, metric conflicts, handoff candidates.
 
-It does not need to be tiny. It should be information-rich and cumulative, not a raw dump of every
-artifact. Python will append an `Execution Result` section after the deterministic run or stop is
-recorded.
+The memo can grow but should stay information-dense, not log-style. Drop any prose that a later,
+stronger finding has subsumed. Python will append an `Execution Result` section after the
+deterministic run or stop is recorded.
 
 ## Output
 

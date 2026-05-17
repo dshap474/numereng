@@ -38,14 +38,17 @@ ResearchAction = Literal["baseline", "run", "stop"]
 PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
 CUSTOM_PROGRAM_DIR = Path(__file__).with_name("custom_programs")
 PROGRAM_METADATA_KEY = "agentic_research_program"
+ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
+VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
-SCORING_STAGE = "post_training_full"
+SCORING_STAGE = "post_training_core"
 RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 MAX_CONTEXT_CHARS = 12_000
+CODEX_TIMEOUT_SECONDS = 600.0
 ALLOWED_CHANGE_PATHS = (
     "data.feature_set",
     "data.target_col",
@@ -113,6 +116,8 @@ class ResearchStatusResult:
     next_round_number: int
     total_rounds_completed: int
     last_checkpoint: str
+    last_round_label: str | None
+    last_run_id: str | None
     stop_reason: str | None
     best_overall: ResearchBestRun
     agentic_research_dir: Path
@@ -207,7 +212,10 @@ def run_research(
         for _ in range(max_rounds):
             if _stopped_by_llm(state):
                 break
-            result = _run_one_round(root=root, experiment_id=experiment.experiment_id, state=state)
+            try:
+                result = _run_one_round(root=root, experiment_id=experiment.experiment_id, state=state)
+            except AgenticResearchError as exc:
+                result = _record_failed_round(experiment=experiment, state=state, error=exc)
             rounds.append(result)
             experiment = get_experiment(store_root=root, experiment_id=experiment_id)
             state = _load_state(_state_path(experiment)) or _initial_state(experiment)
@@ -424,6 +432,28 @@ def _run_baseline_round(
         artifact_dir=artifact_dir,
         learning=learning,
         decision_payload=decision_payload,
+        round_markdown=_baseline_round_markdown(
+            round_label=round_label,
+            parent_name=parent_path.name,
+            config_name=config_path.name,
+        ),
+    )
+
+
+def _baseline_round_markdown(*, round_label: str, parent_name: str, config_name: str) -> str:
+    return (
+        f"# {round_label} Research State\n\n"
+        f"## Current Best\n\n"
+        f"`{config_name}` is the baseline copy of `{parent_name}` and the only completed run. "
+        f"It is the current incumbent by default. See the Execution Result below for scored metrics.\n\n"
+        f"## Tried Inside The Cost Envelope\n\n"
+        f"| Round | Config | Notes |\n"
+        f"| --- | --- | --- |\n"
+        f"| {round_label} | {config_name} | Baseline; see Execution Result. |\n\n"
+        f"## This Decision\n\n"
+        f"Baseline copy from `{parent_name}`; no mutation.\n\n"
+        f"## Next Open Question\n\n"
+        f"What is the first useful single-variable probe inside the cost envelope?\n"
     )
 
 
@@ -558,6 +588,65 @@ def _record_stop_round(
     )
 
 
+def _record_failed_round(
+    *,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    error: AgenticResearchError,
+) -> ResearchRoundResult:
+    round_number = _as_int(state.get("next_round_number"), default=1)
+    round_label = f"r{round_number:03d}"
+    artifact_dir = _rounds_dir(experiment)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    message = str(error) or error.__class__.__name__
+    learning = f"Round skipped: {message}"
+    payload: dict[str, object] = {
+        "round_number": round_number,
+        "round_label": round_label,
+        "action": "run",
+        "status": "failed",
+        "run_id": None,
+        "metric_value": None,
+        "learning": learning,
+        "error": message,
+        "completed_at": _utc_now_iso(),
+    }
+    _append_decision_log(_decision_log_path(experiment), payload)
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="round_failed",
+        payload={"error": message},
+    )
+    _write_failure_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label=round_label,
+        round_payload=payload,
+    )
+    state.update(
+        {
+            "status": "running",
+            "next_round_number": round_number + 1,
+            "last_checkpoint": "round_failed",
+            "last_error": message,
+            "updated_at": _utc_now_iso(),
+        }
+    )
+    _save_state(experiment, state)
+    return ResearchRoundResult(
+        round_number=round_number,
+        round_label=round_label,
+        action="run",
+        status="failed",
+        config_path=None,
+        run_id=None,
+        metric_value=None,
+        learning=learning,
+        artifact_dir=artifact_dir,
+    )
+
+
 def _build_context(
     *,
     root: Path,
@@ -659,7 +748,28 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
         ]
     )
     try:
-        completed = subprocess.run(cmd, input=prompt, text=True, capture_output=True, check=False)
+        try:
+            completed = subprocess.run(
+                cmd,
+                input=prompt,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                check=False,
+                timeout=CODEX_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            error = f"agentic_research_codex_timeout:{int(CODEX_TIMEOUT_SECONDS)}"
+            _write_failure_debug(
+                artifact_dir=artifact_dir,
+                round_label=round_label,
+                prompt=prompt,
+                codex_stdout=_decode_subprocess_stream(exc.stdout),
+                codex_stderr=_decode_subprocess_stream(exc.stderr),
+                error=error,
+            )
+            raise AgenticResearchError(error) from exc
         if completed.returncode != 0:
             error = f"agentic_research_codex_failed:{completed.returncode}:{completed.stderr.strip()}"
             _write_failure_debug(
@@ -681,6 +791,16 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
             schema_path.unlink()
         except OSError:
             pass
+
+
+def _decode_subprocess_stream(stream: object) -> str:
+    if stream is None:
+        return ""
+    if isinstance(stream, bytes):
+        return stream.decode("utf-8", errors="replace")
+    if isinstance(stream, str):
+        return stream
+    return str(stream)
 
 
 def _resolve_codex_executable() -> str:
@@ -815,6 +935,21 @@ def _materialize_decision_config(*, experiment: ExperimentRecord, round_label: s
     parent_path = config_dir / str(decision.parent_config)
     if not parent_path.is_file():
         raise AgenticResearchValidationError(f"agentic_research_parent_config_not_found:{decision.parent_config}")
+    allowed_paths = _program_allowed_paths(experiment)
+    value_caps = _program_value_caps(experiment)
+    for change in decision.changes:
+        if not _matches_any_path(change.path, allowed_paths):
+            raise AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{change.path}")
+        if change.path in value_caps:
+            bounds = value_caps[change.path]
+            if isinstance(change.value, bool) or not isinstance(change.value, (int, float)):
+                raise AgenticResearchValidationError(f"agentic_research_change_value_not_numeric:{change.path}")
+            value = float(change.value)
+            lo, hi = bounds
+            if not (lo <= value <= hi):
+                raise AgenticResearchValidationError(
+                    f"agentic_research_change_value_out_of_range:{change.path}:{value}:[{lo},{hi}]"
+                )
     payload = load_training_config_json(parent_path)
     for change in decision.changes:
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
@@ -908,22 +1043,83 @@ def _assign_dotted(payload: dict[str, object], parts: list[str], value: object) 
 
 
 def _change_path_allowed(path: str) -> bool:
-    for allowed in ALLOWED_CHANGE_PATHS:
-        if allowed.endswith(".*") and path.startswith(allowed[:-1]):
+    return _matches_any_path(path, ALLOWED_CHANGE_PATHS)
+
+
+def _matches_any_path(path: str, allowed: tuple[str, ...]) -> bool:
+    for entry in allowed:
+        if entry.endswith(".*") and path.startswith(entry[:-1]):
             return True
-        if path == allowed:
+        if path == entry:
             return True
     return False
 
 
+def _program_allowed_paths(experiment: ExperimentRecord) -> tuple[str, ...]:
+    raw = experiment.metadata.get(ALLOWED_PATHS_METADATA_KEY)
+    if not isinstance(raw, list):
+        return ALLOWED_CHANGE_PATHS
+    narrowed: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        candidate = item.strip()
+        if candidate and _matches_any_path(candidate, ALLOWED_CHANGE_PATHS):
+            narrowed.append(candidate)
+    return tuple(narrowed) if narrowed else ALLOWED_CHANGE_PATHS
+
+
+def _program_value_caps(experiment: ExperimentRecord) -> dict[str, tuple[float, float]]:
+    raw = experiment.metadata.get(VALUE_CAPS_METADATA_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    caps: dict[str, tuple[float, float]] = {}
+    for key, bounds in raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if not isinstance(bounds, list) or len(bounds) != 2:
+            continue
+        lo, hi = bounds
+        if isinstance(lo, bool) or isinstance(hi, bool):
+            continue
+        if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
+            continue
+        caps[key.strip()] = (float(lo), float(hi))
+    return caps
+
+
 def _config_context(experiment: ExperimentRecord) -> list[dict[str, object]]:
-    items: list[dict[str, object]] = []
     config_dir = experiment.manifest_path.parent / "configs"
-    for path in sorted(config_dir.glob("*.json")):
+    paths = sorted(config_dir.glob("*.json"))
+    parsed: list[tuple[Path, dict[str, object] | None, str | None]] = []
+    for path in paths:
         try:
             payload = load_training_config_json(path)
+            parsed.append((path, payload, compute_config_hash(payload)))
         except Exception as exc:
-            items.append({"filename": path.name, "error": str(exc)})
+            parsed.append((path, None, str(exc)))
+
+    by_hash: dict[str, list[Path]] = {}
+    for path, payload, hash_or_error in parsed:
+        if payload is not None and hash_or_error is not None:
+            by_hash.setdefault(hash_or_error, []).append(path)
+
+    skip: set[Path] = set()
+    for group in by_hash.values():
+        if len(group) < 2:
+            continue
+        # If a generated `config_*.json` shares a hash with the seed, hide the seed.
+        generated = [p for p in group if p.name.startswith("config_")]
+        seeds = [p for p in group if not p.name.startswith("config_")]
+        if generated and seeds:
+            skip.update(seeds)
+
+    items: list[dict[str, object]] = []
+    for path, payload, hash_or_error in parsed:
+        if path in skip:
+            continue
+        if payload is None:
+            items.append({"filename": path.name, "error": hash_or_error})
             continue
         items.append({"filename": path.name, "config": _mutable_config_view(payload)})
     return items
@@ -1015,7 +1211,7 @@ def _best_run_from_report(report: ExperimentReport | None) -> ResearchBestRun:
                 corr_mean=row.corr_mean,
                 mmc_mean=row.mmc_mean,
                 cwmm_mean=row.cwmm_mean,
-                updated_at=_utc_now_iso(),
+                updated_at=row.created_at,
             )
     return ResearchBestRun()
 
@@ -1095,6 +1291,8 @@ def _status_result(
         next_round_number=_as_int(state.get("next_round_number"), default=1),
         total_rounds_completed=_as_int(state.get("total_rounds_completed"), default=0),
         last_checkpoint=str(state.get("last_checkpoint") or "initialized"),
+        last_round_label=_optional_str(state.get("last_round_label")),
+        last_run_id=_optional_str(state.get("last_run_id")),
         stop_reason=_optional_str(state.get("stop_reason")),
         best_overall=best,
         agentic_research_dir=auto_dir,
@@ -1195,7 +1393,7 @@ def _latest_round_markdown(experiment: ExperimentRecord) -> str | None:
     rounds_dir = _rounds_dir(experiment)
     if not rounds_dir.is_dir():
         return None
-    candidates = [path for path in rounds_dir.glob("r*.md") if re.fullmatch(r"r\d{3}\.md", path.name)]
+    candidates = [path for path in rounds_dir.glob("r*.md") if re.fullmatch(r"r\d{3,}\.md", path.name)]
     if not candidates:
         return None
     return _read_text(sorted(candidates)[-1], limit=MAX_CONTEXT_CHARS)
@@ -1308,6 +1506,31 @@ def _write_round_notes(*, artifact_dir: Path, round_payload: dict[str, object]) 
     _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
+def _write_failure_round_markdown(
+    *,
+    artifact_dir: Path,
+    round_label: str,
+    round_payload: dict[str, object],
+) -> None:
+    error = _optional_str(round_payload.get("error")) or "unknown error"
+    lines = [
+        f"# {round_label} Research State",
+        "",
+        "## This Decision",
+        "Round skipped after error; loop continued.",
+        "",
+        "## Execution Result",
+        f"- Action: {round_payload.get('action')}",
+        f"- Status: {round_payload.get('status')}",
+        f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
+        f"- Config: {_notes_value(round_payload.get('config_path'))}",
+        f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
+        f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
+        f"- Error: {error}",
+    ]
+    _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
+
+
 def _write_llm_round_markdown(
     *,
     artifact_dir: Path,
@@ -1361,7 +1584,10 @@ def _write_failure_debug(
 
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    text = json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _write_text(path: Path, text: str) -> None:

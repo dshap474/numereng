@@ -42,6 +42,8 @@ def research_status(request: ResearchStatusRequest) -> ResearchStatusResponse:
         next_round_number=result.next_round_number,
         total_rounds_completed=result.total_rounds_completed,
         last_checkpoint=result.last_checkpoint,
+        last_round_label=result.last_round_label,
+        last_run_id=result.last_run_id,
         stop_reason=result.stop_reason,
         best_overall=_best_response(result.best_overall),
         agentic_research_dir=str(result.agentic_research_dir),

@@ -43,6 +43,8 @@ class ResearchStatusResponse(BaseModel):
     next_round_number: int
     total_rounds_completed: int
     last_checkpoint: str
+    last_round_label: str | None = None
+    last_run_id: str | None = None
     stop_reason: str | None = None
     best_overall: ResearchBestRunResponse
     agentic_research_dir: str

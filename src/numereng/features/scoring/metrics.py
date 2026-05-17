@@ -300,7 +300,14 @@ def _groupby_apply_per_era(
 def _sort_frame_by_era_stable(frame: pd.DataFrame, *, era_col: str) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
-    sort_keys = frame[era_col].map(_era_sort_key)
+    era_series = frame[era_col]
+    if pd.api.types.is_integer_dtype(era_series.dtype):
+        return frame.sort_values(era_col, kind="mergesort").reset_index(drop=True)
+    numeric_keys = pd.to_numeric(era_series, errors="coerce")
+    if numeric_keys.notna().all():
+        sort_keys = numeric_keys
+    else:
+        sort_keys = era_series.astype(str)
     sorted_frame = frame.assign(_era_sort_key__=sort_keys).sort_values("_era_sort_key__", kind="mergesort")
     return sorted_frame.drop(columns="_era_sort_key__").reset_index(drop=True)
 
