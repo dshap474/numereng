@@ -45,6 +45,19 @@ PHASES_METADATA_KEY = "agentic_research_phases"
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
 CONFIRMATION_PROMOTION_THRESHOLD = 3e-4
+ARTIFACT_ROTATION_METADATA_KEY = "agentic_research_artifact_rotation"
+ARTIFACT_ROTATION_HEAVY_NAMES: frozenset[str] = frozenset({"predictions.parquet", "meta.parquet"})
+ARTIFACT_ROTATION_HEAVY_SIZE_THRESHOLD = 1_000_000
+ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
+    {
+        "metrics.json",
+        "run.json",
+        "score_provenance.json",
+        "runtime.json",
+        "manifest.json",
+    }
+)
+ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -612,6 +625,17 @@ def _train_score_record_round(
             round_label=round_label,
             event="phase_transition",
             payload=transition_payload,
+        )
+    rotation_payload = _rotate_run_artifacts(
+        root=root, experiment=experiment, state=state, last_round_number=round_number
+    )
+    if rotation_payload is not None:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="run_artifacts_rotated",
+            payload=rotation_payload,
         )
     _save_state(experiment, state)
     return ResearchRoundResult(
@@ -2114,6 +2138,147 @@ def _write_experiment_markdown(experiment: ExperimentRecord, content: str | None
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return len(content)
+
+
+def _artifact_rotation_mode(experiment: ExperimentRecord) -> str:
+    """Return one of `disabled`, `dry_run`, `enabled`. Default is `disabled`."""
+    raw = experiment.metadata.get(ARTIFACT_ROTATION_METADATA_KEY)
+    if isinstance(raw, str) and raw in ("disabled", "dry_run", "enabled"):
+        return raw
+    return "disabled"
+
+
+def _essential_run_ids(
+    *,
+    report: ExperimentReport | None,
+    state: dict[str, object],
+    last_round_number: int,
+) -> set[str]:
+    """Compute the set of run_ids whose heavy artifacts must be preserved."""
+    essential: set[str] = set()
+    if report is not None:
+        for row in report.rows:
+            run_id = getattr(row, "run_id", None)
+            if isinstance(run_id, str):
+                essential.add(run_id)
+    confirmations = state.get("confirmations")
+    if isinstance(confirmations, dict):
+        for entry in confirmations.values():
+            if not isinstance(entry, dict):
+                continue
+            runs = entry.get("runs")
+            if isinstance(runs, dict):
+                for value in runs.values():
+                    if isinstance(value, str):
+                        essential.add(value)
+    history = state.get("phase_history")
+    if isinstance(history, list):
+        for record in history:
+            if not isinstance(record, dict):
+                continue
+            best_run = record.get("best_run_id")
+            if isinstance(best_run, str):
+                essential.add(best_run)
+    champion = state.get("confirmed_champion")
+    if isinstance(champion, dict):
+        runs = champion.get("runs")
+        if isinstance(runs, dict):
+            for value in runs.values():
+                if isinstance(value, str):
+                    essential.add(value)
+    grace_start = max(1, last_round_number - ARTIFACT_ROTATION_RECENT_ROUND_GRACE + 1)
+    signatures = state.get("tried_signatures")
+    if isinstance(signatures, list):
+        for entry in signatures:
+            if not isinstance(entry, dict):
+                continue
+            round_label = entry.get("r")
+            if not isinstance(round_label, str) or not round_label.startswith("r"):
+                continue
+            try:
+                round_num = int(round_label[1:])
+            except ValueError:
+                continue
+            if round_num < grace_start:
+                continue
+            run_id = entry.get("run_id")
+            if isinstance(run_id, str):
+                essential.add(run_id)
+    return essential
+
+
+def _heavy_artifact_targets(run_dir: Path) -> list[Path]:
+    """Return concrete files in a run dir that are eligible for rotation."""
+    if not run_dir.is_dir():
+        return []
+    targets: list[Path] = []
+    for path in run_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.name in ARTIFACT_ROTATION_PRESERVE_NAMES:
+            continue
+        if path.name in ARTIFACT_ROTATION_HEAVY_NAMES:
+            targets.append(path)
+            continue
+        if "predictions" in path.parts and path.suffix == ".parquet":
+            targets.append(path)
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        if size >= ARTIFACT_ROTATION_HEAVY_SIZE_THRESHOLD:
+            targets.append(path)
+    return targets
+
+
+def _rotate_run_artifacts(
+    *,
+    root: Path,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    last_round_number: int,
+) -> dict[str, object] | None:
+    """Prune heavy artifacts from non-essential runs.
+
+    Returns a trace payload when rotation produced action (or would have, in dry run),
+    or None when the rotation mode is disabled.
+    """
+    mode = _artifact_rotation_mode(experiment)
+    if mode == "disabled":
+        return None
+    report = _safe_report(root=root, experiment_id=experiment.experiment_id)
+    essential = _essential_run_ids(report=report, state=state, last_round_number=last_round_number)
+    runs_root = root / "runs"
+    if not runs_root.is_dir():
+        return None
+    rotated: list[str] = []
+    bytes_freed = 0
+    for run_dir in sorted(runs_root.iterdir()):
+        if not run_dir.is_dir() or run_dir.name in essential:
+            continue
+        targets = _heavy_artifact_targets(run_dir)
+        if not targets:
+            continue
+        for target in targets:
+            try:
+                bytes_freed += target.stat().st_size
+            except OSError:
+                pass
+            if mode == "enabled":
+                try:
+                    target.unlink()
+                except OSError:
+                    continue
+        rotated.append(run_dir.name)
+    if not rotated:
+        return None
+    return {
+        "mode": mode,
+        "rotated_run_ids": rotated,
+        "bytes_freed": bytes_freed,
+        "kept_count": len(essential),
+    }
 
 
 def _read_text(path: Path, *, limit: int) -> str | None:

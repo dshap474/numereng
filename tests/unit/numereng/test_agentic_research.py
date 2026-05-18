@@ -1088,6 +1088,106 @@ def test_confirmation_no_promotion_when_below_threshold() -> None:
     assert champion["parent_config"] == "config_023.json"
 
 
+def test_artifact_rotation_preserves_essential_and_prunes_others(tmp_path: Path) -> None:
+    """Essential runs (leaderboard + confirmation) keep heavy artifacts; others lose them."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_artifact_rotation": "enabled"})
+    runs_root = store_root / "runs"
+    essential_id = "run-essential"
+    confirmation_id = "run-conf"
+    non_essential_id = "run-old"
+    for run_id in (essential_id, confirmation_id, non_essential_id):
+        d = runs_root / run_id
+        d.mkdir(parents=True)
+        (d / "metrics.json").write_text("{}", encoding="utf-8")
+        (d / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+
+    report = _report(_row(essential_id, 0.9))
+    state: dict[str, object] = {
+        "confirmations": {
+            "config_005.json": {
+                "runs": {"42": confirmation_id, "17": "missing-1", "99": "missing-2"},
+            }
+        },
+        "tried_signatures": [],
+    }
+    experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    import numereng.features.agentic_research.run as research_module_alias
+
+    research_module_alias._safe_report = lambda **_: report  # type: ignore[assignment]
+    try:
+        payload = research_module._rotate_run_artifacts(
+            root=store_root,
+            experiment=experiment_record,
+            state=state,
+            last_round_number=50,
+        )
+    finally:
+        del research_module_alias._safe_report
+
+    assert payload is not None
+    assert non_essential_id in payload["rotated_run_ids"]
+    assert essential_id not in payload["rotated_run_ids"]
+    assert confirmation_id not in payload["rotated_run_ids"]
+    assert (runs_root / non_essential_id / "predictions.parquet").exists() is False
+    assert (runs_root / non_essential_id / "metrics.json").exists() is True
+    assert (runs_root / essential_id / "predictions.parquet").exists() is True
+    assert (runs_root / confirmation_id / "predictions.parquet").exists() is True
+
+
+def test_artifact_rotation_dry_run_does_not_delete(tmp_path: Path) -> None:
+    """dry_run mode emits payload describing what WOULD rotate, but files remain intact."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_artifact_rotation": "dry_run"})
+    run_dir = store_root / "runs" / "run-x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+    (run_dir / "metrics.json").write_text("{}", encoding="utf-8")
+
+    experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    import numereng.features.agentic_research.run as research_module_alias
+
+    research_module_alias._safe_report = lambda **_: None  # type: ignore[assignment]
+    try:
+        payload = research_module._rotate_run_artifacts(
+            root=store_root,
+            experiment=experiment_record,
+            state={},
+            last_round_number=50,
+        )
+    finally:
+        del research_module_alias._safe_report
+
+    assert payload is not None
+    assert payload["mode"] == "dry_run"
+    assert "run-x" in payload["rotated_run_ids"]
+    assert (run_dir / "predictions.parquet").exists() is True
+
+
+def test_artifact_rotation_disabled_returns_none(tmp_path: Path) -> None:
+    """Default mode (disabled) skips rotation entirely."""
+    store_root = tmp_path / ".numereng"
+    create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    run_dir = store_root / "runs" / "run-x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+
+    experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    payload = research_module._rotate_run_artifacts(
+        root=store_root,
+        experiment=experiment_record,
+        state={},
+        last_round_number=50,
+    )
+    assert payload is None
+    assert (run_dir / "predictions.parquet").exists() is True
+
+
 def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
     """_extract_signature reads config; _append_tried_signature caps the window."""
     config_path = tmp_path / "configs" / "config_001.json"
