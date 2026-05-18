@@ -1088,6 +1088,66 @@ def test_confirmation_no_promotion_when_below_threshold() -> None:
     assert champion["parent_config"] == "config_023.json"
 
 
+def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
+    """_extract_signature reads config; _append_tried_signature caps the window."""
+    config_path = tmp_path / "configs" / "config_001.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "data": {
+                    "data_version": "v5.2",
+                    "dataset_variant": "non_downsampled",
+                    "target_col": "target_alpha_60",
+                },
+                "model": {
+                    "type": "LGBMRegressor",
+                    "params": {
+                        "learning_rate": 0.03,
+                        "n_estimators": 300,
+                        "max_depth": 3,
+                        "num_leaves": 8,
+                        "colsample_bytree": 0.7,
+                        "min_child_samples": 100,
+                        "random_state": 42,
+                    },
+                },
+                "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    sig = research_module._extract_signature(
+        config_path=config_path,
+        round_label="r001",
+        run_id="run-abc",
+        primary_metric=0.003079,
+        action="run",
+    )
+    assert sig == {
+        "r": "r001",
+        "run_id": "run-abc",
+        "action": "run",
+        "primary": 0.003079,
+        "target": "target_alpha_60",
+        "lr": 0.03,
+        "n": 300,
+        "depth": 3,
+        "leaves": 8,
+        "cs": 0.7,
+        "mcs": 100,
+        "seed": 42,
+    }
+
+    state: dict[str, object] = {}
+    for i in range(105):
+        research_module._append_tried_signature(state, {"r": f"r{i:03d}"})
+    sigs = cast(list[dict[str, object]], state["tried_signatures"])
+    assert len(sigs) == 100
+    assert sigs[0]["r"] == "r005"
+    assert sigs[-1]["r"] == "r104"
+
+
 def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None:
     """With require_confirmed_champion=True and a champion in the current phase, transition fires."""
     cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))

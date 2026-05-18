@@ -555,6 +555,16 @@ def _train_score_record_round(
         _update_phase_progress(state=state, metric_value=float(metric_value))
     else:
         _update_phase_progress(state=state, metric_value=None)
+    _append_tried_signature(
+        state,
+        _extract_signature(
+            config_path=config_path,
+            round_label=round_label,
+            run_id=trained.run_id,
+            primary_metric=float(metric_value) if isinstance(metric_value, (int, float)) else None,
+            action=action,
+        ),
+    )
     if _is_confirmation_round(decision_payload):
         parent_config = str(decision_payload.get("parent_config"))
         changes_list = decision_payload.get("changes")
@@ -760,6 +770,7 @@ def _build_context(
         "cost_summary": _cost_summary(state),
         "confirmations": _recent_confirmations(state, limit=30),
         "confirmed_champion": state.get("confirmed_champion"),
+        "tried_signatures": state.get("tried_signatures", []),
         "state": state,
         "configs": _config_context(experiment),
         "report": _report_context(report),
@@ -1348,6 +1359,52 @@ def _accumulate_phase_cost(state: dict[str, object], seconds: float) -> None:
     bucket["total_seconds"] = float(bucket.get("total_seconds", 0.0)) + max(0.0, seconds)
     totals[phase] = bucket
     state["phase_cost_totals"] = totals
+
+
+TRIED_SIGNATURES_WINDOW = 100
+
+
+def _extract_signature(
+    *,
+    config_path: Path,
+    round_label: str,
+    run_id: str | None,
+    primary_metric: float | None,
+    action: str,
+) -> dict[str, object]:
+    """Compact per-round summary the LLM consults instead of carrying a ledger in the memo."""
+    sig: dict[str, object] = {
+        "r": round_label,
+        "run_id": run_id,
+        "action": action,
+        "primary": primary_metric,
+    }
+    try:
+        payload = load_training_config_json(config_path)
+    except Exception:
+        return sig
+    data_section = payload.get("data") if isinstance(payload, dict) else None
+    model_section = payload.get("model") if isinstance(payload, dict) else None
+    params_section = model_section.get("params") if isinstance(model_section, dict) else None
+    if isinstance(data_section, dict):
+        sig["target"] = data_section.get("target_col")
+    if isinstance(params_section, dict):
+        sig["lr"] = params_section.get("learning_rate")
+        sig["n"] = params_section.get("n_estimators")
+        sig["depth"] = params_section.get("max_depth")
+        sig["leaves"] = params_section.get("num_leaves")
+        sig["cs"] = params_section.get("colsample_bytree")
+        sig["mcs"] = params_section.get("min_child_samples")
+        sig["seed"] = params_section.get("random_state")
+    return sig
+
+
+def _append_tried_signature(state: dict[str, object], signature: dict[str, object]) -> None:
+    signatures = state.get("tried_signatures")
+    if not isinstance(signatures, list):
+        signatures = []
+    signatures.append(signature)
+    state["tried_signatures"] = signatures[-TRIED_SIGNATURES_WINDOW:]
 
 
 def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
