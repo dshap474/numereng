@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -40,6 +41,8 @@ CUSTOM_PROGRAM_DIR = Path(__file__).with_name("custom_programs")
 PROGRAM_METADATA_KEY = "agentic_research_program"
 ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
+PHASES_METADATA_KEY = "agentic_research_phases"
+PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -363,14 +366,24 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             experiment=experiment,
             round_label=round_label,
             decision=decision,
+            state=state,
         )
     except Exception as exc:
+        message = str(exc)
+        if message.startswith("agentic_research_change_value_out_of_range:"):
+            _append_trace(
+                experiment,
+                round_number=round_number,
+                round_label=round_label,
+                event="caps_violation_rejected",
+                payload={"phase": _optional_str(state.get("phase")), "error": message},
+            )
         _append_trace(
             experiment,
             round_number=round_number,
             round_label=round_label,
             event="config_materialization_failed",
-            payload={"decision": decision_payload, "error": str(exc)},
+            payload={"decision": decision_payload, "error": message},
         )
         raise
     _append_trace(
@@ -481,6 +494,7 @@ def _train_score_record_round(
     round_markdown: str | None = None,
 ) -> ResearchRoundResult:
     _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
+    round_started_at = time.monotonic()
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
     with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
@@ -490,6 +504,7 @@ def _train_score_record_round(
             round=round_label,
             stage=SCORING_STAGE,
         )
+    round_seconds = max(0.0, time.monotonic() - round_started_at)
 
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     row = _row_for_run(report, trained.run_id)
@@ -508,6 +523,7 @@ def _train_score_record_round(
         "learning": learning,
         "decision": decision_payload,
         "completed_at": _utc_now_iso(),
+        "wall_time_seconds": round_seconds,
     }
     if round_markdown is None:
         _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
@@ -532,6 +548,20 @@ def _train_score_record_round(
             "updated_at": _utc_now_iso(),
         }
     )
+    _accumulate_phase_cost(state, round_seconds)
+    if metric_value is not None and isinstance(metric_value, (int, float)):
+        _update_phase_progress(state=state, metric_value=float(metric_value))
+    else:
+        _update_phase_progress(state=state, metric_value=None)
+    transition_payload = _maybe_transition_phase(experiment=experiment, state=state, round_number=round_number)
+    if transition_payload is not None:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="phase_transition",
+            payload=transition_payload,
+        )
     _save_state(experiment, state)
     return ResearchRoundResult(
         round_number=round_number,
@@ -665,6 +695,7 @@ def _build_context(
     report: ExperimentReport | None,
     state: dict[str, object],
 ) -> dict[str, object]:
+    phase_caps = _current_phase_caps(experiment=experiment, state=state)
     return {
         "objective": {
             "primary_metric": PRIMARY_METRIC_FIELD,
@@ -682,6 +713,10 @@ def _build_context(
             "champion_run_id": experiment.champion_run_id,
             "run_count": len(experiment.runs),
         },
+        "phase": state.get("phase"),
+        "phase_history": state.get("phase_history", []),
+        "phase_value_caps": {path: list(bounds) for path, bounds in phase_caps.items()},
+        "cost_summary": _cost_summary(state),
         "state": state,
         "configs": _config_context(experiment),
         "report": _report_context(report),
@@ -946,13 +981,23 @@ def _parse_change(payload: object) -> ResearchChange:
     )
 
 
-def _materialize_decision_config(*, experiment: ExperimentRecord, round_label: str, decision: ResearchDecision) -> Path:
+def _materialize_decision_config(
+    *,
+    experiment: ExperimentRecord,
+    round_label: str,
+    decision: ResearchDecision,
+    state: dict[str, object] | None = None,
+) -> Path:
     config_dir = experiment.manifest_path.parent / "configs"
     parent_path = config_dir / str(decision.parent_config)
     if not parent_path.is_file():
         raise AgenticResearchValidationError(f"agentic_research_parent_config_not_found:{decision.parent_config}")
     allowed_paths = _program_allowed_paths(experiment)
-    value_caps = _program_value_caps(experiment)
+    value_caps = (
+        _current_phase_caps(experiment=experiment, state=state)
+        if state is not None
+        else _program_value_caps(experiment)
+    )
     for change in decision.changes:
         if not _matches_any_path(change.path, allowed_paths):
             raise AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{change.path}")
@@ -1087,6 +1132,10 @@ def _program_allowed_paths(experiment: ExperimentRecord) -> tuple[str, ...]:
 
 def _program_value_caps(experiment: ExperimentRecord) -> dict[str, tuple[float, float]]:
     raw = experiment.metadata.get(VALUE_CAPS_METADATA_KEY)
+    return _parse_value_caps(raw)
+
+
+def _parse_value_caps(raw: object) -> dict[str, tuple[float, float]]:
     if not isinstance(raw, dict):
         return {}
     caps: dict[str, tuple[float, float]] = {}
@@ -1102,6 +1151,185 @@ def _program_value_caps(experiment: ExperimentRecord) -> dict[str, tuple[float, 
             continue
         caps[key.strip()] = (float(lo), float(hi))
     return caps
+
+
+def _phases_config(experiment: ExperimentRecord) -> dict[str, object] | None:
+    raw = experiment.metadata.get(PHASES_METADATA_KEY)
+    if not isinstance(raw, dict) or not raw:
+        return None
+    return cast(dict[str, object], raw)
+
+
+def _phase_spec(phases_config: dict[str, object], phase: str) -> dict[str, object] | None:
+    spec = phases_config.get(phase)
+    return cast(dict[str, object], spec) if isinstance(spec, dict) else None
+
+
+def _initial_phase(phases_config: dict[str, object]) -> str | None:
+    initial = phases_config.get("initial_phase")
+    if isinstance(initial, str) and initial in phases_config:
+        return initial
+    for key in phases_config:
+        if key == "initial_phase":
+            continue
+        if isinstance(phases_config[key], dict):
+            return key
+    return None
+
+
+def _current_phase_caps(*, experiment: ExperimentRecord, state: dict[str, object]) -> dict[str, tuple[float, float]]:
+    phases_config = _phases_config(experiment)
+    if phases_config is None:
+        return _program_value_caps(experiment)
+    phase = _optional_str(state.get("phase"))
+    if phase is None:
+        return _program_value_caps(experiment)
+    spec = _phase_spec(phases_config, phase)
+    if spec is None:
+        return _program_value_caps(experiment)
+    return _parse_value_caps(spec.get("value_caps"))
+
+
+def _phase_transition_spec(*, experiment: ExperimentRecord, state: dict[str, object]) -> dict[str, object] | None:
+    phases_config = _phases_config(experiment)
+    if phases_config is None:
+        return None
+    phase = _optional_str(state.get("phase"))
+    if phase is None:
+        return None
+    spec = _phase_spec(phases_config, phase)
+    if spec is None:
+        return None
+    transition = spec.get("transition")
+    return cast(dict[str, object], transition) if isinstance(transition, dict) else None
+
+
+def _update_phase_progress(*, state: dict[str, object], metric_value: float | None) -> None:
+    if "phase" not in state:
+        return
+    if metric_value is None:
+        state["phase_plateau_counter"] = _as_int(state.get("phase_plateau_counter"), default=0) + 1
+        return
+    current_best = state.get("phase_best_metric")
+    threshold = PHASE_IMPROVEMENT_THRESHOLD
+    improved = current_best is None or (
+        isinstance(current_best, (int, float)) and metric_value > float(current_best) + threshold
+    )
+    if improved:
+        state["phase_best_metric"] = float(metric_value)
+        state["phase_plateau_counter"] = 0
+    else:
+        state["phase_plateau_counter"] = _as_int(state.get("phase_plateau_counter"), default=0) + 1
+
+
+def _phase_has_confirmed_champion(state: dict[str, object], phase: str) -> bool:
+    confirmations = state.get("confirmations")
+    if not isinstance(confirmations, dict):
+        return False
+    for value in confirmations.values():
+        if not isinstance(value, dict):
+            continue
+        if value.get("promoted_in_phase") == phase:
+            return True
+    return False
+
+
+def _maybe_transition_phase(
+    *, experiment: ExperimentRecord, state: dict[str, object], round_number: int
+) -> dict[str, object] | None:
+    """Evaluate the phase-transition predicate; mutate state if it fires.
+
+    Returns a trace payload when a transition (or terminal stop) fires, otherwise None.
+    """
+    transition = _phase_transition_spec(experiment=experiment, state=state)
+    if transition is None:
+        return None
+    current_phase = _optional_str(state.get("phase"))
+    if current_phase is None:
+        return None
+
+    min_rounds = _as_int(transition.get("min_rounds_in_phase"), default=0)
+    plateau_threshold = _as_int(transition.get("plateau_threshold"), default=0)
+    require_champion = bool(transition.get("require_confirmed_champion", False))
+    is_terminal = bool(transition.get("is_terminal", False))
+
+    rounds_in_phase = round_number - _as_int(state.get("phase_round_start"), default=1) + 1
+    plateau = _as_int(state.get("phase_plateau_counter"), default=0)
+    champion_ok = (not require_champion) or _phase_has_confirmed_champion(state, current_phase)
+    if rounds_in_phase < min_rounds or plateau < plateau_threshold or not champion_ok:
+        return None
+
+    history_record: dict[str, object] = {
+        "phase": current_phase,
+        "started_round": _as_int(state.get("phase_round_start"), default=1),
+        "ended_round": round_number,
+        "exit_reason": "all_phases_done" if is_terminal else "phase_transition",
+        "best_metric": state.get("phase_best_metric"),
+        "rounds_in_phase": rounds_in_phase,
+    }
+    history = state.get("phase_history")
+    if not isinstance(history, list):
+        history = []
+    history.append(history_record)
+    state["phase_history"] = history
+
+    if is_terminal:
+        state["status"] = "stopped"
+        state["stop_reason"] = f"all_phases_done:{current_phase}_plateau"
+        state["last_checkpoint"] = "all_phases_done"
+        return {"transition": "terminal", "from": current_phase, "to": None}
+
+    phases_config = _phases_config(experiment)
+    spec = _phase_spec(phases_config, current_phase) if phases_config else None
+    next_phase = spec.get("next_phase") if spec else None
+    if not isinstance(next_phase, str) or next_phase not in (phases_config or {}):
+        return None
+
+    state["phase"] = next_phase
+    state["phase_round_start"] = round_number + 1
+    state["phase_best_metric"] = None
+    state["phase_plateau_counter"] = 0
+    return {"transition": "phase_change", "from": current_phase, "to": next_phase}
+
+
+def _accumulate_phase_cost(state: dict[str, object], seconds: float) -> None:
+    if "phase" not in state:
+        return
+    phase = _optional_str(state.get("phase")) or "unknown"
+    totals = state.get("phase_cost_totals")
+    if not isinstance(totals, dict):
+        totals = {}
+    bucket_raw = totals.get(phase)
+    bucket: dict[str, float] = bucket_raw if isinstance(bucket_raw, dict) else {}
+    bucket["rounds"] = float(bucket.get("rounds", 0)) + 1
+    bucket["total_seconds"] = float(bucket.get("total_seconds", 0.0)) + max(0.0, seconds)
+    totals[phase] = bucket
+    state["phase_cost_totals"] = totals
+
+
+def _cost_summary(state: dict[str, object]) -> dict[str, object]:
+    totals_raw = state.get("phase_cost_totals")
+    totals: dict[str, dict[str, float]] = {}
+    grand_rounds = 0.0
+    grand_seconds = 0.0
+    if isinstance(totals_raw, dict):
+        for phase, bucket in totals_raw.items():
+            if not isinstance(bucket, dict):
+                continue
+            rounds = float(bucket.get("rounds", 0))
+            seconds = float(bucket.get("total_seconds", 0.0))
+            totals[str(phase)] = {
+                "rounds": rounds,
+                "total_seconds": seconds,
+                "avg_seconds": (seconds / rounds) if rounds else 0.0,
+            }
+            grand_rounds += rounds
+            grand_seconds += seconds
+    return {
+        "total_rounds": grand_rounds,
+        "total_seconds": grand_seconds,
+        "by_phase": totals,
+    }
 
 
 def _config_context(experiment: ExperimentRecord) -> list[dict[str, object]]:
@@ -1302,7 +1530,7 @@ def _extract_json_object(text: str) -> dict[str, object]:
 
 def _initial_state(experiment: ExperimentRecord) -> dict[str, object]:
     now = _utc_now_iso()
-    return {
+    state: dict[str, object] = {
         "schema_version": 1,
         "experiment_id": experiment.experiment_id,
         "status": "initialized",
@@ -1314,6 +1542,17 @@ def _initial_state(experiment: ExperimentRecord) -> dict[str, object]:
         "created_at": now,
         "updated_at": now,
     }
+    phases_config = _phases_config(experiment)
+    if phases_config is not None:
+        initial_phase = _initial_phase(phases_config)
+        if initial_phase is not None:
+            state["phase"] = initial_phase
+            state["phase_round_start"] = 1
+            state["phase_best_metric"] = None
+            state["phase_plateau_counter"] = 0
+            state["phase_history"] = []
+            state["phase_cost_totals"] = {}
+    return state
 
 
 def _status_result(
@@ -1387,7 +1626,9 @@ def _status_value(value: object) -> ResearchStatus:
 
 def _stopped_by_llm(state: dict[str, object]) -> bool:
     stop_reason = _optional_str(state.get("stop_reason")) or ""
-    return _status_value(state.get("status")) == "stopped" and stop_reason.startswith("llm_stop:")
+    if _status_value(state.get("status")) != "stopped":
+        return False
+    return stop_reason.startswith("llm_stop:") or stop_reason.startswith("all_phases_done:")
 
 
 def _agentic_dir(experiment: ExperimentRecord) -> Path:

@@ -807,3 +807,183 @@ def test_parse_llm_response_requires_round_markdown() -> None:
                 }
             )
         )
+
+
+_SHALLOW_PHASES_CONFIG: dict[str, object] = {
+    "initial_phase": "shallow",
+    "shallow": {
+        "value_caps": {
+            "model.params.n_estimators": [25, 300],
+            "model.params.max_depth": [2, 3],
+        },
+        "transition": {
+            "min_rounds_in_phase": 2,
+            "plateau_threshold": 2,
+            "require_confirmed_champion": False,
+        },
+        "next_phase": "medium",
+    },
+    "medium": {
+        "value_caps": {
+            "model.params.n_estimators": [250, 3000],
+            "model.params.max_depth": [3, 6],
+        },
+        "transition": {
+            "min_rounds_in_phase": 10,
+            "plateau_threshold": 10,
+            "is_terminal": True,
+        },
+    },
+}
+
+
+def test_phase_transition_fires_when_predicate_met() -> None:
+    """Plateau + min_rounds reached → phase transitions to next_phase."""
+    experiment_metadata = {"agentic_research_phases": _SHALLOW_PHASES_CONFIG}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.001,
+        "phase_plateau_counter": 2,
+        "phase_history": [],
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+    )
+    assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}
+    assert state["phase"] == "medium"
+    assert state["phase_round_start"] == 4
+    assert state["phase_best_metric"] is None
+    assert state["phase_plateau_counter"] == 0
+    history = state["phase_history"]
+    assert isinstance(history, list) and len(history) == 1
+    assert history[0]["exit_reason"] == "phase_transition"
+
+
+def test_phase_transition_blocked_when_no_confirmed_champion() -> None:
+    """Same predicate but require_confirmed_champion=True with no confirmations → no transition."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    cfg["shallow"]["transition"]["require_confirmed_champion"] = True
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.001,
+        "phase_plateau_counter": 2,
+        "phase_history": [],
+        "confirmations": {},
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+    )
+    assert payload is None
+    assert state["phase"] == "shallow"
+    assert state["phase_history"] == []
+
+
+def test_terminal_phase_stop_emits_all_phases_done() -> None:
+    """Predicate satisfied in a phase marked is_terminal → state stops with all_phases_done reason."""
+    experiment_metadata = {"agentic_research_phases": _SHALLOW_PHASES_CONFIG}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "medium",
+        "phase_round_start": 4,
+        "phase_best_metric": 0.003,
+        "phase_plateau_counter": 10,
+        "phase_history": [],
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=13,
+    )
+    assert payload == {"transition": "terminal", "from": "medium", "to": None}
+    assert state["status"] == "stopped"
+    assert state["stop_reason"] == "all_phases_done:medium_plateau"
+    history = state["phase_history"]
+    assert isinstance(history, list) and len(history) == 1
+    assert history[0]["exit_reason"] == "all_phases_done"
+
+
+def test_caps_violation_rejected_emits_trace_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LLM proposes a value outside the current phase's caps → trace records caps_violation_rejected."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_phases": _SHALLOW_PHASES_CONFIG})
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    reports = [
+        _report(_row("run-0", 0.10)),
+    ]
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: reports.pop(0) if reports else _report(_row("run-0", 0.10)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "Probe deep n_estimators.",
+                    "belief_update": "Need a wider tree count.",
+                    "next_hypothesis": "Larger n_estimators improves BMC.",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.n_estimators", "value": 5000, "reason": "probe"}],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-x",
+            predictions_path=store_root / "runs" / "run-x" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-x" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_core",
+            run_ids=("run-x",),
+        ),
+    )
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    assert result.rounds[0].status == "failed"
+
+    trace_path = experiment.manifest_path.parent / "agentic_research" / "trace.jsonl"
+    events = _trace_events(trace_path)
+    caps_events = [e for e in events if e["event"] == "caps_violation_rejected"]
+    assert len(caps_events) == 1
+    payload = cast(dict[str, object], caps_events[0]["payload"])
+    assert payload["phase"] == "shallow"
+    assert "model.params.n_estimators" in str(payload["error"])
