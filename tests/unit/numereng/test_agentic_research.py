@@ -518,6 +518,53 @@ def test_record_round_config_in_run_plan_is_idempotent(tmp_path: Path) -> None:
     assert rows[0]["config_path"] == str(config_path)
 
 
+def test_run_plan_recorded_before_score_experiment_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """score_experiment_round resolves the round via run_plan.csv; the row must exist when it runs.
+
+    Regression for the ordering bug where _record_round_config_in_run_plan was called after
+    score_experiment_round, causing experiment_round_not_found:rNNN failures because
+    configs/config_NNN.json doesn't match the score fallback glob configs/rNNN_*.json.
+    """
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    run_plan_path = experiment.manifest_path.parent / "run_plan.csv"
+
+    seen_rounds: list[str] = []
+
+    def _score_spy(**kwargs: object) -> ExperimentScoreRoundResult:
+        round_label = cast(str, kwargs["round"])
+        assert run_plan_path.is_file(), "run_plan.csv must exist when score_experiment_round runs"
+        rows = _run_plan_rows(run_plan_path)
+        assert any(row["round"] == round_label for row in rows), (
+            f"run_plan.csv must contain {round_label} when score_experiment_round runs; "
+            f"got rounds {[r['round'] for r in rows]}"
+        )
+        seen_rounds.append(round_label)
+        return ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID, round=round_label, stage="post_training_core", run_ids=("run-1",)
+        )
+
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-1", 0.12)))
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-1",
+            predictions_path=store_root / "runs" / "run-1" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-1" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(research_module, "score_experiment_round", _score_spy)
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    assert seen_rounds == ["r001"]
+
+
 def test_context_includes_only_latest_round_markdown(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")

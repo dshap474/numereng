@@ -516,6 +516,9 @@ def _train_score_record_round(
     round_started_at = time.monotonic()
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
+    # Must run before score_experiment_round: score reads run_plan.csv to resolve
+    # the round's configs (configs/config_NNN.json does not match the fallback glob).
+    _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
         score_experiment_round(
             store_root=root,
@@ -524,7 +527,6 @@ def _train_score_record_round(
             stage=SCORING_STAGE,
         )
     round_seconds = max(0.0, time.monotonic() - round_started_at)
-    _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
 
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     row = _row_for_run(report, trained.run_id)
