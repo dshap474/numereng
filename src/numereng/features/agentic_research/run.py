@@ -58,6 +58,7 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
     }
 )
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
+CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -560,6 +561,7 @@ def _train_score_record_round(
             "last_round_label": round_label,
             "last_run_id": trained.run_id,
             "best_overall": asdict(best),
+            "failed_rounds_counter": 0,
             "updated_at": _utc_now_iso(),
         }
     )
@@ -740,15 +742,28 @@ def _record_failed_round(
         round_label=round_label,
         round_payload=payload,
     )
+    failures = _as_int(state.get("failed_rounds_counter"), default=0) + 1
     state.update(
         {
             "status": "running",
             "next_round_number": round_number + 1,
             "last_checkpoint": "round_failed",
             "last_error": message,
+            "failed_rounds_counter": failures,
             "updated_at": _utc_now_iso(),
         }
     )
+    if failures >= CONSECUTIVE_FAILURE_BAIL_THRESHOLD:
+        state["status"] = "stopped"
+        state["stop_reason"] = f"consecutive_failures:{failures}"
+        state["last_checkpoint"] = "consecutive_failures_bail"
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="round_failed_with_retry_exhausted",
+            payload={"failed_rounds_counter": failures, "threshold": CONSECUTIVE_FAILURE_BAIL_THRESHOLD},
+        )
     _save_state(experiment, state)
     return ResearchRoundResult(
         round_number=round_number,
@@ -1876,7 +1891,11 @@ def _stopped_by_llm(state: dict[str, object]) -> bool:
     stop_reason = _optional_str(state.get("stop_reason")) or ""
     if _status_value(state.get("status")) != "stopped":
         return False
-    return stop_reason.startswith("llm_stop:") or stop_reason.startswith("all_phases_done:")
+    return (
+        stop_reason.startswith("llm_stop:")
+        or stop_reason.startswith("all_phases_done:")
+        or stop_reason.startswith("consecutive_failures:")
+    )
 
 
 def _agentic_dir(experiment: ExperimentRecord) -> Path:

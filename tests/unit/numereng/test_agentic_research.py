@@ -1088,6 +1088,42 @@ def test_confirmation_no_promotion_when_below_threshold() -> None:
     assert champion["parent_config"] == "config_023.json"
 
 
+def test_consecutive_failures_bail_after_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After CONSECUTIVE_FAILURE_BAIL_THRESHOLD failed rounds in a row, the loop stops."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-0", 0.10)),
+    )
+
+    def _fail(**_):
+        raise research_module.AgenticResearchValidationError("agentic_research_test_failure")
+
+    monkeypatch.setattr(research_module, "_call_research_llm", _fail)
+
+    result = run_research(
+        store_root=store_root,
+        experiment_id=EXPERIMENT_ID,
+        max_rounds=research_module.CONSECUTIVE_FAILURE_BAIL_THRESHOLD + 3,
+    )
+    assert result.stop_reason is not None
+    assert result.stop_reason.startswith("consecutive_failures:")
+    assert len(result.rounds) == research_module.CONSECUTIVE_FAILURE_BAIL_THRESHOLD
+
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    bail_events = [e for e in trace if e["event"] == "round_failed_with_retry_exhausted"]
+    assert len(bail_events) == 1
+    payload = cast(dict[str, object], bail_events[0]["payload"])
+    assert payload["failed_rounds_counter"] == research_module.CONSECUTIVE_FAILURE_BAIL_THRESHOLD
+
+
 def test_artifact_rotation_preserves_essential_and_prunes_others(tmp_path: Path) -> None:
     """Essential runs (leaderboard + confirmation) keep heavy artifacts; others lose them."""
     store_root = tmp_path / ".numereng"
