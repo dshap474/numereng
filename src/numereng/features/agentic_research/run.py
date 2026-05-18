@@ -170,6 +170,7 @@ class ResearchLLMResponse:
 
     decision: ResearchDecision
     round_markdown: str
+    experiment_markdown: str | None
 
 
 def get_research_status(
@@ -327,6 +328,14 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         round_label=round_label,
         event="decision_parsed",
         payload={"decision": decision_payload},
+    )
+    bytes_written = _write_experiment_markdown(experiment, llm_response.experiment_markdown)
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="experiment_markdown_updated",
+        payload={"bytes_written": bytes_written},
     )
 
     if decision.action == "stop":
@@ -678,7 +687,7 @@ def _build_context(
         "report": _report_context(report),
         "recent_rounds": _recent_decisions(_decision_log_path(experiment), limit=8),
         "latest_round_markdown": _latest_round_markdown(experiment),
-        "experiment_notes": _read_text(experiment.manifest_path.parent / "EXPERIMENT.md", limit=MAX_CONTEXT_CHARS),
+        "experiment_notes": _read_text(_experiment_markdown_path(experiment), limit=MAX_CONTEXT_CHARS),
         "research_memory": _read_text(root / "notes" / "__RESEARCH_MEMORY__" / "CURRENT.md", limit=MAX_CONTEXT_CHARS),
     }
 
@@ -816,9 +825,13 @@ def _parse_llm_response(raw_response: str) -> ResearchLLMResponse:
     decision_form = payload.get("decision_form")
     if not isinstance(decision_form, dict):
         raise AgenticResearchValidationError("agentic_research_decision_form_missing")
+    experiment_markdown_raw = payload.get("experiment_markdown")
+    if experiment_markdown_raw is not None and not isinstance(experiment_markdown_raw, str):
+        raise AgenticResearchValidationError("agentic_research_experiment_markdown_invalid")
     return ResearchLLMResponse(
         decision=_parse_decision_object(cast(dict[str, object], decision_form)),
         round_markdown=_required_str(payload, "round_markdown"),
+        experiment_markdown=experiment_markdown_raw,
     )
 
 
@@ -912,8 +925,9 @@ def _llm_response_schema() -> dict[str, object]:
         "properties": {
             "decision_form": decision_schema,
             "round_markdown": {"type": "string"},
+            "experiment_markdown": {"type": ["string", "null"]},
         },
-        "required": ["decision_form", "round_markdown"],
+        "required": ["decision_form", "round_markdown", "experiment_markdown"],
         "additionalProperties": False,
     }
 
@@ -1617,6 +1631,24 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _experiment_markdown_path(experiment: ExperimentRecord) -> Path:
+    return experiment.manifest_path.parent / "EXPERIMENT.md"
+
+
+def _write_experiment_markdown(experiment: ExperimentRecord, content: str | None) -> int:
+    """Overwrite the experiment-level EXPERIMENT.md curated by the agent.
+
+    Returns the number of bytes written. If `content` is missing or empty, the
+    prior file is left untouched and 0 is returned.
+    """
+    if not content:
+        return 0
+    path = _experiment_markdown_path(experiment)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return len(content)
 
 
 def _read_text(path: Path, *, limit: int) -> str | None:

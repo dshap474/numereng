@@ -152,10 +152,56 @@ The memo can grow but should stay information-dense, not log-style. Drop any pro
 stronger finding has subsumed. Python will append an `Execution Result` section after the
 deterministic run or stop is recorded.
 
+## Curated EXPERIMENT.md (Working Memory)
+
+The context includes `experiment_notes`, which is the **current** `EXPERIMENT.md` — your
+curated, bounded working memory. Each round you also return `experiment_markdown`, which
+overwrites this file. It is the only structural document that persists between rounds beyond
+the rolling memo.
+
+The two documents play different roles. Do not duplicate content between them:
+
+| File | Role | Lifespan |
+| --- | --- | --- |
+| `round_markdown` (rNNN.md) | Contemporaneous record of round N: what was tried, what was learned, the decision rationale. | Frozen after write; one file per round. |
+| `experiment_markdown` (EXPERIMENT.md) | Living model of the experiment: only what would change the next decision. | Overwritten each round; bounded size. |
+
+**Required sections in `experiment_markdown`** (in this order):
+
+1. **Champion State** — current 3-seed-confirmed champion (if any), its config, and the
+   confirmation threshold for new candidates.
+2. **Active Beliefs** — confirmed claims that constrain future decisions. Each bullet must
+   cite the evidence (round IDs or run IDs) that supports it. ≤ 8 bullets.
+3. **Closed Hypotheses** — disproven directions. Each bullet states what was tested, what
+   the disconfirming evidence was, and why it should not be retried. ≤ 8 bullets.
+4. **Open Frontiers** — directions worth probing that have not yet been resolved. Each bullet
+   names the hypothesis and the next concrete test. ≤ 5 bullets.
+5. **Anti-Patterns** — configs or hypothesis classes that have been definitively ruled out
+   (e.g., harmful regularizers, ranges that consistently underperform). ≤ 5 bullets.
+
+**Eviction rule:** an item stays iff it would change the next config decision. If a bullet no
+longer affects future choices (e.g., a belief about a deprecated target route), evict it. The
+durable audit trail lives in `trace.jsonl` and `rounds/*.md` — `EXPERIMENT.md` is not the
+archive, it is the working set.
+
+**Curation discipline:**
+
+- Each bullet must be one sentence or two short clauses; no prose paragraphs.
+- Do not narrate the current round; that belongs in `round_markdown`.
+- Promote a finding into `Active Beliefs` only after the same direction has been seen in
+  ≥ 2 rounds OR confirmed across the seed trio.
+- Mark superseded items as `[superseded by rNNN]` rather than silently deleting if the
+  supersession is recent (last 5 rounds). After that, evict cleanly.
+- Hard size cap: keep `experiment_markdown` under 4000 characters. If you cannot fit, you are
+  retaining stale items — evict more aggressively.
+
+If you have nothing new to curate this round, return `experiment_markdown: null` and the prior
+file is preserved unchanged. Do not echo the prior content as a no-op — null means "no update."
+
 ## Output
 
 Return exactly one JSON object conforming to the provided schema. The top-level fields are
-`decision_form` and `round_markdown`.
+`decision_form`, `round_markdown`, and `experiment_markdown`.
 
 For a new run:
 
@@ -176,7 +222,8 @@ For a new run:
     ],
     "stop_reason": null
   },
-  "round_markdown": "# rNNN Research State\n\n..."
+  "round_markdown": "# rNNN Research State\n\n...",
+  "experiment_markdown": "# Champion State\n...\n\n# Active Beliefs\n- ...\n"
 }
 ```
 
@@ -193,7 +240,8 @@ To stop:
     "changes": [],
     "stop_reason": "Why no next run is justified."
   },
-  "round_markdown": "# rNNN Research State\n\n..."
+  "round_markdown": "# rNNN Research State\n\n...",
+  "experiment_markdown": "# Champion State\n...\n\n# Active Beliefs\n- ...\n"
 }
 ```
 

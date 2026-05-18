@@ -63,8 +63,19 @@ def _row(run_id: str, value: float) -> ExperimentReportRow:
     )
 
 
-def _llm_response(decision_form: dict[str, object], *, round_markdown: str = "# r001 Research State\n\nMemo.") -> str:
-    return json.dumps({"decision_form": decision_form, "round_markdown": round_markdown})
+def _llm_response(
+    decision_form: dict[str, object],
+    *,
+    round_markdown: str = "# r001 Research State\n\nMemo.",
+    experiment_markdown: str | None = None,
+) -> str:
+    return json.dumps(
+        {
+            "decision_form": decision_form,
+            "round_markdown": round_markdown,
+            "experiment_markdown": experiment_markdown,
+        }
+    )
 
 
 def _set_experiment_metadata(manifest_path: Path, metadata: dict[str, object]) -> None:
@@ -326,6 +337,7 @@ def test_run_research_materializes_llm_config_mutation(
         "prompt_rendered",
         "llm_response",
         "decision_parsed",
+        "experiment_markdown_updated",
         "config_written",
         "round_completed",
     ]
@@ -341,6 +353,144 @@ def test_run_research_materializes_llm_config_mutation(
     completed_payload = cast(dict[str, object], trace[-1]["payload"])
     assert completed_payload["run_id"] == "run-1"
     assert completed_payload["metric_value"] == 0.13
+
+
+def test_run_research_writes_curated_experiment_markdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the LLM returns experiment_markdown, it replaces EXPERIMENT.md."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    experiment_md_path = experiment.manifest_path.parent / "EXPERIMENT.md"
+    experiment_md_path.write_text("# Stale\nPrior content.\n", encoding="utf-8")
+
+    reports = [
+        _report(_row("run-0", 0.10)),
+        _report(_row("run-1", 0.13), _row("run-0", 0.10)),
+    ]
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: reports.pop(0) if reports else _report(_row("run-1", 0.13)),
+    )
+    curated = "# Active Beliefs\n- LR 0.02 beats 0.01.\n\n# Closed Hypotheses\n- depth=4 hurts.\n"
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "OK.",
+                    "belief_update": "LR matters.",
+                    "next_hypothesis": "Try lr=0.02.",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.learning_rate", "value": 0.02, "reason": "probe"}],
+                    "stop_reason": None,
+                },
+                experiment_markdown=curated,
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-1",
+            predictions_path=store_root / "runs" / "run-1" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-1" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_core",
+            run_ids=("run-1",),
+        ),
+    )
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    assert experiment_md_path.read_text(encoding="utf-8") == curated
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    [update_event] = [e for e in trace if e["event"] == "experiment_markdown_updated"]
+    assert cast(dict[str, object], update_event["payload"])["bytes_written"] == len(curated)
+
+
+def test_run_research_preserves_experiment_markdown_when_llm_omits_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When experiment_markdown is null, the prior EXPERIMENT.md is preserved."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    experiment_md_path = experiment.manifest_path.parent / "EXPERIMENT.md"
+    prior = "# Prior\nKept across rounds.\n"
+    experiment_md_path.write_text(prior, encoding="utf-8")
+
+    reports = [
+        _report(_row("run-0", 0.10)),
+        _report(_row("run-1", 0.13), _row("run-0", 0.10)),
+    ]
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: reports.pop(0) if reports else _report(_row("run-1", 0.13)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "OK.",
+                    "belief_update": "Stable.",
+                    "next_hypothesis": "Probe.",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.learning_rate", "value": 0.02, "reason": "probe"}],
+                    "stop_reason": None,
+                },
+                experiment_markdown=None,
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-1",
+            predictions_path=store_root / "runs" / "run-1" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-1" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_core",
+            run_ids=("run-1",),
+        ),
+    )
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    assert experiment_md_path.read_text(encoding="utf-8") == prior
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    [update_event] = [e for e in trace if e["event"] == "experiment_markdown_updated"]
+    assert cast(dict[str, object], update_event["payload"])["bytes_written"] == 0
 
 
 def test_round_config_filename_stays_short() -> None:
