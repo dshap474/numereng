@@ -178,6 +178,60 @@ def test_run_research_runs_baseline_before_llm(
     assert not (artifact_dir / "learning.md").exists()
 
 
+def test_run_research_falls_back_to_on_disk_metric_when_run_off_leaderboard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When _safe_report's truncated leaderboard omits the just-trained run,
+    metric_value must still be populated from runs/<run_id>/metrics.json."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    other_run_row = _row("other-run-on-leaderboard", 0.99)
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(other_run_row),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-off-board",
+            predictions_path=store_root / "runs" / "run-off-board" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-off-board" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID,
+            round="r001",
+            stage="post_training_core",
+            run_ids=("run-off-board",),
+        ),
+    )
+
+    metrics_path = store_root / "runs" / "run-off-board" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps({"bmc_last_200_eras": {"mean": 0.00275}}),
+        encoding="utf-8",
+    )
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    assert result.rounds[0].run_id == "run-off-board"
+    assert result.rounds[0].metric_value == pytest.approx(0.00275)
+    round_notes = (experiment.manifest_path.parent / "agentic_research" / "rounds" / "r001.md").read_text(
+        encoding="utf-8"
+    )
+    assert "bmc_last_200_eras_mean: 0.00275" in round_notes
+
+
 def test_run_research_materializes_llm_config_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -485,6 +485,8 @@ def _train_score_record_round(
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     row = _row_for_run(report, trained.run_id)
     metric_value = getattr(row, PRIMARY_METRIC_FIELD) if row is not None else None
+    if metric_value is None:
+        metric_value = _run_primary_metric_from_disk(root=root, run_id=trained.run_id)
     best = _best_run_from_report(report)
     round_payload: dict[str, object] = {
         "round_number": round_number,
@@ -1185,6 +1187,28 @@ def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
         return report_experiment(store_root=root, experiment_id=experiment_id, metric=PRIMARY_METRIC, limit=25)
     except ExperimentError:
         return None
+
+
+def _run_primary_metric_from_disk(*, root: Path, run_id: str) -> float | None:
+    """Read the primary metric directly from runs/<run_id>/metrics.json.
+
+    Fallback for rounds whose run scored below the truncated leaderboard
+    returned by `_safe_report`. The on-disk metric is authoritative; the
+    leaderboard is just a paginated view.
+    """
+    metrics_path = root / "runs" / run_id / "metrics.json"
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    current: object = payload
+    for token in PRIMARY_METRIC.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(token)
+        if current is None:
+            return None
+    return float(current) if isinstance(current, (int, float)) else None
 
 
 def _has_scored_primary_row(report: ExperimentReport | None) -> bool:
