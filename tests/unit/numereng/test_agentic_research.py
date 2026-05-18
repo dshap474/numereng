@@ -987,3 +987,129 @@ def test_caps_violation_rejected_emits_trace_event(
     payload = cast(dict[str, object], caps_events[0]["payload"])
     assert payload["phase"] == "shallow"
     assert "model.params.n_estimators" in str(payload["error"])
+
+
+def test_confirmation_detected_and_recorded_structurally() -> None:
+    """A round with a single model.params.random_state change against config_NNN.json
+    is recorded as a confirmation attempt."""
+    state: dict[str, object] = {}
+    decision_payload = {
+        "action": "run",
+        "parent_config": "config_023.json",
+        "changes": [{"path": "model.params.random_state", "value": 17, "reason": "confirm seed 17"}],
+    }
+    assert research_module._is_confirmation_round(decision_payload) is True
+    research_module._record_confirmation_attempt(
+        state=state,
+        parent_config="config_023.json",
+        seed=17,
+        run_id="run-17",
+        metric_value=0.003357,
+        round_number=24,
+    )
+    confirmations = cast(dict[str, dict[str, object]], state["confirmations"])
+    entry = confirmations["config_023.json"]
+    assert 17 in cast(list[int], entry["seeds_completed"])
+    assert cast(dict[str, str], entry["runs"])["17"] == "run-17"
+    assert cast(dict[str, float], entry["primary_metric_by_seed"])["17"] == pytest.approx(0.003357)
+
+
+def test_confirmation_not_detected_for_seed_only_against_baseline() -> None:
+    """parent_config = base.json (not config_NNN.json) → not a confirmation round."""
+    decision_payload = {
+        "action": "run",
+        "parent_config": "base.json",
+        "changes": [{"path": "model.params.random_state", "value": 17, "reason": "x"}],
+    }
+    assert research_module._is_confirmation_round(decision_payload) is False
+
+
+def test_confirmation_not_detected_when_multiple_changes() -> None:
+    decision_payload = {
+        "action": "run",
+        "parent_config": "config_023.json",
+        "changes": [
+            {"path": "model.params.random_state", "value": 17, "reason": "x"},
+            {"path": "model.params.learning_rate", "value": 0.05, "reason": "y"},
+        ],
+    }
+    assert research_module._is_confirmation_round(decision_payload) is False
+
+
+def test_confirmation_promotion_when_seed_trio_beats_champion() -> None:
+    """Complete seeds 42/17/99 with mean above champion+3e-4 → confirmed_champion updated."""
+    state: dict[str, object] = {"phase": "shallow"}
+    for seed, metric, run_id in [(42, 0.0031, "run-42"), (17, 0.0033, "run-17"), (99, 0.0032, "run-99")]:
+        research_module._record_confirmation_attempt(
+            state=state,
+            parent_config="config_023.json",
+            seed=seed,
+            run_id=run_id,
+            metric_value=metric,
+            round_number=23 + seed,
+        )
+    promotion = research_module._maybe_promote_confirmation(
+        state=state, parent_config="config_023.json", round_number=99
+    )
+    assert promotion is not None
+    assert promotion["parent_config"] == "config_023.json"
+    assert promotion["seed_trio_primary_mean"] == pytest.approx((0.0031 + 0.0033 + 0.0032) / 3)
+    assert promotion["phase"] == "shallow"
+    champion = cast(dict[str, object], state["confirmed_champion"])
+    assert champion["parent_config"] == "config_023.json"
+    assert champion["promoted_in_phase"] == "shallow"
+
+
+def test_confirmation_no_promotion_when_below_threshold() -> None:
+    """New trio mean only beats champion by less than 3e-4 → no promotion."""
+    state: dict[str, object] = {
+        "phase": "medium",
+        "confirmed_champion": {
+            "parent_config": "config_023.json",
+            "seed_trio_primary_mean": 0.0032,
+            "promoted_at_round": 25,
+            "promoted_in_phase": "shallow",
+        },
+    }
+    for seed, metric in [(42, 0.00320), (17, 0.00322), (99, 0.00321)]:
+        research_module._record_confirmation_attempt(
+            state=state,
+            parent_config="config_055.json",
+            seed=seed,
+            run_id=f"run-{seed}",
+            metric_value=metric,
+            round_number=55,
+        )
+    promotion = research_module._maybe_promote_confirmation(
+        state=state, parent_config="config_055.json", round_number=58
+    )
+    assert promotion is None
+    champion = cast(dict[str, object], state["confirmed_champion"])
+    assert champion["parent_config"] == "config_023.json"
+
+
+def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None:
+    """With require_confirmed_champion=True and a champion in the current phase, transition fires."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    cfg["shallow"]["transition"]["require_confirmed_champion"] = True
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.003,
+        "phase_plateau_counter": 2,
+        "phase_history": [],
+        "confirmations": {
+            "config_023.json": {"promoted_in_phase": "shallow", "seed_trio_primary_mean": 0.003},
+        },
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+    )
+    assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}

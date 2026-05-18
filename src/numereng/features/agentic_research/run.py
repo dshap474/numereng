@@ -43,6 +43,8 @@ ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
+CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
+CONFIRMATION_PROMOTION_THRESHOLD = 3e-4
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -553,6 +555,45 @@ def _train_score_record_round(
         _update_phase_progress(state=state, metric_value=float(metric_value))
     else:
         _update_phase_progress(state=state, metric_value=None)
+    if _is_confirmation_round(decision_payload):
+        parent_config = str(decision_payload.get("parent_config"))
+        changes_list = decision_payload.get("changes")
+        seed_value = (
+            changes_list[0].get("value")
+            if isinstance(changes_list, list) and changes_list and isinstance(changes_list[0], dict)
+            else None
+        )
+        if isinstance(seed_value, int):
+            metric_for_record = float(metric_value) if isinstance(metric_value, (int, float)) else None
+            _record_confirmation_attempt(
+                state=state,
+                parent_config=parent_config,
+                seed=seed_value,
+                run_id=trained.run_id,
+                metric_value=metric_for_record,
+                round_number=round_number,
+            )
+            _append_trace(
+                experiment,
+                round_number=round_number,
+                round_label=round_label,
+                event="confirmation_attempt",
+                payload={
+                    "parent_config": parent_config,
+                    "seed": seed_value,
+                    "run_id": trained.run_id,
+                    "primary_metric": metric_for_record,
+                },
+            )
+            promotion = _maybe_promote_confirmation(state=state, parent_config=parent_config, round_number=round_number)
+            if promotion is not None:
+                _append_trace(
+                    experiment,
+                    round_number=round_number,
+                    round_label=round_label,
+                    event="confirmation_promoted",
+                    payload=promotion,
+                )
     transition_payload = _maybe_transition_phase(experiment=experiment, state=state, round_number=round_number)
     if transition_payload is not None:
         _append_trace(
@@ -717,6 +758,8 @@ def _build_context(
         "phase_history": state.get("phase_history", []),
         "phase_value_caps": {path: list(bounds) for path, bounds in phase_caps.items()},
         "cost_summary": _cost_summary(state),
+        "confirmations": _recent_confirmations(state, limit=30),
+        "confirmed_champion": state.get("confirmed_champion"),
         "state": state,
         "configs": _config_context(experiment),
         "report": _report_context(report),
@@ -1305,6 +1348,130 @@ def _accumulate_phase_cost(state: dict[str, object], seconds: float) -> None:
     bucket["total_seconds"] = float(bucket.get("total_seconds", 0.0)) + max(0.0, seconds)
     totals[phase] = bucket
     state["phase_cost_totals"] = totals
+
+
+def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
+    """A confirmation round mutates only `model.params.random_state` and reuses a
+    previously-LLM-generated parent config (i.e. `config_NNN.json`, not the seed)."""
+    if decision_payload.get("action") != "run":
+        return False
+    changes = decision_payload.get("changes")
+    if not isinstance(changes, list) or len(changes) != 1:
+        return False
+    change = changes[0]
+    if not isinstance(change, dict):
+        return False
+    if change.get("path") != "model.params.random_state":
+        return False
+    parent = decision_payload.get("parent_config")
+    if not isinstance(parent, str):
+        return False
+    return parent.startswith("config_") and parent.endswith(".json")
+
+
+def _record_confirmation_attempt(
+    *,
+    state: dict[str, object],
+    parent_config: str,
+    seed: int,
+    run_id: str,
+    metric_value: float | None,
+    round_number: int,
+) -> dict[str, object]:
+    """Append a single-seed result to state.confirmations[parent_config]."""
+    confirmations_raw = state.get("confirmations")
+    confirmations: dict[str, dict[str, object]] = confirmations_raw if isinstance(confirmations_raw, dict) else {}
+    entry_raw = confirmations.get(parent_config)
+    entry: dict[str, object] = entry_raw if isinstance(entry_raw, dict) else {}
+    seeds_completed = entry.get("seeds_completed")
+    if not isinstance(seeds_completed, list):
+        seeds_completed = []
+    if seed not in seeds_completed:
+        seeds_completed.append(seed)
+    runs_raw = entry.get("runs")
+    runs: dict[str, str] = runs_raw if isinstance(runs_raw, dict) else {}
+    runs[str(seed)] = run_id
+    metrics_raw = entry.get("primary_metric_by_seed")
+    metrics: dict[str, float] = metrics_raw if isinstance(metrics_raw, dict) else {}
+    if metric_value is not None:
+        metrics[str(seed)] = float(metric_value)
+    entry["seeds_completed"] = seeds_completed
+    entry["runs"] = runs
+    entry["primary_metric_by_seed"] = metrics
+    entry.setdefault("first_attempt_at_round", round_number)
+    entry["last_attempt_at_round"] = round_number
+    confirmations[parent_config] = entry
+    state["confirmations"] = confirmations
+    return entry
+
+
+def _maybe_promote_confirmation(
+    *, state: dict[str, object], parent_config: str, round_number: int
+) -> dict[str, object] | None:
+    """If the canonical seed trio has completed and beats the current champion, promote.
+
+    Returns a trace payload describing the promotion, or None if no promotion happened.
+    """
+    confirmations_raw = state.get("confirmations")
+    if not isinstance(confirmations_raw, dict):
+        return None
+    entry_raw = confirmations_raw.get(parent_config)
+    if not isinstance(entry_raw, dict):
+        return None
+    seeds = entry_raw.get("seeds_completed")
+    metrics_raw = entry_raw.get("primary_metric_by_seed")
+    if not isinstance(seeds, list) or not isinstance(metrics_raw, dict):
+        return None
+    canonical = set(CANONICAL_SEED_TRIO)
+    if not canonical.issubset(set(seeds)):
+        return None
+    metric_values: list[float] = []
+    for seed in CANONICAL_SEED_TRIO:
+        raw = metrics_raw.get(str(seed))
+        if not isinstance(raw, (int, float)):
+            return None
+        metric_values.append(float(raw))
+    mean = sum(metric_values) / len(metric_values)
+    entry_raw["seed_trio_primary_mean"] = mean
+    prior = state.get("confirmed_champion")
+    prior_mean: float | None = None
+    if isinstance(prior, dict):
+        raw = prior.get("seed_trio_primary_mean")
+        if isinstance(raw, (int, float)):
+            prior_mean = float(raw)
+    if prior_mean is not None and mean <= prior_mean + CONFIRMATION_PROMOTION_THRESHOLD:
+        return None
+    entry_raw["promoted_at_round"] = round_number
+    entry_raw["promoted_in_phase"] = state.get("phase")
+    state["confirmed_champion"] = {
+        "parent_config": parent_config,
+        "seed_trio_primary_mean": mean,
+        "promoted_at_round": round_number,
+        "promoted_in_phase": state.get("phase"),
+        "runs": dict(entry_raw.get("runs") or {}),
+    }
+    return {
+        "parent_config": parent_config,
+        "seed_trio_primary_mean": mean,
+        "prior_seed_trio_primary_mean": prior_mean,
+        "phase": state.get("phase"),
+    }
+
+
+def _recent_confirmations(state: dict[str, object], *, limit: int = 30) -> dict[str, object]:
+    """Return the most-recent N confirmation entries by last_attempt_at_round."""
+    confirmations_raw = state.get("confirmations")
+    if not isinstance(confirmations_raw, dict):
+        return {}
+    items: list[tuple[int, str, dict[str, object]]] = []
+    for parent, entry in confirmations_raw.items():
+        if not isinstance(entry, dict):
+            continue
+        last = entry.get("last_attempt_at_round")
+        last_int = int(last) if isinstance(last, (int, float)) else 0
+        items.append((last_int, str(parent), entry))
+    items.sort(key=lambda triple: triple[0], reverse=True)
+    return {parent: entry for _, parent, entry in items[:limit]}
 
 
 def _cost_summary(state: dict[str, object]) -> dict[str, object]:
