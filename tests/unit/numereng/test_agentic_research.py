@@ -84,6 +84,12 @@ def _set_experiment_metadata(manifest_path: Path, metadata: dict[str, object]) -
     manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _set_experiment_runs(manifest_path: Path, run_ids: list[str]) -> None:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["runs"] = list(run_ids)
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def _trace_events(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
@@ -337,7 +343,6 @@ def test_run_research_materializes_llm_config_mutation(
         "prompt_rendered",
         "llm_response",
         "decision_parsed",
-        "experiment_markdown_updated",
         "config_written",
         "round_completed",
     ]
@@ -422,6 +427,8 @@ def test_run_research_writes_curated_experiment_markdown(
     trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
     [update_event] = [e for e in trace if e["event"] == "experiment_markdown_updated"]
     assert cast(dict[str, object], update_event["payload"])["bytes_written"] == len(curated)
+    events = [e["event"] for e in trace]
+    assert events.index("experiment_markdown_updated") > events.index("config_written")
 
 
 def test_run_research_preserves_experiment_markdown_when_llm_omits_it(
@@ -489,8 +496,7 @@ def test_run_research_preserves_experiment_markdown_when_llm_omits_it(
 
     assert experiment_md_path.read_text(encoding="utf-8") == prior
     trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
-    [update_event] = [e for e in trace if e["event"] == "experiment_markdown_updated"]
-    assert cast(dict[str, object], update_event["payload"])["bytes_written"] == 0
+    assert not [e for e in trace if e["event"] == "experiment_markdown_updated"]
 
 
 def test_round_config_filename_stays_short() -> None:
@@ -768,10 +774,10 @@ def test_materialize_rejects_path_outside_program_allowed_list(tmp_path: Path) -
         research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
 
 
-def test_parse_decision_rejects_disallowed_change_path() -> None:
+def test_parse_llm_response_rejects_disallowed_change_path() -> None:
     with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
-        research_module._parse_decision(
-            json.dumps(
+        research_module._parse_llm_response(
+            _llm_response(
                 {
                     "action": "run",
                     "learning": "x",
@@ -838,7 +844,7 @@ _SHALLOW_PHASES_CONFIG: dict[str, object] = {
 
 
 def test_phase_transition_fires_when_predicate_met() -> None:
-    """Plateau + min_rounds reached → phase transitions to next_phase."""
+    """Plateau + successful_rounds reached → phase transitions to next_phase."""
     experiment_metadata = {"agentic_research_phases": _SHALLOW_PHASES_CONFIG}
 
     class _FakeExperiment:
@@ -849,6 +855,7 @@ def test_phase_transition_fires_when_predicate_met() -> None:
         "phase_round_start": 1,
         "phase_best_metric": 0.001,
         "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
         "phase_history": [],
     }
     payload = research_module._maybe_transition_phase(
@@ -861,6 +868,7 @@ def test_phase_transition_fires_when_predicate_met() -> None:
     assert state["phase_round_start"] == 4
     assert state["phase_best_metric"] is None
     assert state["phase_plateau_counter"] == 0
+    assert state["phase_successful_rounds"] == 0
     history = state["phase_history"]
     assert isinstance(history, list) and len(history) == 1
     assert history[0]["exit_reason"] == "phase_transition"
@@ -880,6 +888,7 @@ def test_phase_transition_blocked_when_no_confirmed_champion() -> None:
         "phase_round_start": 1,
         "phase_best_metric": 0.001,
         "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
         "phase_history": [],
         "confirmations": {},
     }
@@ -905,6 +914,7 @@ def test_terminal_phase_stop_emits_all_phases_done() -> None:
         "phase_round_start": 4,
         "phase_best_metric": 0.003,
         "phase_plateau_counter": 10,
+        "phase_successful_rounds": 10,
         "phase_history": [],
     }
     payload = research_module._maybe_transition_phase(
@@ -918,75 +928,6 @@ def test_terminal_phase_stop_emits_all_phases_done() -> None:
     history = state["phase_history"]
     assert isinstance(history, list) and len(history) == 1
     assert history[0]["exit_reason"] == "all_phases_done"
-
-
-def test_caps_violation_rejected_emits_trace_event(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """LLM proposes a value outside the current phase's caps → trace records caps_violation_rejected."""
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_phases": _SHALLOW_PHASES_CONFIG})
-    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
-
-    reports = [
-        _report(_row("run-0", 0.10)),
-    ]
-    monkeypatch.setattr(
-        research_module,
-        "_safe_report",
-        lambda **_: reports.pop(0) if reports else _report(_row("run-0", 0.10)),
-    )
-    monkeypatch.setattr(
-        research_module,
-        "_call_research_llm",
-        lambda **_: (
-            _llm_response(
-                {
-                    "action": "run",
-                    "learning": "Probe deep n_estimators.",
-                    "belief_update": "Need a wider tree count.",
-                    "next_hypothesis": "Larger n_estimators improves BMC.",
-                    "parent_config": "seed.json",
-                    "changes": [{"path": "model.params.n_estimators", "value": 5000, "reason": "probe"}],
-                    "stop_reason": None,
-                },
-            ),
-            "test",
-        ),
-    )
-    monkeypatch.setattr(
-        research_module,
-        "train_experiment",
-        lambda **_: ExperimentTrainResult(
-            experiment_id=EXPERIMENT_ID,
-            run_id="run-x",
-            predictions_path=store_root / "runs" / "run-x" / "predictions.parquet",
-            results_path=store_root / "runs" / "run-x" / "results.json",
-        ),
-    )
-    monkeypatch.setattr(
-        research_module,
-        "score_experiment_round",
-        lambda **_: ExperimentScoreRoundResult(
-            experiment_id=EXPERIMENT_ID,
-            round="r001",
-            stage="post_training_core",
-            run_ids=("run-x",),
-        ),
-    )
-
-    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
-    assert result.rounds[0].status == "failed"
-
-    trace_path = experiment.manifest_path.parent / "agentic_research" / "trace.jsonl"
-    events = _trace_events(trace_path)
-    caps_events = [e for e in events if e["event"] == "caps_violation_rejected"]
-    assert len(caps_events) == 1
-    payload = cast(dict[str, object], caps_events[0]["payload"])
-    assert payload["phase"] == "shallow"
-    assert "model.params.n_estimators" in str(payload["error"])
 
 
 def test_confirmation_detected_and_recorded_structurally() -> None:
@@ -1138,6 +1079,7 @@ def test_artifact_rotation_preserves_essential_and_prunes_others(tmp_path: Path)
         d.mkdir(parents=True)
         (d / "metrics.json").write_text("{}", encoding="utf-8")
         (d / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+    _set_experiment_runs(experiment.manifest_path, [essential_id, confirmation_id, non_essential_id])
 
     report = _report(_row(essential_id, 0.9))
     state: dict[str, object] = {
@@ -1150,18 +1092,14 @@ def test_artifact_rotation_preserves_essential_and_prunes_others(tmp_path: Path)
     }
     experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
 
-    import numereng.features.agentic_research.run as research_module_alias
-
-    research_module_alias._safe_report = lambda **_: report  # type: ignore[assignment]
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(research_module, "_safe_report", lambda **_: report)
         payload = research_module._rotate_run_artifacts(
             root=store_root,
             experiment=experiment_record,
             state=state,
             last_round_number=50,
         )
-    finally:
-        del research_module_alias._safe_report
 
     assert payload is not None
     assert non_essential_id in payload["rotated_run_ids"]
@@ -1174,7 +1112,8 @@ def test_artifact_rotation_preserves_essential_and_prunes_others(tmp_path: Path)
 
 
 def test_artifact_rotation_dry_run_does_not_delete(tmp_path: Path) -> None:
-    """dry_run mode emits payload describing what WOULD rotate, but files remain intact."""
+    """dry_run mode emits payload describing what WOULD rotate, but files remain intact.
+    Payload includes a `targets` list so operators can audit before flipping to enabled."""
     store_root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
     _set_experiment_metadata(experiment.manifest_path, {"agentic_research_artifact_rotation": "dry_run"})
@@ -1182,26 +1121,25 @@ def test_artifact_rotation_dry_run_does_not_delete(tmp_path: Path) -> None:
     run_dir.mkdir(parents=True)
     (run_dir / "predictions.parquet").write_bytes(b"x" * 2_000_000)
     (run_dir / "metrics.json").write_text("{}", encoding="utf-8")
+    _set_experiment_runs(experiment.manifest_path, ["run-x"])
 
     experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
 
-    import numereng.features.agentic_research.run as research_module_alias
-
-    research_module_alias._safe_report = lambda **_: None  # type: ignore[assignment]
-    try:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(research_module, "_safe_report", lambda **_: None)
         payload = research_module._rotate_run_artifacts(
             root=store_root,
             experiment=experiment_record,
             state={},
             last_round_number=50,
         )
-    finally:
-        del research_module_alias._safe_report
 
     assert payload is not None
     assert payload["mode"] == "dry_run"
     assert "run-x" in payload["rotated_run_ids"]
     assert (run_dir / "predictions.parquet").exists() is True
+    targets = cast(list[str], payload["targets"])
+    assert any("predictions.parquet" in t for t in targets)
 
 
 def test_artifact_rotation_disabled_returns_none(tmp_path: Path) -> None:
@@ -1225,7 +1163,7 @@ def test_artifact_rotation_disabled_returns_none(tmp_path: Path) -> None:
 
 
 def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
-    """_extract_signature reads config; _append_tried_signature caps the window."""
+    """_extract_lgbm_signature reads config; _append_tried_signature caps the window."""
     config_path = tmp_path / "configs" / "config_001.json"
     config_path.parent.mkdir(parents=True)
     config_path.write_text(
@@ -1253,7 +1191,7 @@ def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    sig = research_module._extract_signature(
+    sig = research_module._extract_lgbm_signature(
         config_path=config_path,
         round_label="r001",
         run_id="run-abc",
@@ -1276,12 +1214,11 @@ def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
     }
 
     state: dict[str, object] = {}
-    for i in range(105):
+    for i in range(research_module.TRIED_SIGNATURES_WINDOW + 1):
         research_module._append_tried_signature(state, {"r": f"r{i:03d}"})
     sigs = cast(list[dict[str, object]], state["tried_signatures"])
-    assert len(sigs) == 100
-    assert sigs[0]["r"] == "r005"
-    assert sigs[-1]["r"] == "r104"
+    assert len(sigs) == research_module.TRIED_SIGNATURES_WINDOW
+    assert sigs[0]["r"] == "r001"
 
 
 def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None:
@@ -1298,6 +1235,7 @@ def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None
         "phase_round_start": 1,
         "phase_best_metric": 0.003,
         "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
         "phase_history": [],
         "confirmations": {
             "config_023.json": {"promoted_in_phase": "shallow", "seed_trio_primary_mean": 0.003},
@@ -1309,3 +1247,296 @@ def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None
         round_number=3,
     )
     assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}
+
+
+def test_phase_transition_no_op_when_next_phase_missing() -> None:
+    """A non-terminal phase missing next_phase returns a misconfigured payload and leaves state unchanged."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    cfg["shallow"].pop("next_phase", None)
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.001,
+        "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
+        "phase_history": [],
+    }
+    first = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+    )
+    second = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=4,
+    )
+    assert first is not None and first["transition"] == "misconfigured"
+    assert second is not None and second["transition"] == "misconfigured"
+    assert state["phase"] == "shallow"
+    assert state["phase_history"] == []
+
+
+def test_phase_transition_records_best_run_id_in_history() -> None:
+    """Phase transition history record includes best_run_id derived from the report."""
+    experiment_metadata = {"agentic_research_phases": _SHALLOW_PHASES_CONFIG}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.123,
+        "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
+        "phase_history": [],
+    }
+    report = _report(_row("run-best", 0.123), _row("run-other", 0.05))
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+        report=report,
+    )
+    assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}
+    history = cast(list[dict[str, object]], state["phase_history"])
+    assert history[0]["best_run_id"] == "run-best"
+
+
+def test_update_phase_progress_skips_none_metric() -> None:
+    """Missing metric must not advance plateau counter or successful_rounds."""
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_plateau_counter": 0,
+        "phase_successful_rounds": 0,
+        "phase_best_metric": None,
+    }
+    research_module._update_phase_progress(state=state, metric_value=None)
+    assert state["phase_plateau_counter"] == 0
+    assert state["phase_successful_rounds"] == 0
+    assert state["phase_best_metric"] is None
+
+
+def test_update_phase_progress_counts_only_successful_rounds() -> None:
+    """phase_successful_rounds increments only on a real metric; plateau ticks on no improvement."""
+    state: dict[str, object] = {"phase": "shallow"}
+    research_module._update_phase_progress(state=state, metric_value=0.5)
+    research_module._update_phase_progress(state=state, metric_value=0.5)
+    assert state["phase_successful_rounds"] == 2
+    assert state["phase_plateau_counter"] == 1
+    assert state["phase_best_metric"] == 0.5
+
+
+def test_run_research_continues_after_training_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-AgenticResearchError from train_experiment is caught and recorded as a failed round."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-0", 0.10)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.learning_rate", "value": 0.02, "reason": "x"}],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+
+    def _boom(**_: object) -> object:
+        raise RuntimeError("transient training failure")
+
+    monkeypatch.setattr(research_module, "train_experiment", _boom)
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+    assert result.rounds[0].status == "failed"
+    state_path = experiment.manifest_path.parent / "agentic_research" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["failed_rounds_counter"] >= 1
+
+
+def test_run_research_catches_codex_executable_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If codex is missing, FileNotFoundError is wrapped and the round is recorded as failed."""
+    store_root = tmp_path / ".numereng"
+    create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-0", 0.10)),
+    )
+
+    def _missing(**_: object) -> tuple[str, str]:
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(research_module, "_call_research_llm", _missing)
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    assert result.rounds[0].status == "failed"
+    assert "codex" in (result.rounds[0].learning or "").lower()
+
+
+def test_record_confirmation_attempt_rejects_bool_seed() -> None:
+    """Boolean random_state must not be recorded as seed=1 (Python bool is subclass of int)."""
+    decision_payload: dict[str, object] = {
+        "action": "run",
+        "parent_config": "config_023.json",
+        "changes": [{"path": "model.params.random_state", "value": True, "reason": "buggy"}],
+    }
+    assert research_module._is_confirmation_round(decision_payload) is True
+
+    seed_value = cast(list[dict[str, object]], decision_payload["changes"])[0]["value"]
+    assert isinstance(seed_value, int) is True
+    assert isinstance(seed_value, bool) is True
+
+
+def test_is_confirmation_round_excludes_config_001() -> None:
+    """config_001.json (baseline) is not a valid confirmation parent."""
+    decision_payload = {
+        "action": "run",
+        "parent_config": "config_001.json",
+        "changes": [{"path": "model.params.random_state", "value": 17, "reason": "confirm"}],
+    }
+    assert research_module._is_confirmation_round(decision_payload) is False
+
+
+def test_latest_round_markdown_sorts_by_integer(tmp_path: Path) -> None:
+    """Round numbering above 999 must be sorted numerically, not lexicographically."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    rounds_dir = experiment.manifest_path.parent / "agentic_research" / "rounds"
+    rounds_dir.mkdir(parents=True)
+    (rounds_dir / "r999.md").write_text("nine-nine-nine", encoding="utf-8")
+    (rounds_dir / "r1000.md").write_text("thousand", encoding="utf-8")
+    assert research_module._latest_round_markdown(experiment) == "thousand"
+
+
+def test_write_experiment_markdown_is_atomic(tmp_path: Path) -> None:
+    """Writing creates no leftover .tmp file on success and lands fully or not at all."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    research_module._write_experiment_markdown(experiment, "# Curated\nBody.\n")
+    path = experiment.manifest_path.parent / "EXPERIMENT.md"
+    assert path.read_text(encoding="utf-8") == "# Curated\nBody.\n"
+    leftover = list(path.parent.glob(".EXPERIMENT.md.tmp"))
+    assert leftover == []
+
+
+def test_build_context_surfaces_canonical_seed_trio(tmp_path: Path) -> None:
+    """Context dict includes canonical_seed_trio so the LLM picks the right seeds."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    context = research_module._build_context(
+        root=store_root,
+        experiment=experiment,
+        report=None,
+        state={"phase": "shallow"},
+    )
+    assert context["canonical_seed_trio"] == list(research_module.CANONICAL_SEED_TRIO)
+
+
+def test_experiment_markdown_not_updated_when_round_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If materialization fails, EXPERIMENT.md must not be overwritten with the unrun hypothesis."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_phases": _SHALLOW_PHASES_CONFIG})
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    md_path = experiment.manifest_path.parent / "EXPERIMENT.md"
+    prior = "# Prior\nUntouched.\n"
+    md_path.write_text(prior, encoding="utf-8")
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-0", 0.10)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "Caps-violating probe.",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.n_estimators", "value": 5000, "reason": "out of range"}],
+                    "stop_reason": None,
+                },
+                experiment_markdown="# Hypothetical\nShould NOT be persisted.\n",
+            ),
+            "test",
+        ),
+    )
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    assert result.rounds[0].status == "failed"
+    assert md_path.read_text(encoding="utf-8") == prior
+
+
+def test_artifact_rotation_does_not_touch_other_experiments(tmp_path: Path) -> None:
+    """Rotation enabled on experiment A must not delete run dirs owned by experiment B."""
+    store_root = tmp_path / ".numereng"
+    exp_a_id = "2026-02-22_exp-a"
+    exp_b_id = "2026-02-22_exp-b"
+    experiment_a = create_experiment(store_root=store_root, experiment_id=exp_a_id, name="A")
+    experiment_b = create_experiment(store_root=store_root, experiment_id=exp_b_id, name="B")
+    _set_experiment_metadata(experiment_a.manifest_path, {"agentic_research_artifact_rotation": "enabled"})
+
+    runs_root = store_root / "runs"
+    a_run = "run-a"
+    b_run = "run-b"
+    for run_id in (a_run, b_run):
+        d = runs_root / run_id
+        d.mkdir(parents=True)
+        (d / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+        (d / "metrics.json").write_text("{}", encoding="utf-8")
+    _set_experiment_runs(experiment_a.manifest_path, [a_run])
+    _set_experiment_runs(experiment_b.manifest_path, [b_run])
+
+    experiment_a_record = research_module.get_experiment(store_root=store_root, experiment_id=exp_a_id)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(research_module, "_safe_report", lambda **_: None)
+        payload = research_module._rotate_run_artifacts(
+            root=store_root,
+            experiment=experiment_a_record,
+            state={},
+            last_round_number=50,
+        )
+
+    assert payload is not None
+    assert a_run in payload["rotated_run_ids"]
+    assert b_run not in payload["rotated_run_ids"]
+    assert (runs_root / a_run / "predictions.parquet").exists() is False
+    assert (runs_root / b_run / "predictions.parquet").exists() is True

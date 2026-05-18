@@ -59,6 +59,7 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
 )
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
+TRIED_SIGNATURES_WINDOW = 100
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -230,11 +231,13 @@ def run_research(
     rounds: list[ResearchRoundResult] = []
     try:
         for _ in range(max_rounds):
-            if _stopped_by_llm(state):
+            if _is_terminal_stop(state):
                 break
             try:
                 result = _run_one_round(root=root, experiment_id=experiment.experiment_id, state=state)
-            except AgenticResearchError as exc:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception as exc:
                 result = _record_failed_round(experiment=experiment, state=state, error=exc)
             rounds.append(result)
             experiment = get_experiment(store_root=root, experiment_id=experiment_id)
@@ -348,14 +351,6 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         event="decision_parsed",
         payload={"decision": decision_payload},
     )
-    bytes_written = _write_experiment_markdown(experiment, llm_response.experiment_markdown)
-    _append_trace(
-        experiment,
-        round_number=round_number,
-        round_label=round_label,
-        event="experiment_markdown_updated",
-        payload={"bytes_written": bytes_written},
-    )
 
     if decision.action == "stop":
         result = _record_stop_round(
@@ -368,6 +363,15 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             artifact_dir=artifact_dir,
             round_markdown=llm_response.round_markdown,
         )
+        bytes_written = _write_experiment_markdown(experiment, llm_response.experiment_markdown)
+        if bytes_written > 0:
+            _append_trace(
+                experiment,
+                round_number=round_number,
+                round_label=round_label,
+                event="experiment_markdown_updated",
+                payload={"bytes_written": bytes_written},
+            )
         _append_trace(
             experiment,
             round_number=round_number,
@@ -385,21 +389,12 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             state=state,
         )
     except Exception as exc:
-        message = str(exc)
-        if message.startswith("agentic_research_change_value_out_of_range:"):
-            _append_trace(
-                experiment,
-                round_number=round_number,
-                round_label=round_label,
-                event="caps_violation_rejected",
-                payload={"phase": _optional_str(state.get("phase")), "error": message},
-            )
         _append_trace(
             experiment,
             round_number=round_number,
             round_label=round_label,
             event="config_materialization_failed",
-            payload={"decision": decision_payload, "error": message},
+            payload={"decision": decision_payload, "error": str(exc)},
         )
         raise
     _append_trace(
@@ -422,6 +417,15 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         decision_payload=decision_payload,
         round_markdown=llm_response.round_markdown,
     )
+    bytes_written = _write_experiment_markdown(experiment, llm_response.experiment_markdown)
+    if bytes_written > 0:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="experiment_markdown_updated",
+            payload={"bytes_written": bytes_written},
+        )
     _append_trace(
         experiment,
         round_number=round_number,
@@ -509,7 +513,6 @@ def _train_score_record_round(
     decision_payload: dict[str, object],
     round_markdown: str | None = None,
 ) -> ResearchRoundResult:
-    _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     round_started_at = time.monotonic()
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
@@ -521,6 +524,7 @@ def _train_score_record_round(
             stage=SCORING_STAGE,
         )
     round_seconds = max(0.0, time.monotonic() - round_started_at)
+    _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
 
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     row = _row_for_run(report, trained.run_id)
@@ -566,17 +570,15 @@ def _train_score_record_round(
         }
     )
     _accumulate_phase_cost(state, round_seconds)
-    if metric_value is not None and isinstance(metric_value, (int, float)):
-        _update_phase_progress(state=state, metric_value=float(metric_value))
-    else:
-        _update_phase_progress(state=state, metric_value=None)
+    typed_metric = _coerce_metric(metric_value)
+    _update_phase_progress(state=state, metric_value=typed_metric)
     _append_tried_signature(
         state,
-        _extract_signature(
+        _extract_lgbm_signature(
             config_path=config_path,
             round_label=round_label,
             run_id=trained.run_id,
-            primary_metric=float(metric_value) if isinstance(metric_value, (int, float)) else None,
+            primary_metric=typed_metric,
             action=action,
         ),
     )
@@ -588,7 +590,7 @@ def _train_score_record_round(
             if isinstance(changes_list, list) and changes_list and isinstance(changes_list[0], dict)
             else None
         )
-        if isinstance(seed_value, int):
+        if isinstance(seed_value, int) and not isinstance(seed_value, bool):
             metric_for_record = float(metric_value) if isinstance(metric_value, (int, float)) else None
             _record_confirmation_attempt(
                 state=state,
@@ -619,13 +621,16 @@ def _train_score_record_round(
                     event="confirmation_promoted",
                     payload=promotion,
                 )
-    transition_payload = _maybe_transition_phase(experiment=experiment, state=state, round_number=round_number)
+    transition_payload = _maybe_transition_phase(
+        experiment=experiment, state=state, round_number=round_number, report=report
+    )
     if transition_payload is not None:
+        event = "phase_misconfigured" if transition_payload.get("transition") == "misconfigured" else "phase_transition"
         _append_trace(
             experiment,
             round_number=round_number,
             round_label=round_label,
-            event="phase_transition",
+            event=event,
             payload=transition_payload,
         )
     rotation_payload = _rotate_run_artifacts(
@@ -710,7 +715,7 @@ def _record_failed_round(
     *,
     experiment: ExperimentRecord,
     state: dict[str, object],
-    error: AgenticResearchError,
+    error: Exception,
 ) -> ResearchRoundResult:
     round_number = _as_int(state.get("next_round_number"), default=1)
     round_label = f"r{round_number:03d}"
@@ -748,7 +753,6 @@ def _record_failed_round(
             "status": "running",
             "next_round_number": round_number + 1,
             "last_checkpoint": "round_failed",
-            "last_error": message,
             "failed_rounds_counter": failures,
             "updated_at": _utc_now_iso(),
         }
@@ -807,6 +811,7 @@ def _build_context(
         "phase_history": state.get("phase_history", []),
         "phase_value_caps": {path: list(bounds) for path, bounds in phase_caps.items()},
         "cost_summary": _cost_summary(state),
+        "canonical_seed_trio": list(CANONICAL_SEED_TRIO),
         "confirmations": _recent_confirmations(state, limit=30),
         "confirmed_champion": state.get("confirmed_champion"),
         "tried_signatures": state.get("tried_signatures", []),
@@ -909,6 +914,15 @@ def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, confi
                 error=error,
             )
             raise AgenticResearchError(error) from exc
+        except FileNotFoundError as exc:
+            error = f"agentic_research_codex_executable_missing:{cmd[0]}"
+            _write_failure_debug(
+                artifact_dir=artifact_dir,
+                round_label=round_label,
+                prompt=prompt,
+                error=error,
+            )
+            raise AgenticResearchError(error) from exc
         if completed.returncode != 0:
             error = f"agentic_research_codex_failed:{completed.returncode}:{completed.stderr.strip()}"
             _write_failure_debug(
@@ -961,10 +975,6 @@ def _parse_llm_response(raw_response: str) -> ResearchLLMResponse:
         round_markdown=_required_str(payload, "round_markdown"),
         experiment_markdown=experiment_markdown_raw,
     )
-
-
-def _parse_decision(raw_response: str) -> ResearchDecision:
-    return _parse_decision_object(_extract_json_object(raw_response))
 
 
 def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
@@ -1258,16 +1268,13 @@ def _phase_spec(phases_config: dict[str, object], phase: str) -> dict[str, objec
     return cast(dict[str, object], spec) if isinstance(spec, dict) else None
 
 
-def _initial_phase(phases_config: dict[str, object]) -> str | None:
+def _initial_phase(phases_config: dict[str, object]) -> str:
     initial = phases_config.get("initial_phase")
-    if isinstance(initial, str) and initial in phases_config:
-        return initial
-    for key in phases_config:
-        if key == "initial_phase":
-            continue
-        if isinstance(phases_config[key], dict):
-            return key
-    return None
+    if not isinstance(initial, str) or not initial.strip():
+        raise AgenticResearchValidationError("agentic_research_initial_phase_missing")
+    if not isinstance(phases_config.get(initial), dict):
+        raise AgenticResearchValidationError(f"agentic_research_initial_phase_invalid:{initial}")
+    return initial
 
 
 def _current_phase_caps(*, experiment: ExperimentRecord, state: dict[str, object]) -> dict[str, tuple[float, float]]:
@@ -1301,12 +1308,13 @@ def _update_phase_progress(*, state: dict[str, object], metric_value: float | No
     if "phase" not in state:
         return
     if metric_value is None:
-        state["phase_plateau_counter"] = _as_int(state.get("phase_plateau_counter"), default=0) + 1
         return
+    state["phase_successful_rounds"] = _as_int(state.get("phase_successful_rounds"), default=0) + 1
     current_best = state.get("phase_best_metric")
-    threshold = PHASE_IMPROVEMENT_THRESHOLD
     improved = current_best is None or (
-        isinstance(current_best, (int, float)) and metric_value > float(current_best) + threshold
+        isinstance(current_best, (int, float))
+        and not isinstance(current_best, bool)
+        and metric_value > float(current_best) + PHASE_IMPROVEMENT_THRESHOLD
     )
     if improved:
         state["phase_best_metric"] = float(metric_value)
@@ -1328,11 +1336,17 @@ def _phase_has_confirmed_champion(state: dict[str, object], phase: str) -> bool:
 
 
 def _maybe_transition_phase(
-    *, experiment: ExperimentRecord, state: dict[str, object], round_number: int
+    *,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    round_number: int,
+    report: ExperimentReport | None = None,
 ) -> dict[str, object] | None:
-    """Evaluate the phase-transition predicate; mutate state if it fires.
+    """Evaluate the phase-transition predicate; mutate state only if a real transition fires.
 
     Returns a trace payload when a transition (or terminal stop) fires, otherwise None.
+    A non-terminal phase missing a valid `next_phase` emits a `phase_misconfigured` trace
+    event and leaves state unchanged so the predicate doesn't re-fire forever.
     """
     transition = _phase_transition_spec(experiment=experiment, state=state)
     if transition is None:
@@ -1346,11 +1360,24 @@ def _maybe_transition_phase(
     require_champion = bool(transition.get("require_confirmed_champion", False))
     is_terminal = bool(transition.get("is_terminal", False))
 
-    rounds_in_phase = round_number - _as_int(state.get("phase_round_start"), default=1) + 1
+    successful_rounds = _as_int(state.get("phase_successful_rounds"), default=0)
     plateau = _as_int(state.get("phase_plateau_counter"), default=0)
     champion_ok = (not require_champion) or _phase_has_confirmed_champion(state, current_phase)
-    if rounds_in_phase < min_rounds or plateau < plateau_threshold or not champion_ok:
+    if successful_rounds < min_rounds or plateau < plateau_threshold or not champion_ok:
         return None
+
+    next_phase: str | None = None
+    if not is_terminal:
+        phases_config = _phases_config(experiment)
+        spec = _phase_spec(phases_config, current_phase) if phases_config else None
+        raw_next = spec.get("next_phase") if spec else None
+        if not isinstance(raw_next, str) or raw_next not in (phases_config or {}):
+            return {
+                "transition": "misconfigured",
+                "from": current_phase,
+                "reason": "next_phase_missing_or_invalid",
+            }
+        next_phase = raw_next
 
     history_record: dict[str, object] = {
         "phase": current_phase,
@@ -1358,7 +1385,8 @@ def _maybe_transition_phase(
         "ended_round": round_number,
         "exit_reason": "all_phases_done" if is_terminal else "phase_transition",
         "best_metric": state.get("phase_best_metric"),
-        "rounds_in_phase": rounds_in_phase,
+        "successful_rounds": successful_rounds,
+        "best_run_id": _best_run_id_for_phase(state=state, report=report),
     }
     history = state.get("phase_history")
     if not isinstance(history, list):
@@ -1372,17 +1400,27 @@ def _maybe_transition_phase(
         state["last_checkpoint"] = "all_phases_done"
         return {"transition": "terminal", "from": current_phase, "to": None}
 
-    phases_config = _phases_config(experiment)
-    spec = _phase_spec(phases_config, current_phase) if phases_config else None
-    next_phase = spec.get("next_phase") if spec else None
-    if not isinstance(next_phase, str) or next_phase not in (phases_config or {}):
-        return None
-
     state["phase"] = next_phase
     state["phase_round_start"] = round_number + 1
     state["phase_best_metric"] = None
     state["phase_plateau_counter"] = 0
+    state["phase_successful_rounds"] = 0
     return {"transition": "phase_change", "from": current_phase, "to": next_phase}
+
+
+def _best_run_id_for_phase(*, state: dict[str, object], report: ExperimentReport | None) -> str | None:
+    """Return the run_id whose primary metric matches phase_best_metric, if any."""
+    best_metric = state.get("phase_best_metric")
+    if not isinstance(best_metric, (int, float)) or isinstance(best_metric, bool):
+        return None
+    if report is None:
+        return None
+    target = float(best_metric)
+    for row in report.rows:
+        value = getattr(row, PRIMARY_METRIC_FIELD, None)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and float(value) == target:
+            return row.run_id
+    return None
 
 
 def _accumulate_phase_cost(state: dict[str, object], seconds: float) -> None:
@@ -1400,10 +1438,7 @@ def _accumulate_phase_cost(state: dict[str, object], seconds: float) -> None:
     state["phase_cost_totals"] = totals
 
 
-TRIED_SIGNATURES_WINDOW = 100
-
-
-def _extract_signature(
+def _extract_lgbm_signature(
     *,
     config_path: Path,
     round_label: str,
@@ -1448,7 +1483,9 @@ def _append_tried_signature(state: dict[str, object], signature: dict[str, objec
 
 def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
     """A confirmation round mutates only `model.params.random_state` and reuses a
-    previously-LLM-generated parent config (i.e. `config_NNN.json`, not the seed)."""
+    previously-LLM-generated parent config (`config_NNN.json` where NNN > 001).
+    The baseline (`config_001.json`) is a copy of the seed, not an LLM hypothesis,
+    so confirming it would satisfy the promotion gate without testing anything."""
     if decision_payload.get("action") != "run":
         return False
     changes = decision_payload.get("changes")
@@ -1462,7 +1499,9 @@ def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
     parent = decision_payload.get("parent_config")
     if not isinstance(parent, str):
         return False
-    return parent.startswith("config_") and parent.endswith(".json")
+    if not (parent.startswith("config_") and parent.endswith(".json")):
+        return False
+    return parent != "config_001.json"
 
 
 def _record_confirmation_attempt(
@@ -1807,14 +1846,13 @@ def _initial_state(experiment: ExperimentRecord) -> dict[str, object]:
     }
     phases_config = _phases_config(experiment)
     if phases_config is not None:
-        initial_phase = _initial_phase(phases_config)
-        if initial_phase is not None:
-            state["phase"] = initial_phase
-            state["phase_round_start"] = 1
-            state["phase_best_metric"] = None
-            state["phase_plateau_counter"] = 0
-            state["phase_history"] = []
-            state["phase_cost_totals"] = {}
+        state["phase"] = _initial_phase(phases_config)
+        state["phase_round_start"] = 1
+        state["phase_best_metric"] = None
+        state["phase_plateau_counter"] = 0
+        state["phase_successful_rounds"] = 0
+        state["phase_history"] = []
+        state["phase_cost_totals"] = {}
     return state
 
 
@@ -1887,15 +1925,9 @@ def _status_value(value: object) -> ResearchStatus:
     return "initialized"
 
 
-def _stopped_by_llm(state: dict[str, object]) -> bool:
-    stop_reason = _optional_str(state.get("stop_reason")) or ""
-    if _status_value(state.get("status")) != "stopped":
-        return False
-    return (
-        stop_reason.startswith("llm_stop:")
-        or stop_reason.startswith("all_phases_done:")
-        or stop_reason.startswith("consecutive_failures:")
-    )
+def _is_terminal_stop(state: dict[str, object]) -> bool:
+    """Has the loop reached any terminal stop (LLM stop, all phases done, failure bail)?"""
+    return _status_value(state.get("status")) == "stopped"
 
 
 def _agentic_dir(experiment: ExperimentRecord) -> Path:
@@ -1942,7 +1974,8 @@ def _latest_round_markdown(experiment: ExperimentRecord) -> str | None:
     candidates = [path for path in rounds_dir.glob("r*.md") if re.fullmatch(r"r\d{3,}\.md", path.name)]
     if not candidates:
         return None
-    return _read_text(sorted(candidates)[-1], limit=MAX_CONTEXT_CHARS)
+    latest = max(candidates, key=lambda p: int(p.stem[1:]))
+    return _read_text(latest, limit=MAX_CONTEXT_CHARS)
 
 
 def _load_state(path: Path) -> dict[str, object] | None:
@@ -2146,16 +2179,19 @@ def _experiment_markdown_path(experiment: ExperimentRecord) -> Path:
 
 
 def _write_experiment_markdown(experiment: ExperimentRecord, content: str | None) -> int:
-    """Overwrite the experiment-level EXPERIMENT.md curated by the agent.
+    """Atomically overwrite the experiment-level EXPERIMENT.md curated by the agent.
 
     Returns the number of bytes written. If `content` is missing or empty, the
-    prior file is left untouched and 0 is returned.
+    prior file is left untouched and 0 is returned. Uses temp+os.replace so a
+    crash mid-write cannot leave a partial file the next round would read.
     """
     if not content:
         return 0
     path = _experiment_markdown_path(experiment)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
     return len(content)
 
 
@@ -2258,7 +2294,11 @@ def _rotate_run_artifacts(
     state: dict[str, object],
     last_round_number: int,
 ) -> dict[str, object] | None:
-    """Prune heavy artifacts from non-essential runs.
+    """Prune heavy artifacts from non-essential runs OWNED BY THIS EXPERIMENT.
+
+    Runs are owned if listed in `experiment.runs` or referenced anywhere in state
+    (state references cannot escape the current experiment by construction).
+    Sibling experiments' run dirs in the shared `runs/` root are never touched.
 
     Returns a trace payload when rotation produced action (or would have, in dry run),
     or None when the rotation mode is disabled.
@@ -2268,13 +2308,15 @@ def _rotate_run_artifacts(
         return None
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     essential = _essential_run_ids(report=report, state=state, last_round_number=last_round_number)
+    owned = set(experiment.runs) | essential | _state_run_ids(state)
     runs_root = root / "runs"
     if not runs_root.is_dir():
         return None
     rotated: list[str] = []
     bytes_freed = 0
+    dry_run_targets: list[str] = []
     for run_dir in sorted(runs_root.iterdir()):
-        if not run_dir.is_dir() or run_dir.name in essential:
+        if not run_dir.is_dir() or run_dir.name not in owned or run_dir.name in essential:
             continue
         targets = _heavy_artifact_targets(run_dir)
         if not targets:
@@ -2289,15 +2331,58 @@ def _rotate_run_artifacts(
                     target.unlink()
                 except OSError:
                     continue
+            elif mode == "dry_run" and len(dry_run_targets) < 100:
+                dry_run_targets.append(str(target))
         rotated.append(run_dir.name)
     if not rotated:
         return None
-    return {
+    payload: dict[str, object] = {
         "mode": mode,
         "rotated_run_ids": rotated,
         "bytes_freed": bytes_freed,
         "kept_count": len(essential),
     }
+    if mode == "dry_run":
+        payload["targets"] = dry_run_targets
+    return payload
+
+
+def _state_run_ids(state: dict[str, object]) -> set[str]:
+    """Collect every run_id referenced anywhere in state (confirmations, history,
+    tried_signatures, confirmed_champion, best_overall)."""
+    run_ids: set[str] = set()
+    confirmations = state.get("confirmations")
+    if isinstance(confirmations, dict):
+        for entry in confirmations.values():
+            if isinstance(entry, dict):
+                runs = entry.get("runs")
+                if isinstance(runs, dict):
+                    run_ids.update(v for v in runs.values() if isinstance(v, str))
+    history = state.get("phase_history")
+    if isinstance(history, list):
+        for record in history:
+            if isinstance(record, dict):
+                best = record.get("best_run_id")
+                if isinstance(best, str):
+                    run_ids.add(best)
+    champion = state.get("confirmed_champion")
+    if isinstance(champion, dict):
+        runs = champion.get("runs")
+        if isinstance(runs, dict):
+            run_ids.update(v for v in runs.values() if isinstance(v, str))
+    best_overall = state.get("best_overall")
+    if isinstance(best_overall, dict):
+        run_id = best_overall.get("run_id")
+        if isinstance(run_id, str):
+            run_ids.add(run_id)
+    signatures = state.get("tried_signatures")
+    if isinstance(signatures, list):
+        for entry in signatures:
+            if isinstance(entry, dict):
+                run_id = entry.get("run_id")
+                if isinstance(run_id, str):
+                    run_ids.add(run_id)
+    return run_ids
 
 
 def _read_text(path: Path, *, limit: int) -> str | None:
@@ -2336,6 +2421,15 @@ def _required_str(payload: dict[str, object], key: str) -> str:
 def _optional_str(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
+    return None
+
+
+def _coerce_metric(value: object) -> float | None:
+    """Coerce a primary-metric candidate to float, rejecting booleans (subclass of int)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
     return None
 
 

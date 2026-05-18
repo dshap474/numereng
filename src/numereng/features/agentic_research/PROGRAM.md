@@ -26,6 +26,10 @@ hypotheses in one decision.
 - Single-seed discovery is directional only. It can identify candidates, but it cannot prove a true
   winner or convergence.
 - Seed-averaged confirmation is required before claiming that one config is better than another.
+  Confirmation uses the canonical seed trio surfaced in `context.canonical_seed_trio` (currently
+  `[42, 17, 99]`). To run a confirmation round, set `parent_config` to the previously-LLM-generated
+  `config_NNN.json` you want to confirm (never the baseline `config_001.json`), and propose exactly
+  one change: `model.params.random_state` set to the next seed in the trio not yet completed.
 - Treat improvements below roughly `1e-4` to `3e-4` on `bmc_last_200_eras_mean` as provisional
   unless confirmed across the same seed set.
 - Use the best comparable parent, not automatically the previous round.
