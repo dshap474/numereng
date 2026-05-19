@@ -620,6 +620,48 @@ def _train_score_record_round(
                     event="confirmation_promoted",
                     payload=promotion,
                 )
+    elif action == "run":
+        # Auto-credit the discovery seed against the freshly-materialized config.
+        # Without this, the seed trio can never complete: the LLM cannot re-run
+        # the generated config with random_state=42 because the duplicate-by-hash
+        # gate would reject it.
+        discovery_seed = _config_random_state(config_path)
+        if (
+            isinstance(discovery_seed, int)
+            and not isinstance(discovery_seed, bool)
+            and discovery_seed in CANONICAL_SEED_TRIO
+        ):
+            _record_confirmation_attempt(
+                state=state,
+                parent_config=config_path.name,
+                seed=discovery_seed,
+                run_id=trained.run_id,
+                metric_value=typed_metric,
+                round_number=round_number,
+            )
+            _append_trace(
+                experiment,
+                round_number=round_number,
+                round_label=round_label,
+                event="discovery_seed_auto_credited",
+                payload={
+                    "generated_config": config_path.name,
+                    "seed": discovery_seed,
+                    "run_id": trained.run_id,
+                    "primary_metric": typed_metric,
+                },
+            )
+            promotion = _maybe_promote_confirmation(
+                state=state, parent_config=config_path.name, round_number=round_number
+            )
+            if promotion is not None:
+                _append_trace(
+                    experiment,
+                    round_number=round_number,
+                    round_label=round_label,
+                    event="confirmation_promoted",
+                    payload=promotion,
+                )
     transition_payload = _maybe_transition_phase(
         experiment=experiment, state=state, round_number=round_number, report=report
     )
@@ -1470,6 +1512,19 @@ def _extract_lgbm_signature(
         sig["mcs"] = params_section.get("min_child_samples")
         sig["seed"] = params_section.get("random_state")
     return sig
+
+
+def _config_random_state(config_path: Path) -> object | None:
+    """Return `model.params.random_state` for a materialized config, or None on any parse error."""
+    try:
+        payload = load_training_config_json(config_path)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    model = payload.get("model")
+    params = model.get("params") if isinstance(model, dict) else None
+    return params.get("random_state") if isinstance(params, dict) else None
 
 
 def _append_tried_signature(state: dict[str, object], signature: dict[str, object]) -> None:

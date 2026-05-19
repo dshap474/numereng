@@ -1473,6 +1473,262 @@ def test_is_confirmation_round_excludes_config_001() -> None:
     assert research_module._is_confirmation_round(decision_payload) is False
 
 
+def test_config_random_state_handles_missing_and_malformed(tmp_path: Path) -> None:
+    """The helper returns None for missing/malformed configs without raising."""
+    missing = tmp_path / "missing.json"
+    assert research_module._config_random_state(missing) is None
+
+    schema_invalid = tmp_path / "schema_invalid.json"
+    schema_invalid.write_text("{}", encoding="utf-8")
+    assert research_module._config_random_state(schema_invalid) is None
+
+    valid = tmp_path / "valid.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+                "model": {"type": "LGBMRegressor", "params": {"learning_rate": 0.01, "random_state": 42}},
+                "training": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert research_module._config_random_state(valid) == 42
+
+
+def test_discovery_seed_auto_credits_canonical_random_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A discovery round that materializes a config with random_state in CANONICAL_SEED_TRIO
+    must record that seed against the generated config so the trio can eventually complete."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-disc", 0.0025)))
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [
+                        {"path": "model.params.learning_rate", "value": 0.07, "reason": "x"},
+                        {"path": "model.params.random_state", "value": 42, "reason": "discovery seed"},
+                    ],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-disc",
+            predictions_path=store_root / "runs" / "run-disc" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-disc" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID, round="r001", stage="post_training_core", run_ids=("run-disc",)
+        ),
+    )
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    state = json.loads(
+        (experiment.manifest_path.parent / "agentic_research" / "state.json").read_text(encoding="utf-8")
+    )
+    entry = state["confirmations"]["config_001.json"]
+    assert entry["seeds_completed"] == [42]
+    assert entry["runs"] == {"42": "run-disc"}
+    assert entry["primary_metric_by_seed"]["42"] == pytest.approx(0.0025)
+
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    auto_credit = [e for e in trace if e["event"] == "discovery_seed_auto_credited"]
+    assert len(auto_credit) == 1
+    payload = cast(dict[str, object], auto_credit[0]["payload"])
+    assert payload["generated_config"] == "config_001.json"
+    assert payload["seed"] == 42
+
+
+def test_discovery_seed_skips_non_canonical_random_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A discovery round with random_state=123 (not in trio) must not record a confirmation entry."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-x", 0.001)))
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [
+                        {"path": "model.params.random_state", "value": 123, "reason": "non-canonical"},
+                    ],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-x",
+            predictions_path=store_root / "runs" / "run-x" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-x" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID, round="r001", stage="post_training_core", run_ids=("run-x",)
+        ),
+    )
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    state = json.loads(
+        (experiment.manifest_path.parent / "agentic_research" / "state.json").read_text(encoding="utf-8")
+    )
+    assert state.get("confirmations", {}) == {}
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    assert not any(e["event"] == "discovery_seed_auto_credited" for e in trace)
+
+
+def test_confirmation_round_does_not_auto_credit_double(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A confirmation round routes through the existing confirmation_attempt path only;
+    the auto-credit branch must not fire (it is `elif action == 'run'` AFTER the if-confirmation)."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    configs_dir = experiment.manifest_path.parent / "configs"
+    _write_training_config(configs_dir / "seed.json")
+    _write_training_config(configs_dir / "config_005.json", learning_rate=0.07)
+
+    monkeypatch.setattr(research_module, "_safe_report", lambda **_: _report(_row("run-conf", 0.003)))
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "confirm",
+                    "belief_update": "confirm",
+                    "next_hypothesis": "confirm",
+                    "parent_config": "config_005.json",
+                    "changes": [{"path": "model.params.random_state", "value": 17, "reason": "trio"}],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "train_experiment",
+        lambda **_: ExperimentTrainResult(
+            experiment_id=EXPERIMENT_ID,
+            run_id="run-conf",
+            predictions_path=store_root / "runs" / "run-conf" / "predictions.parquet",
+            results_path=store_root / "runs" / "run-conf" / "results.json",
+        ),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "score_experiment_round",
+        lambda **_: ExperimentScoreRoundResult(
+            experiment_id=EXPERIMENT_ID, round="r001", stage="post_training_core", run_ids=("run-conf",)
+        ),
+    )
+
+    run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    state = json.loads(
+        (experiment.manifest_path.parent / "agentic_research" / "state.json").read_text(encoding="utf-8")
+    )
+    # Only one entry — under the parent, not under the generated config_001.json
+    assert list(state["confirmations"].keys()) == ["config_005.json"]
+    assert state["confirmations"]["config_005.json"]["seeds_completed"] == [17]
+    trace = _trace_events(experiment.manifest_path.parent / "agentic_research" / "trace.jsonl")
+    assert not any(e["event"] == "discovery_seed_auto_credited" for e in trace)
+
+
+def test_auto_credit_plus_confirmations_promotes_champion(tmp_path: Path) -> None:
+    """End-to-end: discovery(seed=42) auto-credits, then seed-17 and seed-99 confirmations
+    complete the trio and `_maybe_promote_confirmation` populates `confirmed_champion`."""
+    state: dict[str, object] = {"phase": "shallow"}
+    # Simulate discovery auto-credit
+    research_module._record_confirmation_attempt(
+        state=state,
+        parent_config="config_021.json",
+        seed=42,
+        run_id="run-disc",
+        metric_value=0.0025,
+        round_number=21,
+    )
+    # Simulate seed-17 confirmation
+    research_module._record_confirmation_attempt(
+        state=state,
+        parent_config="config_021.json",
+        seed=17,
+        run_id="run-c17",
+        metric_value=0.0027,
+        round_number=22,
+    )
+    promo_after_17 = research_module._maybe_promote_confirmation(
+        state=state, parent_config="config_021.json", round_number=22
+    )
+    assert promo_after_17 is None  # trio incomplete
+    # Simulate seed-99 confirmation
+    research_module._record_confirmation_attempt(
+        state=state,
+        parent_config="config_021.json",
+        seed=99,
+        run_id="run-c99",
+        metric_value=0.0030,
+        round_number=23,
+    )
+    promo_after_99 = research_module._maybe_promote_confirmation(
+        state=state, parent_config="config_021.json", round_number=23
+    )
+    assert promo_after_99 is not None
+    assert promo_after_99["parent_config"] == "config_021.json"
+    assert promo_after_99["seed_trio_primary_mean"] == pytest.approx((0.0025 + 0.0027 + 0.0030) / 3)
+    champion = cast(dict[str, object], state["confirmed_champion"])
+    assert champion["parent_config"] == "config_021.json"
+    assert set(cast(dict[str, str], champion["runs"]).keys()) == {"42", "17", "99"}
+
+
 def test_latest_round_markdown_sorts_by_integer(tmp_path: Path) -> None:
     """Round numbering above 999 must be sorted numerically, not lexicographically."""
     store_root = tmp_path / ".numereng"

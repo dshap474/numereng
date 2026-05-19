@@ -30,6 +30,11 @@ hypotheses in one decision.
   `[42, 17, 99]`). To run a confirmation round, set `parent_config` to the previously-LLM-generated
   `config_NNN.json` you want to confirm (never the baseline `config_001.json`), and propose exactly
   one change: `model.params.random_state` set to the next seed in the trio not yet completed.
+- The discovery round's own seed is auto-credited. When a non-confirmation run completes and its
+  `model.params.random_state` is in the canonical trio, Python writes that seed into
+  `confirmations[generated_config]` automatically. Consult `context.confirmations` to see which
+  seeds have already completed for a config before proposing a confirmation round — do not waste
+  a round re-running the discovery seed.
 - Treat improvements below roughly `1e-4` to `3e-4` on `bmc_last_200_eras_mean` as provisional
   unless confirmed across the same seed set.
 - Use the best comparable parent, not automatically the previous round.
