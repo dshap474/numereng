@@ -511,7 +511,7 @@ def _train_score_record_round(
     artifact_dir: Path,
     learning: str,
     decision_payload: dict[str, object],
-    round_markdown: str | None = None,
+    round_markdown: str,
 ) -> ResearchRoundResult:
     round_started_at = time.monotonic()
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
@@ -547,15 +547,12 @@ def _train_score_record_round(
         "completed_at": _utc_now_iso(),
         "wall_time_seconds": round_seconds,
     }
-    if round_markdown is None:
-        _write_round_notes(artifact_dir=artifact_dir, round_payload=round_payload)
-    else:
-        _write_llm_round_markdown(
-            artifact_dir=artifact_dir,
-            round_label=round_label,
-            round_markdown=round_markdown,
-            round_payload=round_payload,
-        )
+    _write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label=round_label,
+        round_markdown=round_markdown,
+        round_payload=round_payload,
+    )
     _append_decision_log(_decision_log_path(experiment), round_payload)
 
     state.update(
@@ -2037,54 +2034,6 @@ def _append_trace(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
-
-
-def _write_round_notes(*, artifact_dir: Path, round_payload: dict[str, object]) -> None:
-    decision = round_payload.get("decision")
-    decision_payload = cast(dict[str, object], decision) if isinstance(decision, dict) else {}
-    lines = [
-        f"# {round_payload.get('round_label', 'round')} Agentic Research Notes",
-        "",
-        "## Summary",
-        f"- Action: {round_payload.get('action')}",
-        f"- Status: {round_payload.get('status')}",
-        f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
-        f"- Config: {_notes_value(round_payload.get('config_path'))}",
-        f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
-        f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
-        "",
-        "## Learning",
-        str(round_payload.get("learning") or decision_payload.get("learning") or "None recorded.").strip(),
-    ]
-    belief_update = _optional_str(decision_payload.get("belief_update"))
-    if belief_update is not None:
-        lines.extend(["", "## Belief Update", belief_update])
-    next_hypothesis = _optional_str(decision_payload.get("next_hypothesis"))
-    if next_hypothesis is not None:
-        lines.extend(["", "## Next Hypothesis", next_hypothesis])
-    lines.extend(["", "## Decision", f"- Parent config: {_notes_value(decision_payload.get('parent_config'))}"])
-    if "generated_config" in decision_payload:
-        lines.append(f"- Generated config: {_notes_value(decision_payload.get('generated_config'))}")
-    if "model_source" in decision_payload:
-        lines.append(f"- Model source: {_notes_value(decision_payload.get('model_source'))}")
-    changes = _as_list(decision_payload.get("changes"))
-    if changes:
-        lines.append("- Changes:")
-        for change in changes:
-            if not isinstance(change, dict):
-                continue
-            change_payload = cast(dict[str, object], change)
-            path = _notes_value(change_payload.get("path"))
-            value = json.dumps(change_payload.get("value"), sort_keys=True, default=str)
-            reason = _notes_value(change_payload.get("reason"))
-            lines.append(f"  - `{path}` = `{value}`: {reason}")
-    else:
-        lines.append("- Changes: none")
-    stop_reason = _optional_str(round_payload.get("stop_reason")) or _optional_str(decision_payload.get("stop_reason"))
-    if stop_reason is not None:
-        lines.extend(["", "## Stop Reason", stop_reason])
-    round_label = str(round_payload.get("round_label") or "round")
-    _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
 def _write_failure_round_markdown(

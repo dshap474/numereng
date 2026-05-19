@@ -1587,3 +1587,54 @@ def test_artifact_rotation_does_not_touch_other_experiments(tmp_path: Path) -> N
     assert b_run not in payload["rotated_run_ids"]
     assert (runs_root / a_run / "predictions.parquet").exists() is False
     assert (runs_root / b_run / "predictions.parquet").exists() is True
+
+
+def test_artifact_rotation_grace_window_protects_recent_signatures(tmp_path: Path) -> None:
+    """tried_signatures within the 10-round grace are essential; older ones are eligible to rotate.
+
+    Long-burn correctness: as the loop runs, signatures pile up. Once a signature's round falls
+    outside `ARTIFACT_ROTATION_RECENT_ROUND_GRACE` of the latest round AND its run is not
+    otherwise referenced (no leaderboard row, no confirmation, no champion), its heavy artifacts
+    are eligible for rotation. This is the only path that actually frees space during a long burn.
+    """
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(experiment.manifest_path, {"agentic_research_artifact_rotation": "enabled"})
+
+    runs_root = store_root / "runs"
+    recent_run = "run-recent-r048"
+    old_run = "run-old-r010"
+    for run_id in (recent_run, old_run):
+        d = runs_root / run_id
+        d.mkdir(parents=True)
+        (d / "predictions.parquet").write_bytes(b"x" * 2_000_000)
+        (d / "metrics.json").write_text("{}", encoding="utf-8")
+    _set_experiment_runs(experiment.manifest_path, [recent_run, old_run])
+
+    last_round = 50
+    state: dict[str, object] = {
+        "tried_signatures": [
+            {"r": "r010", "run_id": old_run, "primary": 0.1},
+            {"r": "r048", "run_id": recent_run, "primary": 0.2},
+        ],
+    }
+    experiment_record = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(research_module, "_safe_report", lambda **_: None)
+        payload = research_module._rotate_run_artifacts(
+            root=store_root,
+            experiment=experiment_record,
+            state=state,
+            last_round_number=last_round,
+        )
+
+    grace_start = last_round - research_module.ARTIFACT_ROTATION_RECENT_ROUND_GRACE + 1
+    assert grace_start == 41  # sanity-check the grace math
+
+    assert payload is not None
+    assert old_run in payload["rotated_run_ids"]
+    assert recent_run not in payload["rotated_run_ids"]
+    assert (runs_root / old_run / "predictions.parquet").exists() is False
+    assert (runs_root / recent_run / "predictions.parquet").exists() is True
+    assert (runs_root / old_run / "metrics.json").exists() is True  # preserve sentinel kept
