@@ -695,7 +695,13 @@ def _train_score_record_round(
         experiment=experiment, state=state, round_number=round_number, report=report
     )
     if transition_payload is not None:
-        event = "phase_misconfigured" if transition_payload.get("transition") == "misconfigured" else "phase_transition"
+        kind = transition_payload.get("transition")
+        if kind == "misconfigured":
+            event = "phase_misconfigured"
+        elif kind == "blocked_no_champion":
+            event = "phase_blocked_no_champion"
+        else:
+            event = "phase_transition"
         _append_trace(
             experiment,
             round_number=round_number,
@@ -1483,8 +1489,18 @@ def _maybe_transition_phase(
     successful_rounds = _as_int(state.get("phase_successful_rounds"), default=0)
     plateau = _as_int(state.get("phase_plateau_counter"), default=0)
     champion_ok = (not require_champion) or _phase_has_confirmed_champion(state, current_phase)
-    if successful_rounds < min_rounds or plateau < plateau_threshold or not champion_ok:
+    if successful_rounds < min_rounds or plateau < plateau_threshold:
         return None
+    if not champion_ok:
+        # Transition gates are otherwise met but the phase exhausted without a
+        # confirmed champion. Surface that distinctly so operators can grep
+        # trace.jsonl for stuck phases instead of inferring it from silence.
+        return {
+            "transition": "blocked_no_champion",
+            "from": current_phase,
+            "successful_rounds": successful_rounds,
+            "plateau": plateau,
+        }
 
     next_phase: str | None = None
     if not is_terminal:

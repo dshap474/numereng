@@ -1005,7 +1005,9 @@ def test_phase_transition_fires_when_predicate_met() -> None:
 
 
 def test_phase_transition_blocked_when_no_confirmed_champion() -> None:
-    """Same predicate but require_confirmed_champion=True with no confirmations → no transition."""
+    """When require_confirmed_champion=True and rounds/plateau thresholds are met
+    but no champion exists, _maybe_transition_phase emits a blocked_no_champion
+    payload (informational) and leaves state untouched."""
     cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
     cfg["shallow"]["transition"]["require_confirmed_champion"] = True
     experiment_metadata = {"agentic_research_phases": cfg}
@@ -1027,9 +1029,42 @@ def test_phase_transition_blocked_when_no_confirmed_champion() -> None:
         state=state,
         round_number=3,
     )
-    assert payload is None
+    assert payload is not None
+    assert payload["transition"] == "blocked_no_champion"
+    assert payload["from"] == "shallow"
+    assert payload["successful_rounds"] == 2
+    assert payload["plateau"] == 2
+    # State must remain unchanged - no real transition fired.
     assert state["phase"] == "shallow"
     assert state["phase_history"] == []
+
+
+def test_phase_transition_returns_none_when_min_rounds_not_met() -> None:
+    """Gate ordering: min_rounds/plateau check fails before the champion check,
+    so a phase that hasn't burned enough rounds yet returns None (silent), not
+    blocked_no_champion."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    cfg["shallow"]["transition"]["require_confirmed_champion"] = True
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.001,
+        "phase_plateau_counter": 0,
+        "phase_successful_rounds": 0,
+        "phase_history": [],
+        "confirmations": {},
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=1,
+    )
+    assert payload is None
 
 
 def test_terminal_phase_stop_emits_all_phases_done() -> None:

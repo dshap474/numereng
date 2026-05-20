@@ -105,6 +105,16 @@ read `experiment_notes` for the focused contract.
 Do not emit shell commands. Do not invent output filenames. Do not edit Python code. Do not
 hand-write the final machine `decision.json`; Python creates it.
 
+## Model-Specific Constraints
+
+- **LGBM leaf cap:** When `model.params.max_depth > 0`, `num_leaves` above `2 ** max_depth` has
+  no effect because LightGBM stops splits at the depth ceiling. A `max_depth=5, num_leaves=64`
+  config produces the identical tree as `max_depth=5, num_leaves=32`. Python normalizes the
+  effective config before the duplicate-by-hash check, so proposing leaves above the cap will
+  almost always collide with a previously-tried sibling and waste the round. Never propose
+  `num_leaves > 2 ** max_depth` as a single-axis change; if you intend to raise leaf budget,
+  raise `max_depth` first.
+
 ## Budget And Phased Strategy
 
 The context includes `state.next_round_number` and `state.total_rounds_completed`. Use them to
