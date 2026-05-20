@@ -184,7 +184,7 @@ def test_run_research_runs_baseline_before_llm(
             "seed": "",
             "target": "",
             "horizon": "",
-            "config_path": str(experiment.manifest_path.parent / "configs" / "config_001.json"),
+            "config_path": "configs/config_001.json",
             "score_stage_default": "post_training_core",
         }
     ]
@@ -330,6 +330,7 @@ def test_run_research_materializes_llm_config_mutation(
     assert "## Execution Result" in round_notes
     assert "Run ID: run-1" in round_notes
     assert "bmc_last_200_eras_mean: 0.13" in round_notes
+    assert "Config: configs/config_001.json" in round_notes
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
     assert not (artifact_dir / "prompt.md").exists()
@@ -515,7 +516,22 @@ def test_record_round_config_in_run_plan_is_idempotent(tmp_path: Path) -> None:
     rows = _run_plan_rows(experiment.manifest_path.parent / "run_plan.csv")
     assert len(rows) == 1
     assert rows[0]["round"] == "r004"
-    assert rows[0]["config_path"] == str(config_path)
+    assert rows[0]["config_path"] == "configs/config_004.json"
+
+
+def test_run_plan_records_relative_config_path_for_portability(tmp_path: Path) -> None:
+    """`run_plan.csv` must hold paths relative to the experiment dir so the artifact
+    is portable across machines (PC → laptop sync)."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    config_path = experiment.manifest_path.parent / "configs" / "config_005.json"
+    config_path.write_text("{}", encoding="utf-8")
+
+    research_module._record_round_config_in_run_plan(experiment=experiment, round_label="r005", config_path=config_path)
+    rows = _run_plan_rows(experiment.manifest_path.parent / "run_plan.csv")
+    recorded = rows[0]["config_path"]
+    assert recorded == "configs/config_005.json"
+    assert not Path(recorded).is_absolute()
 
 
 def test_run_plan_recorded_before_score_experiment_round(
@@ -818,6 +834,73 @@ def test_materialize_rejects_path_outside_program_allowed_list(tmp_path: Path) -
         stop_reason=None,
     )
     with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
+        research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+
+
+def test_lgbm_num_leaves_above_depth_cap_normalized() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {"type": "LGBMRegressor", "params": {"max_depth": 5, "num_leaves": 64}},
+        "training": {},
+    }
+    research_module._normalize_lgbm_effective_params(payload)
+    assert payload["model"]["params"]["num_leaves"] == 32
+
+
+def test_lgbm_num_leaves_below_cap_unchanged() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {"type": "LGBMRegressor", "params": {"max_depth": 5, "num_leaves": 16}},
+        "training": {},
+    }
+    research_module._normalize_lgbm_effective_params(payload)
+    assert payload["model"]["params"]["num_leaves"] == 16
+
+
+def test_lgbm_max_depth_unlimited_skips_normalization() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {"type": "LGBMRegressor", "params": {"max_depth": -1, "num_leaves": 1024}},
+        "training": {},
+    }
+    research_module._normalize_lgbm_effective_params(payload)
+    assert payload["model"]["params"]["num_leaves"] == 1024
+
+
+def test_lgbm_normalization_skips_non_lgbm_model() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {"type": "XGBRegressor", "params": {"max_depth": 5, "num_leaves": 64}},
+        "training": {},
+    }
+    research_module._normalize_lgbm_effective_params(payload)
+    assert payload["model"]["params"]["num_leaves"] == 64
+
+
+def test_duplicate_via_effective_leaf_cap_rejected(tmp_path: Path) -> None:
+    """A new config that collapses to an existing one via num_leaves normalization
+    must be rejected by the duplicate-by-hash gate."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    configs_dir = experiment.manifest_path.parent / "configs"
+    seed_payload = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+        "model": {"type": "LGBMRegressor", "params": {"max_depth": 5, "num_leaves": 32, "learning_rate": 0.1}},
+        "training": {},
+    }
+    (configs_dir / "seed.json").parent.mkdir(parents=True, exist_ok=True)
+    (configs_dir / "seed.json").write_text(json.dumps(seed_payload), encoding="utf-8")
+
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(research_module.ResearchChange(path="model.params.num_leaves", value=64, reason="leaves above cap"),),
+        stop_reason=None,
+    )
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_candidate_duplicate"):
         research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
 
 
@@ -1894,3 +1977,176 @@ def test_artifact_rotation_grace_window_protects_recent_signatures(tmp_path: Pat
     assert (runs_root / old_run / "predictions.parquet").exists() is False
     assert (runs_root / recent_run / "predictions.parquet").exists() is True
     assert (runs_root / old_run / "metrics.json").exists() is True  # preserve sentinel kept
+
+
+def test_load_secondary_metrics_flattens_canonical_keys(tmp_path: Path) -> None:
+    run_id = "run-secondary"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "metrics.json").write_text(
+        json.dumps(
+            {
+                "bmc_last_200_eras": {"mean": 0.0035},
+                "bmc": {"mean": 0.0046},
+                "corr": {"mean": 0.0158},
+                "mmc": {"mean": -0.0001},
+                "cwmm": {"mean": 0.2658},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = research_module._load_secondary_metrics_from_disk(root=tmp_path, run_id=run_id)
+    assert result == {
+        "bmc_mean": 0.0046,
+        "corr_mean": 0.0158,
+        "mmc_mean": -0.0001,
+        "cwmm_mean": 0.2658,
+    }
+
+
+def test_load_secondary_metrics_returns_empty_when_metrics_missing(tmp_path: Path) -> None:
+    assert research_module._load_secondary_metrics_from_disk(root=tmp_path, run_id="ghost") == {}
+    assert research_module._load_secondary_metrics_from_disk(root=tmp_path, run_id=None) == {}
+
+
+def test_round_md_includes_wall_time_and_secondary_metrics_block(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r042",
+        round_markdown="# r042 Research State\n\nBody.",
+        round_payload={
+            "action": "run",
+            "status": "completed",
+            "run_id": "abc123",
+            "config_path": "configs/config_042.json",
+            "metric_value": 0.00374,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 138.34,
+            "secondary_metrics": {
+                "bmc_mean": 0.0046,
+                "corr_mean": 0.0158,
+                "mmc_mean": -0.0001,
+                "cwmm_mean": 0.2658,
+            },
+        },
+    )
+    md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
+    assert "- Wall time: 138.3s" in md
+    assert "## Secondary Metrics" in md
+    assert "- bmc_mean: 0.0046" in md
+    assert "- corr_mean: 0.0158" in md
+    assert "- mmc_mean: -0.0001" in md
+    assert "- cwmm_mean: 0.2658" in md
+
+
+def test_failed_round_md_includes_llm_proposal_when_decision_was_parsed(tmp_path: Path) -> None:
+    """When materialization or training fails after a decision was parsed, the
+    failure markdown must record what the LLM proposed."""
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_failure_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r042",
+        round_payload={
+            "action": "run",
+            "status": "failed",
+            "run_id": None,
+            "config_path": None,
+            "metric_value": None,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "error": "agentic_research_candidate_duplicate:abc",
+            "error_class": "AgenticResearchValidationError",
+            "pending_decision": {
+                "action": "run",
+                "parent_config": "config_037.json",
+                "changes": [{"path": "model.params.num_leaves", "value": 64, "reason": "x"}],
+            },
+        },
+    )
+    md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
+    assert "## What was attempted" in md
+    assert "LLM produced a decision" in md
+    assert "AgenticResearchValidationError" in md
+    assert "## LLM proposal" in md
+    assert "- parent: config_037.json" in md
+    assert "- model.params.num_leaves: → 64" in md
+    assert "Error: agentic_research_candidate_duplicate:abc" in md
+
+
+def test_failed_round_md_pre_llm_error_omits_llm_proposal(tmp_path: Path) -> None:
+    """Failures before the LLM is consulted (or before parse succeeds) get a
+    minimal failure markdown without an LLM proposal section."""
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_failure_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r004",
+        round_payload={
+            "action": "run",
+            "status": "failed",
+            "run_id": None,
+            "config_path": None,
+            "metric_value": None,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "error": "experiment_round_not_found:exp:r004",
+            "error_class": "ExperimentValidationError",
+        },
+    )
+    md = (artifact_dir / "r004.md").read_text(encoding="utf-8")
+    assert "## What was attempted" in md
+    assert "failed before the LLM produced a usable decision" in md
+    assert "## LLM proposal" not in md
+    assert "ExperimentValidationError" in md
+
+
+def test_failed_round_md_debug_pointers_only_when_files_exist(tmp_path: Path) -> None:
+    """The Debug artifacts section must list only files that actually exist on disk."""
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    (artifact_dir / "r007.debug.error.txt").write_text("boom", encoding="utf-8")
+    (artifact_dir / "r007.debug.llm_response.txt").write_text("...", encoding="utf-8")
+    research_module._write_failure_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r007",
+        round_payload={
+            "action": "run",
+            "status": "failed",
+            "run_id": None,
+            "config_path": None,
+            "metric_value": None,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "error": "agentic_research_decision_parse_failed",
+            "error_class": "AgenticResearchValidationError",
+        },
+    )
+    md = (artifact_dir / "r007.md").read_text(encoding="utf-8")
+    assert "## Debug artifacts" in md
+    assert "- r007.debug.error.txt" in md
+    assert "- r007.debug.llm_response.txt" in md
+    assert "- r007.debug.codex_stdout.jsonl" not in md  # never created
+    assert "- r007.debug.prompt.md" not in md  # never created
+
+
+def test_round_md_omits_secondary_metrics_block_when_empty(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r042",
+        round_markdown="# r042 Research State\n\nBody.",
+        round_payload={
+            "action": "run",
+            "status": "completed",
+            "run_id": "abc123",
+            "config_path": "configs/config_042.json",
+            "metric_value": 0.00374,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 138.34,
+            "secondary_metrics": {},
+        },
+    )
+    md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
+    assert "## Secondary Metrics" not in md
+    assert "- Wall time: 138.3s" in md

@@ -65,6 +65,12 @@ STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
+SECONDARY_METRICS: tuple[tuple[str, str], ...] = (
+    ("bmc.mean", "bmc_mean"),
+    ("corr.mean", "corr_mean"),
+    ("mmc.mean", "mmc_mean"),
+    ("cwmm.mean", "cwmm_mean"),
+)
 SCORING_STAGE = "post_training_core"
 RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 MAX_CONTEXT_CHARS = 12_000
@@ -344,6 +350,10 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         raise
     decision = llm_response.decision
     decision_payload = _decision_payload(decision, model_source=model_source)
+    # Stash so _record_failed_round can surface what the LLM proposed when a
+    # post-parse step (materialization, train, score) blows up. Cleared on
+    # success in _train_score_record_round / _record_stop_round.
+    state["pending_decision"] = decision_payload
     _append_trace(
         experiment,
         round_number=round_number,
@@ -534,18 +544,20 @@ def _train_score_record_round(
     if metric_value is None:
         metric_value = _run_primary_metric_from_disk(root=root, run_id=trained.run_id)
     best = _best_run_from_report(report)
+    secondary_metrics = _load_secondary_metrics_from_disk(root=root, run_id=trained.run_id)
     round_payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
         "action": action,
         "status": "completed",
-        "config_path": str(config_path),
+        "config_path": _relative_to_experiment(experiment, config_path),
         "run_id": trained.run_id,
         "metric_value": metric_value,
         "learning": learning,
         "decision": decision_payload,
         "completed_at": _utc_now_iso(),
         "wall_time_seconds": round_seconds,
+        "secondary_metrics": secondary_metrics,
     }
     _write_llm_round_markdown(
         artifact_dir=artifact_dir,
@@ -555,6 +567,7 @@ def _train_score_record_round(
     )
     _append_decision_log(_decision_log_path(experiment), round_payload)
 
+    state.pop("pending_decision", None)
     state.update(
         {
             "status": "running",
@@ -730,6 +743,7 @@ def _record_stop_round(
         round_payload=payload,
     )
     _append_decision_log(_decision_log_path(experiment), payload)
+    state.pop("pending_decision", None)
     state.update(
         {
             "status": "stopped",
@@ -763,7 +777,10 @@ def _record_failed_round(
     artifact_dir = _rounds_dir(experiment)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     message = str(error) or error.__class__.__name__
+    error_class = error.__class__.__name__
     learning = f"Round skipped: {message}"
+    pending_decision_raw = state.pop("pending_decision", None)
+    pending_decision = pending_decision_raw if isinstance(pending_decision_raw, dict) else None
     payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
@@ -773,8 +790,11 @@ def _record_failed_round(
         "metric_value": None,
         "learning": learning,
         "error": message,
+        "error_class": error_class,
         "completed_at": _utc_now_iso(),
     }
+    if pending_decision is not None:
+        payload["pending_decision"] = pending_decision
     _append_decision_log(_decision_log_path(experiment), payload)
     _append_trace(
         experiment,
@@ -1159,6 +1179,7 @@ def _materialize_decision_config(
     for change in decision.changes:
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
     validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
+    _normalize_lgbm_effective_params(validated)
     candidate_hash = compute_config_hash(validated)
     existing_hashes = _existing_config_hashes(config_dir)
     if candidate_hash in existing_hashes:
@@ -1172,6 +1193,17 @@ def _materialize_decision_config(
 def _round_config_filename(round_label: str) -> str:
     suffix = round_label.removeprefix("r")
     return f"config_{suffix}.json" if suffix.isdigit() else f"{round_label}_config.json"
+
+
+def _relative_to_experiment(experiment: ExperimentRecord, path: Path) -> str:
+    """Render `path` relative to the experiment directory so artifacts stay portable.
+
+    `experiments/run_plan.py:_resolve_config_path` already accepts relative paths,
+    so writing them here doesn't break scoring or resume."""
+    try:
+        return str(path.relative_to(experiment.manifest_path.parent))
+    except ValueError:
+        return str(path)
 
 
 def _record_round_config_in_run_plan(*, experiment: ExperimentRecord, round_label: str, config_path: Path) -> None:
@@ -1198,7 +1230,7 @@ def _record_round_config_in_run_plan(*, experiment: ExperimentRecord, round_labe
             **{field: "" for field in fieldnames},
             "plan_index": str(_next_run_plan_index(rows)),
             "round": round_label,
-            "config_path": str(config_path),
+            "config_path": _relative_to_experiment(experiment, config_path),
             "score_stage_default": SCORING_STAGE,
         }
     )
@@ -1231,10 +1263,39 @@ def _existing_config_hashes(config_dir: Path) -> set[str]:
     hashes: set[str] = set()
     for path in sorted(config_dir.glob("*.json")):
         try:
-            hashes.add(compute_config_hash(load_training_config_json(path)))
+            payload = load_training_config_json(path)
         except Exception:
             continue
+        _normalize_lgbm_effective_params(payload)
+        hashes.add(compute_config_hash(payload))
     return hashes
+
+
+def _normalize_lgbm_effective_params(payload: dict[str, object]) -> dict[str, object]:
+    """Clamp `num_leaves` to `2 ** max_depth` when both are set for LGBM models.
+
+    LightGBM stops splits at `max_depth` regardless of `num_leaves`, so two configs
+    that differ only by `num_leaves` above the depth-implied cap produce identical
+    trees. Normalizing before hashing makes the duplicate-by-hash gate catch this.
+    Skipped when `max_depth <= 0` (LightGBM's "unlimited depth" sentinel) because
+    then `num_leaves` is the sole limiter.
+    """
+    model = payload.get("model")
+    if not isinstance(model, dict) or model.get("type") != "LGBMRegressor":
+        return payload
+    params = model.get("params")
+    if not isinstance(params, dict):
+        return payload
+    depth = params.get("max_depth")
+    leaves = params.get("num_leaves")
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth <= 0:
+        return payload
+    if not isinstance(leaves, int) or isinstance(leaves, bool):
+        return payload
+    cap = 2**depth
+    if leaves > cap:
+        params["num_leaves"] = cap
+    return payload
 
 
 def _assign_dotted(payload: dict[str, object], parts: list[str], value: object) -> None:
@@ -1787,6 +1848,32 @@ def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
         return None
 
 
+def _load_secondary_metrics_from_disk(*, root: Path, run_id: str | None) -> dict[str, float]:
+    """Read the secondary metric block from runs/<run_id>/metrics.json.
+
+    Returns a flat dict keyed by canonical viz names (`bmc_mean`, `corr_mean`, ...).
+    Silently returns {} if the file is missing or malformed; secondary metrics are
+    cosmetic for the round md, not load-bearing for any decision."""
+    if run_id is None:
+        return {}
+    metrics_path = root / "runs" / run_id / "metrics.json"
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    result: dict[str, float] = {}
+    for dotted, label in SECONDARY_METRICS:
+        current: object = payload
+        for token in dotted.split("."):
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(token)
+        if isinstance(current, (int, float)) and not isinstance(current, bool):
+            result[label] = float(current)
+    return result
+
+
 def _run_primary_metric_from_disk(*, root: Path, run_id: str) -> float | None:
     """Read the primary metric directly from runs/<run_id>/metrics.json.
 
@@ -2098,21 +2185,68 @@ def _write_failure_round_markdown(
     round_payload: dict[str, object],
 ) -> None:
     error = _optional_str(round_payload.get("error")) or "unknown error"
+    error_class = _optional_str(round_payload.get("error_class")) or "Exception"
+    pending = round_payload.get("pending_decision")
+    pending_decision = pending if isinstance(pending, dict) else None
+    reached_llm = pending_decision is not None
+
     lines = [
         f"# {round_label} Research State",
         "",
-        "## This Decision",
-        "Round skipped after error; loop continued.",
-        "",
-        "## Execution Result",
-        f"- Action: {round_payload.get('action')}",
-        f"- Status: {round_payload.get('status')}",
-        f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
-        f"- Config: {_notes_value(round_payload.get('config_path'))}",
-        f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
-        f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
-        f"- Error: {error}",
+        "## What was attempted",
     ]
+    if reached_llm:
+        lines.append(
+            f"The LLM produced a decision but the round failed during materialization, "
+            f"train, or score. Cause: `{error_class}`."
+        )
+    else:
+        lines.append(f"The round failed before the LLM produced a usable decision. Cause: `{error_class}`.")
+
+    if pending_decision is not None:
+        lines.extend(["", "## LLM proposal"])
+        parent = _optional_str(pending_decision.get("parent_config"))
+        action = _optional_str(pending_decision.get("action"))
+        if parent is not None:
+            lines.append(f"- parent: {parent}")
+        if action is not None:
+            lines.append(f"- action: {action}")
+        changes = pending_decision.get("changes")
+        if isinstance(changes, list) and changes:
+            lines.append("- changes:")
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                path = change.get("path")
+                value = change.get("value")
+                lines.append(f"  - {path}: → {value}")
+
+    debug_files = [
+        artifact_dir / f"{round_label}.debug.error.txt",
+        artifact_dir / f"{round_label}.debug.llm_response.txt",
+        artifact_dir / f"{round_label}.debug.prompt.md",
+        artifact_dir / f"{round_label}.debug.codex_stdout.jsonl",
+        artifact_dir / f"{round_label}.debug.codex_stderr.txt",
+    ]
+    present = [p.name for p in debug_files if p.is_file()]
+    if present:
+        lines.extend(["", "## Debug artifacts"])
+        for name in present:
+            lines.append(f"- {name}")
+
+    lines.extend(
+        [
+            "",
+            "## Execution Result",
+            f"- Action: {round_payload.get('action')}",
+            f"- Status: {round_payload.get('status')}",
+            f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
+            f"- Config: {_notes_value(round_payload.get('config_path'))}",
+            f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
+            f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
+            f"- Error: {error}",
+        ]
+    )
     _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
@@ -2123,6 +2257,8 @@ def _write_llm_round_markdown(
     round_markdown: str,
     round_payload: dict[str, object],
 ) -> None:
+    wall = round_payload.get("wall_time_seconds")
+    wall_str = f"{wall:.1f}" if isinstance(wall, (int, float)) and not isinstance(wall, bool) else "none"
     lines = [
         round_markdown.rstrip(),
         "",
@@ -2133,10 +2269,17 @@ def _write_llm_round_markdown(
         f"- Config: {_notes_value(round_payload.get('config_path'))}",
         f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
         f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
+        f"- Wall time: {wall_str}s",
     ]
     stop_reason = _optional_str(round_payload.get("stop_reason"))
     if stop_reason is not None:
         lines.append(f"- Stop reason: {stop_reason}")
+    secondary = round_payload.get("secondary_metrics")
+    if isinstance(secondary, dict) and secondary:
+        lines.extend(["", "## Secondary Metrics"])
+        for _, label in SECONDARY_METRICS:
+            if label in secondary:
+                lines.append(f"- {label}: {secondary[label]}")
     _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
