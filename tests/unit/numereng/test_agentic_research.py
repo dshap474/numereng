@@ -312,6 +312,21 @@ def test_run_research_materializes_llm_config_mutation(
         ),
     )
 
+    metrics_path = store_root / "runs" / "run-1" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "bmc_last_200_eras": {"mean": 0.13},
+                "bmc": {"mean": 0.041},
+                "corr": {"mean": 0.018},
+                "mmc": {"mean": 0.007},
+                "cwmm": {"mean": 0.012},
+            }
+        ),
+        encoding="utf-8",
+    )
+
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
     config_path = result.rounds[0].config_path
@@ -331,6 +346,14 @@ def test_run_research_materializes_llm_config_mutation(
     assert "Run ID: run-1" in round_notes
     assert "bmc_last_200_eras_mean: 0.13" in round_notes
     assert "Config: configs/config_001.json" in round_notes
+    assert "## Diff vs parent" in round_notes
+    assert "model.params.learning_rate" in round_notes
+    assert "## Secondary Metrics" in round_notes
+    assert "bmc_mean: 0.041" in round_notes
+    assert "## Outcome" in round_notes
+    assert "Trigger cleared:" in round_notes
+    assert "Confirmation round:" in round_notes
+    assert "Promoted:" in round_notes
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
     assert not (artifact_dir / "prompt.md").exists()
