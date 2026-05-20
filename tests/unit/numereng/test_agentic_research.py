@@ -2041,6 +2041,166 @@ def test_round_md_includes_wall_time_and_secondary_metrics_block(tmp_path: Path)
     assert "- cwmm_mean: 0.2658" in md
 
 
+def test_render_diff_vs_parent_shows_old_and_new_values(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    parent_path = experiment.manifest_path.parent / "configs" / "parent.json"
+    _write_training_config(parent_path, learning_rate=0.1)
+
+    decision_payload = {
+        "action": "run",
+        "parent_config": "parent.json",
+        "changes": [{"path": "model.params.learning_rate", "value": 0.05, "reason": "x"}],
+    }
+    text = research_module._render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
+    assert "## Diff vs parent" in text
+    assert "- parent: parent.json" in text
+    assert "model.params.learning_rate: 0.1 → 0.05" in text
+
+
+def test_render_diff_vs_parent_baseline_action_returns_full_copy_note(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    decision_payload = {"action": "baseline", "parent_config": "base.json", "changes": []}
+    text = research_module._render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
+    assert "- parent: base.json (full copy; no mutation)" in text
+
+
+def test_baseline_round_markdown_uses_five_section_template() -> None:
+    md = research_module._baseline_round_markdown(
+        round_label="r001", parent_name="base.json", config_name="config_001.json"
+    )
+    assert "## Phase" in md
+    assert "## What this decision tests" in md
+    assert "## Evidence cited" in md
+    assert "## What changed and why" in md
+    assert "## Open questions and caveats" in md
+    # And the legacy headers are gone
+    assert "## Current Best" not in md
+    assert "## Tried Inside The Cost Envelope" not in md
+    assert "## Next Open Question" not in md
+
+
+def test_outcome_footer_trigger_cleared_when_metric_above_champion_seed42(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r042",
+        round_markdown="# r042 Research State\n\nBody.",
+        round_payload={
+            "action": "run",
+            "status": "completed",
+            "run_id": "abc",
+            "config_path": "configs/config_042.json",
+            "metric_value": 0.0037,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 138.0,
+            "secondary_metrics": {},
+            "confirmation_round": False,
+            "champion_seed42_before": 0.0032,
+            "promotion": None,
+            "phase_snapshot": {
+                "phase": "shallow",
+                "plateau_counter": 14,
+                "plateau_threshold": 25,
+                "successful_rounds": 31,
+                "min_rounds_in_phase": 30,
+            },
+        },
+    )
+    md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
+    assert "## Outcome" in md
+    assert "- Trigger cleared: yes (metric 0.0037 above champion seed-42 0.0032)" in md
+    assert "- Confirmation round: no" in md
+    assert "- Promoted: no" in md
+    assert "- Phase: shallow plateau 14/25, successful 31/30" in md
+
+
+def test_outcome_footer_no_champion_yet_shows_na(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r001",
+        round_markdown="# r001 Research State\n\nBaseline.",
+        round_payload={
+            "action": "baseline",
+            "status": "completed",
+            "run_id": "abc",
+            "config_path": "configs/config_001.json",
+            "metric_value": 0.0004,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 111.0,
+            "secondary_metrics": {},
+            "confirmation_round": False,
+            "champion_seed42_before": None,
+            "promotion": None,
+            "phase_snapshot": {
+                "phase": "shallow",
+                "plateau_counter": 0,
+                "plateau_threshold": 25,
+                "successful_rounds": 1,
+                "min_rounds_in_phase": 30,
+            },
+        },
+    )
+    md = (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    assert "- Trigger cleared: n/a (no champion yet)" in md
+
+
+def test_outcome_footer_promoted_yes_with_trio_mean(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r040",
+        round_markdown="# r040 Research State\n\nSeed 99.",
+        round_payload={
+            "action": "run",
+            "status": "completed",
+            "run_id": "abc",
+            "config_path": "configs/config_040.json",
+            "metric_value": 0.00365,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 138.0,
+            "secondary_metrics": {},
+            "confirmation_round": True,
+            "champion_seed42_before": 0.00278,
+            "promotion": {
+                "parent_config": "config_038.json",
+                "seed_trio_primary_mean": 0.003471,
+                "phase": "shallow",
+            },
+            "phase_snapshot": {
+                "phase": "shallow",
+                "plateau_counter": 0,
+                "plateau_threshold": 25,
+                "successful_rounds": 16,
+                "min_rounds_in_phase": 30,
+            },
+        },
+    )
+    md = (artifact_dir / "r040.md").read_text(encoding="utf-8")
+    assert "- Confirmation round: yes" in md
+    assert "- Promoted: yes (trio mean 0.003471)" in md
+
+
+def test_render_diff_vs_parent_renders_missing_old_as_question_mark(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    parent_path = experiment.manifest_path.parent / "configs" / "parent.json"
+    _write_training_config(parent_path, learning_rate=0.1)
+
+    decision_payload = {
+        "action": "run",
+        "parent_config": "parent.json",
+        "changes": [{"path": "model.params.num_leaves", "value": 8, "reason": "x"}],
+    }
+    text = research_module._render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
+    assert "model.params.num_leaves: ? → 8" in text
+
+
 def test_failed_round_md_includes_llm_proposal_when_decision_was_parsed(tmp_path: Path) -> None:
     """When materialization or training fails after a decision was parsed, the
     failure markdown must record what the LLM proposed."""

@@ -42,6 +42,7 @@ PROGRAM_METADATA_KEY = "agentic_research_program"
 ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
+_MISSING_SENTINEL: object = object()
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
 CONFIRMATION_PROMOTION_THRESHOLD = 3e-4
@@ -493,19 +494,23 @@ def _run_baseline_round(
 
 
 def _baseline_round_markdown(*, round_label: str, parent_name: str, config_name: str) -> str:
+    """Render the baseline round using the same 5-section template as LLM rounds
+    so the rounds dir has one consistent shape that scripts can pattern-match against."""
     return (
         f"# {round_label} Research State\n\n"
-        f"## Current Best\n\n"
-        f"`{config_name}` is the baseline copy of `{parent_name}` and the only completed run. "
-        f"It is the current incumbent by default. See the Execution Result below for scored metrics.\n\n"
-        f"## Tried Inside The Cost Envelope\n\n"
-        f"| Round | Config | Notes |\n"
-        f"| --- | --- | --- |\n"
-        f"| {round_label} | {config_name} | Baseline; see Execution Result. |\n\n"
-        f"## This Decision\n\n"
-        f"Baseline copy from `{parent_name}`; no mutation.\n\n"
-        f"## Next Open Question\n\n"
-        f"What is the first useful single-variable probe inside the cost envelope?\n"
+        f"## Phase\n\n"
+        f"Initial phase - baseline establishment, no LLM mutation yet.\n\n"
+        f"## What this decision tests\n\n"
+        f"Whether `{parent_name}` produces a positive primary metric on the configured "
+        f"target. Establishes the incumbent before any LLM-driven hypothesis is run.\n\n"
+        f"## Evidence cited\n\n"
+        f"No prior rounds. This is the experiment baseline.\n\n"
+        f"## What changed and why\n\n"
+        f"`{config_name}` is a full copy of `{parent_name}` with no mutation; future "
+        f"rounds will mutate from this anchor.\n\n"
+        f"## Open questions and caveats\n\n"
+        f"All open frontiers are open. The first LLM decision should propose a single-axis "
+        f"probe inside the configured cost envelope.\n"
     )
 
 
@@ -545,6 +550,9 @@ def _train_score_record_round(
         metric_value = _run_primary_metric_from_disk(root=root, run_id=trained.run_id)
     best = _best_run_from_report(report)
     secondary_metrics = _load_secondary_metrics_from_disk(root=root, run_id=trained.run_id)
+    diff_vs_parent_markdown = _render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
+    confirmation_round = _is_confirmation_round(decision_payload)
+    champion_seed42_before = _champion_seed42_metric(state)
     round_payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
@@ -558,15 +566,10 @@ def _train_score_record_round(
         "completed_at": _utc_now_iso(),
         "wall_time_seconds": round_seconds,
         "secondary_metrics": secondary_metrics,
+        "diff_vs_parent_markdown": diff_vs_parent_markdown,
+        "confirmation_round": confirmation_round,
+        "champion_seed42_before": champion_seed42_before,
     }
-    _write_llm_round_markdown(
-        artifact_dir=artifact_dir,
-        round_label=round_label,
-        round_markdown=round_markdown,
-        round_payload=round_payload,
-    )
-    _append_decision_log(_decision_log_path(experiment), round_payload)
-
     state.pop("pending_decision", None)
     state.update(
         {
@@ -594,6 +597,7 @@ def _train_score_record_round(
             action=action,
         ),
     )
+    promotion_payload: dict[str, object] | None = None
     if _is_confirmation_round(decision_payload):
         parent_config = str(decision_payload.get("parent_config"))
         changes_list = decision_payload.get("changes")
@@ -626,6 +630,7 @@ def _train_score_record_round(
             )
             promotion = _maybe_promote_confirmation(state=state, parent_config=parent_config, round_number=round_number)
             if promotion is not None:
+                promotion_payload = promotion
                 _append_trace(
                     experiment,
                     round_number=round_number,
@@ -668,6 +673,7 @@ def _train_score_record_round(
                 state=state, parent_config=config_path.name, round_number=round_number
             )
             if promotion is not None:
+                promotion_payload = promotion
                 _append_trace(
                     experiment,
                     round_number=round_number,
@@ -675,6 +681,16 @@ def _train_score_record_round(
                     event="confirmation_promoted",
                     payload=promotion,
                 )
+    phase_snapshot = _phase_snapshot_for_md(experiment=experiment, state=state)
+    round_payload["promotion"] = promotion_payload
+    round_payload["phase_snapshot"] = phase_snapshot
+    _write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label=round_label,
+        round_markdown=round_markdown,
+        round_payload=round_payload,
+    )
+    _append_decision_log(_decision_log_path(experiment), round_payload)
     transition_payload = _maybe_transition_phase(
         experiment=experiment, state=state, round_number=round_number, report=report
     )
@@ -724,6 +740,7 @@ def _record_stop_round(
     round_markdown: str,
 ) -> ResearchRoundResult:
     learning = decision.learning or decision.stop_reason or "LLM stopped the research loop."
+    diff_vs_parent_markdown = _render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
     payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
@@ -735,6 +752,7 @@ def _record_stop_round(
         "stop_reason": decision.stop_reason,
         "decision": decision_payload,
         "completed_at": _utc_now_iso(),
+        "diff_vs_parent_markdown": diff_vs_parent_markdown,
     }
     _write_llm_round_markdown(
         artifact_dir=artifact_dir,
@@ -1848,6 +1866,95 @@ def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
         return None
 
 
+def _champion_seed42_metric(state: dict[str, object]) -> float | None:
+    """Return the seed-42 primary metric of the current champion, or None.
+
+    Used by the Outcome footer to decide whether a discovery round cleared the
+    "above champion seed-42" threshold without trying to read the LLM's own
+    EXPERIMENT.md trigger value.
+    """
+    champion = state.get("confirmed_champion")
+    if not isinstance(champion, dict):
+        return None
+    parent = champion.get("parent_config")
+    if not isinstance(parent, str):
+        return None
+    confirmations = state.get("confirmations")
+    if not isinstance(confirmations, dict):
+        return None
+    entry = confirmations.get(parent)
+    if not isinstance(entry, dict):
+        return None
+    metrics_by_seed = entry.get("primary_metric_by_seed")
+    if not isinstance(metrics_by_seed, dict):
+        return None
+    raw = metrics_by_seed.get("42")
+    return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+
+
+def _phase_snapshot_for_md(*, experiment: ExperimentRecord, state: dict[str, object]) -> dict[str, object]:
+    """Capture the post-round, pre-transition phase counters for the Outcome footer."""
+    transition = _phase_transition_spec(experiment=experiment, state=state)
+    plateau_threshold = _as_int(transition.get("plateau_threshold"), default=0) if isinstance(transition, dict) else 0
+    min_rounds = _as_int(transition.get("min_rounds_in_phase"), default=0) if isinstance(transition, dict) else 0
+    return {
+        "phase": state.get("phase"),
+        "plateau_counter": _as_int(state.get("phase_plateau_counter"), default=0),
+        "plateau_threshold": plateau_threshold,
+        "successful_rounds": _as_int(state.get("phase_successful_rounds"), default=0),
+        "min_rounds_in_phase": min_rounds,
+    }
+
+
+def _lookup_dotted(payload: object, dotted: str) -> object:
+    """Walk `dotted` (e.g. `model.params.learning_rate`) through `payload`. Returns
+    `_MISSING_SENTINEL` if any segment is missing or non-mapping. Caller renders this
+    as `?` so a missing-old-value doesn't masquerade as None."""
+    current: object = payload
+    for token in dotted.split("."):
+        if not isinstance(current, dict):
+            return _MISSING_SENTINEL
+        if token not in current:
+            return _MISSING_SENTINEL
+        current = current.get(token)
+    return current
+
+
+def _render_diff_vs_parent(*, experiment: ExperimentRecord, decision_payload: dict[str, object]) -> str:
+    """Render a `## Diff vs parent` block from the structured decision changes.
+
+    Returns the empty string if there is no parent or no diffable content. Loads
+    the parent config from disk to surface the pre-change values; falls back to
+    `?` for any segment that doesn't resolve."""
+    parent_name = decision_payload.get("parent_config")
+    if not isinstance(parent_name, str):
+        return ""
+    action = decision_payload.get("action")
+    changes = decision_payload.get("changes")
+    if action == "baseline":
+        return f"## Diff vs parent\n\n- parent: {parent_name} (full copy; no mutation)\n"
+    if not isinstance(changes, list) or not changes:
+        return ""
+    parent_path = experiment.manifest_path.parent / "configs" / parent_name
+    parent_payload: object = None
+    try:
+        parent_payload = load_training_config_json(parent_path)
+    except Exception:
+        parent_payload = None
+    lines = ["## Diff vs parent", "", f"- parent: {parent_name}"]
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        path = change.get("path")
+        new_value = change.get("value")
+        if not isinstance(path, str):
+            continue
+        old_value = _lookup_dotted(parent_payload, path) if parent_payload is not None else _MISSING_SENTINEL
+        old_str = "?" if old_value is _MISSING_SENTINEL else repr(old_value)
+        lines.append(f"- {path}: {old_str} → {new_value!r}")
+    return "\n".join(lines) + "\n"
+
+
 def _load_secondary_metrics_from_disk(*, root: Path, run_id: str | None) -> dict[str, float]:
     """Read the secondary metric block from runs/<run_id>/metrics.json.
 
@@ -2259,18 +2366,26 @@ def _write_llm_round_markdown(
 ) -> None:
     wall = round_payload.get("wall_time_seconds")
     wall_str = f"{wall:.1f}" if isinstance(wall, (int, float)) and not isinstance(wall, bool) else "none"
+    diff_md = round_payload.get("diff_vs_parent_markdown")
+    diff_block = diff_md.rstrip() if isinstance(diff_md, str) and diff_md.strip() else None
     lines = [
         round_markdown.rstrip(),
         "",
-        "## Execution Result",
-        f"- Action: {round_payload.get('action')}",
-        f"- Status: {round_payload.get('status')}",
-        f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
-        f"- Config: {_notes_value(round_payload.get('config_path'))}",
-        f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
-        f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
-        f"- Wall time: {wall_str}s",
     ]
+    if diff_block is not None:
+        lines.extend([diff_block, ""])
+    lines.extend(
+        [
+            "## Execution Result",
+            f"- Action: {round_payload.get('action')}",
+            f"- Status: {round_payload.get('status')}",
+            f"- Run ID: {_notes_value(round_payload.get('run_id'))}",
+            f"- Config: {_notes_value(round_payload.get('config_path'))}",
+            f"- {PRIMARY_METRIC_FIELD}: {_notes_value(round_payload.get('metric_value'))}",
+            f"- Completed at: {_notes_value(round_payload.get('completed_at'))}",
+            f"- Wall time: {wall_str}s",
+        ]
+    )
     stop_reason = _optional_str(round_payload.get("stop_reason"))
     if stop_reason is not None:
         lines.append(f"- Stop reason: {stop_reason}")
@@ -2280,7 +2395,58 @@ def _write_llm_round_markdown(
         for _, label in SECONDARY_METRICS:
             if label in secondary:
                 lines.append(f"- {label}: {secondary[label]}")
+    outcome_block = _render_outcome_footer(round_payload)
+    if outcome_block:
+        lines.extend(["", outcome_block.rstrip()])
     _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
+
+
+def _render_outcome_footer(round_payload: dict[str, object]) -> str:
+    """Render Python-authoritative round classification: trigger / confirmation / promoted / phase."""
+    lines = ["## Outcome"]
+
+    metric = round_payload.get("metric_value")
+    champion_seed42 = round_payload.get("champion_seed42_before")
+    if (
+        isinstance(metric, (int, float))
+        and not isinstance(metric, bool)
+        and isinstance(champion_seed42, (int, float))
+        and not isinstance(champion_seed42, bool)
+    ):
+        cleared = float(metric) > float(champion_seed42)
+        verb = "above" if cleared else "below"
+        lines.append(
+            f"- Trigger cleared: {'yes' if cleared else 'no'} "
+            f"(metric {metric} {verb} champion seed-42 {champion_seed42})"
+        )
+    else:
+        lines.append("- Trigger cleared: n/a (no champion yet)")
+
+    confirmation = bool(round_payload.get("confirmation_round"))
+    lines.append(f"- Confirmation round: {'yes' if confirmation else 'no'}")
+
+    promotion = round_payload.get("promotion")
+    if isinstance(promotion, dict) and promotion:
+        mean = promotion.get("seed_trio_primary_mean")
+        if isinstance(mean, (int, float)) and not isinstance(mean, bool):
+            lines.append(f"- Promoted: yes (trio mean {mean})")
+        else:
+            lines.append("- Promoted: yes")
+    else:
+        lines.append("- Promoted: no")
+
+    snap = round_payload.get("phase_snapshot")
+    if isinstance(snap, dict):
+        phase = snap.get("phase")
+        plateau = snap.get("plateau_counter")
+        plateau_threshold = snap.get("plateau_threshold")
+        successful = snap.get("successful_rounds")
+        min_rounds = snap.get("min_rounds_in_phase")
+        if phase is not None:
+            lines.append(
+                f"- Phase: {phase} plateau {plateau}/{plateau_threshold}, successful {successful}/{min_rounds}"
+            )
+    return "\n".join(lines) + "\n"
 
 
 def _notes_value(value: object) -> str:
