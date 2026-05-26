@@ -86,6 +86,7 @@ ALLOWED_CHANGE_PATHS = (
     "preprocessing.nan_missing_all_twos",
     "preprocessing.missing_value",
     "model.type",
+    "model.module_path",
     "model.device",
     "model.params.*",
     "model.x_groups",
@@ -96,6 +97,7 @@ ALLOWED_CHANGE_PATHS = (
     "training.engine.embargo_eras",
     "training.resources.parallel_folds",
     "training.resources.max_threads_per_worker",
+    "output.predictions_name",
 )
 
 

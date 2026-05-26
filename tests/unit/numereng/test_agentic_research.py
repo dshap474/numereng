@@ -928,6 +928,11 @@ def test_duplicate_via_effective_leaf_cap_rejected(tmp_path: Path) -> None:
         research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
 
 
+def test_change_path_allows_model_module_path_and_predictions_name() -> None:
+    assert research_module._change_path_allowed("model.module_path") is True
+    assert research_module._change_path_allowed("output.predictions_name") is True
+
+
 def test_parse_llm_response_rejects_disallowed_change_path() -> None:
     with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
         research_module._parse_llm_response(
