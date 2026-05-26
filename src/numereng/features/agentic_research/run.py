@@ -1278,6 +1278,11 @@ def _materialize_decision_config(
         if not _matches_any_path(change.path, allowed_paths):
             raise AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{change.path}")
         if change.path in value_caps:
+            # None signals "drop this param" (e.g. during family switches). The
+            # auto-cleanup below strips conflicting family params, so a None on a
+            # capped path is harmless. Skip the range check; treat as a no-op.
+            if change.value is None:
+                continue
             bounds = value_caps[change.path]
             if isinstance(change.value, bool) or not isinstance(change.value, (int, float)):
                 raise AgenticResearchValidationError(f"agentic_research_change_value_not_numeric:{change.path}")
@@ -1290,6 +1295,7 @@ def _materialize_decision_config(
     payload = load_training_config_json(parent_path)
     for change in decision.changes:
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
+    _apply_family_switch_cleanup(payload)
     validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
     _normalize_lgbm_effective_params(validated)
     candidate_hash = compute_config_hash(validated)
@@ -1381,6 +1387,46 @@ def _existing_config_hashes(config_dir: Path) -> set[str]:
         _normalize_lgbm_effective_params(payload)
         hashes.add(compute_config_hash(payload))
     return hashes
+
+
+_LGBM_ONLY_PARAM_KEYS = ("num_leaves", "min_child_samples", "bagging_freq", "reg_alpha", "device_type")
+_XGBOOST_ONLY_PARAM_KEYS = ("max_leaves", "min_child_weight")
+
+
+def _apply_family_switch_cleanup(payload: dict[str, object]) -> None:
+    """Strip params that conflict with the active `model.type`.
+
+    Family switches need to drop LGBM-only or XGBoost-only knobs from the parent
+    config. The LLM cannot express "delete this key" via a value change, so the
+    controller does it: when `model.type` is XGBoost, drop `model.device` and the
+    LGBM-only params; when LGBM, drop the XGBoost-only params and any orphaned
+    `model.module_path`. Also strips entries the LLM nulled out for the same
+    reason. Operates in place.
+    """
+    model = payload.get("model")
+    if not isinstance(model, dict):
+        return
+    model_type = model.get("type")
+    params = model.get("params")
+    if not isinstance(params, dict):
+        params = None
+    if model_type == "XGBoostRegressor":
+        model.pop("device", None)
+        if params is not None:
+            for key in _LGBM_ONLY_PARAM_KEYS:
+                params.pop(key, None)
+    elif model_type == "LGBMRegressor":
+        # LGBM uses the built-in module so any custom module_path the LLM kept
+        # over from an XGBoost parent would point at the wrong file.
+        if model.get("module_path") in (None, "xgboost_model.py"):
+            model.pop("module_path", None)
+        if params is not None:
+            for key in _XGBOOST_ONLY_PARAM_KEYS:
+                params.pop(key, None)
+    if params is not None:
+        for key in list(params.keys()):
+            if params[key] is None:
+                params.pop(key)
 
 
 def _normalize_lgbm_effective_params(payload: dict[str, object]) -> dict[str, object]:

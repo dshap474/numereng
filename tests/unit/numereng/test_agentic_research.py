@@ -861,6 +861,119 @@ def test_materialize_rejects_path_outside_program_allowed_list(tmp_path: Path) -
         research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
 
 
+def test_family_switch_to_xgboost_strips_lgbm_only_params_and_device() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {
+            "type": "XGBoostRegressor",
+            "module_path": "xgboost_model.py",
+            "device": "cuda",
+            "params": {
+                "max_depth": 5,
+                "num_leaves": 32,
+                "min_child_samples": 100,
+                "bagging_freq": 5,
+                "reg_alpha": 0.1,
+                "device_type": "cuda",
+                "max_leaves": 8,
+                "min_child_weight": 200,
+                "learning_rate": 0.1,
+            },
+        },
+        "training": {},
+    }
+    research_module._apply_family_switch_cleanup(payload)
+    assert "device" not in payload["model"]
+    params = payload["model"]["params"]
+    for key in ("num_leaves", "min_child_samples", "bagging_freq", "reg_alpha", "device_type"):
+        assert key not in params
+    assert params["max_leaves"] == 8
+    assert params["min_child_weight"] == 200
+    assert params["learning_rate"] == 0.1
+
+
+def test_family_switch_to_lgbm_strips_xgboost_only_params_and_module_path() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {
+            "type": "LGBMRegressor",
+            "module_path": "xgboost_model.py",
+            "params": {
+                "max_depth": 5,
+                "num_leaves": 16,
+                "min_child_samples": 200,
+                "max_leaves": 64,
+                "min_child_weight": 100,
+                "learning_rate": 0.1,
+            },
+        },
+        "training": {},
+    }
+    research_module._apply_family_switch_cleanup(payload)
+    assert "module_path" not in payload["model"]
+    params = payload["model"]["params"]
+    for key in ("max_leaves", "min_child_weight"):
+        assert key not in params
+    assert params["num_leaves"] == 16
+
+
+def test_family_switch_cleanup_strips_null_params() -> None:
+    payload = {
+        "data": {"data_version": "v5.2"},
+        "model": {
+            "type": "XGBoostRegressor",
+            "module_path": "xgboost_model.py",
+            "params": {"max_leaves": 8, "min_child_weight": 100, "subsample": None},
+        },
+        "training": {},
+    }
+    research_module._apply_family_switch_cleanup(payload)
+    assert "subsample" not in payload["model"]["params"]
+
+
+def test_materialize_decision_accepts_null_value_for_capped_path(tmp_path: Path) -> None:
+    """A `null` value on a capped LGBM-only path during a family switch must not
+    trip the value-cap range check; the auto-cleanup removes the key entirely."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    configs_dir = experiment.manifest_path.parent / "configs"
+    seed_payload = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled"},
+        "model": {
+            "type": "LGBMRegressor",
+            "params": {"max_depth": 3, "num_leaves": 8, "min_child_samples": 100, "learning_rate": 0.1},
+        },
+        "training": {},
+    }
+    (configs_dir / "seed.json").write_text(json.dumps(seed_payload), encoding="utf-8")
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {"agentic_research_value_caps": {"model.params.num_leaves": [2, 1024]}},
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(
+            research_module.ResearchChange(path="model.type", value="XGBoostRegressor", reason="switch"),
+            research_module.ResearchChange(path="model.module_path", value="xgboost_model.py", reason="switch"),
+            research_module.ResearchChange(path="model.params.num_leaves", value=None, reason="drop lgbm-only"),
+            research_module.ResearchChange(path="model.params.max_leaves", value=8, reason="add xgb-only"),
+            research_module.ResearchChange(path="model.params.min_child_weight", value=100, reason="add xgb-only"),
+        ),
+        stop_reason=None,
+    )
+    config_path = research_module._materialize_decision_config(
+        experiment=experiment, round_label="r002", decision=decision
+    )
+    written = json.loads(config_path.read_text(encoding="utf-8"))
+    assert written["model"]["type"] == "XGBoostRegressor"
+    assert "num_leaves" not in written["model"].get("params", {})
+
+
 def test_lgbm_num_leaves_above_depth_cap_normalized() -> None:
     payload = {
         "data": {"data_version": "v5.2"},
