@@ -2371,9 +2371,13 @@ def test_round_md_omits_secondary_metrics_block_when_empty(tmp_path: Path) -> No
     assert "- Wall time: 138.3s" in md
 
 
-def test_reuse_finished_run_on_hash_collision_returns_existing_run(tmp_path: Path) -> None:
-    """When training fails because the run dir already holds a FINISHED run, reuse it."""
+def test_reuse_finished_run_on_hash_collision_returns_existing_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When training fails because the run dir already holds a FINISHED run, reuse it
+    and link the run into this experiment's manifest."""
     root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=root, experiment_id="2026-05-21_reuse-test", name="Reuse Test")
     run_id = "abcdef012345"
     run_dir = root / "runs" / run_id
     (run_dir / "artifacts" / "predictions").mkdir(parents=True)
@@ -2384,33 +2388,47 @@ def test_reuse_finished_run_on_hash_collision_returns_existing_run(tmp_path: Pat
     run_dir.joinpath("artifacts/predictions/p.parquet").write_bytes(b"")
     run_dir.joinpath("results.json").write_text("{}", encoding="utf-8")
     exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
+    monkeypatch.setattr(research_module, "index_run", lambda **_: None)
 
-    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment_id="exp-2", exc=exc)
+    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
 
     assert result is not None
     assert result.run_id == run_id
-    assert result.experiment_id == "exp-2"
+    assert result.experiment_id == "2026-05-21_reuse-test"
     assert result.predictions_path == run_dir / "artifacts" / "predictions" / "p.parquet"
+    manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
+    assert run_id in manifest_after["runs"]
+    assert manifest_after["status"] == "active"
 
 
-def test_reuse_finished_run_on_hash_collision_skips_non_finished(tmp_path: Path) -> None:
+def test_reuse_finished_run_on_hash_collision_skips_non_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Do not reuse a run whose status is not FINISHED (e.g. FAILED, RUNNING)."""
     root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=root, experiment_id="2026-05-21_reuse-test", name="Reuse Test")
     run_id = "deadbeef0000"
     run_dir = root / "runs" / run_id
     run_dir.mkdir(parents=True)
     run_dir.joinpath("run.json").write_text(json.dumps({"status": "FAILED"}), encoding="utf-8")
     exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
+    monkeypatch.setattr(research_module, "index_run", lambda **_: None)
 
-    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment_id="exp-2", exc=exc)
+    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
 
     assert result is None
+    manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
+    assert run_id not in manifest_after.get("runs", [])
 
 
-def test_reuse_finished_run_on_hash_collision_skips_unrelated_error(tmp_path: Path) -> None:
+def test_reuse_finished_run_on_hash_collision_skips_unrelated_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Errors that aren't the freshness check must not trigger reuse."""
     root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=root, experiment_id="2026-05-21_reuse-test", name="Reuse Test")
+    monkeypatch.setattr(research_module, "index_run", lambda **_: None)
     result = research_module._reuse_finished_run_on_hash_collision(
-        root=root, experiment_id="exp-2", exc=TrainingError("training_config_invalid:something_else")
+        root=root, experiment=experiment, exc=TrainingError("training_config_invalid:something_else")
     )
     assert result is None

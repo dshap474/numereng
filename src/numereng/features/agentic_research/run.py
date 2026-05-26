@@ -28,7 +28,7 @@ from numereng.features.experiments import (
     score_experiment_round,
     train_experiment,
 )
-from numereng.features.store import resolve_store_root
+from numereng.features.store import index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata
 from numereng.features.training.errors import TrainingError
 from numereng.features.training.run_store import compute_config_hash
@@ -457,14 +457,16 @@ _TRAIN_RUN_DIR_NOT_FRESH_PREFIX = "training_run_dir_not_fresh:"
 
 
 def _reuse_finished_run_on_hash_collision(
-    *, root: Path, experiment_id: str, exc: TrainingError
+    *, root: Path, experiment: ExperimentRecord, exc: TrainingError
 ) -> ExperimentTrainResult | None:
     """Reuse an existing FINISHED run dir when a new round's config hashes to it.
 
     Runs are content-addressed: byte-identical training configs across experiments
     share `.numereng/runs/<run_id>/`. The training service's freshness check then
     rejects a second attempt. When the prior run is FINISHED, treat that run as
-    the result of this round instead of failing the round."""
+    the result of this round instead of failing the round. Also link the reused
+    run into this experiment's manifest so downstream scoring/report flows find
+    it via the normal resolver."""
     msg = str(exc)
     if not msg.startswith(_TRAIN_RUN_DIR_NOT_FRESH_PREFIX):
         return None
@@ -490,12 +492,37 @@ def _reuse_finished_run_on_hash_collision(
         predictions_name = "predictions"
     predictions_path = run_dir / "artifacts" / "predictions" / f"{predictions_name}.parquet"
     results_path = run_dir / "results.json"
+    _link_reused_run_to_experiment(experiment=experiment, run_id=run_id)
+    try:
+        index_run(store_root=root, run_id=run_id)
+    except Exception:
+        pass
     return ExperimentTrainResult(
-        experiment_id=experiment_id,
+        experiment_id=experiment.experiment_id,
         run_id=run_id,
         predictions_path=predictions_path,
         results_path=results_path,
     )
+
+
+def _link_reused_run_to_experiment(*, experiment: ExperimentRecord, run_id: str) -> None:
+    """Append run_id to the experiment manifest's runs list if not already present."""
+    manifest_path = experiment.manifest_path
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    runs = manifest.get("runs")
+    if not isinstance(runs, list):
+        runs = []
+    if run_id in runs:
+        return
+    runs.append(run_id)
+    manifest["runs"] = runs
+    if manifest.get("status") == "draft":
+        manifest["status"] = "active"
+    manifest["updated_at"] = datetime.now(UTC).isoformat()
+    _write_json(manifest_path, manifest)
 
 
 def _run_baseline_round(
@@ -576,24 +603,30 @@ def _train_score_record_round(
     round_markdown: str,
 ) -> ResearchRoundResult:
     round_started_at = time.monotonic()
+    reused_existing_run = False
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         try:
             trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
         except TrainingError as exc:
-            reused = _reuse_finished_run_on_hash_collision(root=root, experiment_id=experiment.experiment_id, exc=exc)
+            reused = _reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
             if reused is None:
                 raise
             trained = reused
+            reused_existing_run = True
     # Must run before score_experiment_round: score reads run_plan.csv to resolve
     # the round's configs (configs/config_NNN.json does not match the fallback glob).
     _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
-    with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
-        score_experiment_round(
-            store_root=root,
-            experiment_id=experiment.experiment_id,
-            round=round_label,
-            stage=SCORING_STAGE,
-        )
+    # Reused runs were already scored when first trained; the resolver matches runs to
+    # rounds by config stem in run.json, and a content-shared run's stem points at the
+    # original experiment's config name. Skip the score step to avoid a false miss.
+    if not reused_existing_run:
+        with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
+            score_experiment_round(
+                store_root=root,
+                experiment_id=experiment.experiment_id,
+                round=round_label,
+                stage=SCORING_STAGE,
+            )
     round_seconds = max(0.0, time.monotonic() - round_started_at)
 
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
