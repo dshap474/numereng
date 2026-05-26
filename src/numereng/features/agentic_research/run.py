@@ -1168,7 +1168,7 @@ def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
     if decision.action == "run":
         if decision.parent_config is None:
             raise AgenticResearchValidationError("agentic_research_parent_config_missing")
-        if not 1 <= len(decision.changes) <= 3:
+        if not 1 <= len(decision.changes) <= 5:
             raise AgenticResearchValidationError("agentic_research_change_count_invalid")
     if decision.action == "stop" and not decision.stop_reason:
         raise AgenticResearchValidationError("agentic_research_stop_reason_missing")

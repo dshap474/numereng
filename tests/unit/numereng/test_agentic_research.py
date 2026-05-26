@@ -933,6 +933,53 @@ def test_change_path_allows_model_module_path_and_predictions_name() -> None:
     assert research_module._change_path_allowed("output.predictions_name") is True
 
 
+def test_parse_llm_response_accepts_five_changes_for_family_switch() -> None:
+    decision = research_module._parse_llm_response(
+        _llm_response(
+            {
+                "action": "run",
+                "learning": "x",
+                "belief_update": "x",
+                "next_hypothesis": "x",
+                "parent_config": "seed.json",
+                "changes": [
+                    {"path": "model.type", "value": "XGBoostRegressor", "reason": "switch"},
+                    {"path": "model.module_path", "value": "xgboost_model.py", "reason": "switch"},
+                    {"path": "model.params.max_leaves", "value": 8, "reason": "swap"},
+                    {"path": "model.params.min_child_weight", "value": 100, "reason": "swap"},
+                    {"path": "output.predictions_name", "value": "xgb_run", "reason": "label"},
+                ],
+                "stop_reason": None,
+            }
+        )
+    )
+    assert len(decision.decision.changes) == 5
+
+
+def test_parse_llm_response_rejects_six_changes() -> None:
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_count_invalid"):
+        research_module._parse_llm_response(
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [
+                        {"path": "model.params.learning_rate", "value": 0.05, "reason": "x"},
+                        {"path": "model.params.max_depth", "value": 5, "reason": "x"},
+                        {"path": "model.params.num_leaves", "value": 16, "reason": "x"},
+                        {"path": "model.params.n_estimators", "value": 200, "reason": "x"},
+                        {"path": "model.params.colsample_bytree", "value": 0.5, "reason": "x"},
+                        {"path": "model.params.subsample", "value": 0.8, "reason": "x"},
+                    ],
+                    "stop_reason": None,
+                }
+            )
+        )
+
+
 def test_parse_llm_response_rejects_disallowed_change_path() -> None:
     with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_path_not_allowed"):
         research_module._parse_llm_response(
