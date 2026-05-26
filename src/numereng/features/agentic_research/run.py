@@ -22,6 +22,7 @@ from numereng.features.experiments import (
     ExperimentRecord,
     ExperimentReport,
     ExperimentReportRow,
+    ExperimentTrainResult,
     get_experiment,
     report_experiment,
     score_experiment_round,
@@ -29,6 +30,7 @@ from numereng.features.experiments import (
 )
 from numereng.features.store import resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata
+from numereng.features.training.errors import TrainingError
 from numereng.features.training.run_store import compute_config_hash
 from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterConfig, load_openrouter_config
 from numereng.platform.errors import OpenRouterClientError
@@ -451,6 +453,51 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     return result
 
 
+_TRAIN_RUN_DIR_NOT_FRESH_PREFIX = "training_run_dir_not_fresh:"
+
+
+def _reuse_finished_run_on_hash_collision(
+    *, root: Path, experiment_id: str, exc: TrainingError
+) -> ExperimentTrainResult | None:
+    """Reuse an existing FINISHED run dir when a new round's config hashes to it.
+
+    Runs are content-addressed: byte-identical training configs across experiments
+    share `.numereng/runs/<run_id>/`. The training service's freshness check then
+    rejects a second attempt. When the prior run is FINISHED, treat that run as
+    the result of this round instead of failing the round."""
+    msg = str(exc)
+    if not msg.startswith(_TRAIN_RUN_DIR_NOT_FRESH_PREFIX):
+        return None
+    parts = msg.split(":")
+    if len(parts) < 3:
+        return None
+    run_id = parts[1]
+    run_dir = root / "runs" / run_id
+    run_json_path = run_dir / "run.json"
+    if not run_json_path.is_file():
+        return None
+    try:
+        run_manifest = json.loads(run_json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if run_manifest.get("status") != "FINISHED":
+        return None
+    predictions_name = None
+    output_block = run_manifest.get("output")
+    if isinstance(output_block, dict):
+        predictions_name = output_block.get("predictions_name")
+    if not isinstance(predictions_name, str) or not predictions_name:
+        predictions_name = "predictions"
+    predictions_path = run_dir / "artifacts" / "predictions" / f"{predictions_name}.parquet"
+    results_path = run_dir / "results.json"
+    return ExperimentTrainResult(
+        experiment_id=experiment_id,
+        run_id=run_id,
+        predictions_path=predictions_path,
+        results_path=results_path,
+    )
+
+
 def _run_baseline_round(
     *,
     root: Path,
@@ -530,7 +577,13 @@ def _train_score_record_round(
 ) -> ResearchRoundResult:
     round_started_at = time.monotonic()
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
-        trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
+        try:
+            trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
+        except TrainingError as exc:
+            reused = _reuse_finished_run_on_hash_collision(root=root, experiment_id=experiment.experiment_id, exc=exc)
+            if reused is None:
+                raise
+            trained = reused
     # Must run before score_experiment_round: score reads run_plan.csv to resolve
     # the round's configs (configs/config_NNN.json does not match the fallback glob).
     _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)

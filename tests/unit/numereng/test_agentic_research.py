@@ -23,6 +23,7 @@ from numereng.features.experiments import (
     ExperimentTrainResult,
     create_experiment,
 )
+from numereng.features.training.errors import TrainingError
 from numereng.platform.clients.openrouter import OpenRouterConfig
 
 EXPERIMENT_ID = "2026-02-22_test-exp"
@@ -2368,3 +2369,48 @@ def test_round_md_omits_secondary_metrics_block_when_empty(tmp_path: Path) -> No
     md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
     assert "## Secondary Metrics" not in md
     assert "- Wall time: 138.3s" in md
+
+
+def test_reuse_finished_run_on_hash_collision_returns_existing_run(tmp_path: Path) -> None:
+    """When training fails because the run dir already holds a FINISHED run, reuse it."""
+    root = tmp_path / ".numereng"
+    run_id = "abcdef012345"
+    run_dir = root / "runs" / run_id
+    (run_dir / "artifacts" / "predictions").mkdir(parents=True)
+    run_dir.joinpath("run.json").write_text(
+        json.dumps({"status": "FINISHED", "output": {"predictions_name": "p"}}),
+        encoding="utf-8",
+    )
+    run_dir.joinpath("artifacts/predictions/p.parquet").write_bytes(b"")
+    run_dir.joinpath("results.json").write_text("{}", encoding="utf-8")
+    exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
+
+    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment_id="exp-2", exc=exc)
+
+    assert result is not None
+    assert result.run_id == run_id
+    assert result.experiment_id == "exp-2"
+    assert result.predictions_path == run_dir / "artifacts" / "predictions" / "p.parquet"
+
+
+def test_reuse_finished_run_on_hash_collision_skips_non_finished(tmp_path: Path) -> None:
+    """Do not reuse a run whose status is not FINISHED (e.g. FAILED, RUNNING)."""
+    root = tmp_path / ".numereng"
+    run_id = "deadbeef0000"
+    run_dir = root / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    run_dir.joinpath("run.json").write_text(json.dumps({"status": "FAILED"}), encoding="utf-8")
+    exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
+
+    result = research_module._reuse_finished_run_on_hash_collision(root=root, experiment_id="exp-2", exc=exc)
+
+    assert result is None
+
+
+def test_reuse_finished_run_on_hash_collision_skips_unrelated_error(tmp_path: Path) -> None:
+    """Errors that aren't the freshness check must not trigger reuse."""
+    root = tmp_path / ".numereng"
+    result = research_module._reuse_finished_run_on_hash_collision(
+        root=root, experiment_id="exp-2", exc=TrainingError("training_config_invalid:something_else")
+    )
+    assert result is None
