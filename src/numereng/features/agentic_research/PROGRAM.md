@@ -21,10 +21,18 @@ Optimize Numerai validation performance while preserving interpretability.
 Prefer simple, attributable changes. Change 1 to 3 config values per run. Do not mix unrelated
 hypotheses in one decision.
 
-## Evidence Doctrine
+## Universal Discipline
 
-- Single-seed discovery is directional only. It can identify candidates, but it cannot prove a true
-  winner or convergence.
+These rules apply to every program. Custom programs may tighten them but should not override.
+They exist because observed agent behavior tends to over-explore single-seed noise, under-confirm
+promising candidates, and stay stuck in a single search cell — all wasteful patterns the
+controller cannot block at the schema level. Treat the rules as enforceable contracts you check
+against your own decision before emitting it.
+
+### Evidence Doctrine
+
+- Single-seed discovery is directional only. It can identify candidates, but it cannot prove a
+  true winner or convergence.
 - Seed-averaged confirmation is required before claiming that one config is better than another.
   Confirmation uses the canonical seed trio surfaced in `context.canonical_seed_trio` (currently
   `[42, 17, 99]`). To run a confirmation round, set `parent_config` to the previously-LLM-generated
@@ -40,6 +48,66 @@ hypotheses in one decision.
 - Use the best comparable parent, not automatically the previous round.
 - Comparable means same feature scope, target route, evaluation surface, and evidence tier.
 - If exact metrics conflict, trust the primary metric first, then `bmc_mean`, then sanity checks.
+
+### Confirmation Backlog
+
+**Rule: at most ONE unconfirmed candidate in flight at a time.** Before proposing a new
+discovery probe, scan `context.confirmations`. If any config has `seeds_completed` with 1 or 2
+entries (not yet 3) AND its seed-42 `bmc_last_200_eras_mean` is within `3e-4` of the current
+champion's seed-trio mean (or above any prior champion if none exists), you MUST propose the next
+seed in the canonical trio for that config instead of a fresh discovery probe.
+
+Why this matters: single-seed scores have noise ~`3e-4`. Discovery probes that never get
+confirmed are unconvertible into durable progress — they look like wins but are statistically
+indistinguishable from noise. Draining the backlog before scattering converts probes into either
+champions or closed hypotheses, and the plateau counter then reflects real exploration depth.
+
+A 3-seed confirmation that fails to beat the current champion by `>3e-4` is still valuable: it
+closes the candidate and resets the cycling counter. Record it in `EXPERIMENT.md` as
+"confirmed-but-not-champion" and continue.
+
+### Plateau And Progress Semantics
+
+The plateau counter measures consecutive `run` rounds since the last **true** improvement. A
+true improvement is a NEW 3-seed champion: a confirmed candidate whose `seed_trio_primary_mean`
+exceeds the prior champion's `seed_trio_primary_mean` by more than `3e-4`.
+
+- Single-seed wins, however large, do NOT reset the plateau counter.
+- A completed seed-trio that does NOT become the new champion does NOT reset the plateau counter.
+- Only a new 3-seed champion (or the very first 3-seed champion of an experiment) resets it.
+
+Why this matters: the plateau counter is the signal that a phase has been wrung out and should
+escalate. If single-seed noise resets it, the phase never escalates and the experiment stays in
+shallow forever. Keep an explicit plateau counter line in `round_markdown` and update it
+deliberately each round.
+
+### Search Diversification
+
+Wide-search programs declare a set of **diversification axes** (typically some subset of
+`{family, feature_set, target, horizon}`). The controller does not enforce coverage; you must.
+
+- In your first 12 successful discovery rounds of a phase, touch each declared axis value at
+  least twice and at least `min(4, total_targets/2)` distinct targets.
+- If you have proposed 8 consecutive discovery rounds in the same `{family, feature_set, target}`
+  cell, your search is too narrow — branch to an unvisited cell before continuing.
+- Mark each visited cell in your `EXPERIMENT.md` Open Frontiers as you cover it so you can see
+  the cross-product gap at a glance.
+
+Why this matters: the loss landscape may have a global optimum in a cell you haven't visited.
+A narrow search converges quickly to a local optimum and misses the wider design space — which
+defeats the point of a "wide" program.
+
+### Round Budget Awareness
+
+Each round has a real cost: an LLM call + train + score, typically 30s–10min depending on phase
+and feature set. The total budget per experiment is finite and is named in the custom program.
+Wasted rounds are unrecoverable. Before each `run` decision, ask yourself:
+
+- "If this is my last round in this phase, is this the most valuable hypothesis to test?"
+- "Would a confirmation round close out a durable finding more cheaply than this probe?"
+- "Have I revisited this cell more than 3 times without a candidate-level improvement?"
+
+When in doubt between a discovery probe and a confirmation, prefer the confirmation.
 
 ## Program Anatomy
 
@@ -135,8 +203,8 @@ indefinitely; transitioning is part of the job.
 Return `action: "stop"` when any of the following is true. A clean stop is more useful than
 rounds of churn.
 
-- **Plateau:** 25 consecutive `run` rounds have not improved `bmc_last_200_eras_mean` by more
-  than `3e-4` over the incumbent.
+- **Plateau:** 25 consecutive `run` rounds without a new 3-seed champion (see Plateau And
+  Progress Semantics for the precise reset rule).
 - **Cycling:** 5 consecutive proposals have been rejected as duplicates by hash.
 - **Exhausted hypothesis:** You cannot articulate a new hypothesis beyond restating prior
   beliefs.
@@ -144,8 +212,8 @@ rounds of churn.
   or the experiment's fixed surface; name the handoff in `stop_reason`.
 
 The plateau and cycling counters live in your rolling memo. Increment them deliberately each
-round. Reset the plateau counter when a real improvement (> noise floor) is recorded; reset the
-cycling counter after any successful run.
+round. Reset the cycling counter after any successful run. Reset the plateau counter ONLY when
+a new 3-seed champion is promoted (see Universal Discipline).
 
 ## Round Markdown
 
@@ -159,8 +227,8 @@ Required sections in the memo (in any order, but include all):
    parameter values that distinguish them.
 3. **Tried-configs ledger** — a compact list of (parameter-tuple → primary metric) for every run
    recorded so far. Use this to avoid proposing duplicates.
-4. **Plateau counter** — `N consecutive rounds since last improvement > 3e-4`. Increment or
-   reset based on the latest round's result.
+4. **Plateau counter** — `N consecutive run rounds since the last new 3-seed champion`. See
+   Plateau And Progress Semantics; single-seed wins do not reset.
 5. **Dup-rejection counter** — `N consecutive duplicate-by-hash rejections`. Reset on any
    successful run.
 6. **Beliefs** — confirmed vs unconfirmed, with the evidence each rests on.
