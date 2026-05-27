@@ -63,6 +63,8 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
 TRIED_SIGNATURES_WINDOW = 100
+DIVERSIFICATION_CELL_THRESHOLD = 8
+CANONICAL_DISCOVERY_SEED = 42
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
@@ -684,6 +686,12 @@ def _train_score_record_round(
             primary_metric=typed_metric,
             action=action,
         ),
+    )
+    _check_diversification_dry_run(
+        experiment=experiment,
+        state=state,
+        round_number=round_number,
+        round_label=round_label,
     )
     promotion_payload: dict[str, object] | None = None
     if _is_confirmation_round(decision_payload):
@@ -1730,8 +1738,11 @@ def _extract_lgbm_signature(
     data_section = payload.get("data") if isinstance(payload, dict) else None
     model_section = payload.get("model") if isinstance(payload, dict) else None
     params_section = model_section.get("params") if isinstance(model_section, dict) else None
+    if isinstance(model_section, dict):
+        sig["family"] = model_section.get("type")
     if isinstance(data_section, dict):
         sig["target"] = data_section.get("target_col")
+        sig["feature_set"] = data_section.get("feature_set")
     if isinstance(params_section, dict):
         sig["lr"] = params_section.get("learning_rate")
         sig["n"] = params_section.get("n_estimators")
@@ -1762,6 +1773,65 @@ def _append_tried_signature(state: dict[str, object], signature: dict[str, objec
         signatures = []
     signatures.append(signature)
     state["tried_signatures"] = signatures[-TRIED_SIGNATURES_WINDOW:]
+
+
+def _signature_cell(signature: dict[str, object]) -> tuple[object, object, object]:
+    """Diversification cell: (family, feature_set, target). None entries are kept
+    so that legacy signatures missing fields don't collapse onto each other."""
+    return (signature.get("family"), signature.get("feature_set"), signature.get("target"))
+
+
+def _check_diversification_dry_run(
+    *,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    round_number: int,
+    round_label: str,
+) -> None:
+    """Observe-only diversification cap. Counts consecutive discovery probes
+    (seed == CANONICAL_DISCOVERY_SEED) in the same `{family, feature_set, target}`
+    cell ending at the latest signature. If the streak reaches the threshold,
+    emit a `diversification_dry_run` trace event and bump
+    `state.diversification_dry_run_count`. Confirmation rounds (seed != 42)
+    are skipped — they neither count nor break the streak.
+
+    This is the dry-run phase of the diversification cap: we log what we would
+    have blocked, so we can decide later whether to promote it to a hard block.
+    """
+    signatures = state.get("tried_signatures")
+    if not isinstance(signatures, list) or not signatures:
+        return
+    latest = signatures[-1]
+    if not isinstance(latest, dict) or latest.get("seed") != CANONICAL_DISCOVERY_SEED:
+        return
+    current_cell = _signature_cell(latest)
+    if all(v is None for v in current_cell):
+        return
+    consecutive = 0
+    for sig in reversed(signatures):
+        if not isinstance(sig, dict):
+            continue
+        if sig.get("seed") != CANONICAL_DISCOVERY_SEED:
+            continue
+        if _signature_cell(sig) != current_cell:
+            break
+        consecutive += 1
+    if consecutive < DIVERSIFICATION_CELL_THRESHOLD:
+        return
+    state["diversification_dry_run_count"] = _as_int(state.get("diversification_dry_run_count"), default=0) + 1
+    family, feature_set, target = current_cell
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="diversification_dry_run",
+        payload={
+            "cell": {"family": family, "feature_set": feature_set, "target": target},
+            "consecutive_count": consecutive,
+            "threshold": DIVERSIFICATION_CELL_THRESHOLD,
+            "note": "dry-run: would have suggested branching to an unvisited cell",
+        },
+    )
 
 
 def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:

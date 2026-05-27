@@ -1557,7 +1557,9 @@ def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
         "run_id": "run-abc",
         "action": "run",
         "primary": 0.003079,
+        "family": "LGBMRegressor",
         "target": "target_alpha_60",
+        "feature_set": "small",
         "lr": 0.03,
         "n": 300,
         "depth": 3,
@@ -1573,6 +1575,113 @@ def test_tried_signatures_extracted_and_windowed(tmp_path: Path) -> None:
     sigs = cast(list[dict[str, object]], state["tried_signatures"])
     assert len(sigs) == research_module.TRIED_SIGNATURES_WINDOW
     assert sigs[0]["r"] == "r001"
+
+
+def _diversification_sig(
+    *,
+    family: str = "LGBMRegressor",
+    feature_set: str = "small",
+    target: str = "target_alpha_20",
+    seed: int = 42,
+    r: str = "r000",
+) -> dict[str, object]:
+    return {
+        "r": r,
+        "action": "run",
+        "family": family,
+        "feature_set": feature_set,
+        "target": target,
+        "seed": seed,
+    }
+
+
+def test_diversification_dry_run_logs_at_threshold(tmp_path: Path) -> None:
+    """8 consecutive same-cell discovery sigs trigger a dry-run trace event + counter bump."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(research_module.DIVERSIFICATION_CELL_THRESHOLD):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._check_diversification_dry_run(
+        experiment=experiment,
+        state=state,
+        round_number=research_module.DIVERSIFICATION_CELL_THRESHOLD,
+        round_label=f"r{research_module.DIVERSIFICATION_CELL_THRESHOLD:03d}",
+    )
+    assert state["diversification_dry_run_count"] == 1
+    trace_path = experiment.manifest_path.parent / "agentic_research" / "trace.jsonl"
+    assert trace_path.exists()
+    rows = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    events = [r for r in rows if r["event"] == "diversification_dry_run"]
+    assert len(events) == 1
+    assert events[0]["payload"]["cell"] == {
+        "family": "LGBMRegressor",
+        "feature_set": "small",
+        "target": "target_alpha_20",
+    }
+    assert events[0]["payload"]["consecutive_count"] == research_module.DIVERSIFICATION_CELL_THRESHOLD
+
+
+def test_diversification_dry_run_silent_below_threshold(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(research_module.DIVERSIFICATION_CELL_THRESHOLD - 1):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._check_diversification_dry_run(
+        experiment=experiment, state=state, round_number=7, round_label="r007"
+    )
+    assert "diversification_dry_run_count" not in state
+
+
+def test_diversification_dry_run_skips_confirmation_rounds(tmp_path: Path) -> None:
+    """Confirmations (seed != 42) neither count toward the streak nor break it.
+
+    Sequence: 4 discoveries in cell A, 2 confirmations (seed 17, 99), 4 more
+    discoveries in cell A. Streak = 8 → triggers.
+    """
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(4):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._append_tried_signature(state, _diversification_sig(seed=17, r="r005"))
+    research_module._append_tried_signature(state, _diversification_sig(seed=99, r="r006"))
+    for i in range(4):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 7:03d}"))
+    research_module._check_diversification_dry_run(
+        experiment=experiment, state=state, round_number=10, round_label="r010"
+    )
+    assert state.get("diversification_dry_run_count") == 1
+
+
+def test_diversification_dry_run_resets_on_cell_change(tmp_path: Path) -> None:
+    """A different-cell discovery breaks the streak; subsequent same-cell rounds restart from 1."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(7):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._append_tried_signature(state, _diversification_sig(target="target_other_20", r="r008"))
+    research_module._append_tried_signature(state, _diversification_sig(r="r009"))
+    research_module._check_diversification_dry_run(
+        experiment=experiment, state=state, round_number=9, round_label="r009"
+    )
+    assert "diversification_dry_run_count" not in state
+
+
+def test_diversification_dry_run_does_not_fire_on_confirmation_as_latest(tmp_path: Path) -> None:
+    """If the latest signature is itself a confirmation (seed != 42), the check is a no-op."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(8):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._append_tried_signature(state, _diversification_sig(seed=17, r="r009"))
+    research_module._check_diversification_dry_run(
+        experiment=experiment, state=state, round_number=9, round_label="r009"
+    )
+    assert "diversification_dry_run_count" not in state
 
 
 def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None:
