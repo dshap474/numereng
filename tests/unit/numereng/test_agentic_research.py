@@ -353,7 +353,8 @@ def test_run_research_materializes_llm_config_mutation(
     assert "bmc_mean: 0.041" in round_notes
     assert "## Outcome" in round_notes
     assert "Trigger cleared:" in round_notes
-    assert "Confirmation round:" in round_notes
+    # "Confirmation round:" line was retired in favor of the round_type-aware
+    # footer; discovery rounds no longer print it.
     assert "Promoted:" in round_notes
     assert not (artifact_dir / "r001").exists()
     assert not (artifact_dir / "context.json").exists()
@@ -1787,13 +1788,79 @@ def test_update_phase_progress_skips_none_metric() -> None:
 
 
 def test_update_phase_progress_counts_only_successful_rounds() -> None:
-    """phase_successful_rounds increments only on a real metric; plateau ticks on no improvement."""
+    """Every successful `run` round increments both successful_rounds and plateau.
+    Plateau resets are owned by _reset_plateau_on_champion_promotion, not by per-round
+    metric comparisons — see PROGRAM.md "Plateau And Progress Semantics"."""
     state: dict[str, object] = {"phase": "shallow"}
-    research_module._update_phase_progress(state=state, metric_value=0.5)
-    research_module._update_phase_progress(state=state, metric_value=0.5)
+    research_module._update_phase_progress(state=state, metric_value=0.5, action="run")
+    research_module._update_phase_progress(state=state, metric_value=0.5, action="run")
+    assert state["phase_successful_rounds"] == 2
+    assert state["phase_plateau_counter"] == 2
+
+
+def test_update_phase_progress_baseline_does_not_tick_plateau() -> None:
+    """Baseline establishes the incumbent rather than failing to improve on it,
+    so it counts as a successful round but does not tick the plateau counter."""
+    state: dict[str, object] = {"phase": "shallow"}
+    research_module._update_phase_progress(state=state, metric_value=0.001, action="baseline")
+    research_module._update_phase_progress(state=state, metric_value=0.002, action="run")
     assert state["phase_successful_rounds"] == 2
     assert state["phase_plateau_counter"] == 1
-    assert state["phase_best_metric"] == 0.5
+
+
+def test_reset_plateau_on_champion_promotion_zeroes_counter_and_updates_best() -> None:
+    state: dict[str, object] = {"phase": "shallow", "phase_plateau_counter": 7, "phase_best_metric": 0.001}
+    research_module._reset_plateau_on_champion_promotion(state=state, new_trio_mean=0.0032)
+    assert state["phase_plateau_counter"] == 0
+    assert state["phase_best_metric"] == 0.0032
+
+
+def test_plateau_parity_replays_diversification_test_sequence() -> None:
+    """Golden parity test using the r014-r020 sequence from the 2026-05-27
+    wide-diversification-test experiment. Confirms that under documented
+    semantics:
+      * each `run` round ticks plateau by 1,
+      * confirmation rounds tick plateau,
+      * champion promotions zero plateau and refresh phase_best_metric,
+      * baseline rounds do not tick plateau.
+    Numbers come from the actual round-md output and state.json of that run."""
+    state: dict[str, object] = {"phase": "shallow", "phase_plateau_counter": 4}
+
+    # r014: discovery (LGBM Alpha60 seed=42). Plateau ticks (no promotion yet).
+    research_module._update_phase_progress(state=state, metric_value=0.002581, action="run")
+    assert state["phase_plateau_counter"] == 5
+
+    # r015: confirmation seed=17.
+    research_module._update_phase_progress(state=state, metric_value=0.002804, action="run")
+    assert state["phase_plateau_counter"] == 6
+
+    # r016: confirmation seed=99 closes the trio; promotion fires. Plateau resets.
+    research_module._update_phase_progress(state=state, metric_value=0.003231, action="run")
+    assert state["phase_plateau_counter"] == 7
+    research_module._reset_plateau_on_champion_promotion(state=state, new_trio_mean=0.002872)
+    assert state["phase_plateau_counter"] == 0
+    assert state["phase_best_metric"] == pytest.approx(0.002872)
+
+    # r017: discovery (XGB Alpha60 seed=42). Single-seed score above phase_best
+    # but no promotion yet — plateau still ticks.
+    research_module._update_phase_progress(state=state, metric_value=0.003268, action="run")
+    assert state["phase_plateau_counter"] == 1
+
+    # r018: confirmation seed=17. Still no promotion — plateau ticks.
+    research_module._update_phase_progress(state=state, metric_value=0.003347, action="run")
+    assert state["phase_plateau_counter"] == 2
+
+    # r019: confirmation seed=99 closes the second trio. Promotion fires.
+    # New trio mean 0.003224 beats prior 0.002872 by > PHASE_IMPROVEMENT_THRESHOLD.
+    research_module._update_phase_progress(state=state, metric_value=0.003059, action="run")
+    assert state["phase_plateau_counter"] == 3
+    research_module._reset_plateau_on_champion_promotion(state=state, new_trio_mean=0.003224)
+    assert state["phase_plateau_counter"] == 0
+    assert state["phase_best_metric"] == pytest.approx(0.003224)
+
+    # r020: post-promotion discovery (XGB Bravo60). No promotion — plateau ticks.
+    research_module._update_phase_progress(state=state, metric_value=0.000987, action="run")
+    assert state["phase_plateau_counter"] == 1
 
 
 def test_run_research_continues_after_training_failure(
@@ -2423,6 +2490,7 @@ def test_outcome_footer_trigger_cleared_when_metric_above_champion_seed42(tmp_pa
         round_markdown="# r042 Research State\n\nBody.",
         round_payload={
             "action": "run",
+            "round_type": "discovery",
             "status": "completed",
             "run_id": "abc",
             "config_path": "configs/config_042.json",
@@ -2445,12 +2513,16 @@ def test_outcome_footer_trigger_cleared_when_metric_above_champion_seed42(tmp_pa
     md = (artifact_dir / "r042.md").read_text(encoding="utf-8")
     assert "## Outcome" in md
     assert "- Trigger cleared: yes (metric 0.0037 above champion seed-42 0.0032)" in md
-    assert "- Confirmation round: no" in md
+    # The legacy "Confirmation round: no" line has been replaced by the round_type-aware
+    # footer; discovery rounds no longer carry that line.
+    assert "- Confirmation round:" not in md
     assert "- Promoted: no" in md
     assert "- Phase: shallow plateau 14/25, successful 31/30" in md
 
 
-def test_outcome_footer_no_champion_yet_shows_na(tmp_path: Path) -> None:
+def test_outcome_footer_baseline_round_shows_status_line(tmp_path: Path) -> None:
+    """Baseline rounds have no champion to compare against and no promotion to
+    track; the footer states the baseline-establishment role explicitly."""
     artifact_dir = tmp_path / "rounds"
     artifact_dir.mkdir()
     research_module._write_llm_round_markdown(
@@ -2459,6 +2531,7 @@ def test_outcome_footer_no_champion_yet_shows_na(tmp_path: Path) -> None:
         round_markdown="# r001 Research State\n\nBaseline.",
         round_payload={
             "action": "baseline",
+            "round_type": "baseline",
             "status": "completed",
             "run_id": "abc",
             "config_path": "configs/config_001.json",
@@ -2479,10 +2552,52 @@ def test_outcome_footer_no_champion_yet_shows_na(tmp_path: Path) -> None:
         },
     )
     md = (artifact_dir / "r001.md").read_text(encoding="utf-8")
+    assert "- Status: baseline establishment (no LLM mutation)" in md
+    # Baseline rounds don't emit Trigger cleared or Promoted lines.
+    assert "- Trigger cleared:" not in md
+    assert "- Promoted:" not in md
+
+
+def test_outcome_footer_discovery_with_no_champion_shows_na(tmp_path: Path) -> None:
+    """Early discovery rounds (before any champion exists) keep the legacy
+    n/a phrasing — there is no champion seed-42 score to compare against."""
+    artifact_dir = tmp_path / "rounds"
+    artifact_dir.mkdir()
+    research_module._write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label="r002",
+        round_markdown="# r002 Research State\n\nFirst discovery.",
+        round_payload={
+            "action": "run",
+            "round_type": "discovery",
+            "status": "completed",
+            "run_id": "abc",
+            "config_path": "configs/config_002.json",
+            "metric_value": 0.0008,
+            "completed_at": "2026-05-19T00:00:00+00:00",
+            "wall_time_seconds": 111.0,
+            "secondary_metrics": {},
+            "confirmation_round": False,
+            "champion_seed42_before": None,
+            "promotion": None,
+            "phase_snapshot": {
+                "phase": "shallow",
+                "plateau_counter": 1,
+                "plateau_threshold": 25,
+                "successful_rounds": 2,
+                "min_rounds_in_phase": 30,
+            },
+        },
+    )
+    md = (artifact_dir / "r002.md").read_text(encoding="utf-8")
     assert "- Trigger cleared: n/a (no champion yet)" in md
 
 
-def test_outcome_footer_promoted_yes_with_trio_mean(tmp_path: Path) -> None:
+def test_outcome_footer_confirmation_round_shows_seed_and_trio_progress(tmp_path: Path) -> None:
+    """Confirmation rounds drop the "Trigger cleared" line (which was misleadingly
+    comparing the confirmation seed against the OLD champion's seed-42) and emit
+    a confirmation-specific block with the seed being confirmed, the candidate's
+    own seed-42 score, and the trio progress."""
     artifact_dir = tmp_path / "rounds"
     artifact_dir.mkdir()
     research_module._write_llm_round_markdown(
@@ -2491,6 +2606,7 @@ def test_outcome_footer_promoted_yes_with_trio_mean(tmp_path: Path) -> None:
         round_markdown="# r040 Research State\n\nSeed 99.",
         round_payload={
             "action": "run",
+            "round_type": "confirmation",
             "status": "completed",
             "run_id": "abc",
             "config_path": "configs/config_040.json",
@@ -2500,6 +2616,12 @@ def test_outcome_footer_promoted_yes_with_trio_mean(tmp_path: Path) -> None:
             "secondary_metrics": {},
             "confirmation_round": True,
             "champion_seed42_before": 0.00278,
+            "confirmation_context": {
+                "seed": 99,
+                "candidate_seed42_metric": 0.0034,
+                "seeds_completed": 3,
+                "total_seeds": 3,
+            },
             "promotion": {
                 "parent_config": "config_038.json",
                 "seed_trio_primary_mean": 0.003471,
@@ -2515,8 +2637,11 @@ def test_outcome_footer_promoted_yes_with_trio_mean(tmp_path: Path) -> None:
         },
     )
     md = (artifact_dir / "r040.md").read_text(encoding="utf-8")
-    assert "- Confirmation round: yes" in md
+    assert "- Confirmation seed: 99" in md
+    assert "- Candidate seed-42 score: 0.0034" in md
+    assert "- Trio progress: 3/3 seeds completed" in md
     assert "- Promoted: yes (trio mean 0.003471)" in md
+    assert "- Trigger cleared:" not in md
 
 
 def test_render_diff_vs_parent_renders_missing_old_as_question_mark(tmp_path: Path) -> None:
@@ -2706,3 +2831,178 @@ def test_reuse_finished_run_on_hash_collision_skips_unrelated_error(
         root=root, experiment=experiment, exc=TrainingError("training_config_invalid:something_else")
     )
     assert result is None
+
+
+def test_normalize_decision_changes_drops_noop_against_parent() -> None:
+    """A change whose new value equals the parent's existing value at the same
+    path is dropped. Modeled after the diversification-experiment LLM that kept
+    bundling `data.target_horizon: '60d' → '60d'` whenever it changed target_col."""
+    parent_payload: dict[str, object] = {
+        "data": {"target_col": "target_ender_60", "target_horizon": "60d", "feature_set": "small"},
+        "model": {"params": {"learning_rate": 0.1}},
+    }
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="config_017.json",
+        changes=(
+            research_module.ResearchChange(path="data.target_col", value="target_alpha_60", reason="swap"),
+            research_module.ResearchChange(path="data.target_horizon", value="60d", reason="coordinated"),
+        ),
+        stop_reason=None,
+    )
+    normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
+    assert [c.path for c in normalized.changes] == ["data.target_col"]
+    assert summary["dropped_no_op_paths"] == ["data.target_horizon"]
+    assert summary["kept_count"] == 1
+    assert summary["raw_count"] == 2
+
+
+def test_normalize_decision_changes_dedupes_path_last_write_wins() -> None:
+    """If the LLM emits the same path twice, the last value wins and the
+    duplicate is recorded in the summary."""
+    parent_payload: dict[str, object] = {"model": {"params": {"learning_rate": 0.1}}}
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="config_001.json",
+        changes=(
+            research_module.ResearchChange(path="model.params.learning_rate", value=0.05, reason="first"),
+            research_module.ResearchChange(path="model.params.learning_rate", value=0.03, reason="oops"),
+        ),
+        stop_reason=None,
+    )
+    normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
+    assert len(normalized.changes) == 1
+    assert normalized.changes[0].value == 0.03
+    assert summary["dropped_duplicate_paths"] == ["model.params.learning_rate"]
+
+
+def test_normalize_decision_changes_keeps_real_mutations() -> None:
+    """A decision with no no-ops and no duplicates is returned unchanged."""
+    parent_payload: dict[str, object] = {"model": {"params": {"learning_rate": 0.1, "max_depth": 3}}}
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="config_001.json",
+        changes=(
+            research_module.ResearchChange(path="model.params.learning_rate", value=0.05, reason="x"),
+            research_module.ResearchChange(path="model.params.max_depth", value=4, reason="x"),
+        ),
+        stop_reason=None,
+    )
+    normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
+    assert len(normalized.changes) == 2
+    assert summary["dropped_no_op_paths"] == []
+    assert summary["dropped_duplicate_paths"] == []
+
+
+def test_normalize_decision_changes_keeps_missing_path_as_real_change() -> None:
+    """When the parent payload doesn't have the path (e.g. adding a new key
+    like `model.module_path` during a family switch), the change must be kept
+    even though the parent value is "missing" rather than equal."""
+    parent_payload: dict[str, object] = {"model": {"type": "LGBMRegressor", "params": {}}}
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="config_001.json",
+        changes=(research_module.ResearchChange(path="model.module_path", value="xgboost_model.py", reason="add"),),
+        stop_reason=None,
+    )
+    normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
+    assert [c.path for c in normalized.changes] == ["model.module_path"]
+    assert summary["dropped_no_op_paths"] == []
+
+
+def test_strip_python_owned_sections_removes_llm_authored_diff_block() -> None:
+    """An LLM-authored `## Diff vs parent` block must be stripped before the
+    composer appends its own canonical version (otherwise the final round.md
+    carries two consecutive diff blocks — one with ASCII -> arrows and stale
+    `?` placeholders, one with Unicode → arrows from the controller)."""
+    text = (
+        "# r017 Research State\n\n"
+        "## Phase\n\nshallow.\n\n"
+        "## Diff vs parent\n\n"
+        "- parent: config_014.json\n"
+        "- model.type: 'LGBMRegressor' -> 'XGBoostRegressor'\n"
+        "- model.module_path: ? -> 'xgboost_model.py'\n\n"
+        "## Open questions and caveats\n\nseed variance.\n"
+    )
+    cleaned, stripped = research_module._strip_python_owned_sections(text)
+    assert stripped == ["Diff vs parent"]
+    assert "## Diff vs parent" not in cleaned
+    assert "## Phase" in cleaned
+    assert "## Open questions and caveats" in cleaned
+
+
+def test_strip_python_owned_sections_no_change_when_llm_does_not_author_them() -> None:
+    text = (
+        "# r014 Research State\n\n"
+        "## Phase\n\nshallow.\n\n"
+        "## What this decision tests\n\nA target swap.\n\n"
+        "## Open questions and caveats\n\nNone.\n"
+    )
+    cleaned, stripped = research_module._strip_python_owned_sections(text)
+    assert stripped == []
+    assert cleaned.rstrip() == text.rstrip()
+
+
+def test_strip_python_owned_sections_strips_multiple_owned_sections() -> None:
+    """An aggressively-over-helpful LLM may try to author Execution Result,
+    Secondary Metrics, and Outcome too. All must be dropped."""
+    text = (
+        "# r042 Research State\n\n"
+        "## Phase\n\nshallow.\n\n"
+        "## Execution Result\n\n- Action: run\n\n"
+        "## Secondary Metrics\n\n- bmc_mean: 0.005\n\n"
+        "## Outcome\n\n- Promoted: maybe\n"
+    )
+    cleaned, stripped = research_module._strip_python_owned_sections(text)
+    assert set(stripped) == {"Execution Result", "Secondary Metrics", "Outcome"}
+    assert "## Execution Result" not in cleaned
+    assert "## Secondary Metrics" not in cleaned
+    assert "## Outcome" not in cleaned
+    assert "## Phase" in cleaned
+
+
+def test_apply_state_defaults_backfills_missing_fields() -> None:
+    """A state file written by an older controller version is upgraded on load
+    to include all canonical fields with zero-values."""
+    legacy_state: dict[str, object] = {
+        "schema_version": 1,
+        "experiment_id": "old-exp",
+        "status": "running",
+        "next_round_number": 5,
+        "total_rounds_completed": 4,
+    }
+    research_module._apply_state_defaults(legacy_state, has_phase=False)
+    assert legacy_state["diversification_dry_run_count"] == 0
+    assert legacy_state["failed_rounds_counter"] == 0
+    assert legacy_state["confirmations"] == {}
+    assert legacy_state["confirmed_champion"] is None
+    assert legacy_state["tried_signatures"] == []
+    # Existing values must be preserved.
+    assert legacy_state["next_round_number"] == 5
+    assert legacy_state["total_rounds_completed"] == 4
+
+
+def test_apply_state_defaults_phase_fields_only_when_has_phase() -> None:
+    """Phase defaults are opt-in per experiment; non-phase experiments stay slim."""
+    state_without_phase: dict[str, object] = {}
+    research_module._apply_state_defaults(state_without_phase, has_phase=False)
+    assert "phase_plateau_counter" not in state_without_phase
+
+    state_with_phase: dict[str, object] = {}
+    research_module._apply_state_defaults(state_with_phase, has_phase=True)
+    assert state_with_phase["phase_plateau_counter"] == 0
+    assert state_with_phase["phase_successful_rounds"] == 0
+    assert state_with_phase["phase_history"] == []
+    assert state_with_phase["phase_best_metric"] is None

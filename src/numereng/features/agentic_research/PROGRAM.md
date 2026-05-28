@@ -239,6 +239,14 @@ The memo can grow but should stay information-dense, not log-style. Drop any pro
 stronger finding has subsumed. Python will append an `Execution Result` section after the
 deterministic run or stop is recorded.
 
+**Do not author these sections** — the controller renders them deterministically from state and
+will strip any LLM-authored copy before composing the final round.md:
+
+- `## Diff vs parent`
+- `## Execution Result`
+- `## Secondary Metrics`
+- `## Outcome`
+
 ## Curated EXPERIMENT.md (Working Memory)
 
 The context includes `experiment_notes`, which is the **current** `EXPERIMENT.md` — your

@@ -37,6 +37,11 @@ from numereng.platform.errors import OpenRouterClientError
 
 ResearchStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
 ResearchAction = Literal["baseline", "run", "stop"]
+# A first-class round classification used by the outcome-footer renderer and
+# persisted in trace.jsonl. Baseline = pre-LLM incumbent; discovery = seed-42
+# fresh probe; confirmation = single-change random_state mutation against a
+# previously LLM-generated parent.
+RoundType = Literal["baseline", "discovery", "confirmation"]
 
 PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
 CUSTOM_PROGRAM_DIR = Path(__file__).with_name("custom_programs")
@@ -356,6 +361,29 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         )
         raise
     decision = llm_response.decision
+    # Normalize the change list once, against the parent config, so every
+    # downstream consumer (classification, validation, materialization, hash,
+    # diff renderer) sees the actionable set rather than the raw LLM submission.
+    # Skipped for `stop` actions (no parent, no changes) and any decision whose
+    # parent_config is not on disk (materialize will raise the canonical
+    # `parent_config_not_found` error in a moment).
+    if decision.action == "run" and decision.parent_config is not None:
+        parent_path = experiment.manifest_path.parent / "configs" / decision.parent_config
+        if parent_path.is_file():
+            parent_payload = load_training_config_json(parent_path)
+            decision, normalization_summary = _normalize_decision_changes(
+                decision=decision, parent_payload=parent_payload
+            )
+            if cast(int, normalization_summary["raw_count"]) > cast(int, normalization_summary["kept_count"]):
+                _append_trace(
+                    experiment,
+                    round_number=round_number,
+                    round_label=round_label,
+                    event="decision_changes_normalized",
+                    payload=normalization_summary,
+                )
+            if not decision.changes:
+                raise AgenticResearchValidationError("agentic_research_no_actionable_changes")
     decision_payload = _decision_payload(decision, model_source=model_source)
     # Stash so _record_failed_round can surface what the LLM proposed when a
     # post-parse step (materialization, train, score) blows up. Cleared on
@@ -452,6 +480,8 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             "config_path": str(result.config_path) if result.config_path is not None else None,
             "run_id": result.run_id,
             "metric_value": result.metric_value,
+            "action": result.action,
+            "round_type": _classify_round_type(decision_payload),
         },
     )
     return result
@@ -641,12 +671,13 @@ def _train_score_record_round(
     best = _best_run_from_report(report)
     secondary_metrics = _load_secondary_metrics_from_disk(root=root, run_id=trained.run_id)
     diff_vs_parent_markdown = _render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
-    confirmation_round = _is_confirmation_round(decision_payload)
+    round_type = _classify_round_type(decision_payload)
     champion_seed42_before = _champion_seed42_metric(state)
     round_payload: dict[str, object] = {
         "round_number": round_number,
         "round_label": round_label,
         "action": action,
+        "round_type": round_type,
         "status": "completed",
         "config_path": _relative_to_experiment(experiment, config_path),
         "run_id": trained.run_id,
@@ -657,8 +688,9 @@ def _train_score_record_round(
         "wall_time_seconds": round_seconds,
         "secondary_metrics": secondary_metrics,
         "diff_vs_parent_markdown": diff_vs_parent_markdown,
-        "confirmation_round": confirmation_round,
+        "confirmation_round": round_type == "confirmation",
         "champion_seed42_before": champion_seed42_before,
+        "confirmation_context": None,
     }
     state.pop("pending_decision", None)
     state.update(
@@ -676,7 +708,7 @@ def _train_score_record_round(
     )
     _accumulate_phase_cost(state, round_seconds)
     typed_metric = _coerce_metric(metric_value)
-    _update_phase_progress(state=state, metric_value=typed_metric)
+    _update_phase_progress(state=state, metric_value=typed_metric, action=action)
     _append_tried_signature(
         state,
         _extract_lgbm_signature(
@@ -694,7 +726,7 @@ def _train_score_record_round(
         round_label=round_label,
     )
     promotion_payload: dict[str, object] | None = None
-    if _is_confirmation_round(decision_payload):
+    if round_type == "confirmation":
         parent_config = str(decision_payload.get("parent_config"))
         changes_list = decision_payload.get("changes")
         seed_value = (
@@ -712,6 +744,11 @@ def _train_score_record_round(
                 metric_value=metric_for_record,
                 round_number=round_number,
             )
+            round_payload["confirmation_context"] = _build_confirmation_context(
+                state=state,
+                parent_config=parent_config,
+                confirmation_seed=seed_value,
+            )
             _append_trace(
                 experiment,
                 round_number=round_number,
@@ -727,6 +764,9 @@ def _train_score_record_round(
             promotion = _maybe_promote_confirmation(state=state, parent_config=parent_config, round_number=round_number)
             if promotion is not None:
                 promotion_payload = promotion
+                _reset_plateau_on_champion_promotion(
+                    state=state, new_trio_mean=float(promotion["seed_trio_primary_mean"])
+                )
                 _append_trace(
                     experiment,
                     round_number=round_number,
@@ -770,6 +810,9 @@ def _train_score_record_round(
             )
             if promotion is not None:
                 promotion_payload = promotion
+                _reset_plateau_on_champion_promotion(
+                    state=state, new_trio_mean=float(promotion["seed_trio_primary_mean"])
+                )
                 _append_trace(
                     experiment,
                     round_number=round_number,
@@ -780,10 +823,23 @@ def _train_score_record_round(
     phase_snapshot = _phase_snapshot_for_md(experiment=experiment, state=state)
     round_payload["promotion"] = promotion_payload
     round_payload["phase_snapshot"] = phase_snapshot
+    cleaned_round_markdown, stripped_sections = _strip_python_owned_sections(round_markdown)
+    if stripped_sections:
+        # The LLM authored a section that the controller owns (e.g. its own
+        # `## Diff vs parent` block with stale `?` placeholders). Surface this
+        # so we can see how often the prompt rule is being ignored and either
+        # reinforce the rule or accept it as benign drift.
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="llm_authored_owned_section",
+            payload={"sections": stripped_sections},
+        )
     _write_llm_round_markdown(
         artifact_dir=artifact_dir,
         round_label=round_label,
-        round_markdown=round_markdown,
+        round_markdown=cleaned_round_markdown,
         round_payload=round_payload,
     )
     _append_decision_log(_decision_log_path(experiment), round_payload)
@@ -1265,6 +1321,56 @@ def _parse_change(payload: object) -> ResearchChange:
     )
 
 
+def _normalize_decision_changes(
+    *,
+    decision: ResearchDecision,
+    parent_payload: dict[str, object],
+) -> tuple[ResearchDecision, dict[str, object]]:
+    """Drop no-op changes (where the parent's value at the path already equals
+    the new value) and dedupe duplicate path entries with last-write-wins.
+
+    This runs once inside `_materialize_decision_config` after the parent
+    config is loaded. Filtering here — rather than at the validation site —
+    keeps the LLM-facing budget honest: a decision with N actionable changes
+    plus a defensively-bundled no-op (e.g. `data.target_horizon: '60d' → '60d'`
+    appended whenever `data.target_col` is rewritten) counts as N, not N+1.
+
+    Returns the normalized decision and a summary dict suitable for a trace
+    event. Order of the kept changes follows the last occurrence per path."""
+    raw_changes = list(decision.changes)
+    last_by_path: dict[str, ResearchChange] = {}
+    duplicate_paths: list[str] = []
+    for change in raw_changes:
+        if change.path in last_by_path:
+            duplicate_paths.append(change.path)
+        last_by_path[change.path] = change
+    deduped = list(last_by_path.values())
+    kept: list[ResearchChange] = []
+    no_op_paths: list[str] = []
+    for change in deduped:
+        existing = _lookup_dotted(parent_payload, change.path)
+        if existing is not _MISSING_SENTINEL and existing == change.value:
+            no_op_paths.append(change.path)
+            continue
+        kept.append(change)
+    normalized = ResearchDecision(
+        action=decision.action,
+        learning=decision.learning,
+        belief_update=decision.belief_update,
+        next_hypothesis=decision.next_hypothesis,
+        parent_config=decision.parent_config,
+        changes=tuple(kept),
+        stop_reason=decision.stop_reason,
+    )
+    summary: dict[str, object] = {
+        "raw_count": len(raw_changes),
+        "kept_count": len(kept),
+        "dropped_no_op_paths": no_op_paths,
+        "dropped_duplicate_paths": duplicate_paths,
+    }
+    return normalized, summary
+
+
 def _materialize_decision_config(
     *,
     experiment: ExperimentRecord,
@@ -1276,6 +1382,7 @@ def _materialize_decision_config(
     parent_path = config_dir / str(decision.parent_config)
     if not parent_path.is_file():
         raise AgenticResearchValidationError(f"agentic_research_parent_config_not_found:{decision.parent_config}")
+    payload = load_training_config_json(parent_path)
     allowed_paths = _program_allowed_paths(experiment)
     value_caps = (
         _current_phase_caps(experiment=experiment, state=state)
@@ -1300,7 +1407,6 @@ def _materialize_decision_config(
                 raise AgenticResearchValidationError(
                     f"agentic_research_change_value_out_of_range:{change.path}:{value}:[{lo},{hi}]"
                 )
-    payload = load_training_config_json(parent_path)
     for change in decision.changes:
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
     _apply_family_switch_cleanup(payload)
@@ -1572,23 +1678,48 @@ def _phase_transition_spec(*, experiment: ExperimentRecord, state: dict[str, obj
     return cast(dict[str, object], transition) if isinstance(transition, dict) else None
 
 
-def _update_phase_progress(*, state: dict[str, object], metric_value: float | None) -> None:
+def _update_phase_progress(
+    *,
+    state: dict[str, object],
+    metric_value: float | None,
+    action: str | None = None,
+) -> None:
+    """Tick the per-phase round counters after a completed round.
+
+    Plateau semantics (matching PROGRAM.md "Plateau And Progress Semantics"):
+    every completed `run` round increments the plateau counter. The counter is
+    reset to 0 only when a new 3-seed champion is promoted whose trio mean
+    strictly exceeds the prior champion's by `PHASE_IMPROVEMENT_THRESHOLD` —
+    that reset is owned by `_reset_plateau_on_champion_promotion`, not this
+    function. Baseline rounds (`action == "baseline"`) count as a successful
+    round but do not tick plateau, because the baseline establishes the
+    incumbent rather than failing to improve on it."""
     if "phase" not in state:
         return
     if metric_value is None:
         return
     state["phase_successful_rounds"] = _as_int(state.get("phase_successful_rounds"), default=0) + 1
-    current_best = state.get("phase_best_metric")
-    improved = current_best is None or (
-        isinstance(current_best, (int, float))
-        and not isinstance(current_best, bool)
-        and metric_value > float(current_best) + PHASE_IMPROVEMENT_THRESHOLD
-    )
-    if improved:
-        state["phase_best_metric"] = float(metric_value)
-        state["phase_plateau_counter"] = 0
-    else:
-        state["phase_plateau_counter"] = _as_int(state.get("phase_plateau_counter"), default=0) + 1
+    if action == "baseline":
+        return
+    state["phase_plateau_counter"] = _as_int(state.get("phase_plateau_counter"), default=0) + 1
+
+
+def _reset_plateau_on_champion_promotion(
+    *,
+    state: dict[str, object],
+    new_trio_mean: float,
+) -> None:
+    """Champion-promotion plateau reset, called immediately after a successful
+    `_maybe_promote_confirmation`. The trio-mean improvement check already ran
+    inside `_maybe_promote_confirmation` (gated on `CONFIRMATION_PROMOTION_THRESHOLD`,
+    which equals `PHASE_IMPROVEMENT_THRESHOLD`), so a promotion event is itself
+    the signal that a true improvement occurred. We also refresh
+    `phase_best_metric` so it tracks the current champion's trio mean rather
+    than a noisy per-seed score."""
+    if "phase" not in state:
+        return
+    state["phase_plateau_counter"] = 0
+    state["phase_best_metric"] = float(new_trio_mean)
 
 
 def _phase_has_confirmed_champion(state: dict[str, object], phase: str) -> bool:
@@ -1855,6 +1986,47 @@ def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
     if not (parent.startswith("config_") and parent.endswith(".json")):
         return False
     return parent != "config_001.json"
+
+
+def _classify_round_type(decision_payload: dict[str, object]) -> RoundType:
+    """Single source of truth for round classification. Used by the outcome
+    footer renderer and persisted in trace.jsonl."""
+    if decision_payload.get("action") == "baseline":
+        return "baseline"
+    if _is_confirmation_round(decision_payload):
+        return "confirmation"
+    return "discovery"
+
+
+def _build_confirmation_context(
+    *,
+    state: dict[str, object],
+    parent_config: str,
+    confirmation_seed: int,
+) -> dict[str, object]:
+    """Pull the per-candidate trio progress for the confirmation round footer.
+    Called immediately after `_record_confirmation_attempt` so the latest seed
+    is already reflected in `state.confirmations[parent_config]`."""
+    confirmations_raw = state.get("confirmations")
+    entry: dict[str, object] = {}
+    if isinstance(confirmations_raw, dict):
+        candidate = confirmations_raw.get(parent_config)
+        if isinstance(candidate, dict):
+            entry = candidate
+    seeds_completed_raw = entry.get("seeds_completed")
+    seeds_completed = len(seeds_completed_raw) if isinstance(seeds_completed_raw, list) else 0
+    metrics_raw = entry.get("primary_metric_by_seed")
+    candidate_seed42_metric: float | None = None
+    if isinstance(metrics_raw, dict):
+        raw_42 = metrics_raw.get("42")
+        if isinstance(raw_42, (int, float)) and not isinstance(raw_42, bool):
+            candidate_seed42_metric = float(raw_42)
+    return {
+        "seed": confirmation_seed,
+        "candidate_seed42_metric": candidate_seed42_metric,
+        "seeds_completed": seeds_completed,
+        "total_seeds": len(CANONICAL_SEED_TRIO),
+    }
 
 
 def _record_confirmation_attempt(
@@ -2140,6 +2312,42 @@ def _lookup_dotted(payload: object, dotted: str) -> object:
     return current
 
 
+# Section headers owned by the Python controller, in the order they appear in
+# the final round.md. The LLM is instructed (PROGRAM.md "Rolling Memo Contract")
+# not to author these sections; if it does anyway, `_strip_python_owned_sections`
+# removes them before the composer re-appends the canonical Python-rendered
+# version. This is the single source of truth for round.md section ownership.
+_PYTHON_OWNED_SECTIONS: tuple[str, ...] = (
+    "Diff vs parent",
+    "Execution Result",
+    "Secondary Metrics",
+    "Outcome",
+)
+
+
+def _strip_python_owned_sections(text: str) -> tuple[str, list[str]]:
+    """Remove any section whose header matches a Python-owned section name.
+
+    A section spans from its `## <name>` header line to the next `## ` header
+    or the end of the string. Returns the cleaned text and a list of stripped
+    section names (one entry per occurrence — duplicates are reported, so the
+    trace event reflects exactly how many headers were dropped)."""
+    stripped: list[str] = []
+    for name in _PYTHON_OWNED_SECTIONS:
+        pattern = re.compile(
+            rf"^##\s+{re.escape(name)}\s*$.*?(?=^##\s|\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+        new_text, count = pattern.subn("", text)
+        if count > 0:
+            stripped.extend([name] * count)
+            text = new_text
+    # Collapse the blank-line dust left behind so the final composer doesn't
+    # accumulate runs of empty lines between LLM body and Python sections.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.rstrip() + "\n", stripped
+
+
 def _render_diff_vs_parent(*, experiment: ExperimentRecord, decision_payload: dict[str, object]) -> str:
     """Render a `## Diff vs parent` block from the structured decision changes.
 
@@ -2298,29 +2506,67 @@ def _extract_json_object(text: str) -> dict[str, object]:
     return payload
 
 
+# Canonical state defaults. Every field listed here is guaranteed to exist on a
+# fresh state.json and on any state loaded from disk (via _apply_state_defaults).
+# Add a new field by extending this dict — never by writing it lazily in some
+# random round handler.
+_STATE_DEFAULTS: dict[str, object] = {
+    "schema_version": 1,
+    "status": "initialized",
+    "next_round_number": 1,
+    "total_rounds_completed": 0,
+    "last_checkpoint": "initialized",
+    "last_round_label": None,
+    "last_run_id": None,
+    "stop_reason": None,
+    "best_overall": None,
+    "confirmations": {},
+    "confirmed_champion": None,
+    "tried_signatures": [],
+    "failed_rounds_counter": 0,
+    "diversification_dry_run_count": 0,
+    "pending_decision": None,
+}
+
+# Defaults applied only when the experiment defines a phases config (the phase
+# subsystem is opt-in per experiment).
+_PHASE_STATE_DEFAULTS: dict[str, object] = {
+    "phase_round_start": 1,
+    "phase_best_metric": None,
+    "phase_plateau_counter": 0,
+    "phase_successful_rounds": 0,
+    "phase_history": [],
+    "phase_cost_totals": {},
+}
+
+
+def _apply_state_defaults(state: dict[str, object], *, has_phase: bool) -> dict[str, object]:
+    """Backfill any missing canonical fields on a loaded state dict.
+
+    Older state files predate fields like `diversification_dry_run_count`; this
+    fills them with their zero-value so downstream consumers see a consistent
+    schema. Existing values are preserved."""
+    for key, value in _STATE_DEFAULTS.items():
+        state.setdefault(key, deepcopy(value))
+    if has_phase:
+        for key, value in _PHASE_STATE_DEFAULTS.items():
+            state.setdefault(key, deepcopy(value))
+    return state
+
+
 def _initial_state(experiment: ExperimentRecord) -> dict[str, object]:
     now = _utc_now_iso()
     state: dict[str, object] = {
-        "schema_version": 1,
         "experiment_id": experiment.experiment_id,
-        "status": "initialized",
-        "next_round_number": 1,
-        "total_rounds_completed": 0,
-        "last_checkpoint": "initialized",
-        "stop_reason": None,
         "best_overall": asdict(ResearchBestRun()),
         "created_at": now,
         "updated_at": now,
     }
     phases_config = _phases_config(experiment)
-    if phases_config is not None:
-        state["phase"] = _initial_phase(phases_config)
-        state["phase_round_start"] = 1
-        state["phase_best_metric"] = None
-        state["phase_plateau_counter"] = 0
-        state["phase_successful_rounds"] = 0
-        state["phase_history"] = []
-        state["phase_cost_totals"] = {}
+    has_phase = phases_config is not None
+    _apply_state_defaults(state, has_phase=has_phase)
+    if has_phase:
+        state["phase"] = _initial_phase(cast(dict[str, object], phases_config))
     return state
 
 
@@ -2455,7 +2701,10 @@ def _load_state(path: Path) -> dict[str, object] | None:
         raise AgenticResearchValidationError(f"agentic_research_state_invalid:{path}") from exc
     if not isinstance(payload, dict):
         raise AgenticResearchValidationError(f"agentic_research_state_invalid:{path}")
-    return payload
+    # Backfill any missing canonical fields so callers see a consistent shape
+    # regardless of when the state file was first written.
+    has_phase = "phase" in payload or "phase_history" in payload or "phase_best_metric" in payload
+    return _apply_state_defaults(payload, has_phase=has_phase)
 
 
 def _save_state(experiment: ExperimentRecord, state: dict[str, object]) -> None:
@@ -2622,38 +2871,62 @@ def _write_llm_round_markdown(
 
 
 def _render_outcome_footer(round_payload: dict[str, object]) -> str:
-    """Render Python-authoritative round classification: trigger / confirmation / promoted / phase."""
+    """Render Python-authoritative round classification, branched on round_type.
+
+    Baseline rounds emit a "Status: baseline establishment" line because there
+    is no champion yet and no trigger to evaluate. Discovery rounds keep the
+    legacy "Trigger cleared" comparison against the champion's seed-42 score.
+    Confirmation rounds emit a confirmation-specific block (seed being
+    confirmed, candidate's seed-42 score, trio progress) — the legacy
+    "Trigger cleared" line is misleading here because the candidate's
+    confirmation seeds are compared against its own seed-42, not against the
+    old champion."""
     lines = ["## Outcome"]
+    round_type = round_payload.get("round_type")
 
-    metric = round_payload.get("metric_value")
-    champion_seed42 = round_payload.get("champion_seed42_before")
-    if (
-        isinstance(metric, (int, float))
-        and not isinstance(metric, bool)
-        and isinstance(champion_seed42, (int, float))
-        and not isinstance(champion_seed42, bool)
-    ):
-        cleared = float(metric) > float(champion_seed42)
-        verb = "above" if cleared else "below"
-        lines.append(
-            f"- Trigger cleared: {'yes' if cleared else 'no'} "
-            f"(metric {metric} {verb} champion seed-42 {champion_seed42})"
-        )
-    else:
-        lines.append("- Trigger cleared: n/a (no champion yet)")
-
-    confirmation = bool(round_payload.get("confirmation_round"))
-    lines.append(f"- Confirmation round: {'yes' if confirmation else 'no'}")
-
-    promotion = round_payload.get("promotion")
-    if isinstance(promotion, dict) and promotion:
-        mean = promotion.get("seed_trio_primary_mean")
-        if isinstance(mean, (int, float)) and not isinstance(mean, bool):
-            lines.append(f"- Promoted: yes (trio mean {mean})")
+    if round_type == "baseline":
+        lines.append("- Status: baseline establishment (no LLM mutation)")
+    elif round_type == "confirmation":
+        ctx_raw = round_payload.get("confirmation_context")
+        ctx: dict[str, object] = ctx_raw if isinstance(ctx_raw, dict) else {}
+        seed = ctx.get("seed")
+        candidate_seed42 = ctx.get("candidate_seed42_metric")
+        seeds_completed = ctx.get("seeds_completed")
+        total_seeds = ctx.get("total_seeds")
+        lines.append(f"- Confirmation seed: {seed if seed is not None else 'unknown'}")
+        if isinstance(candidate_seed42, (int, float)) and not isinstance(candidate_seed42, bool):
+            lines.append(f"- Candidate seed-42 score: {candidate_seed42}")
+        if isinstance(seeds_completed, int) and isinstance(total_seeds, int):
+            lines.append(f"- Trio progress: {seeds_completed}/{total_seeds} seeds completed")
+    else:  # discovery
+        metric = round_payload.get("metric_value")
+        champion_seed42 = round_payload.get("champion_seed42_before")
+        if (
+            isinstance(metric, (int, float))
+            and not isinstance(metric, bool)
+            and isinstance(champion_seed42, (int, float))
+            and not isinstance(champion_seed42, bool)
+        ):
+            cleared = float(metric) > float(champion_seed42)
+            verb = "above" if cleared else "below"
+            lines.append(
+                f"- Trigger cleared: {'yes' if cleared else 'no'} "
+                f"(metric {metric} {verb} champion seed-42 {champion_seed42})"
+            )
         else:
-            lines.append("- Promoted: yes")
-    else:
-        lines.append("- Promoted: no")
+            lines.append("- Trigger cleared: n/a (no champion yet)")
+
+    # Promotion line: shown on discovery and confirmation; suppressed on baseline.
+    if round_type != "baseline":
+        promotion = round_payload.get("promotion")
+        if isinstance(promotion, dict) and promotion:
+            mean = promotion.get("seed_trio_primary_mean")
+            if isinstance(mean, (int, float)) and not isinstance(mean, bool):
+                lines.append(f"- Promoted: yes (trio mean {mean})")
+            else:
+                lines.append("- Promoted: yes")
+        else:
+            lines.append("- Promoted: no")
 
     snap = round_payload.get("phase_snapshot")
     if isinstance(snap, dict):
