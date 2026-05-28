@@ -49,10 +49,15 @@ PROGRAM_METADATA_KEY = "agentic_research_program"
 ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
+BUDGET_ROUNDS_METADATA_KEY = "agentic_research_budget_rounds"
 _MISSING_SENTINEL: object = object()
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
 CONFIRMATION_PROMOTION_THRESHOLD = 3e-4
+# Two single-axis discovery configs whose only difference is one param but whose
+# primary metric is identical to this tolerance are the same effective model
+# (e.g. a non-binding regularizer like XGB min_child_weight on shallow trees).
+INERT_METRIC_EPSILON = 1e-9
 ARTIFACT_ROTATION_METADATA_KEY = "agentic_research_artifact_rotation"
 ARTIFACT_ROTATION_HEAVY_NAMES: frozenset[str] = frozenset({"predictions.parquet", "meta.parquet"})
 ARTIFACT_ROTATION_HEAVY_SIZE_THRESHOLD = 1_000_000
@@ -68,7 +73,16 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
 TRIED_SIGNATURES_WINDOW = 100
-DIVERSIFICATION_CELL_THRESHOLD = 8
+# Diversification enforcement (hybrid). A "streak" is consecutive seed-42
+# discovery rounds in the same cell (family, feature_set, target) or on the same
+# target, with confirmation rounds skipped (they neither count nor break it).
+# At SOFT, the controller injects a per-round branch directive into the prompt.
+# At HARD, the controller hard-rejects a discovery round that would extend the
+# streak (confirmations stay exempt). DIVERSIFICATION_ENFORCED gates the hard
+# block so it can be dialed back to directive-only without code surgery.
+DIVERSIFICATION_SOFT_THRESHOLD = 4
+DIVERSIFICATION_HARD_THRESHOLD = 6
+DIVERSIFICATION_ENFORCED = True
 CANONICAL_DISCOVERY_SEED = 42
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
@@ -719,12 +733,18 @@ def _train_score_record_round(
             action=action,
         ),
     )
-    _check_diversification_dry_run(
-        experiment=experiment,
-        state=state,
-        round_number=round_number,
-        round_label=round_label,
-    )
+    if round_type == "discovery":
+        inert = _detect_inert_change(state=state, decision_payload=decision_payload, child_metric=typed_metric)
+        if inert is not None:
+            parent_cfg, inert_path = inert
+            _record_inert_axis(state, parent_cfg, inert_path)
+            _append_trace(
+                experiment,
+                round_number=round_number,
+                round_label=round_label,
+                event="inert_change_detected",
+                payload={"parent_config": parent_cfg, "path": inert_path, "metric": typed_metric},
+            )
     promotion_payload: dict[str, object] | None = None
     if round_type == "confirmation":
         parent_config = str(decision_payload.get("parent_config"))
@@ -852,6 +872,8 @@ def _train_score_record_round(
             event = "phase_misconfigured"
         elif kind == "blocked_no_champion":
             event = "phase_blocked_no_champion"
+        elif kind == "deferred_inflight_confirmation":
+            event = "phase_transition_deferred"
         else:
             event = "phase_transition"
         _append_trace(
@@ -1027,6 +1049,7 @@ def _build_context(
     state: dict[str, object],
 ) -> dict[str, object]:
     phase_caps = _current_phase_caps(experiment=experiment, state=state)
+    diversification_streaks = _diversification_streaks(state)
     return {
         "objective": {
             "primary_metric": PRIMARY_METRIC_FIELD,
@@ -1043,6 +1066,17 @@ def _build_context(
             "tags": list(experiment.tags),
             "champion_run_id": experiment.champion_run_id,
             "run_count": len(experiment.runs),
+            "budget_rounds": _budget_rounds(experiment),
+        },
+        "inert_axes": state.get("inert_axes", {}),
+        "diversification_status": {
+            "cell": list(diversification_streaks["cell"]) if diversification_streaks.get("cell") else None,
+            "cell_streak": diversification_streaks.get("cell_streak", 0),
+            "target": diversification_streaks.get("target"),
+            "target_streak": diversification_streaks.get("target_streak", 0),
+            "soft_threshold": DIVERSIFICATION_SOFT_THRESHOLD,
+            "hard_threshold": DIVERSIFICATION_HARD_THRESHOLD,
+            "directive": _diversification_directive(diversification_streaks),
         },
         "phase": state.get("phase"),
         "phase_history": state.get("phase_history", []),
@@ -1407,11 +1441,13 @@ def _materialize_decision_config(
                 raise AgenticResearchValidationError(
                     f"agentic_research_change_value_out_of_range:{change.path}:{value}:[{lo},{hi}]"
                 )
+    _reject_inert_change(state=state, decision=decision)
     for change in decision.changes:
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
     _apply_family_switch_cleanup(payload)
     validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
-    _normalize_lgbm_effective_params(validated)
+    _normalize_effective_leaf_params(validated)
+    _reject_overconcentrated_discovery(state=state, validated_config=validated)
     candidate_hash = compute_config_hash(validated)
     existing_hashes = _existing_config_hashes(config_dir)
     if candidate_hash in existing_hashes:
@@ -1498,7 +1534,7 @@ def _existing_config_hashes(config_dir: Path) -> set[str]:
             payload = load_training_config_json(path)
         except Exception:
             continue
-        _normalize_lgbm_effective_params(payload)
+        _normalize_effective_leaf_params(payload)
         hashes.add(compute_config_hash(payload))
     return hashes
 
@@ -1570,6 +1606,41 @@ def _normalize_lgbm_effective_params(payload: dict[str, object]) -> dict[str, ob
     return payload
 
 
+def _normalize_xgb_effective_params(payload: dict[str, object]) -> dict[str, object]:
+    """Clamp XGBoost `max_leaves` to `2 ** max_depth` when both are set.
+
+    XGBoost with `grow_policy=lossguide` still stops splits at `max_depth` when
+    `max_depth > 0`, so two configs differing only by `max_leaves` above the
+    depth-implied cap train the identical tree. Mirror of
+    `_normalize_lgbm_effective_params`; makes the duplicate-by-hash gate catch
+    the XGB case the program prompt already promises. Skipped when
+    `max_depth <= 0` (XGBoost's "no depth limit" sentinel) because then
+    `max_leaves` is the sole limiter."""
+    model = payload.get("model")
+    if not isinstance(model, dict) or model.get("type") != "XGBoostRegressor":
+        return payload
+    params = model.get("params")
+    if not isinstance(params, dict):
+        return payload
+    depth = params.get("max_depth")
+    leaves = params.get("max_leaves")
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth <= 0:
+        return payload
+    if not isinstance(leaves, int) or isinstance(leaves, bool):
+        return payload
+    cap = 2**depth
+    if leaves > cap:
+        params["max_leaves"] = cap
+    return payload
+
+
+def _normalize_effective_leaf_params(payload: dict[str, object]) -> dict[str, object]:
+    """Apply the family-specific effective-leaf normalization before hashing."""
+    _normalize_lgbm_effective_params(payload)
+    _normalize_xgb_effective_params(payload)
+    return payload
+
+
 def _assign_dotted(payload: dict[str, object], parts: list[str], value: object) -> None:
     cursor: dict[str, object] = payload
     for part in parts[:-1]:
@@ -1610,6 +1681,27 @@ def _program_allowed_paths(experiment: ExperimentRecord) -> tuple[str, ...]:
 def _program_value_caps(experiment: ExperimentRecord) -> dict[str, tuple[float, float]]:
     raw = experiment.metadata.get(VALUE_CAPS_METADATA_KEY)
     return _parse_value_caps(raw)
+
+
+def _budget_rounds(experiment: ExperimentRecord) -> int | None:
+    """Total round budget from experiment metadata, if declared. Lets the prompt
+    read a per-experiment budget instead of a hard-coded literal so long runs
+    (e.g. 500 rounds) aren't anchored to a stale number. Returns None when unset
+    or invalid; the prompt then falls back to plateau/coverage reasoning."""
+    raw = experiment.metadata.get(BUDGET_ROUNDS_METADATA_KEY)
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw > 0 else None
+    if isinstance(raw, float) and raw.is_integer() and raw > 0:
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            return None
+        return value if value > 0 else None
+    return None
 
 
 def _parse_value_caps(raw: object) -> dict[str, tuple[float, float]]:
@@ -1734,6 +1826,35 @@ def _phase_has_confirmed_champion(state: dict[str, object], phase: str) -> bool:
     return False
 
 
+def _has_inflight_confirmation(state: dict[str, object], round_number: int) -> bool:
+    """True when a confirmation trio is mid-flight and still being worked.
+
+    "Mid-flight" means a candidate has 1 or 2 of the canonical seed trio
+    completed, has not been promoted, and was touched in the current or previous
+    round. The recency guard (`last_attempt_at_round >= round_number - 1`) keeps
+    an abandoned partial trio from blocking phase transitions forever — only a
+    trio that is actively being filled defers the transition. This prevents a
+    champion discovered late in a phase from being credited to the next phase
+    because the transition fired between its confirmation seeds."""
+    confirmations = state.get("confirmations")
+    if not isinstance(confirmations, dict):
+        return False
+    canonical = set(CANONICAL_SEED_TRIO)
+    for entry in confirmations.values():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("promoted_at_round") is not None:
+            continue
+        seeds = entry.get("seeds_completed")
+        completed = canonical & set(seeds) if isinstance(seeds, list) else set()
+        if not (1 <= len(completed) < len(canonical)):
+            continue
+        last = entry.get("last_attempt_at_round")
+        if isinstance(last, (int, float)) and not isinstance(last, bool) and int(last) >= round_number - 1:
+            return True
+    return False
+
+
 def _maybe_transition_phase(
     *,
     experiment: ExperimentRecord,
@@ -1770,6 +1891,18 @@ def _maybe_transition_phase(
         # trace.jsonl for stuck phases instead of inferring it from silence.
         return {
             "transition": "blocked_no_champion",
+            "from": current_phase,
+            "successful_rounds": successful_rounds,
+            "plateau": plateau,
+        }
+
+    if _has_inflight_confirmation(state, round_number):
+        # A confirmation trio is mid-flight. Let it finish in the current phase
+        # so its champion (if it promotes) is credited here, not to the next
+        # phase. The promotion will reset the plateau counter, so the transition
+        # predicate will simply re-evaluate on later rounds.
+        return {
+            "transition": "deferred_inflight_confirmation",
             "from": current_phase,
             "successful_rounds": successful_rounds,
             "plateau": plateau,
@@ -1912,57 +2045,178 @@ def _signature_cell(signature: dict[str, object]) -> tuple[object, object, objec
     return (signature.get("family"), signature.get("feature_set"), signature.get("target"))
 
 
-def _check_diversification_dry_run(
-    *,
-    experiment: ExperimentRecord,
-    state: dict[str, object],
-    round_number: int,
-    round_label: str,
-) -> None:
-    """Observe-only diversification cap. Counts consecutive discovery probes
-    (seed == CANONICAL_DISCOVERY_SEED) in the same `{family, feature_set, target}`
-    cell ending at the latest signature. If the streak reaches the threshold,
-    emit a `diversification_dry_run` trace event and bump
-    `state.diversification_dry_run_count`. Confirmation rounds (seed != 42)
-    are skipped — they neither count nor break the streak.
-
-    This is the dry-run phase of the diversification cap: we log what we would
-    have blocked, so we can decide later whether to promote it to a hard block.
-    """
+def _diversification_streaks(state: dict[str, object]) -> dict[str, object]:
+    """Consecutive seed-42 discovery streaks ending at the latest discovery
+    signature, at two granularities: the exact cell `(family, feature_set,
+    target)` and target-only. Confirmation rounds (seed != 42) are skipped — they
+    neither count toward nor break a streak. The target-only streak is what
+    catches cross-family tunneling on one target (a flaw a cell-exact counter
+    misses). Used by the soft directive (context) and the hard block (materialize)."""
+    empty: dict[str, object] = {"cell": None, "cell_streak": 0, "target": None, "target_streak": 0}
     signatures = state.get("tried_signatures")
     if not isinstance(signatures, list) or not signatures:
-        return
-    latest = signatures[-1]
-    if not isinstance(latest, dict) or latest.get("seed") != CANONICAL_DISCOVERY_SEED:
-        return
-    current_cell = _signature_cell(latest)
-    if all(v is None for v in current_cell):
-        return
-    consecutive = 0
-    for sig in reversed(signatures):
-        if not isinstance(sig, dict):
-            continue
-        if sig.get("seed") != CANONICAL_DISCOVERY_SEED:
-            continue
-        if _signature_cell(sig) != current_cell:
+        return empty
+    discovery = [s for s in signatures if isinstance(s, dict) and s.get("seed") == CANONICAL_DISCOVERY_SEED]
+    if not discovery:
+        return empty
+    latest = discovery[-1]
+    cell = _signature_cell(latest)
+    target = latest.get("target")
+    if all(v is None for v in cell):
+        return empty
+    cell_streak = 0
+    for sig in reversed(discovery):
+        if _signature_cell(sig) != cell:
             break
-        consecutive += 1
-    if consecutive < DIVERSIFICATION_CELL_THRESHOLD:
+        cell_streak += 1
+    target_streak = 0
+    for sig in reversed(discovery):
+        if sig.get("target") != target:
+            break
+        target_streak += 1
+    return {"cell": cell, "cell_streak": cell_streak, "target": target, "target_streak": target_streak}
+
+
+def _diversification_directive(streaks: dict[str, object]) -> str | None:
+    """Per-round branch directive injected into context when a streak crosses the
+    soft threshold. Target-level concentration takes priority over cell-level."""
+    target_streak = _as_int(streaks.get("target_streak"), default=0)
+    cell_streak = _as_int(streaks.get("cell_streak"), default=0)
+    if target_streak >= DIVERSIFICATION_SOFT_THRESHOLD:
+        return (
+            f"DIVERSIFICATION: {target_streak} consecutive discovery probes on target "
+            f"{streaks.get('target')}. Branch to an unvisited target (or change family/"
+            f"feature_set) this round unless you are completing a confirmation trio. The "
+            f"controller hard-rejects a same-target discovery probe at "
+            f"{DIVERSIFICATION_HARD_THRESHOLD}."
+        )
+    if cell_streak >= DIVERSIFICATION_SOFT_THRESHOLD:
+        return (
+            f"DIVERSIFICATION: {cell_streak} consecutive discovery probes in cell "
+            f"{streaks.get('cell')}. Branch to an unvisited cell this round unless completing "
+            f"a confirmation. The controller hard-rejects a same-cell discovery probe at "
+            f"{DIVERSIFICATION_HARD_THRESHOLD}."
+        )
+    return None
+
+
+_BOOKKEEPING_CHANGE_PATHS: tuple[str, ...] = ("output.predictions_name", "model.params.random_state")
+
+
+def _actionable_change_paths(paths: list[str]) -> list[str]:
+    """Change paths that alter the model, excluding seed and output-name bookkeeping."""
+    return [p for p in paths if p not in _BOOKKEEPING_CHANGE_PATHS]
+
+
+def _confirmation_seed42_metric(state: dict[str, object], config_name: str) -> float | None:
+    """The seed-42 primary metric recorded for `config_name` in confirmations.
+    Every seed-42 discovery round auto-credits this, so a tuning child's parent
+    (itself a prior discovery config) is reliably present."""
+    confirmations = state.get("confirmations")
+    if not isinstance(confirmations, dict):
+        return None
+    entry = confirmations.get(config_name)
+    if not isinstance(entry, dict):
+        return None
+    metrics = entry.get("primary_metric_by_seed")
+    if not isinstance(metrics, dict):
+        return None
+    raw = metrics.get("42")
+    return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
+
+
+def _detect_inert_change(
+    *, state: dict[str, object], decision_payload: dict[str, object], child_metric: float | None
+) -> tuple[str, str] | None:
+    """Return `(parent_config, path)` when a discovery round changed exactly one
+    actionable axis off its parent yet reproduced the parent's seed-42 primary
+    metric to within INERT_METRIC_EPSILON — i.e. the knob is inert in this regime
+    (e.g. a non-binding regularizer on shallow trees). Returns None otherwise."""
+    if child_metric is None:
+        return None
+    parent = decision_payload.get("parent_config")
+    if not isinstance(parent, str) or not parent:
+        return None
+    changes = decision_payload.get("changes")
+    if not isinstance(changes, list):
+        return None
+    paths = [c.get("path") for c in changes if isinstance(c, dict) and isinstance(c.get("path"), str)]
+    actionable = _actionable_change_paths([p for p in paths if isinstance(p, str)])
+    if len(actionable) != 1:
+        return None
+    parent42 = _confirmation_seed42_metric(state, parent)
+    if parent42 is None:
+        return None
+    if abs(float(child_metric) - parent42) <= INERT_METRIC_EPSILON:
+        return (parent, actionable[0])
+    return None
+
+
+def _record_inert_axis(state: dict[str, object], parent_config: str, path: str) -> None:
+    """Append `(parent_config, path)` to `state.inert_axes` (idempotent)."""
+    inert_raw = state.get("inert_axes")
+    inert: dict[str, object] = inert_raw if isinstance(inert_raw, dict) else {}
+    paths_raw = inert.get(parent_config)
+    paths: list[str] = paths_raw if isinstance(paths_raw, list) else []
+    if path not in paths:
+        paths.append(path)
+    inert[parent_config] = paths
+    state["inert_axes"] = inert
+
+
+def _config_cell_target(payload: dict[str, object]) -> tuple[tuple[object, object, object], object]:
+    """Extract `((family, feature_set, target), target)` from a config payload.
+    The cell tuple is comparable to `_signature_cell` (same field semantics)."""
+    model = payload.get("model") if isinstance(payload, dict) else None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    family = model.get("type") if isinstance(model, dict) else None
+    feature_set = data.get("feature_set") if isinstance(data, dict) else None
+    target = data.get("target_col") if isinstance(data, dict) else None
+    return ((family, feature_set, target), target)
+
+
+def _config_seed_from_payload(payload: dict[str, object]) -> object | None:
+    model = payload.get("model") if isinstance(payload, dict) else None
+    params = model.get("params") if isinstance(model, dict) else None
+    return params.get("random_state") if isinstance(params, dict) else None
+
+
+def _reject_inert_change(*, state: dict[str, object] | None, decision: ResearchDecision) -> None:
+    """Raise if `decision` single-axis re-probes a `(parent_config, path)` already
+    measured inert (F2). Scope is `(parent_config, path)`: precise, no false-blocks
+    across siblings or phases. Multi-axis changes pass — coupling an inert knob with
+    a binding one is legitimate."""
+    if state is None:
         return
-    state["diversification_dry_run_count"] = _as_int(state.get("diversification_dry_run_count"), default=0) + 1
-    family, feature_set, target = current_cell
-    _append_trace(
-        experiment,
-        round_number=round_number,
-        round_label=round_label,
-        event="diversification_dry_run",
-        payload={
-            "cell": {"family": family, "feature_set": feature_set, "target": target},
-            "consecutive_count": consecutive,
-            "threshold": DIVERSIFICATION_CELL_THRESHOLD,
-            "note": "dry-run: would have suggested branching to an unvisited cell",
-        },
-    )
+    inert = state.get("inert_axes")
+    if not isinstance(inert, dict):
+        return
+    parent = decision.parent_config
+    if not isinstance(parent, str):
+        return
+    inert_paths = inert.get(parent)
+    if not isinstance(inert_paths, list) or not inert_paths:
+        return
+    actionable = _actionable_change_paths([c.path for c in decision.changes])
+    if len(actionable) == 1 and actionable[0] in inert_paths:
+        raise AgenticResearchValidationError(f"agentic_research_inert_change:{actionable[0]}")
+
+
+def _reject_overconcentrated_discovery(*, state: dict[str, object] | None, validated_config: dict[str, object]) -> None:
+    """Raise if this seed-42 discovery round would extend a cell or target streak
+    already at the hard diversification threshold (F1). Confirmation rounds
+    (seed != 42) are exempt. Gated by DIVERSIFICATION_ENFORCED."""
+    if not DIVERSIFICATION_ENFORCED or state is None:
+        return
+    if _config_seed_from_payload(validated_config) != CANONICAL_DISCOVERY_SEED:
+        return
+    new_cell, new_target = _config_cell_target(validated_config)
+    streaks = _diversification_streaks(state)
+    hard = DIVERSIFICATION_HARD_THRESHOLD
+    same_cell = new_cell == streaks.get("cell") and _as_int(streaks.get("cell_streak"), default=0) >= hard
+    same_target = new_target == streaks.get("target") and _as_int(streaks.get("target_streak"), default=0) >= hard
+    if same_cell or same_target:
+        raise AgenticResearchValidationError(f"agentic_research_diversification_required:{new_target}")
 
 
 def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
@@ -2525,6 +2779,7 @@ _STATE_DEFAULTS: dict[str, object] = {
     "tried_signatures": [],
     "failed_rounds_counter": 0,
     "diversification_dry_run_count": 0,
+    "inert_axes": {},
     "pending_decision": None,
 }
 

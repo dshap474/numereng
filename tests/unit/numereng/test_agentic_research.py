@@ -1596,93 +1596,152 @@ def _diversification_sig(
     }
 
 
-def test_diversification_dry_run_logs_at_threshold(tmp_path: Path) -> None:
-    """8 consecutive same-cell discovery sigs trigger a dry-run trace event + counter bump."""
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+def test_diversification_streaks_counts_cell_and_target() -> None:
+    """Consecutive same-cell discovery sigs count toward both cell and target streaks."""
     state: dict[str, object] = {"tried_signatures": []}
-    for i in range(research_module.DIVERSIFICATION_CELL_THRESHOLD):
+    for i in range(5):
         research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
-    research_module._check_diversification_dry_run(
-        experiment=experiment,
-        state=state,
-        round_number=research_module.DIVERSIFICATION_CELL_THRESHOLD,
-        round_label=f"r{research_module.DIVERSIFICATION_CELL_THRESHOLD:03d}",
-    )
-    assert state["diversification_dry_run_count"] == 1
-    trace_path = experiment.manifest_path.parent / "agentic_research" / "trace.jsonl"
-    assert trace_path.exists()
-    rows = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
-    events = [r for r in rows if r["event"] == "diversification_dry_run"]
-    assert len(events) == 1
-    assert events[0]["payload"]["cell"] == {
-        "family": "LGBMRegressor",
-        "feature_set": "small",
-        "target": "target_alpha_20",
+    streaks = research_module._diversification_streaks(state)
+    assert streaks["cell_streak"] == 5
+    assert streaks["target_streak"] == 5
+    assert streaks["cell"] == ("LGBMRegressor", "small", "target_alpha_20")
+    assert streaks["target"] == "target_alpha_20"
+
+
+def test_diversification_streaks_skip_confirmations() -> None:
+    """Confirmations (seed != 42) neither count toward nor break a streak."""
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(3):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
+    research_module._append_tried_signature(state, _diversification_sig(seed=17, r="r004"))
+    research_module._append_tried_signature(state, _diversification_sig(seed=99, r="r005"))
+    for i in range(3):
+        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 6:03d}"))
+    streaks = research_module._diversification_streaks(state)
+    assert streaks["cell_streak"] == 6
+    assert streaks["target_streak"] == 6
+
+
+def test_diversification_target_streak_survives_family_flip() -> None:
+    """Cross-family tunneling on one target: the family flip resets the cell streak
+    but target_streak keeps climbing — the exact flaw a cell-exact counter misses."""
+    state: dict[str, object] = {"tried_signatures": []}
+    for i in range(4):
+        research_module._append_tried_signature(
+            state, _diversification_sig(family="XGBoostRegressor", r=f"r{i + 1:03d}")
+        )
+    research_module._append_tried_signature(state, _diversification_sig(family="LGBMRegressor", r="r005"))
+    streaks = research_module._diversification_streaks(state)
+    assert streaks["cell_streak"] == 1
+    assert streaks["target_streak"] == 5
+
+
+def test_diversification_directive_fires_at_soft_threshold() -> None:
+    below = {
+        "cell_streak": 1,
+        "target_streak": research_module.DIVERSIFICATION_SOFT_THRESHOLD - 1,
+        "target": "target_alpha_60",
+        "cell": None,
     }
-    assert events[0]["payload"]["consecutive_count"] == research_module.DIVERSIFICATION_CELL_THRESHOLD
+    assert research_module._diversification_directive(below) is None
+    at = {
+        "cell_streak": 1,
+        "target_streak": research_module.DIVERSIFICATION_SOFT_THRESHOLD,
+        "target": "target_alpha_60",
+        "cell": None,
+    }
+    directive = research_module._diversification_directive(at)
+    assert directive is not None and "target_alpha_60" in directive
 
 
-def test_diversification_dry_run_silent_below_threshold(tmp_path: Path) -> None:
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+def test_reject_overconcentrated_discovery_blocks_at_hard() -> None:
+    """A seed-42 discovery extending a target streak at the hard threshold is rejected;
+    a different target is allowed; a confirmation seed is exempt."""
     state: dict[str, object] = {"tried_signatures": []}
-    for i in range(research_module.DIVERSIFICATION_CELL_THRESHOLD - 1):
-        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
-    research_module._check_diversification_dry_run(
-        experiment=experiment, state=state, round_number=7, round_label="r007"
+    for i in range(research_module.DIVERSIFICATION_HARD_THRESHOLD):
+        research_module._append_tried_signature(
+            state, _diversification_sig(target="target_alpha_60", r=f"r{i + 1:03d}")
+        )
+
+    def cfg(target: str, seed: int = 42) -> dict[str, object]:
+        return {
+            "model": {"type": "LGBMRegressor", "params": {"random_state": seed}},
+            "data": {"feature_set": "small", "target_col": target},
+        }
+
+    with pytest.raises(AgenticResearchValidationError, match="diversification_required"):
+        research_module._reject_overconcentrated_discovery(state=state, validated_config=cfg("target_alpha_60"))
+    research_module._reject_overconcentrated_discovery(state=state, validated_config=cfg("target_bravo_60"))
+    research_module._reject_overconcentrated_discovery(state=state, validated_config=cfg("target_alpha_60", seed=17))
+
+
+def test_normalize_xgb_effective_params_clamps_max_leaves() -> None:
+    over = {"model": {"type": "XGBoostRegressor", "params": {"max_depth": 3, "max_leaves": 64}}}
+    research_module._normalize_xgb_effective_params(over)
+    assert over["model"]["params"]["max_leaves"] == 8  # 2**3
+    within = {"model": {"type": "XGBoostRegressor", "params": {"max_depth": 4, "max_leaves": 16}}}
+    research_module._normalize_xgb_effective_params(within)
+    assert within["model"]["params"]["max_leaves"] == 16
+    nolimit = {"model": {"type": "XGBoostRegressor", "params": {"max_depth": 0, "max_leaves": 256}}}
+    research_module._normalize_xgb_effective_params(nolimit)
+    assert nolimit["model"]["params"]["max_leaves"] == 256
+    lgbm = {"model": {"type": "LGBMRegressor", "params": {"max_depth": 3, "max_leaves": 64}}}
+    research_module._normalize_xgb_effective_params(lgbm)
+    assert lgbm["model"]["params"]["max_leaves"] == 64
+
+
+def test_detect_inert_change_flags_identical_metric() -> None:
+    """A single-axis discovery whose metric equals the parent's seed-42 metric is inert."""
+    state: dict[str, object] = {"confirmations": {"config_017.json": {"primary_metric_by_seed": {"42": 0.0032677941}}}}
+    payload: dict[str, object] = {
+        "parent_config": "config_017.json",
+        "changes": [
+            {"path": "model.params.min_child_weight", "value": 200},
+            {"path": "output.predictions_name", "value": "x"},
+        ],
+    }
+    assert research_module._detect_inert_change(state=state, decision_payload=payload, child_metric=0.0032677941) == (
+        "config_017.json",
+        "model.params.min_child_weight",
     )
-    assert "diversification_dry_run_count" not in state
+    assert research_module._detect_inert_change(state=state, decision_payload=payload, child_metric=0.0034) is None
+    multi: dict[str, object] = {
+        "parent_config": "config_017.json",
+        "changes": [
+            {"path": "model.params.min_child_weight", "value": 200},
+            {"path": "model.params.max_depth", "value": 4},
+        ],
+    }
+    assert research_module._detect_inert_change(state=state, decision_payload=multi, child_metric=0.0032677941) is None
 
 
-def test_diversification_dry_run_skips_confirmation_rounds(tmp_path: Path) -> None:
-    """Confirmations (seed != 42) neither count toward the streak nor break it.
+def test_reject_inert_change_blocks_single_axis_reprobe() -> None:
+    state: dict[str, object] = {"inert_axes": {"config_017.json": ["model.params.min_child_weight"]}}
 
-    Sequence: 4 discoveries in cell A, 2 confirmations (seed 17, 99), 4 more
-    discoveries in cell A. Streak = 8 → triggers.
-    """
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    state: dict[str, object] = {"tried_signatures": []}
-    for i in range(4):
-        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
-    research_module._append_tried_signature(state, _diversification_sig(seed=17, r="r005"))
-    research_module._append_tried_signature(state, _diversification_sig(seed=99, r="r006"))
-    for i in range(4):
-        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 7:03d}"))
-    research_module._check_diversification_dry_run(
-        experiment=experiment, state=state, round_number=10, round_label="r010"
+    def decision(
+        paths_values: list[tuple[str, object]], parent: str = "config_017.json"
+    ) -> research_module.ResearchDecision:
+        changes = tuple(research_module.ResearchChange(path=p, value=v, reason="r") for p, v in paths_values)
+        return research_module.ResearchDecision(
+            action="run",
+            learning="",
+            belief_update="",
+            next_hypothesis="",
+            parent_config=parent,
+            changes=changes,
+            stop_reason=None,
+        )
+
+    with pytest.raises(AgenticResearchValidationError, match="inert_change"):
+        research_module._reject_inert_change(
+            state=state,
+            decision=decision([("model.params.min_child_weight", 50), ("output.predictions_name", "x")]),
+        )
+    research_module._reject_inert_change(state=state, decision=decision([("model.params.colsample_bytree", 0.8)]))
+    research_module._reject_inert_change(
+        state=state,
+        decision=decision([("model.params.min_child_weight", 50), ("model.params.max_depth", 4)]),
     )
-    assert state.get("diversification_dry_run_count") == 1
-
-
-def test_diversification_dry_run_resets_on_cell_change(tmp_path: Path) -> None:
-    """A different-cell discovery breaks the streak; subsequent same-cell rounds restart from 1."""
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    state: dict[str, object] = {"tried_signatures": []}
-    for i in range(7):
-        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
-    research_module._append_tried_signature(state, _diversification_sig(target="target_other_20", r="r008"))
-    research_module._append_tried_signature(state, _diversification_sig(r="r009"))
-    research_module._check_diversification_dry_run(
-        experiment=experiment, state=state, round_number=9, round_label="r009"
-    )
-    assert "diversification_dry_run_count" not in state
-
-
-def test_diversification_dry_run_does_not_fire_on_confirmation_as_latest(tmp_path: Path) -> None:
-    """If the latest signature is itself a confirmation (seed != 42), the check is a no-op."""
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    state: dict[str, object] = {"tried_signatures": []}
-    for i in range(8):
-        research_module._append_tried_signature(state, _diversification_sig(r=f"r{i + 1:03d}"))
-    research_module._append_tried_signature(state, _diversification_sig(seed=17, r="r009"))
-    research_module._check_diversification_dry_run(
-        experiment=experiment, state=state, round_number=9, round_label="r009"
-    )
-    assert "diversification_dry_run_count" not in state
 
 
 def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None:
@@ -1711,6 +1770,55 @@ def test_phase_transition_with_confirmed_champion_requirement_succeeds() -> None
         round_number=3,
     )
     assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}
+
+
+def test_phase_transition_deferred_during_inflight_confirmation() -> None:
+    """A mid-flight confirmation trio defers the transition so its champion is
+    credited to the discovering phase rather than the next one."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    cfg["shallow"]["transition"]["require_confirmed_champion"] = True
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.003,
+        "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
+        "phase_history": [],
+        "confirmations": {
+            "config_023.json": {"promoted_in_phase": "shallow", "seed_trio_primary_mean": 0.003},
+            # config_040: seeds 42 + 17 done, not promoted, touched this round -> in flight
+            "config_040.json": {"seeds_completed": [42, 17], "last_attempt_at_round": 3},
+        },
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=3,
+    )
+    assert payload is not None and payload["transition"] == "deferred_inflight_confirmation"
+    assert state["phase"] == "shallow"
+    assert state["phase_history"] == []
+
+
+def test_has_inflight_confirmation_recency_and_completion() -> None:
+    base = {
+        "phase": "shallow",
+        "confirmations": {"c.json": {"seeds_completed": [42, 17], "last_attempt_at_round": 10}},
+    }
+    assert research_module._has_inflight_confirmation(base, round_number=10) is True
+    assert research_module._has_inflight_confirmation(base, round_number=11) is True  # within recency window
+    assert research_module._has_inflight_confirmation(base, round_number=13) is False  # stale partial unblocks
+    promoted = {"confirmations": {"c.json": {"seeds_completed": [42, 17, 99], "last_attempt_at_round": 10}}}
+    assert research_module._has_inflight_confirmation(promoted, round_number=10) is False  # full trio not in flight
+    done = {
+        "confirmations": {"c.json": {"seeds_completed": [42, 17], "promoted_at_round": 9, "last_attempt_at_round": 10}}
+    }
+    assert research_module._has_inflight_confirmation(done, round_number=10) is False  # already promoted
 
 
 def test_phase_transition_no_op_when_next_phase_missing() -> None:
