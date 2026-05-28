@@ -25,9 +25,19 @@ hypotheses in one decision.
 
 These rules apply to every program. Custom programs may tighten them but should not override.
 They exist because observed agent behavior tends to over-explore single-seed noise, under-confirm
-promising candidates, and stay stuck in a single search cell — all wasteful patterns the
-controller cannot block at the schema level. Treat the rules as enforceable contracts you check
-against your own decision before emitting it.
+promising candidates, and stay stuck in a single search cell — all wasteful patterns. Treat the
+rules as enforceable contracts you check against your own decision before emitting it.
+
+Some of these are now **enforced by the controller**, not just self-policed — it will reject the
+round and you will see the error in `recent_rounds`:
+
+- **Diversification cap:** a seed-42 discovery probe that would extend an over-long streak in one
+  cell or on one target is rejected (`agentic_research_diversification_required`). Watch
+  `context.diversification_status.directive` and branch before you hit the wall.
+- **Inert axes:** re-probing a single knob the controller measured as inert (no metric change vs
+  parent) is rejected (`agentic_research_inert_change`). See `context.inert_axes`.
+- **Phase credit:** a phase transition is deferred while a confirmation trio is in flight, so a
+  champion is credited to the phase that discovered it.
 
 ### Evidence Doctrine
 
@@ -45,7 +55,10 @@ against your own decision before emitting it.
   a round re-running the discovery seed.
 - Treat improvements below roughly `1e-4` to `3e-4` on `bmc_last_200_eras_mean` as provisional
   unless confirmed across the same seed set.
-- Use the best comparable parent, not automatically the previous round.
+- Use the best comparable parent, not automatically the previous round. For a new-axis discovery
+  probe, branch from the current 3-seed champion (or the best confirmed config in the target cell)
+  — NEVER from a config that regressed against the champion. Chaining a probe off a config that
+  already underperformed compounds two changes and makes the result unattributable.
 - Comparable means same feature scope, target route, evaluation surface, and evidence tier.
 - If exact metrics conflict, trust the primary metric first, then `bmc_mean`, then sanity checks.
 
@@ -53,14 +66,20 @@ against your own decision before emitting it.
 
 **Rule: at most ONE unconfirmed candidate in flight at a time.** Before proposing a new
 discovery probe, scan `context.confirmations`. If any config has `seeds_completed` with 1 or 2
-entries (not yet 3) AND its seed-42 `bmc_last_200_eras_mean` is within `3e-4` of the current
-champion's seed-trio mean (or above any prior champion if none exists), you MUST propose the next
-seed in the canonical trio for that config instead of a fresh discovery probe.
+entries (not yet 3) AND its seed-42 `bmc_last_200_eras_mean` is more than `3e-4` **above** the
+current champion's seed-42 score (or above the baseline if no champion exists), you MUST propose
+the next seed in the canonical trio for that config instead of a fresh discovery probe.
 
-Why this matters: single-seed scores have noise ~`3e-4`. Discovery probes that never get
-confirmed are unconvertible into durable progress — they look like wins but are statistically
-indistinguishable from noise. Draining the backlog before scattering converts probes into either
-champions or closed hypotheses, and the plateau counter then reflects real exploration depth.
+**Do NOT confirm a tie.** A probe whose seed-42 score merely ties the champion (within the `3e-4`
+noise floor) is not a candidate — it is statistically the same model. Confirming it spends two
+rounds to produce a "confirmed-but-not-champion" non-result. The discovery seed is auto-credited,
+so a tied probe already sits at 1 seed in `confirmations`; leave it there and keep exploring.
+Confirm only candidates that genuinely *beat* the champion's seed-42 by `>3e-4`.
+
+Why this matters: single-seed scores have noise ~`3e-4`. Confirming every near-tie turns the
+search into a treadmill of two-round confirmations that close as non-champions, burning most of
+the budget in the exploit regime. Confirming only true beats keeps each confirmation pointed at
+real progress, and the plateau counter then reflects real exploration depth.
 
 A 3-seed confirmation that fails to beat the current champion by `>3e-4` is still valuable: it
 closes the candidate and resets the cycling counter. Record it in `EXPERIMENT.md` as
@@ -84,24 +103,32 @@ deliberately each round.
 ### Search Diversification
 
 Wide-search programs declare a set of **diversification axes** (typically some subset of
-`{family, feature_set, target, horizon}`). The controller does not enforce coverage; you must.
+`{family, feature_set, target, horizon}`). The controller measures your concentration and both
+warns and enforces — but the cheap path is to diversify before it has to.
 
 - In your first 12 successful discovery rounds of a phase, touch each declared axis value at
   least twice and at least `min(4, total_targets/2)` distinct targets.
-- If you have proposed 8 consecutive discovery rounds in the same `{family, feature_set, target}`
-  cell, your search is too narrow — branch to an unvisited cell before continuing.
+- The controller tracks two streaks of consecutive seed-42 discovery rounds: in the same
+  `{family, feature_set, target}` cell, and on the same `target` (across families/feature sets).
+  `context.diversification_status` reports both, plus the soft and hard thresholds.
+- When a streak reaches the **soft** threshold, `diversification_status.directive` is set — branch
+  to an unvisited cell/target that round unless you are completing a confirmation trio.
+- When a streak reaches the **hard** threshold, the controller **rejects** a discovery probe that
+  would extend it. Confirmation rounds are exempt. Do not wait for the wall; heed the directive.
 - Mark each visited cell in your `EXPERIMENT.md` Open Frontiers as you cover it so you can see
   the cross-product gap at a glance.
 
 Why this matters: the loss landscape may have a global optimum in a cell you haven't visited.
 A narrow search converges quickly to a local optimum and misses the wider design space — which
-defeats the point of a "wide" program.
+defeats the point of a "wide" program. Tuning one cell forever (even across families on a single
+target) is the dominant failure mode of long unsupervised runs.
 
 ### Round Budget Awareness
 
 Each round has a real cost: an LLM call + train + score, typically 30s–10min depending on phase
-and feature set. The total budget per experiment is finite and is named in the custom program.
-Wasted rounds are unrecoverable. Before each `run` decision, ask yourself:
+and feature set. The total round budget is `context.experiment.budget_rounds` when set; if it is
+`null`, infer urgency from your plateau counter and coverage rather than a fixed number. Wasted
+rounds are unrecoverable. Before each `run` decision, ask yourself:
 
 - "If this is my last round in this phase, is this the most valuable hypothesis to test?"
 - "Would a confirmation round close out a durable finding more cheaply than this probe?"
@@ -186,8 +213,10 @@ hand-write the final machine `decision.json`; Python creates it.
 ## Budget And Phased Strategy
 
 The context includes `state.next_round_number` and `state.total_rounds_completed`. Use them to
-phase your search. The total budget is not exposed; infer phase from progress, the size of
-`report.rows`, and your plateau counter.
+phase your search. The total budget is `context.experiment.budget_rounds` when set; otherwise
+infer phase from progress, the size of `report.rows`, and your plateau counter. Do not assume a
+fixed budget — long runs may set it to several hundred rounds, so reason in terms of plateau and
+coverage, not an absolute round number.
 
 | Phase | Trigger | Behavior |
 | --- | --- | --- |
