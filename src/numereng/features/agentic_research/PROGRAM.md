@@ -148,11 +148,11 @@ A strong focused program should define:
 | Baseline And Comparison Rule | Which parent is fair and how to compare variants. |
 | Evidence Rules | What counts as discovery, confirmation, plateau, or failure. |
 | Sweep Discipline | How to change one variable at a time without mixing hypotheses. |
-| Stop, Confirmation, And Handoff | When to stop, seed-confirm, or move to a new program. |
+| Confirmation And Handoff | When to seed-confirm or note a handoff candidate for a future program. |
 | Rolling Memo Contract | What must be carried forward in `round_markdown`. |
 
 If the current program does not define a focused hypothesis, behave conservatively: choose the
-smallest useful mutation from the current experiment context, or stop and explain what focused
+smallest useful mutation from the current experiment context, and note in your memo what focused
 program should be created next.
 
 ## Compact Design Space Map
@@ -227,22 +227,23 @@ coverage, not an absolute round number.
 Tag the current phase in your rolling memo and update it deliberately. Do not stay in `Explore`
 indefinitely; transitioning is part of the job.
 
-## Stop Criteria
+## Budget Doctrine — Never Stop
 
-Return `action: "stop"` when any of the following is true. A clean stop is more useful than
-rounds of churn.
+This experiment runs for a fixed round budget. **You never stop it.** Every round you must return
+`action: "run"` with the single most informative next config. There is no `stop` action.
 
-- **Plateau:** 25 consecutive `run` rounds without a new 3-seed champion (see Plateau And
-  Progress Semantics for the precise reset rule).
-- **Cycling:** 5 consecutive proposals have been rejected as duplicates by hash.
-- **Exhausted hypothesis:** You cannot articulate a new hypothesis beyond restating prior
-  beliefs.
-- **Surface change required:** The next useful step would require leaving `allowed_change_paths`
-  or the experiment's fixed surface; name the handoff in `stop_reason`.
+A plateau is **not** a reason to quit — it is a signal to **diversify**: branch to an unvisited
+cell (family / feature set / target), not to keep re-probing the same exhausted neighborhood.
+Continuing to test new combinations past a peak is itself the objective: every round yields
+information about the design space even when it does not set a new champion.
 
-The plateau and cycling counters live in your rolling memo. Increment them deliberately each
-round. Reset the cycling counter after any successful run. Reset the plateau counter ONLY when
-a new 3-seed champion is promoted (see Universal Discipline).
+The run ends only when (a) the round budget is exhausted, (b) a human halts it after monitoring
+progress, or (c) the controller bails on repeated failures — none of these are your decision. Your
+job is to keep proposing the most useful next run, every round, until the budget is spent.
+
+The plateau and cycling counters still live in your rolling memo — track them deliberately so you
+know when to diversify. Reset the cycling counter after any successful run. Reset the plateau
+counter ONLY when a new 3-seed champion is promoted (see Universal Discipline).
 
 ## Round Markdown
 
@@ -266,7 +267,7 @@ Required sections in the memo (in any order, but include all):
 
 The memo can grow but should stay information-dense, not log-style. Drop any prose that a later,
 stronger finding has subsumed. Python will append an `Execution Result` section after the
-deterministic run or stop is recorded.
+deterministic run is recorded.
 
 **Do not author these sections** — the controller renders them deterministically from state and
 will strip any LLM-authored copy before composing the final round.md:
@@ -351,23 +352,7 @@ For a new run:
 }
 ```
 
-To stop:
-
-```json
-{
-  "decision_form": {
-    "action": "stop",
-    "learning": "What this experiment has taught us.",
-    "belief_update": "The final belief update.",
-    "next_hypothesis": null,
-    "parent_config": null,
-    "changes": [],
-    "stop_reason": "Why no next run is justified."
-  },
-  "round_markdown": "# rNNN Research State\n\n...",
-  "experiment_markdown": "# Champion State\n...\n\n# Active Beliefs\n- ...\n"
-}
-```
+There is no stop form — every round returns a `run` decision (see Budget Doctrine — Never Stop).
 
 ## Context
 

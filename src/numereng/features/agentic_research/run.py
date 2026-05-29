@@ -274,8 +274,6 @@ def run_research(
             rounds.append(result)
             experiment = get_experiment(store_root=root, experiment_id=experiment_id)
             state = _load_state(_state_path(experiment)) or _initial_state(experiment)
-            if result.action == "stop":
-                break
     except KeyboardInterrupt:
         state["status"] = "interrupted"
         state["stop_reason"] = "keyboard_interrupt"
@@ -401,7 +399,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     decision_payload = _decision_payload(decision, model_source=model_source)
     # Stash so _record_failed_round can surface what the LLM proposed when a
     # post-parse step (materialization, train, score) blows up. Cleared on
-    # success in _train_score_record_round / _record_stop_round.
+    # success in _train_score_record_round.
     state["pending_decision"] = decision_payload
     _append_trace(
         experiment,
@@ -410,35 +408,6 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         event="decision_parsed",
         payload={"decision": decision_payload},
     )
-
-    if decision.action == "stop":
-        result = _record_stop_round(
-            experiment=experiment,
-            state=state,
-            decision=decision,
-            decision_payload=decision_payload,
-            round_number=round_number,
-            round_label=round_label,
-            artifact_dir=artifact_dir,
-            round_markdown=llm_response.round_markdown,
-        )
-        bytes_written = _write_experiment_markdown(experiment, llm_response.experiment_markdown)
-        if bytes_written > 0:
-            _append_trace(
-                experiment,
-                round_number=round_number,
-                round_label=round_label,
-                event="experiment_markdown_updated",
-                payload={"bytes_written": bytes_written},
-            )
-        _append_trace(
-            experiment,
-            round_number=round_number,
-            round_label=round_label,
-            event="round_stopped",
-            payload={"stop_reason": decision.stop_reason},
-        )
-        return result
 
     try:
         config_path = _materialize_decision_config(
@@ -908,62 +877,6 @@ def _train_score_record_round(
     )
 
 
-def _record_stop_round(
-    *,
-    experiment: ExperimentRecord,
-    state: dict[str, object],
-    decision: ResearchDecision,
-    decision_payload: dict[str, object],
-    round_number: int,
-    round_label: str,
-    artifact_dir: Path,
-    round_markdown: str,
-) -> ResearchRoundResult:
-    learning = decision.learning or decision.stop_reason or "LLM stopped the research loop."
-    diff_vs_parent_markdown = _render_diff_vs_parent(experiment=experiment, decision_payload=decision_payload)
-    payload: dict[str, object] = {
-        "round_number": round_number,
-        "round_label": round_label,
-        "action": "stop",
-        "status": "stopped",
-        "run_id": None,
-        "metric_value": None,
-        "learning": learning,
-        "stop_reason": decision.stop_reason,
-        "decision": decision_payload,
-        "completed_at": _utc_now_iso(),
-        "diff_vs_parent_markdown": diff_vs_parent_markdown,
-    }
-    _write_llm_round_markdown(
-        artifact_dir=artifact_dir,
-        round_label=round_label,
-        round_markdown=round_markdown,
-        round_payload=payload,
-    )
-    _append_decision_log(_decision_log_path(experiment), payload)
-    state.pop("pending_decision", None)
-    state.update(
-        {
-            "status": "stopped",
-            "stop_reason": f"llm_stop:{decision.stop_reason or 'no_next_run'}",
-            "last_checkpoint": "llm_stopped",
-            "updated_at": _utc_now_iso(),
-        }
-    )
-    _save_state(experiment, state)
-    return ResearchRoundResult(
-        round_number=round_number,
-        round_label=round_label,
-        action="stop",
-        status="stopped",
-        config_path=None,
-        run_id=None,
-        metric_value=None,
-        learning=learning,
-        artifact_dir=artifact_dir,
-    )
-
-
 def _record_failed_round(
     *,
     experiment: ExperimentRecord,
@@ -1250,7 +1163,9 @@ def _parse_llm_response(raw_response: str) -> ResearchLLMResponse:
 
 def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
     action_raw = payload.get("action")
-    if action_raw not in {"run", "stop"}:
+    # Budget-bounded design: `stop` is not an LLM action. A run explores until its
+    # round budget is hit (or a human halts it); the LLM only ever proposes runs.
+    if action_raw != "run":
         raise AgenticResearchValidationError("agentic_research_action_invalid")
     action = cast(Literal["run", "stop"], action_raw)
     changes = tuple(_parse_change(item) for item in _as_list(payload.get("changes")))
@@ -1263,13 +1178,10 @@ def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
         changes=changes,
         stop_reason=_optional_str(payload.get("stop_reason")),
     )
-    if decision.action == "run":
-        if decision.parent_config is None:
-            raise AgenticResearchValidationError("agentic_research_parent_config_missing")
-        if not 1 <= len(decision.changes) <= 5:
-            raise AgenticResearchValidationError("agentic_research_change_count_invalid")
-    if decision.action == "stop" and not decision.stop_reason:
-        raise AgenticResearchValidationError("agentic_research_stop_reason_missing")
+    if decision.parent_config is None:
+        raise AgenticResearchValidationError("agentic_research_parent_config_missing")
+    if not 1 <= len(decision.changes) <= 5:
+        raise AgenticResearchValidationError("agentic_research_change_count_invalid")
     return decision
 
 
@@ -1298,7 +1210,7 @@ def _llm_response_schema() -> dict[str, object]:
     decision_schema: dict[str, object] = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["run", "stop"]},
+            "action": {"type": "string", "enum": ["run"]},
             "learning": {"type": "string"},
             "belief_update": {"type": "string"},
             "next_hypothesis": {"type": ["string", "null"]},
@@ -1885,9 +1797,11 @@ def _maybe_transition_phase(
 ) -> dict[str, object] | None:
     """Evaluate the phase-transition predicate; mutate state only if a real transition fires.
 
-    Returns a trace payload when a transition (or terminal stop) fires, otherwise None.
-    A non-terminal phase missing a valid `next_phase` emits a `phase_misconfigured` trace
-    event and leaves state unchanged so the predicate doesn't re-fire forever.
+    Returns a trace payload when a transition fires, otherwise None. A terminal
+    phase never transitions or stops (budget-bounded design) — it returns None and
+    keeps exploring. A non-terminal phase missing a valid `next_phase` emits a
+    `phase_misconfigured` trace event and leaves state unchanged so the predicate
+    doesn't re-fire forever.
     """
     transition = _phase_transition_spec(experiment=experiment, state=state)
     if transition is None:
@@ -1929,24 +1843,29 @@ def _maybe_transition_phase(
             "plateau": plateau,
         }
 
-    next_phase: str | None = None
-    if not is_terminal:
-        phases_config = _phases_config(experiment)
-        spec = _phase_spec(phases_config, current_phase) if phases_config else None
-        raw_next = spec.get("next_phase") if spec else None
-        if not isinstance(raw_next, str) or raw_next not in (phases_config or {}):
-            return {
-                "transition": "misconfigured",
-                "from": current_phase,
-                "reason": "next_phase_missing_or_invalid",
-            }
-        next_phase = raw_next
+    if is_terminal:
+        # Budget-bounded design: the deepest phase is explored until the round
+        # budget is hit (or a human stops the run); it never auto-stops on
+        # plateau. The plateau counter keeps climbing and is surfaced in each
+        # round footer for the human monitor.
+        return None
+
+    phases_config = _phases_config(experiment)
+    spec = _phase_spec(phases_config, current_phase) if phases_config else None
+    raw_next = spec.get("next_phase") if spec else None
+    if not isinstance(raw_next, str) or raw_next not in (phases_config or {}):
+        return {
+            "transition": "misconfigured",
+            "from": current_phase,
+            "reason": "next_phase_missing_or_invalid",
+        }
+    next_phase = raw_next
 
     history_record: dict[str, object] = {
         "phase": current_phase,
         "started_round": _as_int(state.get("phase_round_start"), default=1),
         "ended_round": round_number,
-        "exit_reason": "all_phases_done" if is_terminal else "phase_transition",
+        "exit_reason": "phase_transition",
         "best_metric": state.get("phase_best_metric"),
         "successful_rounds": successful_rounds,
         "best_run_id": _best_run_id_for_phase(state=state, report=report),
@@ -1956,12 +1875,6 @@ def _maybe_transition_phase(
         history = []
     history.append(history_record)
     state["phase_history"] = history
-
-    if is_terminal:
-        state["status"] = "stopped"
-        state["stop_reason"] = f"all_phases_done:{current_phase}_plateau"
-        state["last_checkpoint"] = "all_phases_done"
-        return {"transition": "terminal", "from": current_phase, "to": None}
 
     state["phase"] = next_phase
     state["phase_round_start"] = round_number + 1

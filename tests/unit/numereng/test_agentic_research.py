@@ -721,13 +721,13 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
         output_path.write_text(
             _llm_response(
                 {
-                    "action": "stop",
+                    "action": "run",
                     "learning": "done",
                     "belief_update": "done",
                     "next_hypothesis": None,
-                    "parent_config": None,
-                    "changes": [],
-                    "stop_reason": "done",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.n_estimators", "value": 200, "reason": "probe"}],
+                    "stop_reason": None,
                 }
             ),
             encoding="utf-8",
@@ -756,7 +756,7 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     assert captured["errors"] == "replace"
     schema = cast(dict[str, object], captured["schema"])
     assert "decision_form" in cast(dict[str, object], schema["properties"])
-    assert json.loads(response)["decision_form"]["action"] == "stop"
+    assert json.loads(response)["decision_form"]["action"] == "run"
     assert captured["input"] == "choose next run"
     assert not list(tmp_path.glob(".codex_schema_*.json"))
     assert not list(tmp_path.glob(".codex_output_*.txt"))
@@ -1122,16 +1122,32 @@ def test_parse_llm_response_requires_round_markdown() -> None:
             json.dumps(
                 {
                     "decision_form": {
-                        "action": "stop",
+                        "action": "run",
                         "learning": "x",
                         "belief_update": "x",
                         "next_hypothesis": None,
-                        "parent_config": None,
-                        "changes": [],
-                        "stop_reason": "x",
+                        "parent_config": "seed.json",
+                        "changes": [{"path": "model.params.n_estimators", "value": 200, "reason": "probe"}],
+                        "stop_reason": None,
                     }
                 }
             )
+        )
+
+
+def test_stop_action_rejected() -> None:
+    """Budget-bounded design: `stop` is not a valid LLM action — the parser rejects it."""
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_action_invalid"):
+        research_module._parse_decision_object(
+            {
+                "action": "stop",
+                "learning": "x",
+                "belief_update": "x",
+                "next_hypothesis": None,
+                "parent_config": None,
+                "changes": [],
+                "stop_reason": "converged",
+            }
         )
 
 
@@ -1257,8 +1273,9 @@ def test_phase_transition_returns_none_when_min_rounds_not_met() -> None:
     assert payload is None
 
 
-def test_terminal_phase_stop_emits_all_phases_done() -> None:
-    """Predicate satisfied in a phase marked is_terminal → state stops with all_phases_done reason."""
+def test_terminal_phase_plateau_does_not_stop() -> None:
+    """Budget-bounded design: a terminal phase that meets the transition predicate
+    never auto-stops — it returns None and keeps exploring, leaving state intact."""
     experiment_metadata = {"agentic_research_phases": _SHALLOW_PHASES_CONFIG}
 
     class _FakeExperiment:
@@ -1277,12 +1294,11 @@ def test_terminal_phase_stop_emits_all_phases_done() -> None:
         state=state,
         round_number=13,
     )
-    assert payload == {"transition": "terminal", "from": "medium", "to": None}
-    assert state["status"] == "stopped"
-    assert state["stop_reason"] == "all_phases_done:medium_plateau"
-    history = state["phase_history"]
-    assert isinstance(history, list) and len(history) == 1
-    assert history[0]["exit_reason"] == "all_phases_done"
+    assert payload is None
+    assert state.get("status") != "stopped"
+    assert "stop_reason" not in state
+    assert state["phase"] == "medium"
+    assert state["phase_history"] == []
 
 
 def test_confirmation_detected_and_recorded_structurally() -> None:
