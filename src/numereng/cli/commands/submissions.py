@@ -52,7 +52,7 @@ def _handle_calibration_command(args: Sequence[str]) -> int:
         return 0
 
     if args[0] == "materialize":
-        parsed, parse_error = _parse_workspace_format_options(args[1:])
+        parsed, parse_error = _parse_workspace_format_options(args[1:], allow_dry_run=True)
         if parse_error == "__help__":
             print(USAGE)
             return 0
@@ -60,7 +60,10 @@ def _handle_calibration_command(args: Sequence[str]) -> int:
             return _usage_error(parse_error)
         try:
             response = api.submissions_calibration_materialize(
-                api.SubmissionCalibrationMaterializeRequest(workspace_root=str(parsed["workspace"]))
+                api.SubmissionCalibrationMaterializeRequest(
+                    workspace_root=str(parsed["workspace"]),
+                    dry_run=bool(parsed["dry_run"]),
+                )
             )
         except PackageError as exc:
             print(str(exc), file=sys.stderr)
@@ -115,9 +118,13 @@ def _parse_refresh_options(argv: Sequence[str]) -> tuple[dict[str, Any], str | N
     return _parse_common(argv, parsed, allow_models=True, allow_dry_run=True, allow_resolved_only=False)
 
 
-def _parse_workspace_format_options(argv: Sequence[str]) -> tuple[dict[str, Any], str | None]:
-    parsed = {"workspace": ".", "format": "table"}
-    return _parse_common(argv, parsed, allow_models=False, allow_dry_run=False, allow_resolved_only=False)
+def _parse_workspace_format_options(
+    argv: Sequence[str],
+    *,
+    allow_dry_run: bool = False,
+) -> tuple[dict[str, Any], str | None]:
+    parsed = {"workspace": ".", "format": "table", "dry_run": False}
+    return _parse_common(argv, parsed, allow_models=False, allow_dry_run=allow_dry_run, allow_resolved_only=False)
 
 
 def _parse_report_options(argv: Sequence[str]) -> tuple[dict[str, Any], str | None]:
@@ -197,8 +204,14 @@ def _print_materialize(
     if output_format == "json":
         print(response.model_dump_json(indent=2))
         return 0
-    print(f"materialized rows={response.row_count} scored={response.scored_row_count} models={response.model_count}")
+    mode = "would materialize" if response.dry_run else "materialized"
+    print(
+        f"{mode} rows={response.row_count} scored={response.scored_row_count} "
+        f"observations={response.observation_count} scored_observations={response.scored_observation_count} "
+        f"models={response.model_count}"
+    )
     print(f"rows: {response.rows_path}")
+    print(f"observations: {response.observations_path}")
     print(f"report: {response.report_path}")
     for warning in response.warnings:
         print(f"warning: {warning}")
@@ -210,11 +223,14 @@ def _print_report(response: api.SubmissionCalibrationReportResponse, *, output_f
         print(response.model_dump_json(indent=2))
         return 0
     report = response.report
-    scope = _report_scope(report, resolved_only=response.scope == "resolved_only")
+    scopes = report.get("scopes") if isinstance(report.get("scopes"), dict) else {}
+    scope_key = "resolved_only" if response.scope == "resolved_only" else "all_scored"
+    scope = scopes.get(scope_key) if isinstance(scopes.get(scope_key), dict) else {}
     stats = scope.get("correlations", {}).get("local_bmc200_mean", {}).get("live_mmc20", {})
     print(
-        f"calibration scope={response.scope} rows={scope.get('row_count', 0)} "
-        f"models={scope.get('model_count', 0)} artifact_rows={response.row_count}"
+        f"calibration scope={response.scope} observations={scope.get('observation_count', 0)} "
+        f"rows={scope.get('row_count', 0)} models={scope.get('model_count', 0)} "
+        f"artifact_rows={response.row_count}"
     )
     print(
         "local_bmc200_mean vs live_mmc20: "
@@ -241,15 +257,6 @@ def _print_update(response: api.SubmissionCalibrationUpdateResponse, *, output_f
     _print_materialize(response.materialize, output_format="table")
     _print_report(response.report, output_format="table")
     return 0
-
-
-def _report_scope(report: dict[str, Any], *, resolved_only: bool) -> dict[str, Any]:
-    if "correlations" in report:
-        return report
-    scopes = report.get("scopes") if isinstance(report.get("scopes"), dict) else {}
-    key = "resolved_only" if resolved_only else "all_scored"
-    value = scopes.get(key)
-    return value if isinstance(value, dict) else {}
 
 
 def _format_value(value: Any, *, digits: int = 4) -> str:

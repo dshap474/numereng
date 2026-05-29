@@ -54,35 +54,6 @@ export interface SubmissionSummary {
 	source: Record<string, unknown>;
 	offline_snapshot: Record<string, unknown>;
 	latest_live_summary: Record<string, unknown>;
-	calibration?: {
-		offline_metrics: {
-			bmc_last_200_eras_mean?: number | null;
-			bmc_mean?: number | null;
-			corr_mean?: number | null;
-			mmc_mean?: number | null;
-			fnc_mean?: number | null;
-			source?: string | null;
-		};
-		live_metrics: {
-			mmc20_mean?: number | null;
-			corr20_mean?: number | null;
-			mmc60_mean?: number | null;
-			corr60_mean?: number | null;
-		};
-		live_started_at?: string | null;
-		model_tags?: {
-			family?: string | null;
-			feature_scope?: string | null;
-			target?: string | null;
-			target_horizon?: string | null;
-			recipe?: string | null;
-			package_id?: string | null;
-		};
-		confidence?: string | null;
-		local_rank?: number | null;
-		live_rank?: number | null;
-		rank_delta?: number | null;
-	};
 	latest_refresh_at?: string | null;
 	round_count: number;
 	resolved_round_count: number;
@@ -111,6 +82,8 @@ export interface SubmissionListResponse {
 export interface SubmissionCalibrationRow {
 	model_name: string;
 	model_id?: string | null;
+	upload_id?: string | null;
+	upload_index?: number | null;
 	experiment_id?: string | null;
 	package_id?: string | null;
 	recipe?: string | null;
@@ -146,15 +119,69 @@ export interface SubmissionCalibrationRow {
 	live_season_score?: number | null;
 	live_season_score_percentile?: number | null;
 	live_started_at?: string | null;
+	live_ended_at?: string | null;
 	pulled_at?: string | null;
 	[key: string]: unknown;
 }
 
+export interface SubmissionCalibrationObservation {
+	scope: 'all_scored' | 'resolved_only' | string;
+	model_name: string;
+	model_id?: string | null;
+	upload_id?: string | null;
+	upload_index?: number | null;
+	experiment_id?: string | null;
+	package_id?: string | null;
+	recipe?: string | null;
+	feature_scope?: string | null;
+	target?: string | null;
+	target_horizon?: string | null;
+	family?: string | null;
+	live_started_at?: string | null;
+	live_ended_at?: string | null;
+	first_round_number?: number | null;
+	latest_round_number?: number | null;
+	first_close_date?: string | null;
+	latest_close_date?: string | null;
+	round_count?: number | null;
+	scored_round_count?: number | null;
+	resolved_scored_round_count?: number | null;
+	has_live_score?: boolean | null;
+	confidence?: string | null;
+	local_bmc200_mean?: number | null;
+	local_bmc200_sharpe?: number | null;
+	local_bmc200_max_drawdown?: number | null;
+	local_bmc_mean?: number | null;
+	local_corr_mean?: number | null;
+	local_mmc_mean?: number | null;
+	local_fnc_mean?: number | null;
+	local_metric_source?: string | null;
+	live_bmc?: number | null;
+	live_bmc_mean?: number | null;
+	live_mmc20?: number | null;
+	live_mmc20_mean?: number | null;
+	live_corr20?: number | null;
+	live_corr20_mean?: number | null;
+	live_mmc60?: number | null;
+	live_mmc60_mean?: number | null;
+	live_corr60?: number | null;
+	live_corr60_mean?: number | null;
+	live_season_score?: number | null;
+	live_season_score_mean?: number | null;
+	local_rank?: number | null;
+	live_rank?: number | null;
+	rank_delta?: number | null;
+	[key: string]: unknown;
+}
+
 export interface SubmissionCalibrationResponse {
+	observations: SubmissionCalibrationObservation[];
 	rows: SubmissionCalibrationRow[];
 	total: number;
+	row_total?: number;
 	root: string;
 	rows_path?: string | null;
+	observations_path?: string | null;
 	report_path?: string | null;
 	manifest_path?: string | null;
 	report: Record<string, unknown>;

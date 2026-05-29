@@ -15,8 +15,10 @@ function fallbackSubmissions(): SubmissionListResponse {
 
 function fallbackCalibration(): SubmissionCalibrationResponse {
 	return {
+		observations: [],
 		rows: [],
 		total: 0,
+		row_total: 0,
 		root: '.numereng/analysis/live_calibration',
 		report: {},
 		manifest: {}

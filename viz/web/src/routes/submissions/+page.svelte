@@ -1,8 +1,8 @@
 <script lang="ts">
 	import {
 		api,
+		type SubmissionCalibrationObservation,
 		type SubmissionCalibrationResponse,
-		type SubmissionCalibrationRow,
 		type SubmissionDetail,
 		type SubmissionItem,
 		type SubmissionListResponse,
@@ -13,11 +13,12 @@
 
 	type LocalMetricKey = 'bmc200' | 'bmc' | 'corr' | 'mmc' | 'fnc';
 	type LiveMetricKey = 'mmc20' | 'corr20' | 'mmc60' | 'corr60';
+	type CalibrationScope = 'all_scored' | 'resolved_only';
 	type CalibrationSort = 'live_rank' | 'live_since';
 	type CalibrationPoint = {
 		id: string;
 		modelName: string;
-		roundNumber?: number | null;
+		detailLabel?: string | null;
 		target?: string | null;
 		confidence?: string | null;
 		liveStartedAt?: string | null;
@@ -50,6 +51,7 @@
 	let selectedDetail = $state<SubmissionDetail | null>(null);
 	let detailLoading = $state(false);
 	let activeTab = $state<'live' | 'calibration'>('live');
+	let calibrationScope = $state<CalibrationScope>('all_scored');
 	let calibrationSort = $state<CalibrationSort>('live_rank');
 	let localMetric = $state<LocalMetricKey>('bmc200');
 	let liveMetric = $state<LiveMetricKey>('mmc20');
@@ -60,9 +62,11 @@
 
 	let selectedItem = $derived(submissions.items.find((item) => item.model_name === selectedModel) ?? null);
 	let rounds = $derived(selectedDetail?.rounds ?? []);
-	let confidenceByModel = $derived.by(() => buildConfidenceByModel(calibration.rows));
-	let rankByModel = $derived.by(() => buildRankByModel(calibration.report));
-	let calibrationRows = $derived.by(() => [...calibration.rows].sort(compareCalibrationRows));
+	let calibrationRows = $derived.by(() =>
+		[...(calibration.observations ?? [])]
+			.filter((row) => row.scope === calibrationScope)
+			.sort(compareCalibrationRows)
+	);
 	let filteredCalibrationItems = $derived.by(() =>
 		calibrationRows.filter((row) => {
 			const confidence = confidenceForRow(row);
@@ -125,25 +129,25 @@
 		corr60: 'Live CORR60'
 	};
 
-	function compareCalibrationRows(a: SubmissionCalibrationRow, b: SubmissionCalibrationRow): number {
+	function compareCalibrationRows(
+		a: SubmissionCalibrationObservation,
+		b: SubmissionCalibrationObservation
+	): number {
 		if (calibrationSort === 'live_since') {
 			const timeA = dateTime(a.live_started_at);
 			const timeB = dateTime(b.live_started_at);
-			return timeB - timeA || compareScoredDesc(a, b) || a.model_name.localeCompare(b.model_name) || compareRoundDesc(a, b);
+			return timeB - timeA || compareScoredDesc(a, b) || a.model_name.localeCompare(b.model_name);
 		}
-		const rankA = rankByModel.get(a.model_name)?.live_rank ?? Number.POSITIVE_INFINITY;
-		const rankB = rankByModel.get(b.model_name)?.live_rank ?? Number.POSITIVE_INFINITY;
-		return rankA - rankB || compareScoredDesc(a, b) || compareRoundDesc(a, b) || a.model_name.localeCompare(b.model_name);
+		const rankA = typeof a.live_rank === 'number' ? a.live_rank : Number.POSITIVE_INFINITY;
+		const rankB = typeof b.live_rank === 'number' ? b.live_rank : Number.POSITIVE_INFINITY;
+		return rankA - rankB || compareScoredDesc(a, b) || a.model_name.localeCompare(b.model_name);
 	}
 
-	function compareRoundDesc(a: RoundLike, b: RoundLike): number {
-		const roundA = Number(a.round_number ?? a.round ?? 0);
-		const roundB = Number(b.round_number ?? b.round ?? 0);
-		return (Number.isFinite(roundB) ? roundB : 0) - (Number.isFinite(roundA) ? roundA : 0);
-	}
-
-	function compareScoredDesc(a: SubmissionCalibrationRow, b: SubmissionCalibrationRow): number {
-		return Number(Boolean(b.has_live_score)) - Number(Boolean(a.has_live_score));
+	function compareScoredDesc(
+		a: SubmissionCalibrationObservation,
+		b: SubmissionCalibrationObservation
+	): number {
+		return Number(b.scored_round_count ?? 0) - Number(a.scored_round_count ?? 0);
 	}
 
 	function formatNumber(value: unknown, digits = 4): string {
@@ -180,6 +184,23 @@
 		return `${closeDate} -> ${resolveDate}`;
 	}
 
+	function observationRounds(row: SubmissionCalibrationObservation): string {
+		const first = row.first_round_number;
+		const latest = row.latest_round_number;
+		if (typeof first !== 'number' && typeof latest !== 'number') return 'n/a';
+		if (first === latest || typeof first !== 'number') return formatText(latest);
+		return `${first}-${latest}`;
+	}
+
+	function observationWindow(row: SubmissionCalibrationObservation): string {
+		const first = formatDate(row.first_close_date ?? row.live_started_at);
+		const latest = formatDate(row.latest_close_date ?? row.live_ended_at);
+		if (first === 'n/a' && latest === 'n/a') return 'window n/a';
+		if (latest === 'n/a' || first === latest) return first;
+		if (first === 'n/a') return latest;
+		return `${first} -> ${latest}`;
+	}
+
 	function roundState(row: RoundLike | null | undefined): string {
 		return formatText(row?.state ?? row?.status);
 	}
@@ -190,8 +211,8 @@
 		return 'border-l-transparent';
 	}
 
-	function calibrationRowTone(row: SubmissionCalibrationRow): string {
-		if (row.state === 'resolved') return 'border-l-emerald-400/80';
+	function calibrationRowTone(row: SubmissionCalibrationObservation): string {
+		if (row.confidence === 'resolved_signal' || row.confidence === 'stronger_signal') return 'border-l-emerald-400/80';
 		if (row.has_live_score) return 'border-l-sky-400/70';
 		return 'border-l-transparent';
 	}
@@ -218,51 +239,15 @@
 		return Number.isNaN(parsed) ? 0 : parsed;
 	}
 
-	function buildConfidenceByModel(rows: SubmissionCalibrationRow[]): Map<string, string> {
-		const counts = new Map<string, { scored: number; resolved: number }>();
-		for (const row of rows) {
-			const current = counts.get(row.model_name) ?? { scored: 0, resolved: 0 };
-			if (row.has_live_score) {
-				current.scored += 1;
-				if (row.state === 'resolved') current.resolved += 1;
-			}
-			counts.set(row.model_name, current);
-		}
-		const confidence = new Map<string, string>();
-		for (const [modelName, count] of counts) {
-			if (count.scored === 0) confidence.set(modelName, 'waiting');
-			else if (count.resolved >= 8) confidence.set(modelName, 'stronger_signal');
-			else if (count.resolved >= 3) confidence.set(modelName, 'resolved_signal');
-			else if (count.scored >= 5) confidence.set(modelName, 'usable_estimate');
-			else confidence.set(modelName, 'early');
-		}
-		return confidence;
+	function confidenceForRow(row: SubmissionCalibrationObservation): string {
+		return typeof row.confidence === 'string' && row.confidence ? row.confidence : 'waiting';
 	}
 
-	function buildRankByModel(report: Record<string, unknown>): Map<string, Record<string, unknown>> {
-		const scopes = isRecord(report.scopes) ? report.scopes : {};
-		const allScored = isRecord(scopes.all_scored) ? scopes.all_scored : {};
-		const rows = Array.isArray(allScored.rank_deltas) ? allScored.rank_deltas : [];
-		const ranks = new Map<string, Record<string, unknown>>();
-		for (const row of rows) {
-			if (isRecord(row) && typeof row.model_name === 'string') ranks.set(row.model_name, row);
-		}
-		return ranks;
+	function rankForRow(row: SubmissionCalibrationObservation, key: 'local_rank' | 'live_rank' | 'rank_delta'): unknown {
+		return row[key] ?? null;
 	}
 
-	function isRecord(value: unknown): value is Record<string, unknown> {
-		return typeof value === 'object' && value !== null && !Array.isArray(value);
-	}
-
-	function confidenceForRow(row: SubmissionCalibrationRow): string {
-		return confidenceByModel.get(row.model_name) ?? 'waiting';
-	}
-
-	function rankForRow(row: SubmissionCalibrationRow, key: 'local_rank' | 'live_rank' | 'rank_delta'): unknown {
-		return rankByModel.get(row.model_name)?.[key] ?? null;
-	}
-
-	function localMetricValue(row: SubmissionCalibrationRow): number | null {
+	function localMetricValue(row: SubmissionCalibrationObservation): number | null {
 		const value =
 			localMetric === 'bmc200'
 				? row.local_bmc200_mean
@@ -276,7 +261,7 @@
 		return typeof value === 'number' && Number.isFinite(value) ? value : null;
 	}
 
-	function liveMetricValue(row: SubmissionCalibrationRow): number | null {
+	function liveMetricValue(row: SubmissionCalibrationObservation): number | null {
 		const value =
 			liveMetric === 'mmc20'
 				? row.live_mmc20
@@ -288,12 +273,12 @@
 		return typeof value === 'number' && Number.isFinite(value) ? value : null;
 	}
 
-	function buildChartPoints(rows: SubmissionCalibrationRow[]): CalibrationPoint[] {
+	function buildChartPoints(rows: SubmissionCalibrationObservation[]): CalibrationPoint[] {
 		return rows
 			.map((row) => ({
-				id: `${row.model_name}:${row.round_number ?? 'na'}:${localMetric}:${liveMetric}`,
+				id: `${row.model_name}:${row.upload_id ?? 'current'}:${row.scope}:${localMetric}:${liveMetric}`,
 				modelName: row.model_name,
-				roundNumber: row.round_number,
+				detailLabel: `${row.scored_round_count ?? 0} scored rounds`,
 				target: row.target,
 				confidence: confidenceForRow(row),
 				liveStartedAt: row.live_started_at,
@@ -477,7 +462,14 @@
 								{/if}
 							</p>
 						</div>
-						<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+						<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+							<label class="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+								Scope
+								<select bind:value={calibrationScope} class="mt-1 w-full rounded-md border border-white/10 bg-background px-2 py-1.5 text-xs normal-case tracking-normal text-foreground">
+									<option value="all_scored">all scored</option>
+									<option value="resolved_only">resolved only</option>
+								</select>
+							</label>
 							<label class="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
 								X
 								<select bind:value={localMetric} class="mt-1 w-full rounded-md border border-white/10 bg-background px-2 py-1.5 text-xs normal-case tracking-normal text-foreground">
@@ -565,7 +557,8 @@
 						<thead class="bg-white/[0.025] text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
 								<tr>
 									<th class="px-4 py-3 font-medium">Model</th>
-									<th class="px-4 py-3 font-medium">Round / Dates</th>
+									<th class="px-4 py-3 font-medium">Upload / Window</th>
+									<th class="px-4 py-3 text-right font-medium">Rounds</th>
 									<th class="px-4 py-3 font-medium">Feature</th>
 									<th class="px-4 py-3 font-medium">Target</th>
 									<th class="px-4 py-3 font-medium">Recipe</th>
@@ -580,7 +573,7 @@
 							</tr>
 							</thead>
 							<tbody class="divide-y divide-white/6">
-								{#each filteredCalibrationItems as row (`${row.model_name}:${row.round_number ?? 'na'}`)}
+								{#each filteredCalibrationItems as row (`${row.model_name}:${row.upload_id ?? 'current'}:${row.scope}`)}
 									<tr class="border-l {calibrationRowTone(row)}">
 										<td class="px-4 py-3">
 											<div class="font-mono text-sm font-semibold text-foreground">{row.model_name}</div>
@@ -589,8 +582,12 @@
 											</div>
 										</td>
 										<td class="px-4 py-3">
-											<div class="font-mono text-foreground">{roundNumber(row)}</div>
-											<div class="mt-0.5 text-xs text-muted-foreground">{roundDates(row)}</div>
+											<div class="font-mono text-foreground">{formatText(row.upload_id)}</div>
+											<div class="mt-0.5 text-xs text-muted-foreground">{observationWindow(row)}</div>
+										</td>
+										<td class="px-4 py-3 text-right font-mono text-foreground">
+											<div>{formatText(row.scored_round_count)}</div>
+											<div class="mt-0.5 text-xs text-muted-foreground">{observationRounds(row)}</div>
 										</td>
 										<td class="px-4 py-3 text-muted-foreground">{formatText(row.feature_scope)}</td>
 										<td class="px-4 py-3 text-muted-foreground">{formatText(row.target)}</td>
@@ -623,8 +620,8 @@
 							{/each}
 							{#if filteredCalibrationItems.length === 0}
 								<tr>
-									<td class="px-4 py-6 text-sm text-muted-foreground" colspan="13">
-										No calibration rows match the current filters.
+									<td class="px-4 py-6 text-sm text-muted-foreground" colspan="14">
+										No calibration observations match the current filters.
 									</td>
 								</tr>
 							{/if}

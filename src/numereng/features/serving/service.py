@@ -56,7 +56,7 @@ from numereng.features.serving.runtime import (
     write_blended_predictions,
     write_component_predictions,
 )
-from numereng.features.submission import submit_predictions_file, upload_model_pickle_file
+from numereng.features.submission import record_submission_upload, submit_predictions_file, upload_model_pickle_file
 from numereng.features.submission.client import SubmissionClient
 from numereng.platform.numerai_client import NumeraiClient
 
@@ -418,6 +418,20 @@ def upload_submission_pickle(
             "last_pickle_model_name": upload.model_name,
             "last_pickle_model_id": upload.model_id,
         },
+    )
+    record_submission_upload(
+        workspace_root=workspace_root,
+        model_name=upload.model_name,
+        model_id=upload.model_id,
+        upload_id=upload.upload_id,
+        pickle_path=upload.pickle_path,
+        experiment_id=updated.experiment_id,
+        package_id=updated.package_id,
+        package_path=updated.package_path,
+        recipe=_recipe_from_package(updated),
+        data_version=resolved_data_version,
+        docker_image=upload.docker_image,
+        uploaded_at=updated.updated_at or None,
     )
     return ModelUploadResult(
         package=updated,
@@ -853,6 +867,11 @@ def _save_package_update(
         updated_at=utc_now_iso(),
     )
     return save_package(updated)
+
+
+def _recipe_from_package(package: SubmissionPackageRecord) -> str | None:
+    value = package.provenance.get("recipe")
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _normalize_existing_package_components(

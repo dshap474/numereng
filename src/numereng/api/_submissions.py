@@ -61,16 +61,23 @@ def submissions_calibration_materialize(
     """Materialize canonical live calibration row and report artifacts."""
 
     resolved_request = SubmissionCalibrationMaterializeRequest() if request is None else request
-    result = materialize_live_calibration(workspace_root=resolved_request.workspace_root)
+    result = materialize_live_calibration(
+        workspace_root=resolved_request.workspace_root,
+        dry_run=resolved_request.dry_run,
+    )
     return SubmissionCalibrationMaterializeResponse(
         workspace_root=str(result.workspace_root),
         artifact_root=str(result.artifact_root),
         rows_path=str(result.rows_path),
+        observations_path=str(result.observations_path),
         report_path=str(result.report_path),
         manifest_path=str(result.manifest_path),
         row_count=result.row_count,
+        observation_count=result.observation_count,
         model_count=result.model_count,
         scored_row_count=result.scored_row_count,
+        scored_observation_count=result.scored_observation_count,
+        dry_run=result.dry_run,
         warnings=list(result.warnings),
     )
 
@@ -89,9 +96,11 @@ def submissions_calibration_report(
         workspace_root=str(resolved_request.workspace_layout.workspace_root),
         artifact_root=str(result.artifact_root),
         rows_path=str(result.rows_path),
+        observations_path=str(result.observations_path),
         report_path=str(result.report_path),
         manifest_path=str(result.manifest_path),
         row_count=result.row_count,
+        observation_count=result.observation_count,
         scope="resolved_only" if resolved_request.resolved_only else "all",
         report=result.report,
         manifest=result.manifest,
@@ -112,7 +121,10 @@ def submissions_calibration_update(
         )
     )
     materialize = submissions_calibration_materialize(
-        SubmissionCalibrationMaterializeRequest(workspace_root=resolved_request.workspace_root)
+        SubmissionCalibrationMaterializeRequest(
+            workspace_root=resolved_request.workspace_root,
+            dry_run=resolved_request.dry_run,
+        )
     )
     report = submissions_calibration_report(
         SubmissionCalibrationReportRequest(

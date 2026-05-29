@@ -18,6 +18,7 @@ from numereng.features.store.layout import WorkspaceLayout, resolve_workspace_la
 
 CALIBRATION_RELATIVE_DIR = Path("analysis") / "live_calibration"
 CALIBRATION_ROWS_FILENAME = "calibration_rows.parquet"
+CALIBRATION_OBSERVATIONS_FILENAME = "calibration_observations.parquet"
 CALIBRATION_REPORT_FILENAME = "report.json"
 CALIBRATION_MANIFEST_FILENAME = "manifest.json"
 
@@ -39,6 +40,8 @@ LIVE_METRICS: tuple[str, ...] = (
 CALIBRATION_COLUMNS: tuple[str, ...] = (
     "model_name",
     "model_id",
+    "upload_id",
+    "upload_index",
     "experiment_id",
     "package_id",
     "recipe",
@@ -74,7 +77,56 @@ CALIBRATION_COLUMNS: tuple[str, ...] = (
     "live_season_score",
     "live_season_score_percentile",
     "live_started_at",
+    "live_ended_at",
     "pulled_at",
+)
+CALIBRATION_OBSERVATION_COLUMNS: tuple[str, ...] = (
+    "scope",
+    "model_name",
+    "model_id",
+    "upload_id",
+    "upload_index",
+    "experiment_id",
+    "package_id",
+    "recipe",
+    "feature_scope",
+    "target",
+    "target_horizon",
+    "family",
+    "live_started_at",
+    "live_ended_at",
+    "first_round_number",
+    "latest_round_number",
+    "first_close_date",
+    "latest_close_date",
+    "round_count",
+    "scored_round_count",
+    "resolved_scored_round_count",
+    "has_live_score",
+    "confidence",
+    "local_bmc200_mean",
+    "local_bmc200_sharpe",
+    "local_bmc200_max_drawdown",
+    "local_bmc_mean",
+    "local_corr_mean",
+    "local_mmc_mean",
+    "local_fnc_mean",
+    "local_metric_source",
+    "live_bmc",
+    "live_bmc_mean",
+    "live_mmc20",
+    "live_mmc20_mean",
+    "live_corr20",
+    "live_corr20_mean",
+    "live_mmc60",
+    "live_mmc60_mean",
+    "live_corr60",
+    "live_corr60_mean",
+    "live_season_score",
+    "live_season_score_mean",
+    "local_rank",
+    "live_rank",
+    "rank_delta",
 )
 
 
@@ -85,23 +137,29 @@ class CalibrationMaterializeResult:
     workspace_root: Path
     artifact_root: Path
     rows_path: Path
+    observations_path: Path
     report_path: Path
     manifest_path: Path
     row_count: int
+    observation_count: int
     model_count: int
     scored_row_count: int
+    scored_observation_count: int
+    dry_run: bool = False
     warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class CalibrationReportResult:
-    """Loaded calibration report plus row artifact location."""
+    """Loaded calibration report plus artifact locations."""
 
     artifact_root: Path
     rows_path: Path
+    observations_path: Path
     report_path: Path
     manifest_path: Path
     row_count: int
+    observation_count: int
     report: dict[str, Any]
     manifest: dict[str, Any]
 
@@ -113,46 +171,62 @@ def calibration_artifact_root(*, workspace_root: str | Path = ".") -> Path:
     return layout.store_root / CALIBRATION_RELATIVE_DIR
 
 
-def materialize_live_calibration(*, workspace_root: str | Path = ".") -> CalibrationMaterializeResult:
-    """Build local-vs-live model-round rows and report artifacts."""
+def materialize_live_calibration(
+    *,
+    workspace_root: str | Path = ".",
+    dry_run: bool = False,
+) -> CalibrationMaterializeResult:
+    """Build local-vs-live rows, upload observations, and report artifacts."""
 
     layout = resolve_workspace_layout(workspace_root)
     artifact_root = layout.store_root / CALIBRATION_RELATIVE_DIR
     rows_path = artifact_root / CALIBRATION_ROWS_FILENAME
+    observations_path = artifact_root / CALIBRATION_OBSERVATIONS_FILENAME
     report_path = artifact_root / CALIBRATION_REPORT_FILENAME
     manifest_path = artifact_root / CALIBRATION_MANIFEST_FILENAME
     generated_at = datetime.now(UTC).isoformat()
 
     rows, source_files, warnings = _build_calibration_rows(layout)
-    frame = pd.DataFrame.from_records(rows, columns=list(CALIBRATION_COLUMNS))
-    report = build_live_calibration_report(rows, generated_at=generated_at)
+    observations = build_live_calibration_observations(rows)
+    row_frame = pd.DataFrame.from_records(rows, columns=list(CALIBRATION_COLUMNS))
+    observation_frame = pd.DataFrame.from_records(observations, columns=list(CALIBRATION_OBSERVATION_COLUMNS))
+    report = build_live_calibration_report(rows, observations=observations, generated_at=generated_at)
     manifest = {
         "generated_at": generated_at,
         "workspace_root": str(layout.workspace_root),
         "artifact_root": str(artifact_root),
         "rows_path": str(rows_path),
+        "observations_path": str(observations_path),
         "report_path": str(report_path),
         "source_files": sorted(source_files),
         "row_count": len(rows),
+        "observation_count": len(observations),
         "model_count": len({row["model_name"] for row in rows}),
         "scored_row_count": sum(1 for row in rows if row.get("has_live_score")),
+        "scored_observation_count": sum(1 for row in observations if row.get("has_live_score")),
         "warnings": warnings,
     }
 
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    _write_parquet_atomic(frame, rows_path)
-    _write_json_atomic(report, report_path)
-    _write_json_atomic(manifest, manifest_path)
+    if not dry_run:
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        _write_parquet_atomic(row_frame, rows_path)
+        _write_parquet_atomic(observation_frame, observations_path)
+        _write_json_atomic(report, report_path)
+        _write_json_atomic(manifest, manifest_path)
 
     return CalibrationMaterializeResult(
         workspace_root=layout.workspace_root,
         artifact_root=artifact_root,
         rows_path=rows_path,
+        observations_path=observations_path,
         report_path=report_path,
         manifest_path=manifest_path,
         row_count=len(rows),
+        observation_count=len(observations),
         model_count=len({row["model_name"] for row in rows}),
         scored_row_count=sum(1 for row in rows if row.get("has_live_score")),
+        scored_observation_count=sum(1 for row in observations if row.get("has_live_score")),
+        dry_run=dry_run,
         warnings=tuple(warnings),
     )
 
@@ -164,28 +238,30 @@ def load_live_calibration_report(
 ) -> CalibrationReportResult:
     """Load the latest materialized calibration report."""
 
+    _ = resolved_only
     artifact_root = calibration_artifact_root(workspace_root=workspace_root)
     rows_path = artifact_root / CALIBRATION_ROWS_FILENAME
+    observations_path = artifact_root / CALIBRATION_OBSERVATIONS_FILENAME
     report_path = artifact_root / CALIBRATION_REPORT_FILENAME
     manifest_path = artifact_root / CALIBRATION_MANIFEST_FILENAME
     rows = load_live_calibration_rows(workspace_root=workspace_root)
+    observations = load_live_calibration_observations(workspace_root=workspace_root)
     manifest = _read_json_dict(manifest_path)
     report = _read_json_dict(report_path)
     if not report:
-        report = build_live_calibration_report(rows, generated_at=datetime.now(UTC).isoformat())
-    elif resolved_only:
-        resolved = report.get("scopes", {}).get("resolved_only") if isinstance(report.get("scopes"), dict) else None
-        report = {
-            "generated_at": report.get("generated_at"),
-            "scope": "resolved_only",
-            **(resolved if isinstance(resolved, dict) else {}),
-        }
+        report = build_live_calibration_report(
+            rows,
+            observations=observations,
+            generated_at=datetime.now(UTC).isoformat(),
+        )
     return CalibrationReportResult(
         artifact_root=artifact_root,
         rows_path=rows_path,
+        observations_path=observations_path,
         report_path=report_path,
         manifest_path=manifest_path,
         row_count=len(rows),
+        observation_count=len(observations),
         report=report,
         manifest=manifest,
     )
@@ -195,30 +271,63 @@ def load_live_calibration_rows(*, workspace_root: str | Path = ".") -> list[dict
     """Load the latest materialized model-round calibration rows."""
 
     rows_path = calibration_artifact_root(workspace_root=workspace_root) / CALIBRATION_ROWS_FILENAME
-    if not rows_path.is_file():
-        return []
-    try:
-        frame = pd.read_parquet(rows_path)
-    except Exception:
-        return []
-    return [_sanitize_row(row) for row in frame.to_dict(orient="records")]
+    return _read_parquet_rows(rows_path)
+
+
+def load_live_calibration_observations(*, workspace_root: str | Path = ".") -> list[dict[str, Any]]:
+    """Load the latest upload-level calibration observations."""
+
+    artifact_root = calibration_artifact_root(workspace_root=workspace_root)
+    observations = _read_parquet_rows(artifact_root / CALIBRATION_OBSERVATIONS_FILENAME)
+    if observations:
+        return observations
+    rows = _read_parquet_rows(artifact_root / CALIBRATION_ROWS_FILENAME)
+    return build_live_calibration_observations(rows) if rows else []
+
+
+def build_live_calibration_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate attributed round rows into one observation per upload and scope."""
+
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        model_name = _to_non_empty_str(row.get("model_name"))
+        if not model_name:
+            continue
+        upload_id = _to_non_empty_str(row.get("upload_id")) or "current"
+        grouped[(model_name, upload_id)].append(row)
+
+    observations: list[dict[str, Any]] = []
+    for (_model_name, _upload_id), upload_rows in sorted(grouped.items()):
+        ordered_rows = sorted(upload_rows, key=lambda row: _to_int(row.get("round_number")) or -1)
+        for scope in ("all_scored", "resolved_only"):
+            scope_rows = [row for row in ordered_rows if row.get("has_live_score")]
+            if scope == "resolved_only":
+                scope_rows = [row for row in scope_rows if _is_resolved(row)]
+            observations.append(_calibration_observation(scope=scope, rows=ordered_rows, scope_rows=scope_rows))
+
+    _assign_observation_ranks(observations)
+    return observations
 
 
 def build_live_calibration_report(
     rows: list[dict[str, Any]],
     *,
+    observations: list[dict[str, Any]] | None = None,
     generated_at: str,
 ) -> dict[str, Any]:
-    """Build calibration correlations, ranks, and group summaries from rows."""
+    """Build calibration correlations, ranks, and group summaries from observations."""
 
+    resolved_observations = observations if observations is not None else build_live_calibration_observations(rows)
     return {
         "generated_at": generated_at,
         "row_count": len(rows),
+        "observation_count": len(resolved_observations),
         "model_count": len({row.get("model_name") for row in rows if row.get("model_name")}),
         "scored_row_count": sum(1 for row in rows if row.get("has_live_score")),
+        "scored_observation_count": sum(1 for row in resolved_observations if row.get("has_live_score")),
         "scopes": {
-            "all_scored": _scope_report(rows, resolved_only=False),
-            "resolved_only": _scope_report(rows, resolved_only=True),
+            "all_scored": _scope_report(resolved_observations, scope="all_scored"),
+            "resolved_only": _scope_report(resolved_observations, scope="resolved_only"),
         },
     }
 
@@ -250,24 +359,37 @@ def _build_calibration_rows(layout: WorkspaceLayout) -> tuple[list[dict[str, Any
         if not round_rows:
             warnings.append(f"live_rounds_empty:{model_name}")
             continue
-        local_metrics, local_sources = _submission_offline_metrics(layout, metadata)
-        source_files.update(local_sources)
-        tags = _submission_model_tags(model_name=model_name, metadata=metadata)
-        source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
-        live_started_at = _submission_live_started_at(metadata)
 
-        for round_row in round_rows:
-            rows.append(
-                _calibration_row(
-                    model_name=model_name,
-                    metadata=metadata,
-                    source=source,
-                    tags=tags,
-                    local_metrics=local_metrics,
-                    live_started_at=live_started_at,
-                    round_row=round_row,
-                )
+        uploads = _submission_uploads(metadata)
+        for upload_index, upload in enumerate(uploads):
+            upload_metadata = _metadata_for_upload(metadata, upload)
+            local_metrics, local_sources = _submission_offline_metrics(layout, upload_metadata)
+            source_files.update(local_sources)
+            tags = _submission_model_tags(model_name=model_name, metadata=upload_metadata)
+            source = upload_metadata.get("source") if isinstance(upload_metadata.get("source"), dict) else {}
+            live_started_at = _to_non_empty_str(upload.get("live_started_at")) or _submission_live_started_at(
+                upload_metadata
             )
+            live_ended_at = _to_non_empty_str(upload.get("live_ended_at"))
+            upload_id = _upload_id(upload, source=source, upload_index=upload_index)
+
+            for round_row in round_rows:
+                if not _round_in_upload_window(round_row, upload, upload_count=len(uploads)):
+                    continue
+                rows.append(
+                    _calibration_row(
+                        model_name=model_name,
+                        metadata=upload_metadata,
+                        source=source,
+                        tags=tags,
+                        local_metrics=local_metrics,
+                        upload_id=upload_id,
+                        upload_index=upload_index,
+                        live_started_at=live_started_at,
+                        live_ended_at=live_ended_at,
+                        round_row=round_row,
+                    )
+                )
     return rows, source_files, warnings
 
 
@@ -278,12 +400,17 @@ def _calibration_row(
     source: dict[str, Any],
     tags: dict[str, Any],
     local_metrics: dict[str, Any],
+    upload_id: str,
+    upload_index: int,
     live_started_at: str | None,
+    live_ended_at: str | None,
     round_row: dict[str, Any],
 ) -> dict[str, Any]:
     row = {
         "model_name": model_name,
         "model_id": _to_non_empty_str(metadata.get("model_id")) or _to_non_empty_str(metadata.get("numerai_model_id")),
+        "upload_id": upload_id,
+        "upload_index": upload_index,
         "experiment_id": _to_non_empty_str(source.get("experiment_id")),
         "package_id": _to_non_empty_str(source.get("package_id")),
         "recipe": _to_non_empty_str(source.get("recipe")) or tags.get("recipe"),
@@ -318,19 +445,74 @@ def _calibration_row(
         "live_season_score": _to_float(round_row.get("season_score")),
         "live_season_score_percentile": _to_float(round_row.get("season_score_percentile")),
         "live_started_at": live_started_at,
+        "live_ended_at": live_ended_at,
         "pulled_at": _to_non_empty_str(round_row.get("pulled_at")),
     }
     row["has_live_score"] = any(row.get(metric) is not None for metric in LIVE_METRICS)
     return row
 
 
-def _scope_report(rows: list[dict[str, Any]], *, resolved_only: bool) -> dict[str, Any]:
-    scoped = [row for row in rows if row.get("has_live_score")]
-    if resolved_only:
-        scoped = [row for row in scoped if str(row.get("state") or "").lower() == "resolved"]
+def _calibration_observation(
+    *,
+    scope: str,
+    rows: list[dict[str, Any]],
+    scope_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    first = rows[0]
+    resolved_scored = [row for row in rows if row.get("has_live_score") and _is_resolved(row)]
+    round_numbers = [_to_int(row.get("round_number")) for row in rows]
+    round_numbers = [value for value in round_numbers if value is not None]
+    close_dates = [_date_prefix(row.get("close_date")) for row in rows]
+    close_dates = [value for value in close_dates if value is not None]
+    scored_count = len(scope_rows)
+    observation: dict[str, Any] = {
+        "scope": scope,
+        "model_name": first.get("model_name"),
+        "model_id": first.get("model_id"),
+        "upload_id": first.get("upload_id"),
+        "upload_index": first.get("upload_index"),
+        "experiment_id": first.get("experiment_id"),
+        "package_id": first.get("package_id"),
+        "recipe": first.get("recipe"),
+        "feature_scope": first.get("feature_scope"),
+        "target": first.get("target"),
+        "target_horizon": first.get("target_horizon"),
+        "family": first.get("family"),
+        "live_started_at": first.get("live_started_at"),
+        "live_ended_at": first.get("live_ended_at"),
+        "first_round_number": min(round_numbers) if round_numbers else None,
+        "latest_round_number": max(round_numbers) if round_numbers else None,
+        "first_close_date": min(close_dates) if close_dates else None,
+        "latest_close_date": max(close_dates) if close_dates else None,
+        "round_count": len(rows),
+        "scored_round_count": scored_count,
+        "resolved_scored_round_count": len(resolved_scored),
+        "has_live_score": scored_count > 0,
+        "confidence": _confidence(scored_count=scored_count, resolved_scored_count=len(resolved_scored)),
+        "local_bmc200_mean": first.get("local_bmc200_mean"),
+        "local_bmc200_sharpe": first.get("local_bmc200_sharpe"),
+        "local_bmc200_max_drawdown": first.get("local_bmc200_max_drawdown"),
+        "local_bmc_mean": first.get("local_bmc_mean"),
+        "local_corr_mean": first.get("local_corr_mean"),
+        "local_mmc_mean": first.get("local_mmc_mean"),
+        "local_fnc_mean": first.get("local_fnc_mean"),
+        "local_metric_source": first.get("local_metric_source"),
+        "local_rank": None,
+        "live_rank": None,
+        "rank_delta": None,
+    }
+    for metric in LIVE_METRICS:
+        mean = _mean_numeric(scope_rows, metric)
+        observation[metric] = mean
+        observation[f"{metric}_mean"] = mean
+    return observation
 
+
+def _scope_report(observations: list[dict[str, Any]], *, scope: str) -> dict[str, Any]:
+    scoped = [row for row in observations if row.get("scope") == scope and row.get("has_live_score")]
     return {
-        "row_count": len(scoped),
+        "row_count": sum(_to_int(row.get("scored_round_count")) or 0 for row in scoped),
+        "observation_count": len(scoped),
         "model_count": len({row.get("model_name") for row in scoped if row.get("model_name")}),
         "correlations": _correlation_grid(scoped),
         "rank_deltas": _rank_deltas(scoped),
@@ -353,42 +535,29 @@ def _correlation_grid(rows: list[dict[str, Any]]) -> dict[str, dict[str, dict[st
     return grid
 
 
-def _rank_deltas(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        model_name = _to_non_empty_str(row.get("model_name"))
-        if model_name:
-            by_model[model_name].append(row)
-
+def _rank_deltas(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for model_name, model_rows in sorted(by_model.items()):
-        first = model_rows[0]
-        local_bmc200 = _first_numeric(model_rows, "local_bmc200_mean")
-        live_mmc20 = _mean_numeric(model_rows, "live_mmc20")
-        live_corr20 = _mean_numeric(model_rows, "live_corr20")
+    for row in sorted(
+        observations,
+        key=lambda item: (str(item.get("model_name") or ""), str(item.get("upload_id") or "")),
+    ):
         items.append(
             {
-                "model_name": model_name,
-                "target": first.get("target"),
-                "feature_scope": first.get("feature_scope"),
-                "recipe": first.get("recipe"),
-                "row_count": len(model_rows),
-                "local_bmc200_mean": local_bmc200,
-                "live_mmc20_mean": live_mmc20,
-                "live_corr20_mean": live_corr20,
-                "local_rank": None,
-                "live_rank": None,
-                "rank_delta": None,
+                "model_name": row.get("model_name"),
+                "upload_id": row.get("upload_id"),
+                "target": row.get("target"),
+                "feature_scope": row.get("feature_scope"),
+                "recipe": row.get("recipe"),
+                "row_count": row.get("scored_round_count"),
+                "observation_count": 1,
+                "local_bmc200_mean": row.get("local_bmc200_mean"),
+                "live_mmc20_mean": row.get("live_mmc20"),
+                "live_corr20_mean": row.get("live_corr20"),
+                "local_rank": row.get("local_rank"),
+                "live_rank": row.get("live_rank"),
+                "rank_delta": row.get("rank_delta"),
             }
         )
-
-    _assign_rank(items, value_key="local_bmc200_mean", rank_key="local_rank")
-    _assign_rank(items, value_key="live_mmc20_mean", rank_key="live_rank")
-    for item in items:
-        local_rank = item.get("local_rank")
-        live_rank = item.get("live_rank")
-        if isinstance(local_rank, int) and isinstance(live_rank, int):
-            item["rank_delta"] = live_rank - local_rank
     return items
 
 
@@ -407,7 +576,7 @@ def _group_summaries(rows: list[dict[str, Any]], group_key: str) -> list[dict[st
         summaries.append(
             {
                 group_key: value,
-                "row_count": len(group_rows),
+                "observation_count": len(group_rows),
                 "model_count": len({row.get("model_name") for row in group_rows if row.get("model_name")}),
                 "local_bmc200_mean": _mean_numeric(group_rows, "local_bmc200_mean"),
                 "live_mmc20_mean": _mean_numeric(group_rows, "live_mmc20"),
@@ -490,12 +659,94 @@ def _average_ranks(values: list[float]) -> list[float]:
     return ranks
 
 
+def _assign_observation_ranks(observations: list[dict[str, Any]]) -> None:
+    by_scope: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for observation in observations:
+        by_scope[str(observation.get("scope") or "all_scored")].append(observation)
+    for scoped in by_scope.values():
+        _assign_rank(scoped, value_key="local_bmc200_mean", rank_key="local_rank")
+        _assign_rank(scoped, value_key="live_mmc20", rank_key="live_rank")
+        for item in scoped:
+            local_rank = item.get("local_rank")
+            live_rank = item.get("live_rank")
+            if isinstance(local_rank, int) and isinstance(live_rank, int):
+                item["rank_delta"] = live_rank - local_rank
+
+
 def _assign_rank(items: list[dict[str, Any]], *, value_key: str, rank_key: str) -> None:
     ranked = [(index, _to_float(item.get(value_key))) for index, item in enumerate(items)]
     ranked = [(index, value) for index, value in ranked if value is not None]
     ranked.sort(key=lambda pair: pair[1], reverse=True)
     for rank, (index, _) in enumerate(ranked, start=1):
         items[index][rank_key] = rank
+
+
+def _submission_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    parent_source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    parent_hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
+    uploads_raw = metadata.get("uploads")
+    uploads: list[dict[str, Any]] = []
+    if isinstance(uploads_raw, list):
+        for item in uploads_raw:
+            if isinstance(item, dict):
+                uploads.append(dict(item))
+    if not uploads:
+        uploads.append(
+            {
+                "source": parent_source,
+                "hosted_pickle": parent_hosted,
+            }
+        )
+
+    normalized: list[dict[str, Any]] = []
+    for item in uploads:
+        upload = dict(item)
+        source = upload.get("source") if isinstance(upload.get("source"), dict) else parent_source
+        hosted = upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else parent_hosted
+        upload["source"] = source
+        upload["hosted_pickle"] = hosted
+        upload["live_started_at"] = _to_non_empty_str(upload.get("live_started_at")) or _to_non_empty_str(
+            hosted.get("uploaded_at")
+        )
+        upload["live_ended_at"] = _to_non_empty_str(upload.get("live_ended_at"))
+        normalized.append(upload)
+    return sorted(normalized, key=lambda item: _to_non_empty_str(item.get("live_started_at")) or "")
+
+
+def _metadata_for_upload(metadata: dict[str, Any], upload: dict[str, Any]) -> dict[str, Any]:
+    upload_metadata = dict(metadata)
+    upload_metadata["source"] = upload.get("source") if isinstance(upload.get("source"), dict) else {}
+    upload_metadata["hosted_pickle"] = (
+        upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else {}
+    )
+    return upload_metadata
+
+
+def _upload_id(upload: dict[str, Any], *, source: dict[str, Any], upload_index: int) -> str:
+    hosted = upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else {}
+    return (
+        _to_non_empty_str(upload.get("upload_id"))
+        or _to_non_empty_str(hosted.get("upload_id"))
+        or _to_non_empty_str(source.get("package_id"))
+        or f"upload_{upload_index + 1}"
+    )
+
+
+def _round_in_upload_window(round_row: dict[str, Any], upload: dict[str, Any], *, upload_count: int) -> bool:
+    round_date = _round_attribution_date(round_row)
+    if round_date is None:
+        return upload_count == 1
+    start_date = _date_prefix(upload.get("live_started_at"))
+    end_date = _date_prefix(upload.get("live_ended_at"))
+    if start_date is not None and round_date < start_date:
+        return False
+    if end_date is not None and round_date >= end_date:
+        return False
+    return True
+
+
+def _round_attribution_date(round_row: dict[str, Any]) -> str | None:
+    return _date_prefix(round_row.get("close_date")) or _date_prefix(round_row.get("open_date"))
 
 
 def _submission_offline_metrics(layout: WorkspaceLayout, metadata: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
@@ -692,7 +943,40 @@ def _submission_model_tags(*, model_name: str, metadata: dict[str, Any]) -> dict
     }
 
 
+def _confidence(*, scored_count: int, resolved_scored_count: int) -> str:
+    if scored_count <= 0:
+        return "waiting"
+    if resolved_scored_count >= 8:
+        return "stronger_signal"
+    if resolved_scored_count >= 3:
+        return "resolved_signal"
+    if scored_count >= 5:
+        return "usable_estimate"
+    return "early"
+
+
+def _is_resolved(row: dict[str, Any]) -> bool:
+    return str(row.get("state") or row.get("status") or "").lower() == "resolved"
+
+
+def _date_prefix(value: Any) -> str | None:
+    if hasattr(value, "isoformat"):
+        try:
+            return str(value.isoformat())[:10]
+        except Exception:
+            return None
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:10]
+
+
 def _read_round_rows(path: Path) -> list[dict[str, Any]]:
+    return _read_parquet_rows(path)
+
+
+def _read_parquet_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
     try:
         frame = pd.read_parquet(path)
     except Exception:
@@ -804,14 +1088,6 @@ def _first_float(payload: dict[str, Any], *keys: str) -> float | None:
     return None
 
 
-def _first_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
-    for row in rows:
-        value = _to_float(row.get(key))
-        if value is not None:
-            return value
-    return None
-
-
 def _mean_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
     values = [_to_float(row.get(key)) for row in rows]
     clean = [value for value in values if value is not None]
@@ -822,13 +1098,16 @@ def _mean_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
 
 __all__ = [
     "CALIBRATION_MANIFEST_FILENAME",
+    "CALIBRATION_OBSERVATIONS_FILENAME",
     "CALIBRATION_RELATIVE_DIR",
     "CALIBRATION_REPORT_FILENAME",
     "CALIBRATION_ROWS_FILENAME",
     "CalibrationMaterializeResult",
     "CalibrationReportResult",
+    "build_live_calibration_observations",
     "build_live_calibration_report",
     "calibration_artifact_root",
+    "load_live_calibration_observations",
     "load_live_calibration_report",
     "load_live_calibration_rows",
     "materialize_live_calibration",

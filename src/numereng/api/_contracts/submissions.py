@@ -38,18 +38,22 @@ class SubmissionRefreshResponse(BaseModel):
 
 
 class SubmissionCalibrationMaterializeRequest(WorkspaceBoundRequest):
-    pass
+    dry_run: bool = False
 
 
 class SubmissionCalibrationMaterializeResponse(BaseModel):
     workspace_root: str
     artifact_root: str
     rows_path: str
+    observations_path: str
     report_path: str
     manifest_path: str
     row_count: int
+    observation_count: int
     model_count: int
     scored_row_count: int
+    scored_observation_count: int
+    dry_run: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -61,9 +65,11 @@ class SubmissionCalibrationReportResponse(BaseModel):
     workspace_root: str
     artifact_root: str
     rows_path: str
+    observations_path: str
     report_path: str
     manifest_path: str
     row_count: int
+    observation_count: int
     scope: Literal["all", "resolved_only"]
     report: dict[str, Any]
     manifest: dict[str, Any]

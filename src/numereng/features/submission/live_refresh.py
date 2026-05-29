@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -281,36 +280,4 @@ def _latest_round_number(rows: Iterable[dict[str, Any]]) -> int | None:
     return max(values) if values else None
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workspace", default=".", help="Workspace root. Defaults to current directory.")
-    parser.add_argument("--model", action="append", dest="models", help="Model name to refresh. Repeatable.")
-    parser.add_argument("--dry-run", action="store_true", help="Fetch and summarize without writing files.")
-    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
-    args = parser.parse_args(argv)
-
-    results = refresh_submission_snapshots(
-        workspace_root=args.workspace,
-        model_names=args.models,
-        dry_run=args.dry_run,
-    )
-    payload = [asdict(result) for result in results]
-    for item in payload:
-        item["live_rounds_path"] = str(item["live_rounds_path"])
-        item["submission_path"] = str(item["submission_path"])
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        for result in results:
-            status = "skipped" if result.skipped else "would_refresh" if args.dry_run else "refreshed"
-            warning = f" warning={result.warning}" if result.warning else ""
-            print(
-                f"{status} {result.model_name}: rounds={result.round_count} "
-                f"scored={result.scored_round_count} resolved={result.resolved_round_count}"
-                f" resolved_scored={result.resolved_scored_round_count}{warning}"
-            )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+__all__ = ["SubmissionRefreshResult", "refresh_submission_snapshots"]

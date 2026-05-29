@@ -4,7 +4,7 @@
 	export interface CalibrationPoint {
 		id: string;
 		modelName: string;
-		roundNumber?: number | null;
+		detailLabel?: string | null;
 		target?: string | null;
 		confidence?: string | null;
 		liveStartedAt?: string | null;
@@ -135,7 +135,7 @@
 					<div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
 						<span class="text-muted-foreground">{xLabel}</span><span class="tabular-nums">{formatNumber(point.x)}</span>
 						<span class="text-muted-foreground">{yLabel}</span><span class="tabular-nums">{formatNumber(point.y)}</span>
-						<span class="text-muted-foreground">Round</span><span>{point.roundNumber ?? 'n/a'}</span>
+						<span class="text-muted-foreground">Rows</span><span>{point.detailLabel ?? 'n/a'}</span>
 						<span class="text-muted-foreground">Confidence</span><span>{confidenceText(point.confidence)}</span>
 						<span class="text-muted-foreground">Live Since</span><span>{formatDate(point.liveStartedAt)}</span>
 					</div>

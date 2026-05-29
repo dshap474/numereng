@@ -671,6 +671,66 @@ def test_upload_submission_pickle_validates_model_upload_options(tmp_path: Path)
         )
 
 
+def test_upload_submission_pickle_records_submission_upload_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeServingClient()
+    config_path = _write_config(
+        tmp_path,
+        name="component",
+        model_type="DummyRegressor",
+        params={},
+        module_path=_write_custom_plugin(tmp_path, name="component_plugin", expression="[0.5 for _ in range(len(X))]"),
+    )
+    package = create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="component", weight=1.0, config_path=config_path),),
+    )
+    pickle_path = tmp_path / "model.pkl"
+    pickle_path.write_bytes(b"pickle")
+    package = type(package)(
+        **{
+            **package.__dict__,
+            "artifacts": {
+                "pickle_smoke_verified": "true",
+                "pickle_runtime_docker_image": "Python 3.12",
+                "pickle_path": str(pickle_path),
+            },
+        }
+    )
+    monkeypatch.setattr(
+        serving_service_module,
+        "build_submission_pickle",
+        lambda **_: serving_service_module.PickleBuildResult(
+            package=package,
+            pickle_path=pickle_path,
+            docker_image="Python 3.12",
+            smoke_verified=True,
+        ),
+    )
+
+    result = upload_submission_pickle(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        model_name="main",
+        client=client,
+    )
+
+    assert result.upload_id == "pickle-1"
+    metadata_path = tmp_path / ".numereng" / "submissions" / "main" / "submission.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["model_id"] == "model-1"
+    assert metadata["hosted_pickle"]["upload_id"] == "pickle-1"
+    assert metadata["hosted_pickle"]["docker_image"] == "Python 3.12"
+    assert metadata["source"]["experiment_id"] == "exp-1"
+    assert metadata["source"]["package_id"] == "pkg-1"
+    assert metadata["uploads"][0]["source"]["package_id"] == "pkg-1"
+
+
 def test_build_submission_pickle_rejects_neutralized_package(tmp_path: Path) -> None:
     client = _FakeServingClient()
     run_id = _write_run_backed_component(tmp_path, run_id="run-lgbm")
