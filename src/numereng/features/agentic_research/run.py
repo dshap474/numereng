@@ -1829,18 +1829,30 @@ def _phase_has_confirmed_champion(state: dict[str, object], phase: str) -> bool:
 def _has_inflight_confirmation(state: dict[str, object], round_number: int) -> bool:
     """True when a confirmation trio is mid-flight and still being worked.
 
-    "Mid-flight" means a candidate has 1 or 2 of the canonical seed trio
-    completed, has not been promoted, and was touched in the current or previous
-    round. The recency guard (`last_attempt_at_round >= round_number - 1`) keeps
-    an abandoned partial trio from blocking phase transitions forever — only a
-    trio that is actively being filled defers the transition. This prevents a
-    champion discovered late in a phase from being credited to the next phase
-    because the transition fired between its confirmation seeds."""
+    A candidate is "mid-flight" when it is not promoted, was touched in the
+    current or previous round, has 1-2 canonical seeds done, AND is a genuine
+    confirmation rather than an ordinary discovery. The last clause matters
+    because every discovery round auto-credits seed 42, so seed-42-only entries
+    are produced constantly; counting them as in-flight would defer the phase
+    transition on every discovery round and the phase would never graduate.
+
+    A genuine in-flight trio is one that EITHER has completed a non-discovery
+    canonical seed (17 or 99 — only an explicit confirmation round runs those),
+    OR whose seed-42 metric clears the confirmation threshold (champion seed-42
+    + CONFIRMATION_PROMOTION_THRESHOLD) and is therefore a real champion
+    candidate about to be confirmed across the boundary. The recency guard
+    (`last_attempt_at_round >= round_number - 1`) keeps an abandoned partial trio
+    from blocking phase transitions forever — only a trio that is actively being
+    filled defers the transition. This prevents a champion discovered late in a
+    phase from being credited to the next phase because the transition fired
+    between its confirmation seeds."""
     confirmations = state.get("confirmations")
     if not isinstance(confirmations, dict):
         return False
     canonical = set(CANONICAL_SEED_TRIO)
-    for entry in confirmations.values():
+    champion_seed42 = _champion_seed42_metric(state)
+    candidate_threshold = champion_seed42 + CONFIRMATION_PROMOTION_THRESHOLD if champion_seed42 is not None else None
+    for config_name, entry in confirmations.items():
         if not isinstance(entry, dict):
             continue
         if entry.get("promoted_at_round") is not None:
@@ -1850,8 +1862,17 @@ def _has_inflight_confirmation(state: dict[str, object], round_number: int) -> b
         if not (1 <= len(completed) < len(canonical)):
             continue
         last = entry.get("last_attempt_at_round")
-        if isinstance(last, (int, float)) and not isinstance(last, bool) and int(last) >= round_number - 1:
+        if not (isinstance(last, (int, float)) and not isinstance(last, bool) and int(last) >= round_number - 1):
+            continue
+        # Genuine trio in progress: an explicit confirmation ran a non-discovery seed.
+        if completed - {CANONICAL_DISCOVERY_SEED}:
             return True
+        # Seed-42-only: defer only for a real champion candidate, never for the
+        # auto-credited seed 42 that every ordinary discovery round produces.
+        if candidate_threshold is not None and isinstance(config_name, str):
+            metric = _confirmation_seed42_metric(state, config_name)
+            if metric is not None and metric > candidate_threshold:
+                return True
     return False
 
 

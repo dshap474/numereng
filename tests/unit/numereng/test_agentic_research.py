@@ -1821,6 +1821,96 @@ def test_has_inflight_confirmation_recency_and_completion() -> None:
     assert research_module._has_inflight_confirmation(done, round_number=10) is False  # already promoted
 
 
+def test_inflight_confirmation_ignores_discovery_seed42_autocredit() -> None:
+    """A recent seed-42-only entry whose metric is below the confirmation
+    threshold is an ordinary discovery auto-credit, NOT an in-flight trio.
+
+    Reproduces the production lock: every discovery round auto-credits seed 42,
+    so without this guard the phase transition would defer on every round."""
+    state: dict[str, object] = {
+        "confirmed_champion": {"parent_config": "config_040.json"},
+        "confirmations": {
+            "config_040.json": {  # champion: seed-42 metric defines the threshold (0.00393 + 3e-4)
+                "seeds_completed": [42, 17, 99],
+                "promoted_at_round": 42,
+                "primary_metric_by_seed": {"42": 0.00393},
+            },
+            "config_070.json": {  # recent sub-threshold discovery (below 0.00423)
+                "seeds_completed": [42],
+                "last_attempt_at_round": 70,
+                "primary_metric_by_seed": {"42": 0.0034},
+            },
+        },
+    }
+    assert research_module._has_inflight_confirmation(state, round_number=71) is False
+
+
+def test_inflight_confirmation_defers_for_above_threshold_seed42_candidate() -> None:
+    """A recent seed-42-only entry whose metric CLEARS the confirmation threshold
+    is a real champion candidate about to be confirmed — defer so it is credited
+    to its discovering phase. This preserves the original F5 goal."""
+    state: dict[str, object] = {
+        "confirmed_champion": {"parent_config": "config_040.json"},
+        "confirmations": {
+            "config_040.json": {
+                "seeds_completed": [42, 17, 99],
+                "promoted_at_round": 42,
+                "primary_metric_by_seed": {"42": 0.00393},
+            },
+            "config_072.json": {  # seed-42-only but clears 0.00393 + 3e-4 = 0.00423
+                "seeds_completed": [42],
+                "last_attempt_at_round": 72,
+                "primary_metric_by_seed": {"42": 0.0050},
+            },
+        },
+    }
+    assert research_module._has_inflight_confirmation(state, round_number=72) is True
+
+
+def test_phase_transition_proceeds_despite_discovery_seed42_autocredits() -> None:
+    """End-to-end: at a met-threshold boundary whose confirmations are all
+    sub-threshold discovery seed-42 auto-credits (the round-71 production
+    scenario), the transition must FIRE rather than defer forever."""
+    cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
+    experiment_metadata = {"agentic_research_phases": cfg}
+
+    class _FakeExperiment:
+        metadata = experiment_metadata
+
+    state: dict[str, object] = {
+        "phase": "shallow",
+        "phase_round_start": 1,
+        "phase_best_metric": 0.00393,
+        "phase_plateau_counter": 2,
+        "phase_successful_rounds": 2,
+        "phase_history": [],
+        "confirmed_champion": {"parent_config": "config_040.json"},
+        "confirmations": {
+            "config_040.json": {
+                "seeds_completed": [42, 17, 99],
+                "promoted_in_phase": "shallow",
+                "promoted_at_round": 2,
+                "primary_metric_by_seed": {"42": 0.00393},
+            },
+            "config_006.json": {
+                "seeds_completed": [42],
+                "last_attempt_at_round": 6,
+                "primary_metric_by_seed": {"42": 0.0034},
+            },
+        },
+    }
+    payload = research_module._maybe_transition_phase(
+        experiment=cast(object, _FakeExperiment()),
+        state=state,
+        round_number=7,
+    )
+    assert payload == {"transition": "phase_change", "from": "shallow", "to": "medium"}
+    assert state["phase"] == "medium"
+    history = state["phase_history"]
+    assert isinstance(history, list) and len(history) == 1
+    assert history[0]["exit_reason"] == "phase_transition"
+
+
 def test_phase_transition_no_op_when_next_phase_missing() -> None:
     """A non-terminal phase missing next_phase returns a misconfigured payload and leaves state unchanged."""
     cfg = json.loads(json.dumps(_SHALLOW_PHASES_CONFIG))
