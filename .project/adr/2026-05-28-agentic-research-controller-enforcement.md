@@ -98,3 +98,30 @@ This fixes the permanent-lock bug while preserving F5's original goal (a late-di
 ### Noted follow-up (out of scope, not implemented)
 
 Phase transitions are evaluated only at the end of a successful `run` round (~line 866 of run.py), never on a `stop` action or at resume. This is why the stopped experiment is currently parked at a met-threshold boundary without having transitioned. Widening that check is a separate robustness item.
+
+---
+
+## Follow-up — 2026-05-28: Budget-bounded runs (never auto-stop) (commit 7807620)
+
+### Decision
+
+`agentic_research` runs are now **budget-bounded, not convergence-bounded**. The run always keeps exploring until its `max_rounds` budget is exhausted. The controller and the LLM never self-terminate on convergence. A plateau is a signal to diversify, not to stop.
+
+### Motivation
+
+The 18-round shakeout that validated F5 also revealed a fatal failure mode: the LLM elected a `stop` action at a graduation-eligible phase boundary — twice. Because phase transitions are only evaluated after a `run` round (not on `stop`), an LLM stop at a boundary terminated the experiment instead of graduating it to deep search. For a week-long/500-round unsupervised run this means the experiment dies at the first boundary the LLM loses confidence on, never reaching the deeper search space. Additionally, continued exploration past a plateau is itself valuable: more combinations tested = more learned, independent of whether the metric has converged.
+
+### Changes (commit 7807620)
+
+- **LLM `stop` action disabled:** the response parser rejects `stop`, the schema action enum is now `run`-only, the `stop` branch in `_run_one_round` and the driver stop-break are removed, and `_record_stop_round` is deleted.
+- **Terminal phase no longer auto-stops on plateau:** `_maybe_transition_phase` now returns `None` for terminal phases instead of writing `status=stopped`; the loop continues to the next round.
+- **PROGRAM.md Stop Criteria replaced with Budget Doctrine — Never Stop:** documents the intent explicitly so future prompt regens preserve the invariant.
+- **Terminations retained:** max_rounds reached (`stop_reason=max_rounds_reached`), consecutive-failure safety bail (`stop_reason=consecutive_failures:N`), and KeyboardInterrupt (`status=interrupted`, resumable).
+
+### Human-in-the-loop
+
+Early stop is now a human decision. The operator monitors per-round `rNNN.md` files and/or the numereng frontend and manually halts (process interrupt) if the run has converged and GPU capacity is needed elsewhere. A KeyboardInterrupt sets `status=interrupted`, which is resumable on the next `run_research` invocation.
+
+### Relation to prior follow-up
+
+This builds directly on the F5 phase-lock fix (commit ee2e69b) recorded above. With `stop` disabled, the LLM is forced to execute a `run` round at a graduation boundary — so the corrected `_maybe_transition_phase` logic actually fires and the phase advances rather than stalling.

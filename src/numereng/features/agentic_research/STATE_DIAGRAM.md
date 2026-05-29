@@ -5,14 +5,14 @@ machines, each governed by Python (the LLM only proposes one `decision_form` per
 round — Python decides what changes state).
 
 1. **Loop lifecycle** — the `status` field on `state.json` (`initialized → running → stopped/failed/interrupted`).
-2. **Per-round dispatch** — what one `_run_one_round` call does (baseline vs. run vs. stop, failure handling).
+2. **Per-round dispatch** — what one `_run_one_round` call does (baseline vs. run, failure handling).
 3. **Phase machine** — `shallow → medium → deep`, gated by `min_rounds`, `plateau`, and an optional confirmed champion.
 4. **Confirmation machine** — per `parent_config`: collect the canonical seed trio `(42, 17, 99)`, then maybe promote to `confirmed_champion`.
 
 ## 1. Loop Lifecycle
 
 `status` on `state.json`. Set by `run_research`, `_train_score_record_round`,
-`_record_stop_round`, `_record_failed_round`, and `_maybe_transition_phase`.
+`_record_failed_round`, and `_maybe_transition_phase`.
 
 ```mermaid
 stateDiagram-v2
@@ -22,15 +22,13 @@ stateDiagram-v2
     running --> running: _train_score_record_round (round completed)
     running --> running: _record_failed_round (failures < threshold)
 
-    running --> stopped: LLM action="stop"
     running --> stopped: max_rounds_reached
-    running --> stopped: all_phases_done (terminal phase plateau)
     running --> stopped: consecutive_failures >= 5
 
     running --> interrupted: KeyboardInterrupt
     running --> failed: unhandled exception
 
-    running --> running: _is_terminal_stop short-circuits<br/>(same run_research call, after mid-loop stop)
+    running --> running: _is_terminal_stop short-circuits<br/>(same run_research call, after mid-loop bail)
 
     stopped --> running: run_research re-entry
     interrupted --> running: run_research re-entry
@@ -49,10 +47,9 @@ Notes:
   moment `run_research` is called again. Only the supervisor's decision to stop
   invoking `run_research` actually ends the loop.
 - `_is_terminal_stop` matters **only within a single `run_research` call**: if a
-  round mid-loop flips `status` to `stopped` (LLM stop, terminal phase,
-  consecutive-failure bail), the next iteration's check breaks the loop. On a
-  fresh invocation, the unconditional reset happens before this check ever
-  fires.
+  round mid-loop flips `status` to `stopped` (max_rounds or consecutive-failure
+  bail), the next iteration's check breaks the loop. On a fresh invocation, the
+  unconditional reset happens before this check ever fires.
 - `stop_reason` and `last_checkpoint` persist across invocations for forensics
   even though `status` does not.
 
@@ -76,10 +73,6 @@ flowchart TD
     CallLLM -- ok --> ParseLLM[_parse_llm_response]
     ParseLLM -- error --> RaiseExc
     ParseLLM -- ok --> DecideAction{decision.action}
-
-    DecideAction -- stop --> RecordStop[_record_stop_round<br/>status=stopped]
-    RecordStop --> WriteMd1[write EXPERIMENT.md<br/>if non-empty]
-    WriteMd1 --> EndStop([return stopped])
 
     DecideAction -- run --> Mat[_materialize_decision_config<br/>validate paths/caps/hash]
     Mat -- error --> RaiseExc
@@ -130,10 +123,7 @@ stateDiagram-v2
     medium --> medium: round completes
     medium --> deep: gate satisfied<br/>min_rounds=30, plateau&gt;=25,<br/>require_confirmed_champion
 
-    deep --> deep: round completes
-    deep --> all_phases_done: gate satisfied<br/>min_rounds=50, plateau&gt;=30,<br/>is_terminal=true
-
-    all_phases_done --> [*]: status=stopped<br/>stop_reason=all_phases_done:deep_plateau
+    deep --> deep: round completes<br/>(terminal phase keeps exploring until max_rounds)
 
     shallow --> misconfigured: next_phase missing/invalid<br/>(trace only, no state mutation)
     medium --> misconfigured: next_phase missing/invalid
@@ -204,7 +194,7 @@ flowchart LR
 
     PhaseProg --> GateCheck{gate<br/>satisfied?}
     MaybePromo --> GateCheck
-    GateCheck -- yes --> Transition[phase change<br/>or terminal stop]
+    GateCheck -- yes --> Transition[phase change]
     GateCheck -- no --> Continue[next round]
 
     Round --> Rotate{rotation<br/>mode?}
