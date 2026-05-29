@@ -39,6 +39,10 @@ USAGE = (
     "  numereng serve pickle build --experiment-id <id> --package-id <id> [--docker-image <image>] "
     "[--workspace <path>]\n"
     "  numereng serve pickle upload --experiment-id <id> --package-id <id> --model-name <name> [--data-version <v>] [--docker-image <image>] [--wait-diagnostics] [--workspace <path>]\n"  # noqa: E501
+    "  numereng submissions refresh [--model <name>]... [--dry-run] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
+    "  numereng submissions calibration materialize [--format <table|json>] [--workspace <path>]\n"
+    "  numereng submissions calibration report [--resolved-only] [--format <table|json>] [--workspace <path>]\n"
+    "  numereng submissions calibration update [--model <name>]... [--dry-run] [--resolved-only] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng neutralize apply (--run-id <id> | --predictions <path>) --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--output-path <path>] [--no-neutralization-rank] [--workspace <path>]\n"  # noqa: E501
     "  numereng monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json]\n"
     "  numereng remote list [--format <table|json>]\n"

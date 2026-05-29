@@ -56,6 +56,9 @@ class VizService:
     def get_submission(self, model_name: str) -> dict[str, Any] | None:
         return self.adapter.get_submission(model_name)
 
+    def get_submission_calibration(self) -> dict[str, Any]:
+        return self.adapter.get_submission_calibration()
+
     def get_experiments_overview(self, *, include_remote: bool = True) -> dict[str, Any]:
         local_snapshot = build_monitor_snapshot(store_root=self.adapter.store_root, refresh_cloud=True)
         if not include_remote:

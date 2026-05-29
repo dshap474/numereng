@@ -54,6 +54,35 @@ export interface SubmissionSummary {
 	source: Record<string, unknown>;
 	offline_snapshot: Record<string, unknown>;
 	latest_live_summary: Record<string, unknown>;
+	calibration?: {
+		offline_metrics: {
+			bmc_last_200_eras_mean?: number | null;
+			bmc_mean?: number | null;
+			corr_mean?: number | null;
+			mmc_mean?: number | null;
+			fnc_mean?: number | null;
+			source?: string | null;
+		};
+		live_metrics: {
+			mmc20_mean?: number | null;
+			corr20_mean?: number | null;
+			mmc60_mean?: number | null;
+			corr60_mean?: number | null;
+		};
+		live_started_at?: string | null;
+		model_tags?: {
+			family?: string | null;
+			feature_scope?: string | null;
+			target?: string | null;
+			target_horizon?: string | null;
+			recipe?: string | null;
+			package_id?: string | null;
+		};
+		confidence?: string | null;
+		local_rank?: number | null;
+		live_rank?: number | null;
+		rank_delta?: number | null;
+	};
 	latest_refresh_at?: string | null;
 	round_count: number;
 	resolved_round_count: number;
@@ -77,6 +106,59 @@ export interface SubmissionListResponse {
 	items: SubmissionItem[];
 	total: number;
 	root: string;
+}
+
+export interface SubmissionCalibrationRow {
+	model_name: string;
+	model_id?: string | null;
+	experiment_id?: string | null;
+	package_id?: string | null;
+	recipe?: string | null;
+	feature_scope?: string | null;
+	target?: string | null;
+	target_horizon?: string | null;
+	family?: string | null;
+	round_number?: number | null;
+	state?: string | null;
+	is_estimate?: boolean | null;
+	open_date?: string | null;
+	close_date?: string | null;
+	resolve_date?: string | null;
+	has_live_score?: boolean | null;
+	local_bmc200_mean?: number | null;
+	local_bmc200_sharpe?: number | null;
+	local_bmc200_max_drawdown?: number | null;
+	local_bmc_mean?: number | null;
+	local_corr_mean?: number | null;
+	local_mmc_mean?: number | null;
+	local_fnc_mean?: number | null;
+	local_metric_source?: string | null;
+	live_bmc?: number | null;
+	live_bmc_percentile?: number | null;
+	live_mmc20?: number | null;
+	live_mmc20_percentile?: number | null;
+	live_corr20?: number | null;
+	live_corr20_percentile?: number | null;
+	live_mmc60?: number | null;
+	live_mmc60_percentile?: number | null;
+	live_corr60?: number | null;
+	live_corr60_percentile?: number | null;
+	live_season_score?: number | null;
+	live_season_score_percentile?: number | null;
+	live_started_at?: string | null;
+	pulled_at?: string | null;
+	[key: string]: unknown;
+}
+
+export interface SubmissionCalibrationResponse {
+	rows: SubmissionCalibrationRow[];
+	total: number;
+	root: string;
+	rows_path?: string | null;
+	report_path?: string | null;
+	manifest_path?: string | null;
+	report: Record<string, unknown>;
+	manifest: Record<string, unknown>;
 }
 
 export interface ExperimentOverviewSummary {
@@ -721,6 +803,8 @@ export function createApi(fetchFn: FetchFn = globalThis.fetch) {
 			),
 		listExperiments: () => get<Experiment[]>('/experiments', fetchFn),
 		listSubmissions: () => get<SubmissionListResponse>('/submissions', fetchFn),
+		getSubmissionCalibration: () =>
+			get<SubmissionCalibrationResponse>('/submissions/calibration', fetchFn),
 		getSubmission: (modelName: string) =>
 			get<SubmissionDetail>(`/submissions/${encodeURIComponent(modelName)}`, fetchFn),
 		getExperimentsOverview: (params?: { include_remote?: boolean }) =>

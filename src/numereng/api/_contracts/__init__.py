@@ -24,6 +24,8 @@ from numereng.api._contracts.shared import *  # noqa: F403
 from numereng.api._contracts.shared import __all__ as _shared_all
 from numereng.api._contracts.store import *  # noqa: F403
 from numereng.api._contracts.store import __all__ as _store_all
+from numereng.api._contracts.submissions import *  # noqa: F403
+from numereng.api._contracts.submissions import __all__ as _submissions_all
 from numereng.api._contracts.viz import *  # noqa: F403
 from numereng.api._contracts.viz import __all__ as _viz_all
 
@@ -35,6 +37,7 @@ __all__ = [
     *_hpo_all,
     *_ensemble_all,
     *_store_all,
+    *_submissions_all,
     *_serving_all,
     *_docs_all,
     *_remote_all,

@@ -105,6 +105,14 @@ class NumeraiClient:
             mapping[str(name)] = str(model_id)
         return mapping
 
+    def round_model_performances_v2(self, *, model_id: str) -> list[dict[str, Any]]:
+        """Return round-level model performance rows."""
+        try:
+            rows = self._client.round_model_performances_v2(model_id)
+        except Exception as exc:  # pragma: no cover - error mapping exercised in tests
+            raise NumeraiClientError("numerai_round_model_performances_v2_failed") from exc
+        return [dict(row) for row in rows]
+
     def upload_predictions(self, *, file_path: str, model_id: str) -> str:
         """Upload predictions and return submission id."""
         try:

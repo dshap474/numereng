@@ -123,6 +123,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args=args[1:],
             )
 
+        if args and args[0] == "submissions":
+            return _dispatch_command(
+                module_name="numereng.cli.commands.submissions",
+                handler_name="handle_submissions_command",
+                args=args[1:],
+            )
+
         if args and args[0] == "research":
             return _dispatch_command(
                 module_name="numereng.cli.commands.research",

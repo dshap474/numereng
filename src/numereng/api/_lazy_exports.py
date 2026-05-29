@@ -90,6 +90,13 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "run_training": ("numereng.api._run", "run_training"),
     "score_run": ("numereng.api._run", "score_run"),
     "submit_predictions": ("numereng.api._run", "submit_predictions"),
+    "submissions_calibration_materialize": (
+        "numereng.api._submissions",
+        "submissions_calibration_materialize",
+    ),
+    "submissions_calibration_report": ("numereng.api._submissions", "submissions_calibration_report"),
+    "submissions_calibration_update": ("numereng.api._submissions", "submissions_calibration_update"),
+    "submissions_refresh": ("numereng.api._submissions", "submissions_refresh"),
     "store_backfill_run_execution": ("numereng.api._store", "store_backfill_run_execution"),
     "store_doctor": ("numereng.api._store", "store_doctor"),
     "store_index_run": ("numereng.api._store", "store_index_run"),
@@ -199,6 +206,14 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "rebuild_run_index": ("numereng.features.store", "rebuild_run_index"),
     "submit_predictions_file": ("numereng.features.submission", "submit_predictions_file"),
     "submit_run_predictions": ("numereng.features.submission", "submit_run_predictions"),
+    "materialize_live_calibration": (
+        "numereng.features.submission.calibration",
+        "materialize_live_calibration",
+    ),
+    "refresh_submission_snapshots": (
+        "numereng.features.submission.live_refresh",
+        "refresh_submission_snapshots",
+    ),
     "get_run_lifecycle_record": ("numereng.features.telemetry", "get_run_lifecycle"),
     "reconcile_run_lifecycles_record": ("numereng.features.telemetry", "reconcile_run_lifecycles"),
     "request_run_cancel_record": ("numereng.features.telemetry", "request_run_cancel"),

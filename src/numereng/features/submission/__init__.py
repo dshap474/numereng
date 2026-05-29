@@ -1,5 +1,14 @@
 """Public surface for submission feature services."""
 
+from numereng.features.submission.calibration import (
+    CalibrationMaterializeResult,
+    CalibrationReportResult,
+    build_live_calibration_report,
+    load_live_calibration_report,
+    load_live_calibration_rows,
+    materialize_live_calibration,
+)
+from numereng.features.submission.live_refresh import SubmissionRefreshResult, refresh_submission_snapshots
 from numereng.features.submission.service import (
     ModelUploadResult,
     SubmissionLiveUniverseUnavailableError,
@@ -21,7 +30,10 @@ from numereng.features.submission.service import (
 )
 
 __all__ = [
+    "CalibrationMaterializeResult",
+    "CalibrationReportResult",
     "ModelUploadResult",
+    "SubmissionRefreshResult",
     "SubmissionModelNotFoundError",
     "SubmissionModelUploadFileNotFoundError",
     "SubmissionModelUploadFormatUnsupportedError",
@@ -35,6 +47,11 @@ __all__ = [
     "SubmissionRunPredictionsNotLiveEligibleError",
     "SubmissionRunPredictionsPathUnsafeError",
     "SubmissionLiveUniverseUnavailableError",
+    "build_live_calibration_report",
+    "load_live_calibration_report",
+    "load_live_calibration_rows",
+    "materialize_live_calibration",
+    "refresh_submission_snapshots",
     "submit_predictions_file",
     "submit_run_predictions",
     "upload_model_pickle_file",

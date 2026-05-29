@@ -126,6 +126,10 @@ def create_router(service: VizService) -> APIRouter:
     def list_submissions() -> JSONResponse:
         return _cached_response(service.list_submissions(), max_age=30)
 
+    @router.get("/submissions/calibration")
+    def get_submission_calibration() -> JSONResponse:
+        return _cached_response(service.get_submission_calibration(), max_age=30)
+
     @router.get("/submissions/{model_name}")
     def get_submission(model_name: str) -> JSONResponse:
         try:

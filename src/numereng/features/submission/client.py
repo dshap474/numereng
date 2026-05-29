@@ -15,6 +15,9 @@ class SubmissionClient(Protocol):
     def get_models(self) -> dict[str, str]:
         """Return Numerai model mapping."""
 
+    def round_model_performances_v2(self, *, model_id: str) -> list[dict[str, object]]:
+        """Return round-level performance rows for one model."""
+
     def list_datasets(self, round_num: int | None = None) -> list[str]:
         """Return available dataset names for the authenticated tournament."""
 

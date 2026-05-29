@@ -12,5 +12,7 @@ from numereng.api._contracts.serving import *  # noqa: F403
 from numereng.api._contracts.serving import __all__ as _serving_all
 from numereng.api._contracts.store import *  # noqa: F403
 from numereng.api._contracts.store import __all__ as _store_all
+from numereng.api._contracts.submissions import *  # noqa: F403
+from numereng.api._contracts.submissions import __all__ as _submissions_all
 
-__all__ = [*_hpo_all, *_ensemble_all, *_store_all, *_serving_all, *_docs_all]
+__all__ = [*_hpo_all, *_ensemble_all, *_store_all, *_submissions_all, *_serving_all, *_docs_all]

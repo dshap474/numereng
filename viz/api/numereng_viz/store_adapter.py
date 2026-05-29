@@ -113,6 +113,7 @@ _HIDDEN_DASHBOARD_METRIC_PREFIXES: tuple[str, ...] = (
     "corr_delta_vs_baseline_",
 )
 _REMOTE_PULLS_RELATIVE_DIR = ("cache", "remote_ops", "pulls")
+_LIVE_CALIBRATION_RELATIVE_DIR = ("analysis", "live_calibration")
 
 
 @lru_cache(maxsize=256)
@@ -192,6 +193,71 @@ def _to_non_empty_str(value: Any) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned if cleaned else None
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _first_float(payload: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = _to_float(payload.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _mean_metric(rows: list[dict[str, Any]], metric: str) -> float | None:
+    values = [_to_float(row.get(metric)) for row in rows]
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return sum(clean) / len(clean)
+
+
+def _summary_metric_mean(summaries: dict[str, Any], *groups: str) -> float | None:
+    for group in groups:
+        value = summaries.get(group)
+        if isinstance(value, dict):
+            mean = _to_float(value.get("mean"))
+            if mean is not None:
+                return mean
+        dotted = _to_float(summaries.get(f"{group}.mean"))
+        if dotted is not None:
+            return dotted
+    return None
+
+
+def _rank_submission_calibration(items: list[dict[str, Any]]) -> None:
+    def assign(metric_path: tuple[str, ...], rank_key: str) -> None:
+        ranked: list[tuple[int, float]] = []
+        for index, item in enumerate(items):
+            value: Any = item
+            for key in metric_path:
+                value = value.get(key) if isinstance(value, dict) else None
+            number = _to_float(value)
+            if number is not None:
+                ranked.append((index, number))
+        ranked.sort(key=lambda pair: pair[1], reverse=True)
+        for rank, (index, _) in enumerate(ranked, start=1):
+            calibration = items[index]["summary"]["calibration"]
+            calibration[rank_key] = rank
+
+    assign(("summary", "calibration", "offline_metrics", "bmc_last_200_eras_mean"), "local_rank")
+    assign(("summary", "calibration", "live_metrics", "mmc20_mean"), "live_rank")
+    for item in items:
+        calibration = item["summary"]["calibration"]
+        local_rank = calibration.get("local_rank")
+        live_rank = calibration.get("live_rank")
+        calibration["rank_delta"] = (
+            int(live_rank) - int(local_rank) if isinstance(local_rank, int) and isinstance(live_rank, int) else None
+        )
 
 
 def _normalize_dashboard_metric_key(metric_key: str) -> str | None:
@@ -957,6 +1023,9 @@ class VizStoreAdapter:
 
     def _submissions_root(self) -> Path:
         return resolve_workspace_layout_from_store_root(self.store_root).submissions_root
+
+    def _submission_calibration_root(self) -> Path:
+        return self.store_root.joinpath(*_LIVE_CALIBRATION_RELATIVE_DIR)
 
     def _workspace_root(self) -> Path:
         return resolve_workspace_layout_from_store_root(self.store_root).workspace_root
@@ -1738,6 +1807,166 @@ class VizStoreAdapter:
         records = _read_parquet_records_cached(str(path), path.stat().st_mtime_ns)
         return sorted(records, key=lambda row: str(row.get("round") or row.get("round_number") or ""), reverse=True)
 
+    def _submission_offline_metrics(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        offline = metadata.get("offline_metrics")
+        if not isinstance(offline, dict):
+            offline = metadata.get("offline_snapshot") if isinstance(metadata.get("offline_snapshot"), dict) else {}
+
+        metrics = {
+            "bmc_last_200_eras_mean": _first_float(
+                offline,
+                "bmc_last_200_eras_mean",
+                "local_bmc_last_200_mean",
+                "bmc_last_200_eras.mean",
+            ),
+            "bmc_mean": _first_float(offline, "bmc_mean", "local_bmc_mean", "bmc.mean"),
+            "corr_mean": _first_float(offline, "corr_mean", "local_corr_mean", "corr.mean"),
+            "mmc_mean": _first_float(offline, "mmc_mean", "local_mmc_mean", "mmc.mean"),
+            "fnc_mean": _first_float(offline, "fnc_mean", "local_fnc_mean", "fnc.mean"),
+        }
+        if any(value is not None for value in metrics.values()):
+            metrics["source"] = "submission.json"
+            return metrics
+
+        summaries = self._submission_package_summaries(metadata)
+        if summaries:
+            metrics = {
+                "bmc_last_200_eras_mean": _summary_metric_mean(
+                    summaries,
+                    "bmc_last_200_eras",
+                    "bmc_last_200_eras_target",
+                ),
+                "bmc_mean": _summary_metric_mean(summaries, "bmc", "bmc_target"),
+                "corr_mean": _summary_metric_mean(summaries, "corr", "corr_target"),
+                "mmc_mean": _summary_metric_mean(summaries, "mmc", "mmc_target"),
+                "fnc_mean": _summary_metric_mean(summaries, "fnc", "fnc_target"),
+                "source": "package_validation_summary",
+            }
+            return metrics
+
+        return {
+            "bmc_last_200_eras_mean": None,
+            "bmc_mean": None,
+            "corr_mean": None,
+            "mmc_mean": None,
+            "fnc_mean": None,
+            "source": None,
+        }
+
+    def _submission_package_summaries(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+        package_path_raw = _to_non_empty_str(source.get("package_path"))
+        package_path = Path(package_path_raw) if package_path_raw else None
+        if package_path is None:
+            experiment_id = _to_non_empty_str(source.get("experiment_id"))
+            package_id = _to_non_empty_str(source.get("package_id"))
+            if experiment_id and package_id:
+                package_path = self._experiments_root() / experiment_id / "submission_packages" / package_id
+        if package_path is None:
+            return {}
+
+        package = _read_json_dict(package_path / "package.json")
+        artifacts = package.get("artifacts") if isinstance(package.get("artifacts"), dict) else {}
+        summaries_path_raw = _to_non_empty_str(artifacts.get("last_validation_eval_summaries_path"))
+        summaries_path = Path(summaries_path_raw) if summaries_path_raw else None
+        if summaries_path is None:
+            candidate = package_path / "artifacts" / "eval" / "validation" / "pickle" / "summaries.json"
+            summaries_path = candidate if candidate.is_file() else None
+        return _read_json_dict(summaries_path) if summaries_path is not None else {}
+
+    @staticmethod
+    def _submission_live_metrics(rounds: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "mmc20_mean": _mean_metric(rounds, "mmc20"),
+            "corr20_mean": _mean_metric(rounds, "corr20"),
+            "mmc60_mean": _mean_metric(rounds, "mmc60"),
+            "corr60_mean": _mean_metric(rounds, "corr60"),
+        }
+
+    @staticmethod
+    def _submission_live_started_at(metadata: dict[str, Any]) -> str | None:
+        hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
+        numerai = metadata.get("numerai") if isinstance(metadata.get("numerai"), dict) else {}
+        return (
+            _to_non_empty_str(hosted.get("uploaded_at"))
+            or _to_non_empty_str(numerai.get("hosted_pickle_inserted_at"))
+            or _to_non_empty_str(metadata.get("woke_at"))
+            or _to_non_empty_str(metadata.get("created_at"))
+        )
+
+    @staticmethod
+    def _submission_model_tags(*, model_name: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+        recipe = _to_non_empty_str(source.get("recipe"))
+        package_id = _to_non_empty_str(source.get("package_id"))
+        name = model_name.lower()
+
+        if "cross_scope" in name:
+            feature_scope = "blend"
+            target = "cross_scope"
+            target_horizon = None
+            recipe = recipe or "cross_scope"
+        else:
+            feature_scope = None
+            if name.startswith("lgbm_s_"):
+                feature_scope = "small"
+            elif name.startswith("lgbm_m_"):
+                feature_scope = "medium"
+            elif name.startswith("lgbm_deep_"):
+                feature_scope = "deep"
+
+            target = None
+            target_horizon = None
+            for candidate in ("ender20", "ender60", "cyrusd20", "cyrusd60"):
+                if candidate in name:
+                    target = candidate
+                    target_horizon = "60" if candidate.endswith("60") else "20"
+                    break
+
+        family = "lgbm" if "lgbm" in name else name.split("_", 1)[0]
+        return {
+            "family": family,
+            "feature_scope": feature_scope,
+            "target": target,
+            "target_horizon": target_horizon,
+            "recipe": recipe,
+            "package_id": package_id,
+        }
+
+    @staticmethod
+    def _submission_confidence(rounds: list[dict[str, Any]]) -> str:
+        scored = [row for row in rounds if any(row.get(metric) is not None for metric in ("mmc20", "corr20"))]
+        resolved_scored = [
+            row for row in scored if str(row.get("state") or row.get("status") or "").lower() == "resolved"
+        ]
+        if not scored:
+            return "waiting"
+        if len(resolved_scored) >= 8:
+            return "stronger_signal"
+        if len(resolved_scored) >= 3:
+            return "resolved_signal"
+        if len(scored) >= 5:
+            return "usable_estimate"
+        return "early"
+
+    def _submission_calibration(
+        self,
+        *,
+        model_name: str,
+        metadata: dict[str, Any],
+        rounds: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "offline_metrics": self._submission_offline_metrics(metadata),
+            "live_metrics": self._submission_live_metrics(rounds),
+            "live_started_at": self._submission_live_started_at(metadata),
+            "model_tags": self._submission_model_tags(model_name=model_name, metadata=metadata),
+            "confidence": self._submission_confidence(rounds),
+            "local_rank": None,
+            "live_rank": None,
+            "rank_delta": None,
+        }
+
     def _submission_summary(
         self,
         *,
@@ -1789,6 +2018,7 @@ class VizStoreAdapter:
             "resolving_round_count": resolving_count,
             "latest_round": latest_round,
             "latest_scored_round": latest_scored_round,
+            "calibration": self._submission_calibration(model_name=model_name, metadata=metadata, rounds=rounds),
         }
 
     def _format_submission(self, model_name: str, *, include_rounds: bool) -> dict[str, Any]:
@@ -1810,6 +2040,7 @@ class VizStoreAdapter:
         items = [
             self._format_submission(model_name, include_rounds=False) for model_name in self._iter_submission_names()
         ]
+        _rank_submission_calibration(items)
         return {
             "items": items,
             "total": len(items),
@@ -1821,6 +2052,33 @@ class VizStoreAdapter:
         if not submission_dir.is_dir():
             return None
         return self._format_submission(model_name, include_rounds=True)
+
+    def get_submission_calibration(self) -> dict[str, Any]:
+        root = self._submission_calibration_root()
+        rows_path = root / "calibration_rows.parquet"
+        report_path = root / "report.json"
+        manifest_path = root / "manifest.json"
+        rows: list[dict[str, Any]] = []
+        if rows_path.is_file():
+            records = _read_parquet_records_cached(str(rows_path), rows_path.stat().st_mtime_ns)
+            rows = sorted(
+                records,
+                key=lambda row: (
+                    str(row.get("model_name") or ""),
+                    int(row.get("round_number") or 0) if isinstance(row.get("round_number"), Integral | Real) else 0,
+                ),
+                reverse=True,
+            )
+        return {
+            "rows": rows,
+            "total": len(rows),
+            "root": str(root),
+            "rows_path": str(rows_path),
+            "report_path": str(report_path),
+            "manifest_path": str(manifest_path),
+            "report": _read_json_dict(report_path),
+            "manifest": _read_json_dict(manifest_path),
+        }
 
     def get_experiment(self, experiment_id: str) -> dict[str, Any] | None:
         _ensure_safe_id(experiment_id, label="experiment_id")

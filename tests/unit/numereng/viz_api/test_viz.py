@@ -3774,3 +3774,90 @@ def test_list_submissions_ignores_empty_placeholder_dirs(tmp_path: Path) -> None
     payload = adapter.list_submissions()
 
     assert [item["model_name"] for item in payload["items"]] == ["populated_model"]
+
+
+def test_list_submissions_adds_calibration_summary(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    submissions_root = store_root / "submissions"
+    model_a = submissions_root / "model_a"
+    model_b = submissions_root / "model_b"
+    model_a.mkdir(parents=True)
+    model_b.mkdir(parents=True)
+    (model_a / "submission.json").write_text(
+        json.dumps(
+            {
+                "model_name": "model_a",
+                "hosted_pickle": {"uploaded_at": "2026-05-08T01:00:00+00:00"},
+                "source": {"package_id": "model_a_v1", "recipe": "moderate_lgbm"},
+                "offline_snapshot": {
+                    "local_bmc_last_200_mean": 0.01,
+                    "local_corr_mean": 0.02,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (model_b / "submission.json").write_text(
+        json.dumps(
+            {
+                "model_name": "model_b",
+                "offline_snapshot": {
+                    "local_bmc_last_200_mean": 0.02,
+                    "local_corr_mean": 0.01,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame.from_records([{"round": 1, "state": "resolving", "mmc20": 0.001, "corr20": 0.002}]).to_parquet(
+        model_a / "live_rounds.parquet", index=False
+    )
+    pd.DataFrame.from_records([{"round": 1, "state": "resolving", "mmc20": 0.003, "corr20": 0.001}]).to_parquet(
+        model_b / "live_rounds.parquet", index=False
+    )
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.list_submissions()
+    rows = {item["model_name"]: item["summary"]["calibration"] for item in payload["items"]}
+
+    assert rows["model_a"]["offline_metrics"]["bmc_last_200_eras_mean"] == 0.01
+    assert rows["model_a"]["live_metrics"]["mmc20_mean"] == 0.001
+    assert rows["model_a"]["live_started_at"] == "2026-05-08T01:00:00+00:00"
+    assert rows["model_a"]["model_tags"]["recipe"] == "moderate_lgbm"
+    assert rows["model_a"]["local_rank"] == 2
+    assert rows["model_a"]["live_rank"] == 2
+    assert rows["model_b"]["local_rank"] == 1
+    assert rows["model_b"]["live_rank"] == 1
+    assert rows["model_b"]["confidence"] == "early"
+
+
+def test_get_submission_calibration_reads_materialized_artifacts(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    artifact_root = store_root / "analysis" / "live_calibration"
+    artifact_root.mkdir(parents=True)
+    pd.DataFrame.from_records(
+        [
+            {
+                "model_name": "model_a",
+                "round_number": 1264,
+                "target": "ender20",
+                "local_bmc200_mean": 0.12,
+                "live_mmc20": -0.005,
+                "has_live_score": True,
+            }
+        ]
+    ).to_parquet(artifact_root / "calibration_rows.parquet", index=False)
+    (artifact_root / "report.json").write_text(
+        json.dumps({"scopes": {"all_scored": {"row_count": 1}}}),
+        encoding="utf-8",
+    )
+    (artifact_root / "manifest.json").write_text(json.dumps({"row_count": 1}), encoding="utf-8")
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.get_submission_calibration()
+
+    assert payload["total"] == 1
+    assert payload["rows"][0]["model_name"] == "model_a"
+    assert payload["rows"][0]["live_mmc20"] == -0.005
+    assert payload["report"]["scopes"]["all_scored"]["row_count"] == 1
+    assert payload["manifest"]["row_count"] == 1
