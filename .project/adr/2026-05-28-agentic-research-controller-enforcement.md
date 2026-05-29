@@ -69,3 +69,32 @@ New-axis probe must branch from the champion, never from a regressed config. Pre
 - Custom programs (`custom_programs/`) are gitignored by design; the base `PROGRAM.md` prompt changes (F3, F4, enforcement documentation) are the tracked reference.
 - Tests: 108 pass; 5 obsolete dry-run tests removed, 10 new tests added.
 - Validation pending: a fresh 30-round run to confirm inert count ≤ 1, no cross-family target tunnel past the hard cap, and champion credited to its discovering phase.
+
+---
+
+## Follow-up — 2026-05-28: F5 phase-lock bug found and fixed (commit ee2e69b)
+
+### Validation context
+
+An 18-round shakeout run of `2026-05-27_wide-diversification-test` was launched specifically to exercise F5 at a real medium→deep phase boundary (F5 had only been unit-tested, never hit in-run). The run reached the graduation boundary at round 71 (`phase_plateau_counter=29 ≥ 25`, `phase_successful_rounds=30 ≥ 30`).
+
+### Bug
+
+At round 71 the controller emitted `phase_transition_deferred` with reason `deferred_inflight_confirmation` even though no confirmation was actually in flight.
+
+**Root cause:** `_has_inflight_confirmation` (run.py) classified an entry as a live in-flight trio if it had 1–2 canonical seeds completed and a recent `last_attempt_at_round`. Every discovery round auto-credits seed 42 (a member of the canonical trio 42/17/99) into the confirmations dict, so each ordinary discovery produced a `seeds_completed=[42]` entry that the guard misread as "1 of 3 seeds done, just touched → in-flight." Because the LLM runs a discovery on essentially every round, this deferred the transition on every round — permanent phase-lock.
+
+**Impact:** Silent permanent phase-lock on long/unsupervised runs. A 500-round week-long run would burn its entire budget stuck in one phase. The shakeout run escaped only because the LLM chose a `stop` action — luck, not a safeguard. The pre-existing recency guard did not help because discovery rounds are always fresh. The original F5 unit tests missed this because they constructed confirmation entries with a non-42 seed (e.g. `seeds_completed=[42, 17]`) and never simulated the discovery seed-42 auto-credit that pollutes the dict in production.
+
+### Fix
+
+`_has_inflight_confirmation` now counts an entry as a genuine in-flight trio only if EITHER:
+
+- **(a)** it has completed a non-discovery canonical seed (17 or 99) — only an explicit confirmation round ever runs those, OR
+- **(b)** its seed-42 metric clears the confirmation threshold (`champion_seed42_metric + CONFIRMATION_PROMOTION_THRESHOLD = 3e-4`), i.e. it is a real champion candidate about to cross the boundary.
+
+This fixes the permanent-lock bug while preserving F5's original goal (a late-discovered champion still defers transition so it is credited to its discovering phase). Three regression tests added, including an end-to-end test that simulates the round-71 scenario (met-threshold boundary whose confirmations are all sub-threshold discovery seed-42 auto-credits) and asserts the transition fires rather than defers.
+
+### Noted follow-up (out of scope, not implemented)
+
+Phase transitions are evaluated only at the end of a successful `run` round (~line 866 of run.py), never on a `stop` action or at resume. This is why the stopped experiment is currently parked at a met-threshold boundary without having transitioned. Widening that check is a separate robustness item.
