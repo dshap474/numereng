@@ -140,6 +140,7 @@ See:
 - `numereng remote doctor --target <id>`
 - `numereng remote repo sync --target <id> [--workspace <path>]`
 - `numereng remote experiment sync --target <id> --experiment-id <id> [--workspace <path>]`
+- `numereng remote experiment fetch --target <id> --experiment-id <id> [--workspace <path>]`
 - `numereng remote experiment launch --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--score-stage <post_training_core|post_training_full>] [--sync-repo <auto|always|never>] [--workspace <path>]`
 - `numereng remote experiment status --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]`
 - `numereng remote experiment maintain --target <id> --experiment-id <id> [--start-index <n>] [--end-index <n>] [--workspace <path>]`

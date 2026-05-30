@@ -168,7 +168,7 @@ Command families:
 - `store`: `init`, `index`, `rebuild`, `doctor`, `backfill-run-execution`, `repair-run-lifecycles`, `materialize-viz-artifacts`
 - `monitor`: `snapshot`
 - `viz`
-- `remote`: `list`, `bootstrap-viz`, `doctor`, `repo sync`, `experiment sync`, `experiment pull`, `experiment launch`, `experiment status`, `experiment maintain`, `experiment stop`, `config push`, `run train`
+- `remote`: `list`, `bootstrap-viz`, `doctor`, `repo sync`, `experiment sync`, `experiment fetch`, `experiment pull`, `experiment launch`, `experiment status`, `experiment maintain`, `experiment stop`, `config push`, `run train`
 - `cloud`: `ec2`, `aws`, `modal`
 - `numerai`: `datasets` (`list`, `download`), `models`, `round`, `forum scrape`
 

@@ -29,6 +29,18 @@ Sync the current repo checkout to a remote target:
 uv run numereng remote repo sync --target <target_id>
 ```
 
+## Experiment Record Direction Model
+
+There are three `remote experiment` verbs with distinct data directions:
+
+| Verb | Direction | What it moves |
+| ---- | --------- | ------------- |
+| `remote experiment sync` | PUSH ↑ | Authoring bundle: `EXPERIMENT.md`, `run_plan.csv`, `configs/`, `run_scripts/`. Does **not** push the `agentic_research/` record. |
+| `remote experiment fetch` | PULL ↓ | Experiment record written by the controller: `agentic_research/` (state.json, trace.jsonl, rounds/), `configs/`, `EXPERIMENT.md`, `run_plan.csv`, `run_scripts/`. Does **not** pull `runs/` artifacts. |
+| `remote experiment pull --mode scoring\|full` | PULL ↓ | Run artifacts only: `runs/<run_id>/` subtree. Does **not** touch the experiment record. |
+
+**Direction gotcha — do not use `sync` to "pull" remote state.** Running `remote experiment sync` when the remote is ahead (e.g., the controller has updated `run_plan.csv` or `EXPERIMENT.md`) will overwrite the remote’s newer files with your stale local copies. Use `remote experiment fetch` when you want to bring the controller-written experiment record back to your local machine.
+
 Push only one experiment’s authoring files:
 
 ```bash
@@ -36,6 +48,16 @@ uv run numereng remote experiment sync \
   --target <target_id> \
   --experiment-id <experiment_id>
 ```
+
+Pull the experiment record (controller-written state) from remote down to the local store:
+
+```bash
+uv run numereng remote experiment fetch \
+  --target <target_id> \
+  --experiment-id <experiment_id>
+```
+
+The fetch is incremental (tracked via a `experiment_fetch__<id>.json` marker) and idempotent; re-running it is safe.
 
 Launch one experiment window remotely:
 
@@ -119,8 +141,9 @@ Re-run the command per experiment. `scoring` is idempotent and also upgrades to 
 
 - `remote repo sync` mirrors the git-visible working tree only.
 - It does **not** sync the full `.numereng/` runtime store.
-- `remote experiment sync` mirrors experiment authoring files only.
-- `remote experiment pull --mode <scoring|full>` materializes eligible finished remote runs into local `.numereng/runs/<run_id>/`.
+- `remote experiment sync` mirrors experiment authoring files **up** to the remote (PUSH). It does not pull.
+- `remote experiment fetch` pulls the controller-written experiment record **down** from the remote (PULL). It does not pull `runs/` artifacts.
+- `remote experiment pull --mode <scoring|full>` materializes eligible finished remote runs into local `.numereng/runs/<run_id>/`. It does not touch the experiment record.
 
 ## Local State And Artifacts
 
@@ -135,6 +158,7 @@ Pulled finished runs become normal local runs under `.numereng/runs/`, so later 
 
 - remote targets are declarative; the target definition must already exist and be valid
 - repo sync excludes `.numereng/`, env files, and local machine-specific profiles
+- **do not run `remote experiment sync` to retrieve remote state** — it pushes your local authoring files to the remote and will clobber a remote `run_plan.csv` or `EXPERIMENT.md` that is ahead of your local copy; use `remote experiment fetch` instead
 - experiment pull only materializes finished runs; incomplete remote runs stay remote
 - remote experiment launch/status/maintain/stop operate on explicit experiment windows, so keep the same target, experiment ID, and index window across commands
 
