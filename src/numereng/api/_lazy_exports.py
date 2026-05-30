@@ -76,6 +76,7 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "remote_bootstrap_viz": ("numereng.api._remote", "remote_bootstrap_viz"),
     "remote_config_push": ("numereng.api._remote", "remote_config_push"),
     "remote_doctor": ("numereng.api._remote", "remote_doctor"),
+    "remote_experiment_fetch": ("numereng.api._remote", "remote_experiment_fetch"),
     "remote_experiment_launch": ("numereng.api._remote", "remote_experiment_launch"),
     "remote_experiment_maintain": ("numereng.api._remote", "remote_experiment_maintain"),
     "remote_experiment_pull": ("numereng.api._remote", "remote_experiment_pull"),

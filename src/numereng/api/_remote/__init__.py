@@ -11,6 +11,7 @@ from numereng.api._remote.launch import (
 )
 from numereng.api._remote.sync import (
     remote_config_push,
+    remote_experiment_fetch,
     remote_experiment_pull,
     remote_experiment_sync,
     remote_repo_sync,
@@ -18,6 +19,7 @@ from numereng.api._remote.sync import (
 from numereng.api._remote.targets import remote_bootstrap_viz, remote_doctor, remote_list_targets
 from numereng.features.remote_ops import bootstrap_viz_remotes as bootstrap_viz_remotes_record
 from numereng.features.remote_ops import doctor_remote_target as doctor_remote_target_record
+from numereng.features.remote_ops import fetch_remote_experiment as fetch_remote_experiment_record
 from numereng.features.remote_ops import list_remote_targets as list_remote_targets_record
 from numereng.features.remote_ops import pull_remote_experiment as pull_remote_experiment_record
 from numereng.features.remote_ops import push_remote_config as push_remote_config_record
@@ -37,6 +39,7 @@ __all__ = [
     "remote_doctor",
     "remote_experiment_status",
     "remote_experiment_stop",
+    "remote_experiment_fetch",
     "remote_experiment_pull",
     "remote_experiment_sync",
     "remote_list_targets",

@@ -846,3 +846,70 @@ def test_pull_remote_experiment_scoring_mode_skips_when_local_is_full(
     assert result.already_materialized_run_ids == ("run-a",)
     assert result.materialized_run_ids == ()
     assert result.partially_materialized_run_ids == ()
+
+
+def _build_record_archive(archive_path: Path, files: dict[str, bytes]) -> str:
+    import hashlib
+    import zipfile
+
+    from numereng.features.remote_ops.sync import _SYNC_MANIFEST_NAME
+
+    records = [
+        {"path": path, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)} for path, data in files.items()
+    ]
+    manifest = {"version": 1, "scope": "experiment:exp-1", "files": records}
+    manifest["manifest_hash"] = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path, data in files.items():
+            archive.writestr(path, data)
+        archive.writestr(_SYNC_MANIFEST_NAME, json.dumps(manifest, sort_keys=True))
+    return str(manifest["manifest_hash"])
+
+
+def test_fetch_remote_experiment_extracts_record_into_local_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shutil
+
+    store_root = tmp_path / ".numereng"
+    files = {
+        "agentic_research/state.json": b'{"next_round_number": 521}',
+        "agentic_research/rounds/r001.md": b"# r001",
+        "configs/config_001.json": b"{}",
+        "EXPERIMENT.md": b"# exp",
+        "run_plan.csv": b"plan_index,round\n1,r001\n",
+    }
+    prebuilt = tmp_path / "remote_record.zip"
+    manifest_hash = _build_record_archive(prebuilt, files)
+    payload = json.dumps(
+        {"archive_path": "C:/remote/store/tmp/remote_ops/fetch/exp-1.zip", "manifest_hash": manifest_hash}
+    ).encode("utf-8")
+
+    def fake_run(command: list[str], *args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.CompletedProcess(command, 0, stdout=payload, stderr=b"")
+
+    def fake_scp(*, target: object, remote_paths: tuple[str, ...], destination_dir: Path, allow_missing: bool) -> None:
+        dest = Path(destination_dir) / Path(remote_paths[0].replace("\\", "/")).name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(prebuilt, dest)
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(remote_service.subprocess, "run", fake_run)
+    monkeypatch.setattr(remote_service, "_scp_remote_files", fake_scp)
+
+    result = remote_service.fetch_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
+
+    exp_dir = store_root / "experiments" / "exp-1"
+    assert (exp_dir / "agentic_research" / "state.json").read_bytes() == files["agentic_research/state.json"]
+    assert (exp_dir / "agentic_research" / "rounds" / "r001.md").exists()
+    assert (exp_dir / "run_plan.csv").exists()
+    # Run artifacts are never part of the record fetch.
+    assert not (exp_dir / "runs").exists()
+    assert result.experiment_id == "exp-1"
+    assert result.fetched_files == len(files)
+    assert result.deleted_files == 0
+    assert result.manifest_hash == manifest_hash
+    assert Path(result.local_marker_path).is_file()

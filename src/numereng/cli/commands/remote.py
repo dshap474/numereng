@@ -38,7 +38,9 @@ def handle_remote_command(args: Sequence[str]) -> int:
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "stop":
         return _handle_remote_experiment_stop(args[2:])
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "sync":
-        return _handle_remote_experiment_sync(args[2:])
+        return _handle_remote_experiment_record_command(args[2:], command="sync")
+    if args[0] == "experiment" and len(args) >= 2 and args[1] == "fetch":
+        return _handle_remote_experiment_record_command(args[2:], command="fetch")
     if args[0] == "experiment" and len(args) >= 2 and args[1] == "pull":
         return _handle_remote_experiment_pull(args[2:])
     if args[0] == "config" and len(args) >= 2 and args[1] == "push":
@@ -160,7 +162,8 @@ def _handle_remote_repo_sync(args: Sequence[str]) -> int:
     return 0
 
 
-def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
+def _handle_remote_experiment_record_command(args: Sequence[str], *, command: str) -> int:
+    """Handle ``experiment sync`` (push) and ``experiment fetch`` (pull) — same args."""
     values, _, parse_error = _parse_simple_options(args, value_flags={"--target", "--experiment-id", "--workspace"})
     if parse_error == "__help__":
         print(USAGE)
@@ -179,14 +182,24 @@ def _handle_remote_experiment_sync(args: Sequence[str]) -> int:
         print("missing required argument: --experiment-id", file=sys.stderr)
         print(USAGE, file=sys.stderr)
         return 2
+    workspace_root = values.get("--workspace", ".")
     try:
-        payload = api.remote_experiment_sync(
-            api.RemoteExperimentSyncRequest(
-                target_id=target_id,
-                experiment_id=experiment_id,
-                workspace_root=values.get("--workspace", "."),
+        if command == "fetch":
+            payload = api.remote_experiment_fetch(
+                api.RemoteExperimentFetchRequest(
+                    target_id=target_id,
+                    experiment_id=experiment_id,
+                    workspace_root=workspace_root,
+                )
             )
-        )
+        else:
+            payload = api.remote_experiment_sync(
+                api.RemoteExperimentSyncRequest(
+                    target_id=target_id,
+                    experiment_id=experiment_id,
+                    workspace_root=workspace_root,
+                )
+            )
     except ValidationError as exc:
         print(_validation_error_message(exc), file=sys.stderr)
         print(USAGE, file=sys.stderr)

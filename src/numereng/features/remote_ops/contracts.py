@@ -72,6 +72,21 @@ class RemoteExperimentSyncResult:
 
 
 @dataclass(frozen=True)
+class RemoteExperimentFetchResult:
+    """Result of fetching one experiment record from a target into local storage."""
+
+    target_id: str
+    experiment_id: str
+    local_experiment_dir: Path
+    remote_experiment_dir: str
+    manifest_hash: str
+    fetched_files: int
+    deleted_files: int
+    fetched_at: str
+    local_marker_path: Path
+
+
+@dataclass(frozen=True)
 class RemoteExperimentPullFailure:
     """One run-level failure encountered during remote pullback."""
 
@@ -218,6 +233,7 @@ __all__ = [
     "RemoteBootstrapStatus",
     "RemoteConfigPushResult",
     "RemoteDoctorResult",
+    "RemoteExperimentFetchResult",
     "RemoteExperimentPullFailure",
     "RemoteExperimentPullResult",
     "RemoteExperimentLaunchResult",

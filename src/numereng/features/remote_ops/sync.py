@@ -345,13 +345,180 @@ if __name__ == "__main__":
 """.strip()
 
 
+@dataclass(frozen=True)
+class FetchExtractResult:
+    """Outcome of extracting a fetched archive into the local store."""
+
+    manifest_hash: str
+    fetched_files: int
+    deleted_files: int
+
+
+def build_experiment_fetch_marker_path(*, store_root: Path, target_id: str, experiment_id: str) -> Path:
+    """Return the local marker path tracking the last fetched experiment record.
+
+    Kept distinct from the push marker (``experiment__<id>.json``) so pulling the
+    record down never confuses the next push into thinking files were deleted.
+    """
+
+    file_name = f"experiment_fetch__{_safe_name(experiment_id)}.json"
+    return store_root / _REMOTE_SYNC_DIR[0] / _REMOTE_SYNC_DIR[1] / target_id / file_name
+
+
+def remote_pack_script() -> str:
+    """Return the remote Python source that archives one directory to a temp file.
+
+    Mirrors ``_build_archive``: walks ``source_root`` recursively, writes a
+    ZIP_DEFLATED archive plus the shared manifest to ``archive_path`` on the
+    remote host, and prints a JSON summary the local side reads back.
+    """
+
+    return r"""
+import hashlib
+import json
+import sys
+import zipfile
+from pathlib import Path
+
+
+def main() -> None:
+    if len(sys.argv) != 5:
+        raise SystemExit("remote_fetch_arguments_invalid")
+    source_root = Path(sys.argv[1]).expanduser().resolve()
+    archive_path = Path(sys.argv[2]).expanduser()
+    scope = sys.argv[3]
+    manifest_name = sys.argv[4]
+    if not source_root.is_dir():
+        raise SystemExit("remote_fetch_source_missing:" + str(source_root))
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_records = []
+    with zipfile.ZipFile(archive_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(p for p in source_root.rglob("*") if p.is_file()):
+            relpath = path.relative_to(source_root).as_posix()
+            data = path.read_bytes()
+            file_records.append(
+                {"path": relpath, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+            )
+            archive.writestr(relpath, data)
+        manifest = {"version": 1, "scope": scope, "files": file_records}
+        manifest["manifest_hash"] = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        archive.writestr(manifest_name, json.dumps(manifest, sort_keys=True))
+
+    print(
+        json.dumps(
+            {
+                "archive_path": str(archive_path),
+                "manifest_hash": manifest["manifest_hash"],
+                "file_count": len(file_records),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
+def _safe_local_path(root: Path, relpath: str) -> Path:
+    candidate = (root.joinpath(*relpath.split("/"))).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise RuntimeError(f"remote_fetch_path_escape:{relpath}")
+    return candidate
+
+
+def _cleanup_empty_parents_local(path: Path, root: Path) -> None:
+    parent = path.parent
+    while parent != root and parent.exists():
+        try:
+            parent.rmdir()
+        except OSError:
+            return
+        parent = parent.parent
+
+
+def extract_archive_to_local(
+    *,
+    archive_path: Path,
+    destination_root: Path,
+    marker_path: Path | None,
+    manifest_name: str = _SYNC_MANIFEST_NAME,
+) -> FetchExtractResult:
+    """Extract a fetched archive into ``destination_root`` with incremental delete.
+
+    Files listed in ``marker_path`` but absent from the new manifest are removed,
+    mirroring the remote unpack semantics; everything in the manifest is written.
+    """
+
+    destination_root.mkdir(parents=True, exist_ok=True)
+    destination_root = destination_root.resolve()
+    with zipfile.ZipFile(archive_path) as archive:
+        manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
+        current_files = {
+            str(item["path"]) for item in manifest.get("files", []) if isinstance(item, dict) and item.get("path")
+        }
+        previous_files: set[str] = set()
+        if marker_path is not None and marker_path.is_file():
+            try:
+                previous = json.loads(marker_path.read_text(encoding="utf-8"))
+                previous_files = {str(item) for item in previous.get("files", []) if isinstance(item, str)}
+            except (OSError, json.JSONDecodeError):
+                previous_files = set()
+
+        deleted: list[str] = []
+        for relpath in sorted(previous_files - current_files, reverse=True):
+            target = _safe_local_path(destination_root, relpath)
+            if target.is_file():
+                target.unlink()
+                deleted.append(relpath)
+                _cleanup_empty_parents_local(target, destination_root)
+
+        for file_entry in manifest.get("files", []):
+            if not isinstance(file_entry, dict):
+                continue
+            relpath = str(file_entry.get("path"))
+            target = _safe_local_path(destination_root, relpath)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(relpath))
+
+    manifest_hash = str(manifest.get("manifest_hash", ""))
+    if marker_path is not None:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(
+            json.dumps(
+                {
+                    "scope": manifest.get("scope"),
+                    "manifest_hash": manifest_hash,
+                    "files": sorted(current_files),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    return FetchExtractResult(
+        manifest_hash=manifest_hash,
+        fetched_files=len(current_files),
+        deleted_files=len(deleted),
+    )
+
+
 __all__ = [
+    "FetchExtractResult",
     "SyncEntry",
     "SyncExecutionResult",
+    "build_experiment_fetch_marker_path",
     "build_experiment_marker_paths",
     "build_repo_marker_paths",
+    "extract_archive_to_local",
     "remote_config_destination",
     "remote_experiment_metadata_path",
+    "remote_pack_script",
     "remote_repo_metadata_path",
     "sync_entries_to_remote",
 ]

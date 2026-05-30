@@ -7,6 +7,8 @@ from numereng.api._remote.mappers import pull_failure_response
 from numereng.api.contracts import (
     RemoteConfigPushRequest,
     RemoteConfigPushResponse,
+    RemoteExperimentFetchRequest,
+    RemoteExperimentFetchResponse,
     RemoteExperimentPullRequest,
     RemoteExperimentPullResponse,
     RemoteExperimentSyncRequest,
@@ -55,6 +57,28 @@ def remote_experiment_sync(request: RemoteExperimentSyncRequest) -> RemoteExperi
         synced_at=result.synced_at,
         local_marker_path=str(result.local_marker_path),
         remote_marker_path=result.remote_marker_path,
+    )
+
+
+def remote_experiment_fetch(request: RemoteExperimentFetchRequest) -> RemoteExperimentFetchResponse:
+    try:
+        result = remote_api_module.fetch_remote_experiment_record(
+            target_id=request.target_id,
+            experiment_id=request.experiment_id,
+            store_root=request.store_root,
+        )
+    except Exception as exc:
+        raise PackageError(str(exc)) from exc
+    return RemoteExperimentFetchResponse(
+        target_id=result.target_id,
+        experiment_id=result.experiment_id,
+        local_experiment_dir=str(result.local_experiment_dir),
+        remote_experiment_dir=result.remote_experiment_dir,
+        manifest_hash=result.manifest_hash,
+        fetched_files=result.fetched_files,
+        deleted_files=result.deleted_files,
+        fetched_at=result.fetched_at,
+        local_marker_path=str(result.local_marker_path),
     )
 
 

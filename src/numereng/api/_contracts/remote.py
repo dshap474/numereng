@@ -103,6 +103,23 @@ class RemoteExperimentSyncResponse(BaseModel):
     remote_marker_path: str
 
 
+class RemoteExperimentFetchRequest(WorkspaceBoundRequest):
+    target_id: str
+    experiment_id: str
+
+
+class RemoteExperimentFetchResponse(BaseModel):
+    target_id: str
+    experiment_id: str
+    local_experiment_dir: str
+    remote_experiment_dir: str
+    manifest_hash: str
+    fetched_files: int
+    deleted_files: int
+    fetched_at: str
+    local_marker_path: str
+
+
 RemoteExperimentPullMode = Literal["scoring", "full"]
 
 
@@ -256,6 +273,8 @@ __all__ = [
     "RemoteDoctorResponse",
     "RemoteExperimentLaunchRequest",
     "RemoteExperimentLaunchResponse",
+    "RemoteExperimentFetchRequest",
+    "RemoteExperimentFetchResponse",
     "RemoteExperimentMaintainRequest",
     "RemoteExperimentMaintainResponse",
     "RemoteExperimentPullFailureResponse",

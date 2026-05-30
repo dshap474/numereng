@@ -26,6 +26,7 @@ from numereng.features.remote_ops.contracts import (
     RemoteBootstrapStatus,
     RemoteConfigPushResult,
     RemoteDoctorResult,
+    RemoteExperimentFetchResult,
     RemoteExperimentLaunchResult,
     RemoteExperimentMaintainResult,
     RemoteExperimentPullFailure,
@@ -41,11 +42,15 @@ from numereng.features.remote_ops.contracts import (
     RemoteVizBootstrapTargetResult,
 )
 from numereng.features.remote_ops.sync import (
+    _SYNC_MANIFEST_NAME,
     SyncEntry,
+    build_experiment_fetch_marker_path,
     build_experiment_marker_paths,
     build_repo_marker_paths,
+    extract_archive_to_local,
     remote_config_destination,
     remote_experiment_metadata_path,
+    remote_pack_script,
     remote_repo_metadata_path,
     sync_entries_to_remote,
 )
@@ -305,6 +310,104 @@ def sync_remote_experiment(
         local_marker_path=outcome.local_marker_path or local_marker_path,
         remote_marker_path=outcome.remote_marker_path or remote_marker_path,
     )
+
+
+def fetch_remote_experiment(
+    *,
+    target_id: str,
+    experiment_id: str,
+    store_root: str | Path = ".numereng",
+) -> RemoteExperimentFetchResult:
+    """Fetch one experiment record from a target into canonical local storage.
+
+    The inverse of :func:`sync_remote_experiment`: pulls the remote
+    ``experiments/<id>/`` bundle (agentic_research state/trace/rounds, configs,
+    EXPERIMENT.md, run_plan.csv, run_scripts) down into the local store. Run
+    artifacts under ``runs/`` are intentionally excluded — use
+    :func:`pull_remote_experiment` for those. Incremental via a fetch-only marker.
+    """
+
+    target = _get_target(target_id)
+    resolved_store_root = resolve_store_root(store_root)
+    fetched_at = _utc_now_iso()
+    remote_experiment_dir = remote_path_join(target, target.store_root, "experiments", experiment_id)
+    remote_archive_path = remote_path_join(
+        target, target.store_root, "tmp", "remote_ops", "fetch", f"{_safe_name(experiment_id)}.zip"
+    )
+
+    pack_command = build_remote_python_command(
+        target,
+        remote_pack_script(),
+        args=[remote_experiment_dir, remote_archive_path, f"experiment:{experiment_id}", _SYNC_MANIFEST_NAME],
+        cwd=target.repo_root,
+    )
+    result = subprocess.run(
+        build_ssh_command(target, pack_command),
+        capture_output=True,
+        timeout=max(target.command_timeout_seconds, _SYNC_TIMEOUT_SECONDS),
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RemoteExecutionError(f"remote_experiment_fetch_pack_failed:{stderr or result.returncode}")
+    payload = _extract_json_object(result.stdout.decode("utf-8", errors="replace"))
+    if payload is None or not payload.get("archive_path"):
+        raise RemoteExecutionError("remote_experiment_fetch_missing_manifest")
+
+    experiments_root = resolve_workspace_layout_from_store_root(resolved_store_root).experiments_root
+    local_experiment_dir = experiments_root / experiment_id
+    marker_path = build_experiment_fetch_marker_path(
+        store_root=resolved_store_root, target_id=target.id, experiment_id=experiment_id
+    )
+    staging_dir = _remote_fetch_staging_dir(resolved_store_root, experiment_id=experiment_id)
+    try:
+        _scp_remote_files(
+            target=target,
+            remote_paths=(str(payload["archive_path"]),),
+            destination_dir=staging_dir,
+            allow_missing=False,
+        )
+        local_archive = staging_dir / Path(str(payload["archive_path"]).replace("\\", "/")).name
+        extracted = extract_archive_to_local(
+            archive_path=local_archive,
+            destination_root=local_experiment_dir,
+            marker_path=marker_path,
+        )
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        _best_effort_remote_remove(target=target, remote_path=remote_archive_path)
+
+    return RemoteExperimentFetchResult(
+        target_id=target.id,
+        experiment_id=experiment_id,
+        local_experiment_dir=local_experiment_dir,
+        remote_experiment_dir=remote_experiment_dir,
+        manifest_hash=extracted.manifest_hash,
+        fetched_files=extracted.fetched_files,
+        deleted_files=extracted.deleted_files,
+        fetched_at=fetched_at,
+        local_marker_path=marker_path,
+    )
+
+
+def _remote_fetch_staging_dir(store_root: Path, *, experiment_id: str) -> Path:
+    staging_root = store_root / _REMOTE_PULL_STAGING_DIR[0] / _REMOTE_PULL_STAGING_DIR[1] / _REMOTE_PULL_STAGING_DIR[2]
+    staging_root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f"{_safe_name(experiment_id)}-fetch-", dir=staging_root))
+
+
+def _best_effort_remote_remove(*, target: SshRemoteTargetProfile, remote_path: str) -> None:
+    script = "import os, sys\np = sys.argv[1]\nos.remove(p) if os.path.exists(p) else None"
+    command = build_remote_python_command(target, script, args=[remote_path], cwd=target.repo_root)
+    try:
+        subprocess.run(
+            build_ssh_command(target, command),
+            capture_output=True,
+            timeout=target.command_timeout_seconds,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        pass
 
 
 def pull_remote_experiment(
