@@ -66,30 +66,37 @@ round and you will see the error in `recent_rounds`:
 
 **Rule: at most ONE unconfirmed candidate in flight at a time.** Before proposing a new
 discovery probe, scan `context.confirmations`. If any config has `seeds_completed` with 1 or 2
-entries (not yet 3) AND its seed-42 `bmc_last_200_eras_mean` is more than `3e-4` **above** the
-current champion's seed-42 score (or above the baseline if no champion exists), you MUST propose
-the next seed in the canonical trio for that config instead of a fresh discovery probe.
+entries (not yet 3) AND its seed-42 `bmc_last_200_eras_mean` beats the current champion's
+**3-seed trio mean** (`confirmed_champion.seed_trio_primary_mean`, or the seed-42 baseline if no
+champion exists), you MUST propose the next seed in the canonical trio for that config instead of
+a fresh discovery probe.
 
-**Do NOT confirm a tie.** A probe whose seed-42 score merely ties the champion (within the `3e-4`
-noise floor) is not a candidate — it is statistically the same model. Confirming it spends two
-rounds to produce a "confirmed-but-not-champion" non-result. The discovery seed is auto-credited,
-so a tied probe already sits at 1 seed in `confirmations`; leave it there and keep exploring.
-Confirm only candidates that genuinely *beat* the champion's seed-42 by `>3e-4`.
+**Compare against the champion's trio mean, NOT its luckiest single seed.** A challenger's own
+trio mean is what it will be promoted against, so the fair bar for "worth confirming" is the
+champion's trio mean. Gating entry on the champion's best single seed sets a bar the search space
+may never reach and suppresses every legitimate challenger — this exact mistake wasted hundreds of
+rounds in a prior run (see ADR 2026-05-31).
 
-Why this matters: single-seed scores have noise ~`3e-4`. Confirming every near-tie turns the
-search into a treadmill of two-round confirmations that close as non-champions, burning most of
-the budget in the exploit regime. Confirming only true beats keeps each confirmation pointed at
-real progress, and the plateau counter then reflects real exploration depth.
+**Do NOT confirm a tie.** A probe whose seed-42 score merely ties the champion's trio mean (within
+the `3e-4` single-seed noise floor) is not worth two confirmation rounds. The discovery seed is
+auto-credited, so a tied probe already sits at 1 seed in `confirmations`; leave it there and keep
+exploring. Confirm a candidate when its seed-42 clears the champion's trio mean — a single seed
+above the trio bar is a genuine signal worth the 2-round trio test.
 
-A 3-seed confirmation that fails to beat the current champion by `>3e-4` is still valuable: it
-closes the candidate and resets the cycling counter. Record it in `EXPERIMENT.md` as
-"confirmed-but-not-champion" and continue.
+Why this matters: single-seed scores have noise ~`3e-4`, so a single seed above the champion's
+trio mean is not yet proof — that is exactly why you spend two rounds running the rest of the trio.
+The trio mean averages that noise down; the promotion gate below uses the smaller trio-mean margin.
+
+A 3-seed confirmation that fails to promote is still valuable: it closes the candidate and resets
+the cycling counter. Record it in `EXPERIMENT.md` as "confirmed-but-not-champion" and continue.
 
 ### Plateau And Progress Semantics
 
 The plateau counter measures consecutive `run` rounds since the last **true** improvement. A
 true improvement is a NEW 3-seed champion: a confirmed candidate whose `seed_trio_primary_mean`
-exceeds the prior champion's `seed_trio_primary_mean` by more than `3e-4`.
+exceeds the prior champion's `seed_trio_primary_mean` by more than `1.5e-4` (the trio-mean
+standard error ≈ single-seed noise / √3 — a 3-seed mean already suppresses single-seed noise, so
+the promotion margin is below the `3e-4` single-seed floor).
 
 - Single-seed wins, however large, do NOT reset the plateau counter.
 - A completed seed-trio that does NOT become the new champion does NOT reset the plateau counter.

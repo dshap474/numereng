@@ -91,7 +91,7 @@ At round 71 the controller emitted `phase_transition_deferred` with reason `defe
 `_has_inflight_confirmation` now counts an entry as a genuine in-flight trio only if EITHER:
 
 - **(a)** it has completed a non-discovery canonical seed (17 or 99) — only an explicit confirmation round ever runs those, OR
-- **(b)** its seed-42 metric clears the confirmation threshold (`champion_seed42_metric + CONFIRMATION_PROMOTION_THRESHOLD = 3e-4`), i.e. it is a real champion candidate about to cross the boundary.
+- **(b)** its seed-42 metric clears the confirmation threshold (`champion_seed42_metric + CONFIRMATION_PROMOTION_THRESHOLD = 3e-4`), i.e. it is a real champion candidate about to cross the boundary. **[Superseded 2026-05-31 — ADR `2026-05-31-agentic-research-confirmation-comparand.md`: the comparand for (b) is now the champion's trio mean, not seed-42 + 3e-4.]**
 
 This fixes the permanent-lock bug while preserving F5's original goal (a late-discovered champion still defers transition so it is credited to its discovering phase). Three regression tests added, including an end-to-end test that simulates the round-71 scenario (met-threshold boundary whose confirmations are all sub-threshold discovery seed-42 auto-credits) and asserts the transition fires rather than defers.
 

@@ -1350,7 +1350,7 @@ def test_confirmation_not_detected_when_multiple_changes() -> None:
 
 
 def test_confirmation_promotion_when_seed_trio_beats_champion() -> None:
-    """Complete seeds 42/17/99 with mean above champion+3e-4 → confirmed_champion updated."""
+    """Complete seeds 42/17/99 with no prior champion → confirmed_champion set."""
     state: dict[str, object] = {"phase": "shallow"}
     for seed, metric, run_id in [(42, 0.0031, "run-42"), (17, 0.0033, "run-17"), (99, 0.0032, "run-99")]:
         research_module._record_confirmation_attempt(
@@ -1374,7 +1374,7 @@ def test_confirmation_promotion_when_seed_trio_beats_champion() -> None:
 
 
 def test_confirmation_no_promotion_when_below_threshold() -> None:
-    """New trio mean only beats champion by less than 3e-4 → no promotion."""
+    """New trio mean beats champion by less than CONFIRMATION_PROMOTION_MARGIN → no promotion."""
     state: dict[str, object] = {
         "phase": "medium",
         "confirmed_champion": {
@@ -1399,6 +1399,34 @@ def test_confirmation_no_promotion_when_below_threshold() -> None:
     assert promotion is None
     champion = cast(dict[str, object], state["confirmed_champion"])
     assert champion["parent_config"] == "config_023.json"
+
+
+def test_confirmation_promotes_above_trio_margin_below_old_threshold() -> None:
+    """Regression for ADR 2026-05-31 (§7C flaw 2): a trio mean that beats the
+    champion by MORE than the trio-mean margin (1.5e-4) but LESS than the old
+    single-seed floor (3e-4) must now promote — the old gate wrongly rejected it."""
+    margin = research_module.CONFIRMATION_PROMOTION_MARGIN
+    assert margin < 3e-4  # the fix: trio margin is below the single-seed noise floor
+    champion_mean = 0.0035
+    challenger_mean = champion_mean + 2.0e-4  # between 1.5e-4 and 3e-4
+    state: dict[str, object] = {
+        "phase": "deep",
+        "confirmed_champion": {"parent_config": "config_040.json", "seed_trio_primary_mean": champion_mean},
+    }
+    for seed in (42, 17, 99):
+        research_module._record_confirmation_attempt(
+            state=state,
+            parent_config="config_232.json",
+            seed=seed,
+            run_id=f"run-{seed}",
+            metric_value=challenger_mean,  # equal seeds → trio mean == challenger_mean
+            round_number=232,
+        )
+    promotion = research_module._maybe_promote_confirmation(
+        state=state, parent_config="config_232.json", round_number=233
+    )
+    assert promotion is not None
+    assert cast(dict[str, object], state["confirmed_champion"])["parent_config"] == "config_232.json"
 
 
 def test_consecutive_failures_bail_after_threshold(
@@ -1839,20 +1867,21 @@ def test_has_inflight_confirmation_recency_and_completion() -> None:
 
 
 def test_inflight_confirmation_ignores_discovery_seed42_autocredit() -> None:
-    """A recent seed-42-only entry whose metric is below the confirmation
-    threshold is an ordinary discovery auto-credit, NOT an in-flight trio.
+    """A recent seed-42-only entry whose metric is below the champion trio mean is
+    an ordinary discovery auto-credit, NOT an in-flight trio.
 
     Reproduces the production lock: every discovery round auto-credits seed 42,
     so without this guard the phase transition would defer on every round."""
     state: dict[str, object] = {
-        "confirmed_champion": {"parent_config": "config_040.json"},
+        # Champion trio mean (0.0035) is the comparand; its luckiest seed (0.00393) is not.
+        "confirmed_champion": {"parent_config": "config_040.json", "seed_trio_primary_mean": 0.0035},
         "confirmations": {
-            "config_040.json": {  # champion: seed-42 metric defines the threshold (0.00393 + 3e-4)
+            "config_040.json": {
                 "seeds_completed": [42, 17, 99],
                 "promoted_at_round": 42,
                 "primary_metric_by_seed": {"42": 0.00393},
             },
-            "config_070.json": {  # recent sub-threshold discovery (below 0.00423)
+            "config_070.json": {  # recent discovery below the champion trio mean
                 "seeds_completed": [42],
                 "last_attempt_at_round": 70,
                 "primary_metric_by_seed": {"42": 0.0034},
@@ -1862,22 +1891,24 @@ def test_inflight_confirmation_ignores_discovery_seed42_autocredit() -> None:
     assert research_module._has_inflight_confirmation(state, round_number=71) is False
 
 
-def test_inflight_confirmation_defers_for_above_threshold_seed42_candidate() -> None:
-    """A recent seed-42-only entry whose metric CLEARS the confirmation threshold
-    is a real champion candidate about to be confirmed — defer so it is credited
-    to its discovering phase. This preserves the original F5 goal."""
+def test_inflight_confirmation_defers_for_above_trio_mean_seed42_candidate() -> None:
+    """A recent seed-42-only entry that beats the champion's TRIO MEAN is a real
+    champion candidate about to be confirmed — defer so it is credited to its
+    discovering phase. Uses the real r232 scenario: seed-42 0.00397 sits above the
+    champion trio mean (0.0035) but BELOW the champion's seed-42 (0.00393) + the old
+    3e-4 bar (0.00423) — under the old comparand this challenger was wrongly ignored."""
     state: dict[str, object] = {
-        "confirmed_champion": {"parent_config": "config_040.json"},
+        "confirmed_champion": {"parent_config": "config_040.json", "seed_trio_primary_mean": 0.0035},
         "confirmations": {
             "config_040.json": {
                 "seeds_completed": [42, 17, 99],
                 "promoted_at_round": 42,
                 "primary_metric_by_seed": {"42": 0.00393},
             },
-            "config_072.json": {  # seed-42-only but clears 0.00393 + 3e-4 = 0.00423
+            "config_232.json": {  # seed-42 above champion trio mean → a real candidate
                 "seeds_completed": [42],
                 "last_attempt_at_round": 72,
-                "primary_metric_by_seed": {"42": 0.0050},
+                "primary_metric_by_seed": {"42": 0.00397},
             },
         },
     }
@@ -1901,7 +1932,7 @@ def test_phase_transition_proceeds_despite_discovery_seed42_autocredits() -> Non
         "phase_plateau_counter": 2,
         "phase_successful_rounds": 2,
         "phase_history": [],
-        "confirmed_champion": {"parent_config": "config_040.json"},
+        "confirmed_champion": {"parent_config": "config_040.json", "seed_trio_primary_mean": 0.0035},
         "confirmations": {
             "config_040.json": {
                 "seeds_completed": [42, 17, 99],
@@ -1909,7 +1940,7 @@ def test_phase_transition_proceeds_despite_discovery_seed42_autocredits() -> Non
                 "promoted_at_round": 2,
                 "primary_metric_by_seed": {"42": 0.00393},
             },
-            "config_006.json": {
+            "config_006.json": {  # seed-42 below the champion trio mean → not a candidate
                 "seeds_completed": [42],
                 "last_attempt_at_round": 6,
                 "primary_metric_by_seed": {"42": 0.0034},

@@ -72,7 +72,12 @@ ENSEMBLE_RUN_ID_PREFIX = "ensemble:"
 _MISSING_SENTINEL: object = object()
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
-CONFIRMATION_PROMOTION_THRESHOLD = 3e-4
+# Margin a challenger's 3-seed trio mean must clear over the champion's trio mean to
+# promote. 3e-4 is the *single-seed* noise floor; a 3-seed mean already suppresses
+# that noise (standard error ~= 3e-4 / sqrt(3) ~= 1.7e-4), so gating the trio-vs-trio
+# comparison on a full single-seed margin double-counts the noise guard and makes
+# promotion unreachable near saturation. The trio-mean SE is the honest scale.
+CONFIRMATION_PROMOTION_MARGIN = 1.5e-4
 # Two single-axis discovery configs whose only difference is one param but whose
 # primary metric is identical to this tolerance are the same effective model
 # (e.g. a non-binding regularizer like XGB min_child_weight on shallow trees).
@@ -2407,9 +2412,9 @@ def _reset_plateau_on_champion_promotion(
 ) -> None:
     """Champion-promotion plateau reset, called immediately after a successful
     `_maybe_promote_confirmation`. The trio-mean improvement check already ran
-    inside `_maybe_promote_confirmation` (gated on `CONFIRMATION_PROMOTION_THRESHOLD`,
-    which equals `PHASE_IMPROVEMENT_THRESHOLD`), so a promotion event is itself
-    the signal that a true improvement occurred. We also refresh
+    inside `_maybe_promote_confirmation` (gated on `CONFIRMATION_PROMOTION_MARGIN`,
+    the trio-mean standard error), so a promotion event is itself the signal that a
+    true improvement occurred. We also refresh
     `phase_best_metric` so it tracks the current champion's trio mean rather
     than a noisy per-seed score."""
     if "phase" not in state:
@@ -2442,20 +2447,20 @@ def _has_inflight_confirmation(state: dict[str, object], round_number: int) -> b
 
     A genuine in-flight trio is one that EITHER has completed a non-discovery
     canonical seed (17 or 99 — only an explicit confirmation round runs those),
-    OR whose seed-42 metric clears the confirmation threshold (champion seed-42
-    + CONFIRMATION_PROMOTION_THRESHOLD) and is therefore a real champion
-    candidate about to be confirmed across the boundary. The recency guard
-    (`last_attempt_at_round >= round_number - 1`) keeps an abandoned partial trio
-    from blocking phase transitions forever — only a trio that is actively being
-    filled defers the transition. This prevents a champion discovered late in a
-    phase from being credited to the next phase because the transition fired
-    between its confirmation seeds."""
+    OR whose seed-42 metric beats the champion's confirmed trio mean and is
+    therefore a real champion candidate about to be confirmed across the boundary.
+    (Trio mean is the fair bar a challenger's own trio is judged against; the
+    champion's luckiest single seed is the wrong, unreachably-high comparand — see
+    ADR 2026-05-31.) The recency guard (`last_attempt_at_round >= round_number - 1`)
+    keeps an abandoned partial trio from blocking phase transitions forever — only a
+    trio that is actively being filled defers the transition. This prevents a
+    champion discovered late in a phase from being credited to the next phase because
+    the transition fired between its confirmation seeds."""
     confirmations = state.get("confirmations")
     if not isinstance(confirmations, dict):
         return False
     canonical = set(CANONICAL_SEED_TRIO)
-    champion_seed42 = _champion_seed42_metric(state)
-    candidate_threshold = champion_seed42 + CONFIRMATION_PROMOTION_THRESHOLD if champion_seed42 is not None else None
+    candidate_threshold = _champion_trio_mean_metric(state)
     for config_name, entry in confirmations.items():
         if not isinstance(entry, dict):
             continue
@@ -2982,7 +2987,7 @@ def _maybe_promote_confirmation(
         raw = prior.get("seed_trio_primary_mean")
         if isinstance(raw, (int, float)):
             prior_mean = float(raw)
-    if prior_mean is not None and mean <= prior_mean + CONFIRMATION_PROMOTION_THRESHOLD:
+    if prior_mean is not None and mean <= prior_mean + CONFIRMATION_PROMOTION_MARGIN:
         return None
     entry_raw["promoted_at_round"] = round_number
     entry_raw["promoted_in_phase"] = state.get("phase")
@@ -3139,6 +3144,20 @@ def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
         return report_experiment(store_root=root, experiment_id=experiment_id, metric=PRIMARY_METRIC, limit=25)
     except ExperimentError:
         return None
+
+
+def _champion_trio_mean_metric(state: dict[str, object]) -> float | None:
+    """Return the current champion's confirmed 3-seed trio mean, or None.
+
+    This is the fair comparand for judging a challenger: a challenger's own trio
+    mean is what it will be promoted against, so a single-seed run that beats the
+    champion's trio mean is worth the 2-round trio confirmation. (The champion's
+    luckiest single seed is the wrong, unreachably-high bar — see ADR 2026-05-31.)"""
+    champion = state.get("confirmed_champion")
+    if not isinstance(champion, dict):
+        return None
+    raw = cast(dict[str, object], champion).get("seed_trio_primary_mean")
+    return float(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
 
 
 def _champion_seed42_metric(state: dict[str, object]) -> float | None:

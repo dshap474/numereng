@@ -175,9 +175,12 @@ stateDiagram-v2
 - `parent_config` matches `config_NNN.json` and is **not** `config_001.json`
 - the seed value is an `int` (booleans rejected)
 
-Promotion threshold is `CONFIRMATION_PROMOTION_THRESHOLD = 3e-4`. A confirmed
-champion in a phase satisfies `require_confirmed_champion` for that phase's
-transition gate.
+A challenger becomes a confirmation candidate when its single seed beats the
+champion's **trio mean** (`seed_trio_primary_mean`), and promotes when its own
+trio mean clears the champion's trio mean by `CONFIRMATION_PROMOTION_MARGIN =
+1.5e-4` (the trio-mean standard error; the `3e-4` single-seed noise floor is the
+wrong scale for a 3-seed mean — see ADR 2026-05-31). A confirmed champion in a
+phase satisfies `require_confirmed_champion` for that phase's transition gate.
 
 ## 5. Cross-Machine Interactions
 
