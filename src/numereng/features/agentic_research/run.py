@@ -1004,7 +1004,10 @@ def _build_and_score_ensemble_round(
 
     blend_predictions = built.artifacts_path / "predictions.parquet"
     metric_value = _score_ensemble_predictions(
-        predictions_path=blend_predictions, target_col=target_col, scoring_params=scoring_params
+        predictions_path=blend_predictions,
+        target_col=target_col,
+        scoring_params=scoring_params,
+        target_source_dir=root / "runs" / member_ids[0],
     )
     _record_tried_ensemble(
         state,
@@ -1239,12 +1242,21 @@ def _member_predictions_exists(run_dir: Path) -> bool:
 
 
 def _score_ensemble_predictions(
-    *, predictions_path: Path, target_col: str, scoring_params: dict[str, object]
+    *, predictions_path: Path, target_col: str, scoring_params: dict[str, object], target_source_dir: Path
 ) -> float | None:
     """Score a blended prediction parquet on BMC200 via the SAME scorer single runs
     use, so the number is directly comparable. Dataset/benchmark params come from a
     member run's resolved data config (all members share one dataset). The bare
-    `bmc_last_200_eras` key resolves to the payout target (target_ender_20)."""
+    `bmc_last_200_eras` key resolves to the payout target (target_ender_20).
+
+    `build_ensemble` writes only `id/era/prediction` — it drops the trained target
+    column that single-run prediction files carry inline. The scorer requires the
+    trained `target_col` present in the file before it will dataset-join the payout
+    target, so we re-attach it from a member's prediction file (every member carries
+    its trained target, and the blend's id universe is a subset of each member's)."""
+    predictions_path = _attach_target_to_blend(
+        blend_path=predictions_path, target_col=target_col, member_run_dir=target_source_dir
+    )
     data_version = _optional_str(scoring_params.get("data_version")) or _optional_str(scoring_params.get("version"))
     if data_version is None:
         raise AgenticResearchValidationError("agentic_research_ensemble_data_version_missing")
@@ -1275,6 +1287,39 @@ def _score_ensemble_predictions(
         include_feature_neutral_metrics=False,
     )
     return _bmc200_from_summaries(summaries)
+
+
+def _attach_target_to_blend(*, blend_path: Path, target_col: str, member_run_dir: Path) -> Path:
+    """Merge the trained `target_col` into the blend predictions from a member file.
+
+    Returns a sibling `predictions_scored.parquet` with the target attached, or the
+    original path unchanged if it already carries the target. Joins on `id` (every
+    member shares the blend's id universe). Raises if no usable source is found."""
+    blend = pd.read_parquet(blend_path)
+    if target_col in blend.columns:
+        return blend_path
+    source_path = _resolve_member_prediction_file(member_run_dir)
+    if source_path is None:
+        raise AgenticResearchValidationError("agentic_research_ensemble_target_source_missing")
+    source = pd.read_parquet(source_path, columns=None)
+    if target_col not in source.columns or "id" not in source.columns:
+        raise AgenticResearchValidationError(f"agentic_research_ensemble_target_unavailable:{target_col}")
+    merged = blend.merge(source[["id", target_col]].drop_duplicates("id"), on="id", how="left")
+    if merged[target_col].isna().any():
+        raise AgenticResearchValidationError("agentic_research_ensemble_target_join_incomplete")
+    scored_path = blend_path.with_name("predictions_scored.parquet")
+    merged.to_parquet(scored_path, index=False)
+    return scored_path
+
+
+def _resolve_member_prediction_file(run_dir: Path) -> Path | None:
+    pred_dir = run_dir / "artifacts" / "predictions"
+    if pred_dir.is_dir():
+        files = sorted(item for item in pred_dir.glob("pred_*.parquet") if item.is_file())
+        if files:
+            return files[0]
+    fallback = run_dir / "predictions.parquet"
+    return fallback if fallback.is_file() else None
 
 
 def _bmc200_from_summaries(summaries: dict[str, pd.DataFrame]) -> float | None:

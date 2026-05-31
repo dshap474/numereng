@@ -3454,3 +3454,56 @@ def test_run_research_builds_and_scores_ensemble_round(
     events = {e["event"] for e in _trace_events(experiment_dir / "agentic_research" / "trace.jsonl")}
     assert "ensemble_round_completed" in events
     assert "ensemble_duplicate_skipped" in events
+
+
+def test_attach_target_to_blend_merges_target_from_member(tmp_path: Path) -> None:
+    """build_ensemble drops the trained target; the scorer needs it inline. The
+    controller must re-attach it from a member's prediction file before scoring."""
+    import pandas as pd
+
+    blend_path = tmp_path / "predictions.parquet"
+    pd.DataFrame({"id": ["i1", "i2", "i3"], "era": ["e1", "e1", "e2"], "prediction": [0.1, 0.2, 0.3]}).to_parquet(
+        blend_path, index=False
+    )
+    member_dir = tmp_path / "runs" / "run-a"
+    (member_dir / "artifacts" / "predictions").mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "id": ["i1", "i2", "i3"],
+            "era": ["e1", "e1", "e2"],
+            "target_ender_20": [0.5, 0.75, 0.25],
+            "prediction": [0.9, 0.8, 0.7],
+        }
+    ).to_parquet(member_dir / "artifacts" / "predictions" / "pred_x.parquet", index=False)
+
+    out = research_module._attach_target_to_blend(
+        blend_path=blend_path, target_col="target_ender_20", member_run_dir=member_dir
+    )
+    assert out.name == "predictions_scored.parquet"
+    scored = pd.read_parquet(out)
+    assert list(scored.columns) == ["id", "era", "prediction", "target_ender_20"]
+    assert scored["target_ender_20"].tolist() == [0.5, 0.75, 0.25]
+
+
+def test_attach_target_to_blend_passes_through_when_present(tmp_path: Path) -> None:
+    import pandas as pd
+
+    blend_path = tmp_path / "predictions.parquet"
+    pd.DataFrame({"id": ["i1"], "era": ["e1"], "prediction": [0.1], "target_ender_20": [0.5]}).to_parquet(
+        blend_path, index=False
+    )
+    out = research_module._attach_target_to_blend(
+        blend_path=blend_path, target_col="target_ender_20", member_run_dir=tmp_path / "runs" / "missing"
+    )
+    assert out == blend_path  # already inline → no rewrite, source dir never consulted
+
+
+def test_attach_target_to_blend_raises_when_source_missing(tmp_path: Path) -> None:
+    import pandas as pd
+
+    blend_path = tmp_path / "predictions.parquet"
+    pd.DataFrame({"id": ["i1"], "era": ["e1"], "prediction": [0.1]}).to_parquet(blend_path, index=False)
+    with pytest.raises(research_module.AgenticResearchValidationError, match="target_source_missing"):
+        research_module._attach_target_to_blend(
+            blend_path=blend_path, target_col="target_ender_20", member_run_dir=tmp_path / "runs" / "absent"
+        )
