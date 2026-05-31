@@ -535,6 +535,12 @@ cli research status|run
       - the LLM sees configs, report rows, experiment notes, recent decision rows, research memory, and the latest rolling round markdown
       - the LLM returns schema-constrained `decision_form` plus cumulative `round_markdown`
       - `trace.jsonl` keeps the full prompt/raw-response/event trace for debugging, but is not fed back into future prompts
+      - the LLM can return one of two actions per round:
+          - `"run"`: mutate one parent config, validate the child `TrainingConfig`, train, score, and record the round
+          - `"ensemble"`: blend 2–8 existing scored experiment runs via rank average, score with the same primary metric (`bmc_last_200_eras_mean`), and record under `state.best_ensemble` / `state.tried_ensembles` — never enters the single-model seed-trio promotion track
+      - the `"ensemble"` action is offered only after `phase_plateau_counter >= agentic_research_ensemble_plateau_threshold` (experiment metadata, module default 40); gated via output-schema enum for `codex-exec`, re-checked in `_run_one_round` for OpenRouter
+      - ensemble rounds record `round_type: "ensemble"` and a synthetic `run_id` of form `ensemble:<ensemble_id>` in the decision log; no training run directory is created
+      - ensemble member predictions must be on disk; identical member sets are soft-skipped; ensemble rounds do not tick or reset `phase_plateau_counter`
       - Python validates allowed config paths, writes the strict machine decision, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
       - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation
 ```

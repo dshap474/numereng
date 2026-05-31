@@ -4,8 +4,8 @@ Use `numereng research` when you want numereng to run a simple autonomous config
 
 1. run a deterministic ML round
 2. send the resulting configs, metrics, latest rolling memo, and recent decision log to the LLM
-3. let the LLM choose one small config mutation and update the rolling memo
-4. validate, train, score, and record the next round
+3. let the LLM choose one action: mutate a config (`run`) or blend existing scored runs (`ensemble`)
+4. validate, train or blend, score, and record the next round
 
 The LLM does not edit Python code. It returns a structured decision form plus cumulative markdown
 research state. Python converts the form into the strict machine decision, mutates an experiment
@@ -68,6 +68,26 @@ Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 
 `trace.jsonl` is for debugging and improving the loop; it is not fed back into future prompts by default. `rounds/decision.json` is the compact machine memory. The latest `rounds/rNNN.md` is the rolling human-readable memory loaded into the next LLM prompt.
 
+## Round Actions
+
+Each round the LLM chooses one of two actions:
+
+**`run`** — mutate one parent config, train, and score a new model.
+
+**`ensemble`** — blend 2–8 existing scored experiment runs via rank average and score the blend.
+- Requires `phase_plateau_counter >= agentic_research_ensemble_plateau_threshold` (set via experiment metadata; default 40). The loop offers this action only once single-model search has plateaued enough rounds.
+- Member runs must be `FINISHED`, have predictions on disk, and share one feature set and dataset scope.
+- Identical member sets are soft-skipped (no failure).
+- Ensemble rounds appear in the decision log with `round_type: "ensemble"` and a synthetic `run_id` of the form `ensemble:<ensemble_id>`. They do NOT create a `runs/<id>/` directory and do NOT enter the single-model seed-trio champion track.
+- Ensemble rounds do not tick or reset the plateau counter.
+
+To lower or raise the plateau threshold for an experiment:
+
+```bash
+uv run numereng experiment details --id <experiment_id>
+# then update metadata.agentic_research_ensemble_plateau_threshold in experiment.json
+```
+
 ## High-Risk Gotchas
 
 - The mutable research surface is config JSON, not Python source.
@@ -79,6 +99,8 @@ Under `.numereng/experiments/<experiment_id>/agentic_research/`:
 - The default prompt is tracked as `PROGRAM.md`; an experiment can set `metadata.agentic_research_program` to a local file under `custom_programs/`.
 - Custom programs are ignored local files; use `src/numereng/features/agentic_research/AGENTS.md` as the tracked template.
 - `research run` still relies on the normal training/scoring stack, so broken configs or missing datasets fail the same way they would in manual workflows.
+- Ensemble `run_id` values in the decision log (`ensemble:<id>`) are research artifacts only; they do not resolve under `.numereng/runs/` and will not appear in viz run listings.
+- OpenRouter backend cannot enforce the plateau gate via JSON schema; the controller re-checks the counter and soft-skips premature `ensemble` actions rather than hard-failing.
 
 ## Read Next
 
