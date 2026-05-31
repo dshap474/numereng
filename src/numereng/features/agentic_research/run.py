@@ -58,12 +58,12 @@ ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
 BUDGET_ROUNDS_METADATA_KEY = "agentic_research_budget_rounds"
-# Ensembling is unlocked as an additional LLM action once single-model search has
-# plateaued (phase_plateau_counter >= threshold). The threshold is per-experiment
-# metadata so it can be tuned without code edits; the module default applies when
-# unset. Ensembles are deterministic blends scored once on the same BMC200 metric.
-ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY = "agentic_research_ensemble_plateau_threshold"
-DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD = 40
+# Ensembling is an additional LLM action, available as a structural precondition
+# (not a tuned heuristic): it is offered whenever at least ENSEMBLE_MIN_MEMBERS
+# blendable runs exist — you physically cannot blend fewer. WHEN to ensemble (e.g.
+# once single-model search has plateaued) is the LLM's judgment, guided by PROGRAM.md
+# and the plateau_counter / eligible-runs menu in context, not a controller gate.
+# Ensembles are deterministic blends scored once on the same BMC200 metric.
 ENSEMBLE_MIN_MEMBERS = 2
 ENSEMBLE_MAX_MEMBERS = 8
 # Synthetic run_id namespace for ensemble rounds so nothing downstream tries to
@@ -347,8 +347,13 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             artifact_dir=artifact_dir,
         )
 
-    allow_ensemble = _ensemble_unlocked(state, experiment)
-    context = _build_context(root=root, experiment=experiment, report=report, state=state)
+    eligible_ensemble_rows = _eligible_ensemble_rows(root=root, report=report)
+    # Precondition, not strategy: offer the ensemble action whenever enough blendable
+    # runs exist. The LLM decides whether/when to use it (PROGRAM.md guidance).
+    allow_ensemble = len(eligible_ensemble_rows) >= ENSEMBLE_MIN_MEMBERS
+    context = _build_context(
+        root=root, experiment=experiment, report=report, state=state, eligible_ensemble_rows=eligible_ensemble_rows
+    )
     program_path = _program_path(experiment)
     prompt = _render_prompt(context, program_path=program_path)
     _append_trace(
@@ -412,10 +417,11 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             event="decision_parsed",
             payload={"decision": decision_payload},
         )
-        # Defense in depth: the codex schema already withholds `ensemble` when
-        # locked, but the OpenRouter backend has no schema, so re-check here.
+        # Defense in depth: the codex schema already withholds `ensemble` when fewer
+        # than ENSEMBLE_MIN_MEMBERS blendable runs exist, but the OpenRouter backend
+        # has no schema, so re-check the precondition here.
         if not allow_ensemble:
-            raise AgenticResearchValidationError("agentic_research_ensemble_locked")
+            raise AgenticResearchValidationError("agentic_research_ensemble_unavailable")
         return _build_and_score_ensemble_round(
             root=root,
             experiment=experiment,
@@ -1509,6 +1515,7 @@ def _build_context(
     experiment: ExperimentRecord,
     report: ExperimentReport | None,
     state: dict[str, object],
+    eligible_ensemble_rows: list[dict[str, object]],
 ) -> dict[str, object]:
     phase_caps = _current_phase_caps(experiment=experiment, state=state)
     diversification_streaks = _diversification_streaks(state)
@@ -1542,7 +1549,7 @@ def _build_context(
         },
         "phase": state.get("phase"),
         "phase_history": state.get("phase_history", []),
-        "ensemble": _ensemble_context(state=state, experiment=experiment, report=report),
+        "ensemble": _ensemble_context(state=state, eligible_rows=eligible_ensemble_rows),
         "phase_value_caps": {path: list(bounds) for path, bounds in phase_caps.items()},
         "cost_summary": _cost_summary(state),
         "canonical_seed_trio": list(CANONICAL_SEED_TRIO),
@@ -1559,35 +1566,68 @@ def _build_context(
     }
 
 
-def _ensemble_context(
-    *, state: dict[str, object], experiment: ExperimentRecord, report: ExperimentReport | None
-) -> dict[str, object]:
-    """LLM-facing ensemble status. `eligible_runs` (the blend menu) is populated only
-    once unlocked, to avoid bloating the prompt during ordinary single-model search.
-    The menu is the scored runs in the (top-N) report — i.e. the strongest members."""
-    unlocked = _ensemble_unlocked(state, experiment)
-    eligible: list[dict[str, object]] = []
-    if unlocked and report is not None:
-        for row in report.rows:
-            if getattr(row, PRIMARY_METRIC_FIELD) is None:
-                continue
-            eligible.append(
-                {
-                    "run_id": row.run_id,
-                    "bmc_last_200_eras_mean": row.bmc_last_200_eras_mean,
-                    "corr_mean": row.corr_mean,
-                }
-            )
+def _ensemble_context(*, state: dict[str, object], eligible_rows: list[dict[str, object]]) -> dict[str, object]:
+    """LLM-facing ensemble status. `eligible_runs` is the blend menu — the scored
+    runs whose predictions are still on disk, with target/family so the LLM can pick
+    *diverse* members. `available` is a structural precondition (>= min members), not
+    a strategy gate: WHEN to ensemble is the LLM's call, informed by `plateau_counter`
+    and PROGRAM.md, never a hardcoded threshold."""
     return {
-        "unlocked": unlocked,
+        "available": len(eligible_rows) >= ENSEMBLE_MIN_MEMBERS,
         "plateau_counter": _as_int(state.get("phase_plateau_counter"), default=0),
-        "plateau_threshold": _ensemble_plateau_threshold(experiment),
         "method": "rank_avg",
         "min_members": ENSEMBLE_MIN_MEMBERS,
         "max_members": ENSEMBLE_MAX_MEMBERS,
-        "eligible_runs": eligible,
+        "eligible_runs": eligible_rows,
         "best_ensemble": state.get("best_ensemble"),
     }
+
+
+def _eligible_ensemble_rows(*, root: Path, report: ExperimentReport | None) -> list[dict[str, object]]:
+    """Compact menu of runs that can actually be blended: FINISHED + scored on the
+    primary metric + predictions still on disk (artifact rotation can delete an
+    older run's predictions). Includes target/family so the LLM can choose diverse
+    members. Bounded by the report limit, so this is a handful of small reads/round."""
+    if report is None:
+        return []
+    rows: list[dict[str, object]] = []
+    for row in report.rows:
+        if getattr(row, PRIMARY_METRIC_FIELD) is None:
+            continue
+        if row.status != "FINISHED":
+            continue
+        run_dir = root / "runs" / row.run_id
+        if not _member_predictions_exists(run_dir):
+            continue
+        target, family = _member_target_and_family(run_dir)
+        rows.append(
+            {
+                "run_id": row.run_id,
+                "bmc_last_200_eras_mean": row.bmc_last_200_eras_mean,
+                "corr_mean": row.corr_mean,
+                "target": target,
+                "family": family,
+            }
+        )
+    return rows
+
+
+def _member_target_and_family(run_dir: Path) -> tuple[str | None, str | None]:
+    """Best-effort (target_col, model family) for the ensemble menu; None if unread."""
+    run_json = run_dir / "run.json"
+    manifest: dict[str, object] = {}
+    if run_json.is_file():
+        try:
+            loaded = json.loads(run_json.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = loaded
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+    data_config = _member_data_config(run_dir, manifest)
+    target = _optional_str(data_config.get("target_col"))
+    model = manifest.get("model")
+    family = _optional_str(cast(dict[str, object], model).get("type")) if isinstance(model, dict) else None
+    return target, family
 
 
 def _render_prompt(context: dict[str, object], *, program_path: Path = PROGRAM_PATH) -> str:
@@ -2266,36 +2306,6 @@ def _budget_rounds(experiment: ExperimentRecord) -> int | None:
             return None
         return value if value > 0 else None
     return None
-
-
-def _ensemble_plateau_threshold(experiment: ExperimentRecord) -> int:
-    """Plateau counter at/above which the ensemble action unlocks. Per-experiment
-    metadata override; falls back to the module default. Mirrors `_budget_rounds`
-    coercion (rejects bools, coerces int-valued floats and numeric strings)."""
-    raw = experiment.metadata.get(ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY)
-    if isinstance(raw, bool):
-        return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
-    if isinstance(raw, int):
-        return raw if raw > 0 else DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
-    if isinstance(raw, float) and raw.is_integer() and raw > 0:
-        return int(raw)
-    if isinstance(raw, str):
-        try:
-            value = int(raw.strip())
-        except ValueError:
-            return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
-        return value if value > 0 else DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
-    return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
-
-
-def _ensemble_unlocked(state: dict[str, object], experiment: ExperimentRecord) -> bool:
-    """True once single-model search has plateaued enough to also try ensembles.
-
-    Plateau is a phase-subsystem concept; experiments without a phases config have
-    no `phase_plateau_counter` and therefore never unlock ensembling (intended —
-    it is a plateau feature)."""
-    plateau = _as_int(state.get("phase_plateau_counter"), default=0)
-    return plateau >= _ensemble_plateau_threshold(experiment)
 
 
 def _parse_value_caps(raw: object) -> dict[str, tuple[float, float]]:

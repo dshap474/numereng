@@ -538,7 +538,7 @@ cli research status|run
       - the LLM can return one of two actions per round:
           - `"run"`: mutate one parent config, validate the child `TrainingConfig`, train, score, and record the round
           - `"ensemble"`: blend 2–8 existing scored experiment runs via rank average, score with the same primary metric (`bmc_last_200_eras_mean`), and record under `state.best_ensemble` / `state.tried_ensembles` — never enters the single-model seed-trio promotion track
-      - the `"ensemble"` action is offered only after `phase_plateau_counter >= agentic_research_ensemble_plateau_threshold` (experiment metadata, module default 40); gated via output-schema enum for `codex-exec`, re-checked in `_run_one_round` for OpenRouter
+      - the `"ensemble"` action is offered whenever ≥2 blendable runs exist (FINISHED, scored, predictions on disk) — a structural precondition (`_eligible_ensemble_rows`), not a plateau gate; via output-schema enum for `codex-exec`, re-checked in `_run_one_round` for OpenRouter. *When* to ensemble (e.g. once single-model search plateaus) is the LLM's judgment, guided by `PROGRAM.md` and the `ensemble.plateau_counter` / `ensemble.eligible_runs` context signals
       - ensemble rounds record `round_type: "ensemble"` and a synthetic `run_id` of form `ensemble:<ensemble_id>` in the decision log; no training run directory is created
       - ensemble member predictions must be on disk; identical member sets are soft-skipped; ensemble rounds do not tick or reset `phase_plateau_counter`
       - Python validates allowed config paths, writes the strict machine decision, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round

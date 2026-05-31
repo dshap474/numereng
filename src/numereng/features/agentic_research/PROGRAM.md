@@ -356,22 +356,28 @@ For a new run:
 
 For a `run` decision the `ensemble_run_ids` field is `[]` and `ensemble_weights` is `null`.
 
-There is no stop form — every round returns a `run` or (once unlocked) an `ensemble` decision
-(see Budget Doctrine — Never Stop).
+There is no stop form — every round returns a `run` or (when ensembling is worthwhile) an
+`ensemble` decision (see Budget Doctrine — Never Stop).
 
-### Ensembling (unlocked on plateau)
+### Ensembling (your call, not a gate)
 
-When single-model search plateaus, the context `ensemble.unlocked` flips to `true` and
-`ensemble.eligible_runs` lists the strongest scored runs you may blend. Only then may you return
-`action: "ensemble"` — a deterministic rank-average blend of existing scored runs, scored on the
-same primary metric (`bmc_last_200_eras_mean`, contribution to `target_ender_20`).
+`action: "ensemble"` is available whenever `ensemble.available` is `true` — i.e. at least two
+blendable runs exist (`ensemble.eligible_runs` lists them with their score, target, and family).
+There is **no plateau threshold and no unlock**: deciding *when* to ensemble is your judgment, not a
+controller rule. Keep doing single-model exploration while it is still finding gains; once you judge
+that single-model search has plateaued — many recent rounds with no new best (watch
+`ensemble.plateau_counter` and your rolling memo) — start blending your strongest runs to push the
+metric further. Both moves stay available every round; pick whichever has higher expected information
+gain.
 
-Use it to combine complementary runs (e.g. a strong `target_alpha_60` run with a strong
-`target_alpha_20` run) into a blend that may beat any single model. Ensembles are deterministic
-(no seed trio) and tracked separately as `ensemble.best_ensemble`; they never enter the single-model
-confirmation/promotion flow. Prefer 2–4 diverse, individually-strong members; avoid blending many
-near-identical runs. Do not repeat an already-tried member set (see `ensemble.best_ensemble` and your
-rolling memo).
+An ensemble is a deterministic rank-average blend of existing scored runs, scored on the same primary
+metric (`bmc_last_200_eras_mean`, contribution to `target_ender_20`). Combine *complementary* runs
+(e.g. a strong `target_alpha_60` run with a strong `target_alpha_20` run, or two different model
+families) — diversity is what makes a blend beat its best member. Prefer 2–4 diverse,
+individually-strong members from `ensemble.eligible_runs`; avoid blending many near-identical runs.
+Ensembles are deterministic (no seed trio) and tracked separately as `ensemble.best_ensemble`; they
+never enter the single-model confirmation/promotion flow. Do not repeat an already-tried member set
+(see `ensemble.best_ensemble` and your rolling memo) — it is a wasted round.
 
 ```json
 {

@@ -14,7 +14,9 @@ A 479-round validation experiment reached zero metric gain after the single-mode
 
 ## Decision
 
-Add a native `"ensemble"` LLM action to the agentic research controller, gated behind a plateau counter threshold, scored on the same primary metric as single runs, and tracked on a separate `best_ensemble` / `tried_ensembles` state track that never touches the single-model seed-trio confirmation/promotion machinery.
+Add a native `"ensemble"` LLM action to the agentic research controller, available as a structural precondition (enough blendable runs exist), scored on the same primary metric as single runs, and tracked on a separate `best_ensemble` / `tried_ensembles` state track that never touches the single-model seed-trio confirmation/promotion machinery. *When* to ensemble is the LLM's judgment, guided by `PROGRAM.md` and the plateau signal in context — not a hardcoded controller threshold.
+
+**Update (2026-05-31, same day):** the original design gated the action behind a plateau-counter threshold (`agentic_research_ensemble_plateau_threshold`, default 40). That was replaced — before any long run used it — with a precondition-only gate (see "Plateau gate" below, now "Availability precondition"). The rest of this ADR (track separation, scoring, eligibility, accounting) is unchanged. Rationale for the change: the threshold was a hardcoded *strategy* heuristic, and the project's design split puts strategy with the LLM (PROGRAM.md) and keeps only correctness/execution in the controller. Ensembling is low-blast-radius (separate track, dedup-protected, plateau-invariant), so letting the LLM decide *when* is safe — unlike stop/diversification, which stay enforced.
 
 ### Ensemble action schema
 
@@ -23,9 +25,13 @@ The LLM can return `action: "ensemble"` with:
 - `ensemble_weights` (optional): per-member weights; omit for equal-weight rank average.
 - No `parent_config` / `changes` fields — a blend has no parent config to mutate.
 
-### Plateau gate
+### Availability precondition (supersedes the original plateau gate)
 
-The ensemble action is offered to the LLM only once `phase_plateau_counter >= threshold`. Threshold is read from experiment metadata key `agentic_research_ensemble_plateau_threshold` (module default 40). For the `codex-exec` backend the gate is enforced by restricting the output-schema action enum to `"ensemble" | "run"` only after the threshold is crossed. For the OpenRouter backend (which cannot enforce schema-level enums at request time) the gate is re-checked in `_run_one_round` and a premature ensemble proposal is rejected as a validation error (`agentic_research_ensemble_locked`). (Distinct from the dedup *soft-skip*, which applies only to already-tried member sets.)
+The ensemble action is offered to the LLM whenever at least `ENSEMBLE_MIN_MEMBERS` (2) blendable runs exist — runs that are FINISHED, scored on the primary metric, and still have predictions on disk (`_eligible_ensemble_rows`). This is a structural precondition (you physically cannot blend fewer than two runs), not a tunable strategy knob. There is no plateau threshold and no metadata key.
+
+For the `codex-exec` backend the precondition is enforced by including `"ensemble"` in the output-schema action enum only when it holds. For the OpenRouter backend (which cannot enforce schema-level enums at request time) the precondition is re-checked in `_run_one_round` and a proposal made when too few runs exist is rejected as a validation error (`agentic_research_ensemble_unavailable`). (Distinct from the dedup *soft-skip*, which applies only to already-tried member sets.)
+
+*When* to ensemble — typically once single-model search has plateaued — is left to the LLM, which sees `ensemble.plateau_counter`, the `ensemble.eligible_runs` menu (score + target + family per run, so it can pick *diverse* members), and `PROGRAM.md` guidance. The menu is built every round but is bounded by the report limit and kept compact, so it does not meaningfully grow the prompt.
 
 ### Scoring and track separation
 
@@ -66,5 +72,5 @@ Member runs must be:
 - Single-model search and ensemble search are now first-class autonomous strategies within one research run; the loop can shift to blending when mutations plateau, then return to single-model exploration if the ensemble track also plateaus.
 - Ensemble rounds do not appear as training runs in viz (no `runs/<ensemble_id>/` directory). The `ensemble:<ensemble_id>` synthetic ID in the decision log is a research artifact only.
 - OpenRouter backend cannot enforce the plateau gate via JSON schema; the controller re-checks the counter and rejects a premature ensemble attempt as a validation error. This is the same pattern used for other OpenRouter-specific guardrails.
-- Experiment metadata key `agentic_research_ensemble_plateau_threshold` is the operator-facing knob to tune how many plateau rounds are required before ensemble rounds are offered.
+- There is no operator-facing knob for *when* to ensemble: the action is offered whenever ≥2 blendable runs exist, and the timing decision lives with the LLM via `PROGRAM.md`. To change ensembling strategy, edit the program prompt, not the controller.
 - `best_ensemble` members are pinned from artifact rotation for the life of the research run, so long runs with many ensemble attempts may accumulate more prediction artifacts on disk than single-model-only runs of the same depth.

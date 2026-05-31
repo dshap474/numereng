@@ -620,6 +620,7 @@ def test_context_includes_only_latest_round_markdown(tmp_path: Path) -> None:
         experiment=experiment,
         report=_report(_row("run-0", 0.10)),
         state={},
+        eligible_ensemble_rows=[],
     )
 
     assert context["latest_round_markdown"] == "latest memo"
@@ -2457,6 +2458,7 @@ def test_build_context_surfaces_canonical_seed_trio(tmp_path: Path) -> None:
         experiment=experiment,
         report=None,
         state={"phase": "shallow"},
+        eligible_ensemble_rows=[],
     )
     assert context["canonical_seed_trio"] == list(research_module.CANONICAL_SEED_TRIO)
 
@@ -3293,37 +3295,40 @@ def test_parse_run_decision_still_requires_parent_and_changes() -> None:
 
 
 def test_llm_response_schema_gates_ensemble_action() -> None:
-    locked = research_module._llm_response_schema(allow_ensemble=False)
-    unlocked = research_module._llm_response_schema(allow_ensemble=True)
+    without_ensemble = research_module._llm_response_schema(allow_ensemble=False)
+    with_ensemble = research_module._llm_response_schema(allow_ensemble=True)
 
     def _enum(schema: dict[str, object]) -> list[str]:
         decision = cast(dict[str, object], schema["properties"])["decision_form"]
         props = cast(dict[str, object], cast(dict[str, object], decision)["properties"])
         return cast(list[str], cast(dict[str, object], props["action"])["enum"])
 
-    assert _enum(locked) == ["run"]
-    assert _enum(unlocked) == ["run", "ensemble"]
+    assert _enum(without_ensemble) == ["run"]
+    assert _enum(with_ensemble) == ["run", "ensemble"]
     # Ensemble fields are always present and required so the schema stays stable.
-    decision = cast(dict[str, object], cast(dict[str, object], locked["properties"])["decision_form"])
+    decision = cast(dict[str, object], cast(dict[str, object], without_ensemble["properties"])["decision_form"])
     assert "ensemble_run_ids" in cast(dict[str, object], decision["properties"])
     assert "ensemble_run_ids" in cast(list[str], decision["required"])
 
 
-def test_ensemble_unlocked_respects_threshold_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_eligible_ensemble_rows_filters_and_gates_availability(tmp_path: Path) -> None:
+    """The ensemble action is a structural precondition: it is offered iff at least
+    ENSEMBLE_MIN_MEMBERS blendable runs exist (FINISHED + scored + predictions on
+    disk). No plateau threshold — WHEN to ensemble is the LLM's call."""
     store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    default = research_module.DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+    create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _make_member_run(store_root, "run-a", target="target_alpha_60")
+    _make_member_run(store_root, "run-b", target="target_alpha_20")
+    # run-c is scored in the report but its predictions were rotated off disk.
+    report = _report(_row("run-a", 0.004), _row("run-b", 0.0041), _row("run-c", 0.0039))
 
-    fresh = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
-    assert research_module._ensemble_plateau_threshold(fresh) == default
-    assert research_module._ensemble_unlocked({"phase_plateau_counter": default - 1}, fresh) is False
-    assert research_module._ensemble_unlocked({"phase_plateau_counter": default}, fresh) is True
+    rows = research_module._eligible_ensemble_rows(root=store_root, report=report)
+    assert [r["run_id"] for r in rows] == ["run-a", "run-b"]  # run-c excluded: no predictions
+    assert rows[0]["target"] == "target_alpha_60"
 
-    _set_experiment_metadata(experiment.manifest_path, {research_module.ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY: 5})
-    overridden = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
-    assert research_module._ensemble_plateau_threshold(overridden) == 5
-    assert research_module._ensemble_unlocked({"phase_plateau_counter": 5}, overridden) is True
-    assert research_module._ensemble_unlocked({"phase_plateau_counter": 4}, overridden) is False
+    # Availability is purely a member-count precondition, not a plateau gate.
+    assert research_module._ensemble_context(state={}, eligible_rows=rows)["available"] is True
+    assert research_module._ensemble_context(state={}, eligible_rows=rows[:1])["available"] is False
 
 
 def test_update_best_ensemble_only_on_improvement() -> None:
@@ -3393,7 +3398,9 @@ def test_run_research_builds_and_scores_ensemble_round(
     store_root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
     experiment_dir = experiment.manifest_path.parent
-    _set_experiment_metadata(experiment.manifest_path, {research_module.ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY: 1})
+    # No plateau-threshold metadata: the ensemble action is available purely because
+    # two blendable member runs exist (run-a, run-b made below). The seeded plateau
+    # is here only to assert it stays untouched by ensemble rounds.
     _seed_plateaued_state(experiment_dir, plateau=50, next_round=10)
     _make_member_run(store_root, "run-a", target="target_alpha_60")
     _make_member_run(store_root, "run-b", target="target_alpha_20")

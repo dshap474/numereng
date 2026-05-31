@@ -75,18 +75,13 @@ Each round the LLM chooses one of two actions:
 **`run`** — mutate one parent config, train, and score a new model.
 
 **`ensemble`** — blend 2–8 existing scored experiment runs via rank average and score the blend.
-- Requires `phase_plateau_counter >= agentic_research_ensemble_plateau_threshold` (set via experiment metadata; default 40). The loop offers this action only once single-model search has plateaued enough rounds.
+- Available whenever at least two blendable runs exist (FINISHED, scored, predictions on disk). This is a structural precondition, not a plateau gate. *When* to ensemble — typically once single-model search has plateaued — is the LLM's judgment, guided by `PROGRAM.md` and the `ensemble.plateau_counter` / `ensemble.eligible_runs` signals in context.
 - Member runs must be `FINISHED`, have predictions on disk, and share one feature set and dataset scope.
 - Identical member sets are soft-skipped (no failure).
 - Ensemble rounds appear in the decision log with `round_type: "ensemble"` and a synthetic `run_id` of the form `ensemble:<ensemble_id>`. They do NOT create a `runs/<id>/` directory and do NOT enter the single-model seed-trio champion track.
 - Ensemble rounds do not tick or reset the plateau counter.
 
-To lower or raise the plateau threshold for an experiment:
-
-```bash
-uv run numereng experiment details --id <experiment_id>
-# then update metadata.agentic_research_ensemble_plateau_threshold in experiment.json
-```
+To change *when* the loop ensembles, edit the program prompt (`PROGRAM.md` or the experiment's custom program), not controller config — there is no threshold knob.
 
 ## High-Risk Gotchas
 
