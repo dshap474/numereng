@@ -345,14 +345,54 @@ For a new run:
         "reason": "Why this exact change is worth testing."
       }
     ],
-    "stop_reason": null
+    "stop_reason": null,
+    "ensemble_run_ids": [],
+    "ensemble_weights": null
   },
   "round_markdown": "# rNNN Research State\n\n...",
   "experiment_markdown": "# Champion State\n...\n\n# Active Beliefs\n- ...\n"
 }
 ```
 
-There is no stop form — every round returns a `run` decision (see Budget Doctrine — Never Stop).
+For a `run` decision the `ensemble_run_ids` field is `[]` and `ensemble_weights` is `null`.
+
+There is no stop form — every round returns a `run` or (once unlocked) an `ensemble` decision
+(see Budget Doctrine — Never Stop).
+
+### Ensembling (unlocked on plateau)
+
+When single-model search plateaus, the context `ensemble.unlocked` flips to `true` and
+`ensemble.eligible_runs` lists the strongest scored runs you may blend. Only then may you return
+`action: "ensemble"` — a deterministic rank-average blend of existing scored runs, scored on the
+same primary metric (`bmc_last_200_eras_mean`, contribution to `target_ender_20`).
+
+Use it to combine complementary runs (e.g. a strong `target_alpha_60` run with a strong
+`target_alpha_20` run) into a blend that may beat any single model. Ensembles are deterministic
+(no seed trio) and tracked separately as `ensemble.best_ensemble`; they never enter the single-model
+confirmation/promotion flow. Prefer 2–4 diverse, individually-strong members; avoid blending many
+near-identical runs. Do not repeat an already-tried member set (see `ensemble.best_ensemble` and your
+rolling memo).
+
+```json
+{
+  "decision_form": {
+    "action": "ensemble",
+    "learning": "What the prior evidence taught us.",
+    "belief_update": "Why this blend should beat the best single model.",
+    "next_hypothesis": "The specific blend hypothesis being tested.",
+    "parent_config": null,
+    "changes": [],
+    "stop_reason": null,
+    "ensemble_run_ids": ["<run_id_a>", "<run_id_b>"],
+    "ensemble_weights": null
+  },
+  "round_markdown": "# rNNN Research State\n\n...",
+  "experiment_markdown": "# Champion State\n...\n\n# Active Beliefs\n- ...\n"
+}
+```
+
+`ensemble_weights` is optional: omit (`null`) for equal-weight rank-average, or provide one positive
+weight per member in `ensemble_run_ids`.
 
 ## Context
 

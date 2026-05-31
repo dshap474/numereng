@@ -16,7 +16,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, cast
 
+import pandas as pd
+
 from numereng.config.training import TrainingConfig, load_training_config_json
+from numereng.features.ensemble import EnsembleBuildRequest, EnsembleError, build_ensemble
 from numereng.features.experiments import (
     ExperimentError,
     ExperimentRecord,
@@ -28,20 +31,25 @@ from numereng.features.experiments import (
     score_experiment_round,
     train_experiment,
 )
+from numereng.features.scoring.metrics import score_prediction_file_with_details
 from numereng.features.store import index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata
+from numereng.features.training.client import create_training_data_client
 from numereng.features.training.errors import TrainingError
+from numereng.features.training.repo import DEFAULT_DATASETS_DIR
 from numereng.features.training.run_store import compute_config_hash
+from numereng.features.training.service import resolve_benchmark_source
 from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterConfig, load_openrouter_config
 from numereng.platform.errors import OpenRouterClientError
 
 ResearchStatus = Literal["initialized", "running", "interrupted", "stopped", "failed"]
-ResearchAction = Literal["baseline", "run", "stop"]
+ResearchAction = Literal["baseline", "run", "stop", "ensemble"]
 # A first-class round classification used by the outcome-footer renderer and
 # persisted in trace.jsonl. Baseline = pre-LLM incumbent; discovery = seed-42
 # fresh probe; confirmation = single-change random_state mutation against a
-# previously LLM-generated parent.
-RoundType = Literal["baseline", "discovery", "confirmation"]
+# previously LLM-generated parent; ensemble = a blend of existing scored runs
+# (no config mutation, no seed trio — scored once, deterministically).
+RoundType = Literal["baseline", "discovery", "confirmation", "ensemble"]
 
 PROGRAM_PATH = Path(__file__).with_name("PROGRAM.md")
 CUSTOM_PROGRAM_DIR = Path(__file__).with_name("custom_programs")
@@ -50,6 +58,17 @@ ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
 BUDGET_ROUNDS_METADATA_KEY = "agentic_research_budget_rounds"
+# Ensembling is unlocked as an additional LLM action once single-model search has
+# plateaued (phase_plateau_counter >= threshold). The threshold is per-experiment
+# metadata so it can be tuned without code edits; the module default applies when
+# unset. Ensembles are deterministic blends scored once on the same BMC200 metric.
+ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY = "agentic_research_ensemble_plateau_threshold"
+DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD = 40
+ENSEMBLE_MIN_MEMBERS = 2
+ENSEMBLE_MAX_MEMBERS = 8
+# Synthetic run_id namespace for ensemble rounds so nothing downstream tries to
+# resolve them under runs/<id>/ (they live under ensembles/<id>/ instead).
+ENSEMBLE_RUN_ID_PREFIX = "ensemble:"
 _MISSING_SENTINEL: object = object()
 PHASE_IMPROVEMENT_THRESHOLD = 3e-4
 CANONICAL_SEED_TRIO: tuple[int, ...] = (42, 17, 99)
@@ -89,6 +108,10 @@ STATE_FILENAME = "state.json"
 TRACE_FILENAME = "trace.jsonl"
 PRIMARY_METRIC = "bmc_last_200_eras.mean"
 PRIMARY_METRIC_FIELD = "bmc_last_200_eras_mean"
+# Key for the BMC-last-200-eras summary frame returned by the scorer, and the
+# canonical payout target the loop optimizes contribution against.
+PRIMARY_BMC_SUMMARY_KEY = "bmc_last_200_eras"
+PAYOUT_TARGET_COL = "target_ender_20"
 SECONDARY_METRICS: tuple[tuple[str, str], ...] = (
     ("bmc.mean", "bmc_mean"),
     ("corr.mean", "corr_mean"),
@@ -207,13 +230,17 @@ class ResearchChange:
 class ResearchDecision:
     """Parsed LLM decision for the next research step."""
 
-    action: Literal["run", "stop"]
+    action: Literal["run", "ensemble"]
     learning: str
     belief_update: str
     next_hypothesis: str | None
     parent_config: str | None
     changes: tuple[ResearchChange, ...]
     stop_reason: str | None
+    # Populated only for `action == "ensemble"`: the existing scored run_ids to
+    # blend, and optional per-member weights (rank-average is the only method).
+    ensemble_run_ids: tuple[str, ...] = ()
+    ensemble_weights: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -320,6 +347,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             artifact_dir=artifact_dir,
         )
 
+    allow_ensemble = _ensemble_unlocked(state, experiment)
     context = _build_context(root=root, experiment=experiment, report=report, state=state)
     program_path = _program_path(experiment)
     prompt = _render_prompt(context, program_path=program_path)
@@ -336,6 +364,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             prompt=prompt,
             artifact_dir=artifact_dir,
             round_label=round_label,
+            allow_ensemble=allow_ensemble,
         )
     except Exception as exc:
         _append_trace(
@@ -373,6 +402,33 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         )
         raise
     decision = llm_response.decision
+    if decision.action == "ensemble":
+        decision_payload = _decision_payload(decision, model_source=model_source)
+        state["pending_decision"] = decision_payload
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="decision_parsed",
+            payload={"decision": decision_payload},
+        )
+        # Defense in depth: the codex schema already withholds `ensemble` when
+        # locked, but the OpenRouter backend has no schema, so re-check here.
+        if not allow_ensemble:
+            raise AgenticResearchValidationError("agentic_research_ensemble_locked")
+        return _build_and_score_ensemble_round(
+            root=root,
+            experiment=experiment,
+            state=state,
+            report=report,
+            round_number=round_number,
+            round_label=round_label,
+            decision=decision,
+            decision_payload=decision_payload,
+            artifact_dir=artifact_dir,
+            round_markdown=llm_response.round_markdown,
+            experiment_markdown=llm_response.experiment_markdown,
+        )
     # Normalize the change list once, against the parent config, so every
     # downstream consumer (classification, validation, materialization, hash,
     # diff renderer) sees the actionable set rather than the raw LLM submission.
@@ -877,6 +933,454 @@ def _train_score_record_round(
     )
 
 
+def _build_and_score_ensemble_round(
+    *,
+    root: Path,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    report: ExperimentReport | None,
+    round_number: int,
+    round_label: str,
+    decision: ResearchDecision,
+    decision_payload: dict[str, object],
+    artifact_dir: Path,
+    round_markdown: str,
+    experiment_markdown: str | None,
+) -> ResearchRoundResult:
+    """Build a rank-average blend of existing scored runs and score it on BMC200.
+
+    Unlike a `run` round there is no config, no training, and no seed trio: a blend
+    is deterministic, so one score is final. The result competes in a separate
+    `best_ensemble` track and never touches the single-model champion machinery."""
+    round_started_at = time.monotonic()
+    member_ids = list(decision.ensemble_run_ids)
+    weights = decision.ensemble_weights
+    signature = _ensemble_signature(member_ids, weights)
+
+    # Dedup soft-skip: an identical blend was already built and scored. Re-running it
+    # would be deterministic work for no new information; record a completed round
+    # reusing the cached score and advance. This is NOT a failure, so it must not
+    # touch the consecutive-failure bail counter.
+    cached = _find_tried_ensemble(state, signature)
+    if cached is not None:
+        return _record_ensemble_round(
+            root=root,
+            experiment=experiment,
+            state=state,
+            round_number=round_number,
+            round_label=round_label,
+            decision_payload=decision_payload,
+            artifact_dir=artifact_dir,
+            round_markdown=round_markdown,
+            experiment_markdown=experiment_markdown,
+            ensemble_id=str(cached.get("ensemble_id")),
+            member_ids=member_ids,
+            weights=weights,
+            metric_value=_coerce_metric(cached.get("metric_value")),
+            round_seconds=max(0.0, time.monotonic() - round_started_at),
+            duplicate=True,
+        )
+
+    # Eligibility: members must be FINISHED runs of THIS experiment with predictions
+    # still on disk, sharing one dataset scope/feature set (so the blend is
+    # well-defined and scoreable). Raises a hard validation error on any failure.
+    target_col, scoring_params = _resolve_eligible_ensemble_runs(
+        root=root, experiment=experiment, report=report, run_ids=member_ids
+    )
+
+    request = EnsembleBuildRequest(
+        run_ids=tuple(member_ids),
+        experiment_id=experiment.experiment_id,
+        method="rank_avg",
+        target=target_col,
+        weights=weights,
+        optimize_weights=False,
+    )
+    try:
+        with bind_launch_metadata(source="feature.agentic_research.ensemble", operation_type="run", job_type="run"):
+            built = build_ensemble(store_root=root, request=request)
+    except EnsembleError as exc:
+        raise AgenticResearchValidationError(f"agentic_research_ensemble_build_failed:{exc}") from exc
+
+    blend_predictions = built.artifacts_path / "predictions.parquet"
+    metric_value = _score_ensemble_predictions(
+        predictions_path=blend_predictions, target_col=target_col, scoring_params=scoring_params
+    )
+    _record_tried_ensemble(
+        state,
+        signature=signature,
+        ensemble_id=built.ensemble_id,
+        member_ids=member_ids,
+        metric_value=metric_value,
+        round_label=round_label,
+    )
+    return _record_ensemble_round(
+        root=root,
+        experiment=experiment,
+        state=state,
+        round_number=round_number,
+        round_label=round_label,
+        decision_payload=decision_payload,
+        artifact_dir=artifact_dir,
+        round_markdown=round_markdown,
+        experiment_markdown=experiment_markdown,
+        ensemble_id=built.ensemble_id,
+        member_ids=member_ids,
+        weights=weights,
+        metric_value=metric_value,
+        round_seconds=max(0.0, time.monotonic() - round_started_at),
+        duplicate=False,
+    )
+
+
+def _record_ensemble_round(
+    *,
+    root: Path,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    round_number: int,
+    round_label: str,
+    decision_payload: dict[str, object],
+    artifact_dir: Path,
+    round_markdown: str,
+    experiment_markdown: str | None,
+    ensemble_id: str,
+    member_ids: list[str],
+    weights: tuple[float, ...] | None,
+    metric_value: float | None,
+    round_seconds: float,
+    duplicate: bool,
+) -> ResearchRoundResult:
+    """Persist one ensemble round: update the best_ensemble track, write markdown,
+    trace, and state. Shared by the fresh-build and dedup-skip paths."""
+    synthetic_run_id = f"{ENSEMBLE_RUN_ID_PREFIX}{ensemble_id}"
+    improved = _update_best_ensemble(
+        state,
+        ensemble_id=ensemble_id,
+        member_ids=member_ids,
+        weights=weights,
+        metric_value=metric_value,
+        round_label=round_label,
+    )
+    learning = _optional_str(decision_payload.get("learning")) or ""
+    round_payload: dict[str, object] = {
+        "round_number": round_number,
+        "round_label": round_label,
+        "action": "ensemble",
+        "round_type": "ensemble",
+        "status": "completed",
+        "config_path": None,
+        "run_id": synthetic_run_id,
+        "metric_value": metric_value,
+        "learning": learning,
+        "decision": decision_payload,
+        "completed_at": _utc_now_iso(),
+        "wall_time_seconds": round_seconds,
+        "secondary_metrics": {},
+        "diff_vs_parent_markdown": _render_ensemble_summary_md(
+            member_ids=member_ids, weights=weights, metric_value=metric_value, duplicate=duplicate
+        ),
+        "confirmation_round": False,
+        "champion_seed42_before": None,
+        "confirmation_context": None,
+        "promotion": None,
+        "phase_snapshot": _phase_snapshot_for_md(experiment=experiment, state=state),
+        "ensemble": {
+            "ensemble_id": ensemble_id,
+            "member_run_ids": member_ids,
+            "weights": list(weights) if weights is not None else None,
+            "metric_value": metric_value,
+            "improved_best": improved,
+            "duplicate": duplicate,
+            "best_ensemble": state.get("best_ensemble"),
+        },
+    }
+    state.pop("pending_decision", None)
+    state.update(
+        {
+            "status": "running",
+            "next_round_number": round_number + 1,
+            "total_rounds_completed": _as_int(state.get("total_rounds_completed"), default=0) + 1,
+            "last_checkpoint": "round_completed",
+            "last_round_label": round_label,
+            "last_run_id": synthetic_run_id,
+            "failed_rounds_counter": 0,
+            "updated_at": _utc_now_iso(),
+        }
+    )
+    # Ensemble rounds cost wall-time (a blend + a full BMC re-score) so we record it,
+    # but they are NOT capacity exploration: they neither tick nor reset the phase
+    # plateau counter, and never trigger a phase transition.
+    _accumulate_phase_cost(state, round_seconds)
+    cleaned_round_markdown, stripped_sections = _strip_python_owned_sections(round_markdown)
+    if stripped_sections:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="llm_authored_owned_section",
+            payload={"sections": stripped_sections},
+        )
+    _write_llm_round_markdown(
+        artifact_dir=artifact_dir,
+        round_label=round_label,
+        round_markdown=cleaned_round_markdown,
+        round_payload=round_payload,
+    )
+    _append_decision_log(_decision_log_path(experiment), round_payload)
+    bytes_written = _write_experiment_markdown(experiment, experiment_markdown)
+    if bytes_written > 0:
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="experiment_markdown_updated",
+            payload={"bytes_written": bytes_written},
+        )
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="ensemble_duplicate_skipped" if duplicate else "ensemble_round_completed",
+        payload={
+            "ensemble_id": ensemble_id,
+            "member_run_ids": member_ids,
+            "weights": list(weights) if weights is not None else None,
+            "metric_value": metric_value,
+            "improved_best": improved,
+        },
+    )
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="round_completed",
+        payload={
+            "config_path": None,
+            "run_id": synthetic_run_id,
+            "metric_value": metric_value,
+            "action": "ensemble",
+            "round_type": "ensemble",
+        },
+    )
+    _save_state(experiment, state)
+    return ResearchRoundResult(
+        round_number=round_number,
+        round_label=round_label,
+        action="ensemble",
+        status="completed",
+        config_path=None,
+        run_id=synthetic_run_id,
+        metric_value=metric_value,
+        learning=learning,
+        artifact_dir=artifact_dir,
+    )
+
+
+def _resolve_eligible_ensemble_runs(
+    *, root: Path, experiment: ExperimentRecord, report: ExperimentReport | None, run_ids: list[str]
+) -> tuple[str, dict[str, object]]:
+    """Validate every proposed member and return (target_col, member-data-config).
+
+    A member is eligible only if it belongs to THIS experiment, is FINISHED, and its
+    predictions parquet still exists on disk (artifact rotation can delete an older
+    run's predictions even while its metadata persists). All members must share one
+    feature set and dataset scope so the rank-average blend is well-defined."""
+    membership = {row.run_id for row in (report.rows if report else ())}
+    membership.update(experiment.runs)
+    feature_sets: set[str] = set()
+    scopes: set[str] = set()
+    member_configs: list[dict[str, object]] = []
+    for run_id in run_ids:
+        if run_id not in membership:
+            raise AgenticResearchValidationError(f"agentic_research_ensemble_member_foreign:{run_id}")
+        run_dir = root / "runs" / run_id
+        run_json = run_dir / "run.json"
+        if not run_json.is_file():
+            raise AgenticResearchValidationError(f"agentic_research_ensemble_member_missing:{run_id}")
+        try:
+            manifest = json.loads(run_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AgenticResearchValidationError(f"agentic_research_ensemble_member_unreadable:{run_id}") from exc
+        if not isinstance(manifest, dict) or manifest.get("status") != "FINISHED":
+            raise AgenticResearchValidationError(f"agentic_research_ensemble_member_not_finished:{run_id}")
+        if not _member_predictions_exists(run_dir):
+            raise AgenticResearchValidationError(f"agentic_research_ensemble_member_predictions_missing:{run_id}")
+        data_config = _member_data_config(run_dir, manifest)
+        feature_sets.add(str(data_config.get("feature_set")))
+        scopes.add(str(data_config.get("dataset_scope", "train_plus_validation")))
+        member_configs.append(data_config)
+    if len(feature_sets) > 1 or len(scopes) > 1:
+        raise AgenticResearchValidationError("agentic_research_ensemble_mixed_dataset_surface")
+    data_config = member_configs[0]
+    target_col = str(data_config.get("target_col") or PAYOUT_TARGET_COL)
+    return target_col, data_config
+
+
+def _member_data_config(run_dir: Path, manifest: dict[str, object]) -> dict[str, object]:
+    """Prefer the run's resolved.json `data` block; fall back to run.json `data`."""
+    resolved_path = run_dir / "resolved.json"
+    if resolved_path.is_file():
+        try:
+            payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("data"), dict):
+            return cast(dict[str, object], payload["data"])
+    data = manifest.get("data")
+    return cast(dict[str, object], data) if isinstance(data, dict) else {}
+
+
+def _member_predictions_exists(run_dir: Path) -> bool:
+    pred_dir = run_dir / "artifacts" / "predictions"
+    if pred_dir.is_dir() and any(pred_dir.glob("*.parquet")):
+        return True
+    return (run_dir / "predictions.parquet").is_file()
+
+
+def _score_ensemble_predictions(
+    *, predictions_path: Path, target_col: str, scoring_params: dict[str, object]
+) -> float | None:
+    """Score a blended prediction parquet on BMC200 via the SAME scorer single runs
+    use, so the number is directly comparable. Dataset/benchmark params come from a
+    member run's resolved data config (all members share one dataset). The bare
+    `bmc_last_200_eras` key resolves to the payout target (target_ender_20)."""
+    data_version = _optional_str(scoring_params.get("data_version")) or _optional_str(scoring_params.get("version"))
+    if data_version is None:
+        raise AgenticResearchValidationError("agentic_research_ensemble_data_version_missing")
+    benchmark_source = resolve_benchmark_source(data_config=scoring_params, data_root=DEFAULT_DATASETS_DIR)
+    raw_meta_path = scoring_params.get("meta_model_data_path")
+    meta_model_data_path = Path(raw_meta_path) if isinstance(raw_meta_path, str) and raw_meta_path else None
+    summaries, _provenance, _frames = score_prediction_file_with_details(
+        predictions_path=predictions_path,
+        pred_cols=["prediction"],
+        target_col=target_col,
+        scoring_target_cols=_dedupe_targets([target_col, PAYOUT_TARGET_COL]),
+        scoring_targets_explicit=False,
+        data_version=data_version,
+        dataset_variant=str(scoring_params.get("dataset_variant", "non_downsampled")),
+        feature_set=str(scoring_params.get("feature_set", "small")),
+        feature_source_paths=None,
+        dataset_scope=str(scoring_params.get("dataset_scope", "train_plus_validation")),
+        client=create_training_data_client(),
+        benchmark_model=benchmark_source.pred_col,
+        benchmark_name=benchmark_source.name,
+        benchmark_data_path=benchmark_source.predictions_path,
+        benchmark_metadata_path=benchmark_source.metadata_path,
+        meta_model_data_path=meta_model_data_path,
+        meta_model_col=str(scoring_params.get("meta_model_col", "numerai_meta_model")),
+        era_col=str(scoring_params.get("era_col", "era")),
+        id_col=str(scoring_params.get("id_col", "id")),
+        data_root=DEFAULT_DATASETS_DIR,
+        include_feature_neutral_metrics=False,
+    )
+    return _bmc200_from_summaries(summaries)
+
+
+def _bmc200_from_summaries(summaries: dict[str, pd.DataFrame]) -> float | None:
+    frame = summaries.get(PRIMARY_BMC_SUMMARY_KEY)
+    if frame is None or "prediction" not in frame.index:
+        return None
+    stats = frame.loc["prediction"].to_dict()
+    value = stats.get("mean")
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _dedupe_targets(items: list[str]) -> tuple[str, ...]:
+    seen: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.append(item)
+    return tuple(seen)
+
+
+def _ensemble_signature(member_ids: list[str], weights: tuple[float, ...] | None) -> str:
+    """Order-insensitive signature of a blend (member set + rounded weights) for dedup."""
+    if weights is None:
+        return json.dumps({"members": sorted(member_ids), "weights": None}, sort_keys=True)
+    paired = sorted(zip(member_ids, weights, strict=False), key=lambda kv: kv[0])
+    return json.dumps(
+        {"members": [m for m, _ in paired], "weights": [round(float(w), 4) for _, w in paired]},
+        sort_keys=True,
+    )
+
+
+def _find_tried_ensemble(state: dict[str, object], signature: str) -> dict[str, object] | None:
+    tried = state.get("tried_ensembles")
+    if not isinstance(tried, list):
+        return None
+    for entry in tried:
+        if isinstance(entry, dict) and entry.get("signature") == signature:
+            return cast(dict[str, object], entry)
+    return None
+
+
+def _record_tried_ensemble(
+    state: dict[str, object],
+    *,
+    signature: str,
+    ensemble_id: str,
+    member_ids: list[str],
+    metric_value: float | None,
+    round_label: str,
+) -> None:
+    existing = state.get("tried_ensembles")
+    tried: list[object] = list(existing) if isinstance(existing, list) else []
+    tried.append(
+        {
+            "signature": signature,
+            "ensemble_id": ensemble_id,
+            "member_run_ids": list(member_ids),
+            "metric_value": metric_value,
+            "round_label": round_label,
+        }
+    )
+    state["tried_ensembles"] = tried
+
+
+def _update_best_ensemble(
+    state: dict[str, object],
+    *,
+    ensemble_id: str,
+    member_ids: list[str],
+    weights: tuple[float, ...] | None,
+    metric_value: float | None,
+    round_label: str,
+) -> bool:
+    """Promote the blend into the separate best_ensemble track if it scores higher.
+    Returns True when it became the new best ensemble."""
+    if metric_value is None:
+        return False
+    current = state.get("best_ensemble")
+    current_metric = current.get("metric_value") if isinstance(current, dict) else None
+    if isinstance(current_metric, (int, float)) and not isinstance(current_metric, bool):
+        if metric_value <= float(current_metric):
+            return False
+    state["best_ensemble"] = {
+        "ensemble_id": ensemble_id,
+        "run_ids": list(member_ids),
+        "weights": list(weights) if weights is not None else None,
+        "metric_value": metric_value,
+        "round_label": round_label,
+        "updated_at": _utc_now_iso(),
+    }
+    return True
+
+
+def _render_ensemble_summary_md(
+    *, member_ids: list[str], weights: tuple[float, ...] | None, metric_value: float | None, duplicate: bool
+) -> str:
+    lines = ["## Ensemble blend"]
+    if duplicate:
+        lines.append("- Note: duplicate of a previously-built blend (cached score reused)")
+    lines.append(f"- Method: rank_avg ({len(member_ids)} members)")
+    for index, run_id in enumerate(member_ids):
+        weight_note = f" (weight {weights[index]:.4f})" if weights is not None else ""
+        lines.append(f"  - {run_id}{weight_note}")
+    lines.append(f"- Scored {PRIMARY_METRIC_FIELD} (vs {PAYOUT_TARGET_COL}): {metric_value}")
+    return "\n".join(lines) + "\n"
+
+
 def _record_failed_round(
     *,
     experiment: ExperimentRecord,
@@ -993,6 +1497,7 @@ def _build_context(
         },
         "phase": state.get("phase"),
         "phase_history": state.get("phase_history", []),
+        "ensemble": _ensemble_context(state=state, experiment=experiment, report=report),
         "phase_value_caps": {path: list(bounds) for path, bounds in phase_caps.items()},
         "cost_summary": _cost_summary(state),
         "canonical_seed_trio": list(CANONICAL_SEED_TRIO),
@@ -1009,17 +1514,56 @@ def _build_context(
     }
 
 
+def _ensemble_context(
+    *, state: dict[str, object], experiment: ExperimentRecord, report: ExperimentReport | None
+) -> dict[str, object]:
+    """LLM-facing ensemble status. `eligible_runs` (the blend menu) is populated only
+    once unlocked, to avoid bloating the prompt during ordinary single-model search.
+    The menu is the scored runs in the (top-N) report — i.e. the strongest members."""
+    unlocked = _ensemble_unlocked(state, experiment)
+    eligible: list[dict[str, object]] = []
+    if unlocked and report is not None:
+        for row in report.rows:
+            if getattr(row, PRIMARY_METRIC_FIELD) is None:
+                continue
+            eligible.append(
+                {
+                    "run_id": row.run_id,
+                    "bmc_last_200_eras_mean": row.bmc_last_200_eras_mean,
+                    "corr_mean": row.corr_mean,
+                }
+            )
+    return {
+        "unlocked": unlocked,
+        "plateau_counter": _as_int(state.get("phase_plateau_counter"), default=0),
+        "plateau_threshold": _ensemble_plateau_threshold(experiment),
+        "method": "rank_avg",
+        "min_members": ENSEMBLE_MIN_MEMBERS,
+        "max_members": ENSEMBLE_MAX_MEMBERS,
+        "eligible_runs": eligible,
+        "best_ensemble": state.get("best_ensemble"),
+    }
+
+
 def _render_prompt(context: dict[str, object], *, program_path: Path = PROGRAM_PATH) -> str:
     context_json = json.dumps(context, indent=2, sort_keys=True, default=str)
     return program_path.read_text(encoding="utf-8").replace("{{CONTEXT_JSON}}", context_json)
 
 
-def _call_research_llm(*, prompt: str, artifact_dir: Path, round_label: str) -> tuple[str, str]:
+def _call_research_llm(
+    *, prompt: str, artifact_dir: Path, round_label: str, allow_ensemble: bool = False
+) -> tuple[str, str]:
     config = load_openrouter_config()
     if config.active_model_source == "openrouter":
         return _call_openrouter(prompt, config=config), "openrouter"
     return (
-        _call_codex_exec(prompt=prompt, artifact_dir=artifact_dir, round_label=round_label, config=config),
+        _call_codex_exec(
+            prompt=prompt,
+            artifact_dir=artifact_dir,
+            round_label=round_label,
+            config=config,
+            allow_ensemble=allow_ensemble,
+        ),
         "codex-exec",
     )
 
@@ -1046,13 +1590,15 @@ def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:
     return content
 
 
-def _call_codex_exec(*, prompt: str, artifact_dir: Path, round_label: str, config: OpenRouterConfig) -> str:
+def _call_codex_exec(
+    *, prompt: str, artifact_dir: Path, round_label: str, config: OpenRouterConfig, allow_ensemble: bool = False
+) -> str:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False) as handle:
         schema_path = Path(handle.name)
-    _write_json(schema_path, _llm_response_schema())
+    _write_json(schema_path, _llm_response_schema(allow_ensemble=allow_ensemble))
     cmd = [
         _resolve_codex_executable(),
         "exec",
@@ -1161,13 +1707,21 @@ def _parse_llm_response(raw_response: str) -> ResearchLLMResponse:
     )
 
 
+_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
 def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
     action_raw = payload.get("action")
     # Budget-bounded design: `stop` is not an LLM action. A run explores until its
-    # round budget is hit (or a human halts it); the LLM only ever proposes runs.
-    if action_raw != "run":
+    # round budget is hit (or a human halts it); the LLM only ever proposes runs or
+    # (once unlocked) ensembles. Whether `ensemble` is *allowed* is gated upstream
+    # (codex schema enum + the unlock check in `_run_one_round`); parse only checks
+    # the proposal is well-formed.
+    if action_raw not in ("run", "ensemble"):
         raise AgenticResearchValidationError("agentic_research_action_invalid")
-    action = cast(Literal["run", "stop"], action_raw)
+    if action_raw == "ensemble":
+        return _parse_ensemble_decision(payload)
+    action = cast(Literal["run", "ensemble"], action_raw)
     changes = tuple(_parse_change(item) for item in _as_list(payload.get("changes")))
     decision = ResearchDecision(
         action=action,
@@ -1185,7 +1739,51 @@ def _parse_decision_object(payload: dict[str, object]) -> ResearchDecision:
     return decision
 
 
-def _llm_response_schema() -> dict[str, object]:
+def _parse_ensemble_decision(payload: dict[str, object]) -> ResearchDecision:
+    """Parse an `action == "ensemble"` proposal: a blend of existing scored runs.
+
+    Shape differs from a `run`: no parent_config, no changes; instead 2..N member
+    run_ids and optional matching weights."""
+    raw_ids = _as_list(payload.get("ensemble_run_ids"))
+    run_ids: list[str] = []
+    for item in raw_ids:
+        if not isinstance(item, str) or not _SAFE_RUN_ID.match(item):
+            raise AgenticResearchValidationError("agentic_research_ensemble_run_id_invalid")
+        run_ids.append(item)
+    if len(run_ids) != len(set(run_ids)):
+        raise AgenticResearchValidationError("agentic_research_ensemble_duplicate_member")
+    if not ENSEMBLE_MIN_MEMBERS <= len(run_ids) <= ENSEMBLE_MAX_MEMBERS:
+        raise AgenticResearchValidationError("agentic_research_ensemble_member_count_invalid")
+    weights: tuple[float, ...] | None = None
+    raw_weights = payload.get("ensemble_weights")
+    if raw_weights is not None:
+        weight_list = _as_list(raw_weights)
+        parsed: list[float] = []
+        for item in weight_list:
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                raise AgenticResearchValidationError("agentic_research_ensemble_weight_invalid")
+            parsed.append(float(item))
+        if len(parsed) != len(run_ids):
+            raise AgenticResearchValidationError("agentic_research_ensemble_weight_count_mismatch")
+        weights = tuple(parsed)
+    if _optional_str(payload.get("parent_config")) is not None:
+        raise AgenticResearchValidationError("agentic_research_ensemble_parent_config_forbidden")
+    if _as_list(payload.get("changes")):
+        raise AgenticResearchValidationError("agentic_research_ensemble_changes_forbidden")
+    return ResearchDecision(
+        action="ensemble",
+        learning=_required_str(payload, "learning"),
+        belief_update=_required_str(payload, "belief_update"),
+        next_hypothesis=_optional_str(payload.get("next_hypothesis")),
+        parent_config=None,
+        changes=(),
+        stop_reason=None,
+        ensemble_run_ids=tuple(run_ids),
+        ensemble_weights=weights,
+    )
+
+
+def _llm_response_schema(*, allow_ensemble: bool = False) -> dict[str, object]:
     value_schema: dict[str, object] = {
         "anyOf": [
             {"type": "string"},
@@ -1207,10 +1805,14 @@ def _llm_response_schema() -> dict[str, object]:
             },
         ]
     }
+    # The action enum is the unlock gate for the codex-exec backend: `ensemble` is
+    # only offered once plateaued. (The OpenRouter backend sends no schema, so for
+    # it the gate is enforced only by the unlock check in `_run_one_round`.)
+    action_enum = ["run", "ensemble"] if allow_ensemble else ["run"]
     decision_schema: dict[str, object] = {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["run"]},
+            "action": {"type": "string", "enum": action_enum},
             "learning": {"type": "string"},
             "belief_update": {"type": "string"},
             "next_hypothesis": {"type": ["string", "null"]},
@@ -1229,6 +1831,9 @@ def _llm_response_schema() -> dict[str, object]:
                 },
             },
             "stop_reason": {"type": ["string", "null"]},
+            # Always present so the schema is stable; `run` actions send [] / null.
+            "ensemble_run_ids": {"type": "array", "items": {"type": "string"}},
+            "ensemble_weights": {"type": ["array", "null"], "items": {"type": "number"}},
         },
         "required": [
             "action",
@@ -1238,6 +1843,8 @@ def _llm_response_schema() -> dict[str, object]:
             "parent_config",
             "changes",
             "stop_reason",
+            "ensemble_run_ids",
+            "ensemble_weights",
         ],
         "additionalProperties": False,
     }
@@ -1614,6 +2221,36 @@ def _budget_rounds(experiment: ExperimentRecord) -> int | None:
             return None
         return value if value > 0 else None
     return None
+
+
+def _ensemble_plateau_threshold(experiment: ExperimentRecord) -> int:
+    """Plateau counter at/above which the ensemble action unlocks. Per-experiment
+    metadata override; falls back to the module default. Mirrors `_budget_rounds`
+    coercion (rejects bools, coerces int-valued floats and numeric strings)."""
+    raw = experiment.metadata.get(ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY)
+    if isinstance(raw, bool):
+        return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+    if isinstance(raw, int):
+        return raw if raw > 0 else DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+    if isinstance(raw, float) and raw.is_integer() and raw > 0:
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            value = int(raw.strip())
+        except ValueError:
+            return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+        return value if value > 0 else DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+    return DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+
+
+def _ensemble_unlocked(state: dict[str, object], experiment: ExperimentRecord) -> bool:
+    """True once single-model search has plateaued enough to also try ensembles.
+
+    Plateau is a phase-subsystem concept; experiments without a phases config have
+    no `phase_plateau_counter` and therefore never unlock ensembling (intended —
+    it is a plateau feature)."""
+    plateau = _as_int(state.get("phase_plateau_counter"), default=0)
+    return plateau >= _ensemble_plateau_threshold(experiment)
 
 
 def _parse_value_caps(raw: object) -> dict[str, tuple[float, float]]:
@@ -2179,8 +2816,11 @@ def _is_confirmation_round(decision_payload: dict[str, object]) -> bool:
 def _classify_round_type(decision_payload: dict[str, object]) -> RoundType:
     """Single source of truth for round classification. Used by the outcome
     footer renderer and persisted in trace.jsonl."""
-    if decision_payload.get("action") == "baseline":
+    action = decision_payload.get("action")
+    if action == "baseline":
         return "baseline"
+    if action == "ensemble":
+        return "ensemble"
     if _is_confirmation_round(decision_payload):
         return "confirmation"
     return "discovery"
@@ -2672,6 +3312,8 @@ def _decision_payload(decision: ResearchDecision, *, model_source: str) -> dict[
         "parent_config": decision.parent_config,
         "changes": [asdict(change) for change in decision.changes],
         "stop_reason": decision.stop_reason,
+        "ensemble_run_ids": list(decision.ensemble_run_ids),
+        "ensemble_weights": (list(decision.ensemble_weights) if decision.ensemble_weights is not None else None),
         "model_source": model_source,
     }
 
@@ -2715,6 +3357,10 @@ _STATE_DEFAULTS: dict[str, object] = {
     "diversification_dry_run_count": 0,
     "inert_axes": {},
     "pending_decision": None,
+    # Separate ensemble track (deterministic; no seed-trio). best_ensemble holds the
+    # top blend found; tried_ensembles is the dedup ledger of member-set signatures.
+    "best_ensemble": None,
+    "tried_ensembles": [],
 }
 
 # Defaults applied only when the experiment defines a phases config (the phase
@@ -3075,6 +3721,17 @@ def _render_outcome_footer(round_payload: dict[str, object]) -> str:
 
     if round_type == "baseline":
         lines.append("- Status: baseline establishment (no LLM mutation)")
+    elif round_type == "ensemble":
+        ens_raw = round_payload.get("ensemble")
+        ens = ens_raw if isinstance(ens_raw, dict) else {}
+        members = ens.get("member_run_ids")
+        metric = round_payload.get("metric_value")
+        lines.append(f"- Ensemble members: {len(members) if isinstance(members, list) else 0}")
+        if isinstance(metric, (int, float)) and not isinstance(metric, bool):
+            lines.append(f"- Ensemble {PRIMARY_METRIC_FIELD}: {metric}")
+        lines.append(f"- New best ensemble: {'yes' if ens.get('improved_best') else 'no'}")
+        if ens.get("duplicate"):
+            lines.append("- Duplicate blend: yes (cached score reused)")
     elif round_type == "confirmation":
         ctx_raw = round_payload.get("confirmation_context")
         ctx: dict[str, object] = ctx_raw if isinstance(ctx_raw, dict) else {}
@@ -3105,8 +3762,9 @@ def _render_outcome_footer(round_payload: dict[str, object]) -> str:
         else:
             lines.append("- Trigger cleared: n/a (no champion yet)")
 
-    # Promotion line: shown on discovery and confirmation; suppressed on baseline.
-    if round_type != "baseline":
+    # Promotion line: shown on discovery and confirmation; suppressed on baseline
+    # and ensemble (ensembles use the separate best_ensemble track, not promotion).
+    if round_type not in ("baseline", "ensemble"):
         promotion = round_payload.get("promotion")
         if isinstance(promotion, dict) and promotion:
             mean = promotion.get("seed_trio_primary_mean")
@@ -3238,6 +3896,13 @@ def _essential_run_ids(
             for value in runs.values():
                 if isinstance(value, str):
                     essential.add(value)
+    # Members of the best ensemble must stay blendable/re-scoreable: never rotate
+    # away their predictions even if they age out of the report window.
+    best_ensemble = state.get("best_ensemble")
+    if isinstance(best_ensemble, dict):
+        member_runs = best_ensemble.get("run_ids")
+        if isinstance(member_runs, list):
+            essential.update(value for value in member_runs if isinstance(value, str))
     grace_start = max(1, last_round_number - ARTIFACT_ROTATION_RECENT_ROUND_GRACE + 1)
     signatures = state.get("tried_signatures")
     if isinstance(signatures, list):

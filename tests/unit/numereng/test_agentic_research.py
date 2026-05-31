@@ -3220,3 +3220,237 @@ def test_apply_state_defaults_phase_fields_only_when_has_phase() -> None:
     assert state_with_phase["phase_successful_rounds"] == 0
     assert state_with_phase["phase_history"] == []
     assert state_with_phase["phase_best_metric"] is None
+
+
+# --- Ensemble action -------------------------------------------------------
+
+
+def _ensemble_form(run_ids: list[str], *, weights: list[float] | None = None) -> dict[str, object]:
+    return {
+        "action": "ensemble",
+        "learning": "Single-model search plateaued.",
+        "belief_update": "A blend of the two strongest runs should beat either alone.",
+        "next_hypothesis": "Blend the top two complementary runs.",
+        "parent_config": None,
+        "changes": [],
+        "stop_reason": None,
+        "ensemble_run_ids": run_ids,
+        "ensemble_weights": weights,
+    }
+
+
+def test_parse_ensemble_decision_accepts_valid() -> None:
+    decision = research_module._parse_decision_object(_ensemble_form(["run-a", "run-b"]))
+    assert decision.action == "ensemble"
+    assert decision.ensemble_run_ids == ("run-a", "run-b")
+    assert decision.ensemble_weights is None
+    assert decision.parent_config is None
+    assert decision.changes == ()
+
+
+def test_parse_ensemble_decision_accepts_weights() -> None:
+    decision = research_module._parse_decision_object(_ensemble_form(["run-a", "run-b"], weights=[0.6, 0.4]))
+    assert decision.ensemble_weights == (0.6, 0.4)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "code"),
+    [
+        (lambda f: f.update(ensemble_run_ids=["only-one"]), "member_count_invalid"),
+        (lambda f: f.update(ensemble_run_ids=["a", "a"]), "duplicate_member"),
+        (lambda f: f.update(ensemble_run_ids=["ok", "bad id!"]), "run_id_invalid"),
+        (lambda f: f.update(ensemble_weights=[0.5]), "weight_count_mismatch"),
+        (lambda f: f.update(parent_config="config_001.json"), "parent_config_forbidden"),
+        (
+            lambda f: f.update(changes=[{"path": "model.params.x", "value": 1, "reason": "no"}]),
+            "changes_forbidden",
+        ),
+    ],
+)
+def test_parse_ensemble_decision_rejects_malformed(mutate, code: str) -> None:
+    form = _ensemble_form(["run-a", "run-b"])
+    mutate(form)
+    with pytest.raises(AgenticResearchValidationError) as excinfo:
+        research_module._parse_decision_object(form)
+    assert code in str(excinfo.value)
+
+
+def test_parse_run_decision_still_requires_parent_and_changes() -> None:
+    form: dict[str, object] = {
+        "action": "run",
+        "learning": "x",
+        "belief_update": "y",
+        "next_hypothesis": "z",
+        "parent_config": None,
+        "changes": [],
+        "stop_reason": None,
+        "ensemble_run_ids": [],
+        "ensemble_weights": None,
+    }
+    with pytest.raises(AgenticResearchValidationError) as excinfo:
+        research_module._parse_decision_object(form)
+    assert "parent_config_missing" in str(excinfo.value)
+
+
+def test_llm_response_schema_gates_ensemble_action() -> None:
+    locked = research_module._llm_response_schema(allow_ensemble=False)
+    unlocked = research_module._llm_response_schema(allow_ensemble=True)
+
+    def _enum(schema: dict[str, object]) -> list[str]:
+        decision = cast(dict[str, object], schema["properties"])["decision_form"]
+        props = cast(dict[str, object], cast(dict[str, object], decision)["properties"])
+        return cast(list[str], cast(dict[str, object], props["action"])["enum"])
+
+    assert _enum(locked) == ["run"]
+    assert _enum(unlocked) == ["run", "ensemble"]
+    # Ensemble fields are always present and required so the schema stays stable.
+    decision = cast(dict[str, object], cast(dict[str, object], locked["properties"])["decision_form"])
+    assert "ensemble_run_ids" in cast(dict[str, object], decision["properties"])
+    assert "ensemble_run_ids" in cast(list[str], decision["required"])
+
+
+def test_ensemble_unlocked_respects_threshold_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    default = research_module.DEFAULT_ENSEMBLE_PLATEAU_THRESHOLD
+
+    fresh = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    assert research_module._ensemble_plateau_threshold(fresh) == default
+    assert research_module._ensemble_unlocked({"phase_plateau_counter": default - 1}, fresh) is False
+    assert research_module._ensemble_unlocked({"phase_plateau_counter": default}, fresh) is True
+
+    _set_experiment_metadata(experiment.manifest_path, {research_module.ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY: 5})
+    overridden = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    assert research_module._ensemble_plateau_threshold(overridden) == 5
+    assert research_module._ensemble_unlocked({"phase_plateau_counter": 5}, overridden) is True
+    assert research_module._ensemble_unlocked({"phase_plateau_counter": 4}, overridden) is False
+
+
+def test_update_best_ensemble_only_on_improvement() -> None:
+    state: dict[str, object] = {}
+    assert research_module._update_best_ensemble(
+        state, ensemble_id="e1", member_ids=["a", "b"], weights=None, metric_value=0.003, round_label="r050"
+    )
+    assert cast(dict[str, object], state["best_ensemble"])["metric_value"] == 0.003
+    # Lower score does not displace the incumbent.
+    assert not research_module._update_best_ensemble(
+        state, ensemble_id="e2", member_ids=["a", "c"], weights=None, metric_value=0.002, round_label="r051"
+    )
+    assert cast(dict[str, object], state["best_ensemble"])["ensemble_id"] == "e1"
+    # Higher score does.
+    assert research_module._update_best_ensemble(
+        state, ensemble_id="e3", member_ids=["a", "d"], weights=None, metric_value=0.004, round_label="r052"
+    )
+    assert cast(dict[str, object], state["best_ensemble"])["ensemble_id"] == "e3"
+
+
+def _make_member_run(store_root: Path, run_id: str, *, target: str) -> None:
+    run_dir = store_root / "runs" / run_id
+    (run_dir / "artifacts" / "predictions").mkdir(parents=True, exist_ok=True)
+    (run_dir / "artifacts" / "predictions" / "p.parquet").write_bytes(b"PAR1")
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "status": "FINISHED",
+                "data": {
+                    "data_version": "v5.2",
+                    "feature_set": "small",
+                    "dataset_scope": "train_plus_validation",
+                    "target_col": target,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _seed_plateaued_state(experiment_dir: Path, *, plateau: int, next_round: int) -> None:
+    state_path = experiment_dir / "agentic_research" / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "running",
+                "next_round_number": next_round,
+                "total_rounds_completed": next_round - 1,
+                "phase": "deep",
+                "phase_plateau_counter": plateau,
+                "phase_successful_rounds": plateau,
+                "confirmed_champion": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_run_research_builds_and_scores_ensemble_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    experiment_dir = experiment.manifest_path.parent
+    _set_experiment_metadata(experiment.manifest_path, {research_module.ENSEMBLE_PLATEAU_THRESHOLD_METADATA_KEY: 1})
+    _seed_plateaued_state(experiment_dir, plateau=50, next_round=10)
+    _make_member_run(store_root, "run-a", target="target_alpha_60")
+    _make_member_run(store_root, "run-b", target="target_alpha_20")
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-a", 0.0039), _row("run-b", 0.0040)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (_llm_response(_ensemble_form(["run-a", "run-b"])), "test"),
+    )
+
+    build_calls: list[tuple[str, ...]] = []
+
+    def _fake_build(*, store_root: Path, request: object) -> object:  # noqa: ARG001
+        run_ids = cast(tuple[str, ...], getattr(request, "run_ids"))
+        build_calls.append(run_ids)
+        artifacts = store_root / "ensembles" / "ens-1"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "predictions.parquet").write_bytes(b"PAR1")
+        return SimpleNamespace(ensemble_id="ens-1", artifacts_path=artifacts)
+
+    monkeypatch.setattr(research_module, "build_ensemble", _fake_build)
+    monkeypatch.setattr(research_module, "_score_ensemble_predictions", lambda **_: 0.0042)
+
+    def _fail_score_round(**_: object) -> None:
+        raise AssertionError("score_experiment_round must not run for ensemble rounds")
+
+    def _fail_run_plan(**_: object) -> None:
+        raise AssertionError("_record_round_config_in_run_plan must not run for ensemble rounds")
+
+    monkeypatch.setattr(research_module, "score_experiment_round", _fail_score_round)
+    monkeypatch.setattr(research_module, "_record_round_config_in_run_plan", _fail_run_plan)
+
+    # Two rounds: the second proposes the identical blend and must dedup-skip.
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    assert [r.action for r in result.rounds] == ["ensemble", "ensemble"]
+    assert build_calls == [("run-a", "run-b")]  # second round reused the cached blend
+
+    state = json.loads((experiment_dir / "agentic_research" / "state.json").read_text(encoding="utf-8"))
+    best = state["best_ensemble"]
+    assert best["metric_value"] == 0.0042
+    assert best["run_ids"] == ["run-a", "run-b"]
+    assert state["confirmed_champion"] is None  # single-model track untouched
+    assert state["phase_plateau_counter"] == 50  # ensemble rounds neither tick nor reset plateau
+    assert state["failed_rounds_counter"] == 0
+
+    decisions = (
+        (experiment_dir / "agentic_research" / "rounds" / "decision.json").read_text(encoding="utf-8").splitlines()
+    )
+    assert json.loads(decisions[-1])["decision"]["action"] == "ensemble"
+    assert json.loads(decisions[-1])["round_type"] == "ensemble"
+
+    events = {e["event"] for e in _trace_events(experiment_dir / "agentic_research" / "trace.jsonl")}
+    assert "ensemble_round_completed" in events
+    assert "ensemble_duplicate_skipped" in events
