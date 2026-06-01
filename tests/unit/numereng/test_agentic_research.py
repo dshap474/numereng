@@ -2494,6 +2494,60 @@ def test_build_context_surfaces_canonical_seed_trio(tmp_path: Path) -> None:
     assert context["canonical_seed_trio"] == list(research_module.CANONICAL_SEED_TRIO)
 
 
+def test_state_context_drops_unbounded_collections_keeps_program_fields() -> None:
+    """The prompt's `state` must not carry the per-round-growing collections.
+
+    `confirmations` grows one entry per config forever and was the unbounded term that
+    blew the codex prompt on long runs; `tried_signatures` is the 100-entry dedup
+    window. Both are surfaced curated as their own top-level context keys, so the raw
+    `state` copy is pure duplication. Programs read only scalar fields + phase_history,
+    which must survive."""
+    state = {
+        "phase": "deep",
+        "next_round_number": 522,
+        "total_rounds_completed": 521,
+        "phase_history": [{"phase": "shallow"}],
+        "confirmations": {f"config_{i:03d}.json": {"runs": {}} for i in range(481)},
+        "tried_signatures": [f"sig-{i}" for i in range(100)],
+    }
+    curated = research_module._state_context(state)
+    for field in ("phase", "next_round_number", "total_rounds_completed", "phase_history"):
+        assert field in curated, field
+    assert "confirmations" not in curated
+    assert "tried_signatures" not in curated
+
+
+def test_build_context_prompt_size_bounded_as_confirmations_grow(tmp_path: Path) -> None:
+    """Rendered prompt size must stay flat as confirmations accumulate over a long run.
+
+    Regression for the r521 codex stream-disconnect: the raw `state` dump shipped every
+    confirmation entry, so the prompt grew without bound. With the curated `state`, a
+    state holding 1000 confirmations must render no larger than one holding 10."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+
+    def _state(n: int) -> dict[str, object]:
+        return {
+            "phase": "deep",
+            "next_round_number": n + 1,
+            "total_rounds_completed": n,
+            "confirmations": {
+                f"config_{i:03d}.json": {"runs": {"42": {"run_id": f"run{i}"}}, "last_attempt_at_round": i}
+                for i in range(n)
+            },
+        }
+
+    def _prompt_len(n: int) -> int:
+        context = research_module._build_context(
+            root=store_root, experiment=experiment, report=None, state=_state(n), eligible_ensemble_rows=[]
+        )
+        return len(research_module._render_prompt(context))
+
+    small, large = _prompt_len(10), _prompt_len(1000)
+    # Curated confirmations is capped at 30 entries; 1000 vs 10 must not blow the prompt.
+    assert large - small < 10_000, (small, large)
+
+
 def test_experiment_markdown_not_updated_when_round_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

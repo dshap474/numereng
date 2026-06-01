@@ -1561,7 +1561,7 @@ def _build_context(
         "confirmations": _recent_confirmations(state, limit=30),
         "confirmed_champion": state.get("confirmed_champion"),
         "tried_signatures": state.get("tried_signatures", []),
-        "state": state,
+        "state": _state_context(state),
         "configs": _config_context(experiment),
         "report": _report_context(report),
         "recent_rounds": _recent_decisions(_decision_log_path(experiment), limit=8),
@@ -1569,6 +1569,22 @@ def _build_context(
         "experiment_notes": _read_text(_experiment_markdown_path(experiment), limit=MAX_CONTEXT_CHARS),
         "research_memory": _read_text(root / "notes" / "__RESEARCH_MEMORY__" / "CURRENT.md", limit=MAX_CONTEXT_CHARS),
     }
+
+
+_STATE_CONTEXT_OMIT_KEYS = ("confirmations", "tried_signatures")
+
+
+def _state_context(state: dict[str, object]) -> dict[str, object]:
+    """Compact `state` for the prompt. Drops the two collections that grow per-round
+    (`confirmations` is one entry per config tried — unbounded; `tried_signatures` is
+    the 100-entry dedup window). Both are already surfaced curated as their own
+    top-level context keys (`confirmations` capped at 30; `tried_signatures` verbatim),
+    so dumping the raw copies here only duplicated bytes and, in the case of
+    `confirmations`, was the single unbounded growth term that blew the codex prompt on
+    long runs. No program reads `state.confirmations`/`state.tried_signatures` — only
+    scalar fields (`phase`, `next_round_number`, `total_rounds_completed`) and
+    `phase_history`, all retained here."""
+    return {key: value for key, value in state.items() if key not in _STATE_CONTEXT_OMIT_KEYS}
 
 
 def _ensemble_context(*, state: dict[str, object], eligible_rows: list[dict[str, object]]) -> dict[str, object]:
