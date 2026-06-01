@@ -2548,6 +2548,34 @@ def test_build_context_prompt_size_bounded_as_confirmations_grow(tmp_path: Path)
     assert large - small < 10_000, (small, large)
 
 
+def test_config_context_bounds_recent_plus_seed_and_champion(tmp_path: Path) -> None:
+    """The configs menu must stay bounded as configs accumulate over a long run.
+
+    Regression for the r521 codex stream-disconnect: the configs list dumped every
+    generated config (~500 = ~500 KB, the prompt's single largest term). It must now
+    surface only the seed, the confirmed champion (however old), and the most recent
+    CONFIG_CONTEXT_RECENT generated configs."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    config_dir = experiment.manifest_path.parent / "configs"
+    _write_training_config(config_dir / "seed.json")
+    total = research_module.CONFIG_CONTEXT_RECENT + 25
+    for i in range(1, total + 1):
+        _write_training_config(config_dir / f"config_{i:03d}.json", learning_rate=0.001 * i)
+    champion_name = "config_002.json"  # old champion, far outside the recent window
+    state = {"confirmed_champion": {"parent_config": champion_name}}
+
+    context = research_module._config_context(experiment, state=state)
+    names = {item["filename"] for item in context}
+
+    # Bounded: recent window + seed + champion, never all `total` generated configs.
+    assert len(context) <= research_module.CONFIG_CONTEXT_RECENT + 2
+    assert "seed.json" in names  # seeds always kept
+    assert champion_name in names  # champion kept even though it is old
+    assert f"config_{total:03d}.json" in names  # newest kept
+    assert "config_010.json" not in names  # an old non-champion generated config is dropped
+
+
 def test_experiment_markdown_not_updated_when_round_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -97,6 +97,14 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
 TRIED_SIGNATURES_WINDOW = 100
+# Cap on generated configs surfaced in the prompt. The configs list is the single
+# largest prompt term and grows one entry per round (~500 configs = ~500 KB on the
+# 521-round run — the dominant cause of the codex stream-disconnect that killed it).
+# The LLM only needs to branch from the current neighborhood + the all-time champion;
+# older configs remain on disk (so still nameable as parent_config) and are surfaced
+# by metric in the report. Seeds and the champion config are always kept on top of
+# the recent window.
+CONFIG_CONTEXT_RECENT = 40
 # Diversification enforcement (hybrid). A "streak" is consecutive seed-42
 # discovery rounds in the same cell (family, feature_set, target) or on the same
 # target, with confirmation rounds skipped (they neither count nor break it).
@@ -1562,7 +1570,7 @@ def _build_context(
         "confirmed_champion": state.get("confirmed_champion"),
         "tried_signatures": state.get("tried_signatures", []),
         "state": _state_context(state),
-        "configs": _config_context(experiment),
+        "configs": _config_context(experiment, state=state),
         "report": _report_context(report),
         "recent_rounds": _recent_decisions(_decision_log_path(experiment), limit=8),
         "latest_round_markdown": _latest_round_markdown(experiment),
@@ -3063,9 +3071,39 @@ def _cost_summary(state: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _config_context(experiment: ExperimentRecord) -> list[dict[str, object]]:
+def _config_suffix_num(path: Path) -> int:
+    """Numeric suffix of a generated `config_NNN.json` (0 for unparseable/seed names)."""
+    match = re.search(r"(\d+)", path.stem)
+    return int(match.group(1)) if match else 0
+
+
+def _relevant_config_paths(paths: list[Path], *, state: dict[str, object]) -> set[Path]:
+    """Bound the config menu to what the LLM needs to branch from: all seeds (non
+    `config_*` names), the confirmed champion's config, and the most recent
+    CONFIG_CONTEXT_RECENT generated configs. Older configs stay on disk (still nameable
+    as parent_config) and are surfaced by metric in the report."""
+    keep: set[Path] = set()
+    generated: list[Path] = []
+    for path in paths:
+        if path.name.startswith("config_"):
+            generated.append(path)
+        else:
+            keep.add(path)
+    champion = state.get("confirmed_champion")
+    if isinstance(champion, dict):
+        champion_name = cast(dict[str, object], champion).get("parent_config")
+        if isinstance(champion_name, str):
+            keep.update(p for p in generated if p.name == champion_name)
+    generated.sort(key=_config_suffix_num)
+    keep.update(generated[-CONFIG_CONTEXT_RECENT:])
+    return keep
+
+
+def _config_context(experiment: ExperimentRecord, *, state: dict[str, object]) -> list[dict[str, object]]:
     config_dir = experiment.manifest_path.parent / "configs"
-    paths = sorted(config_dir.glob("*.json"))
+    all_paths = sorted(config_dir.glob("*.json"))
+    keep = _relevant_config_paths(all_paths, state=state)
+    paths = [path for path in all_paths if path in keep]
     parsed: list[tuple[Path, dict[str, object] | None, str | None]] = []
     for path in paths:
         try:
