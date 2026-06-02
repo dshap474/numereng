@@ -3627,3 +3627,19 @@ def test_attach_target_to_blend_raises_when_source_missing(tmp_path: Path) -> No
         research_module._attach_target_to_blend(
             blend_path=blend_path, target_col="target_ender_20", member_run_dir=tmp_path / "runs" / "absent"
         )
+
+
+def test_resolve_member_prediction_file_matches_config_derived_name(tmp_path: Path) -> None:
+    """Regression (live r522 bail `ensemble_target_source_missing`): prediction parquets are
+    named from the run's config (e.g. `xgb_small_charlie60_champ_s42.parquet`), NOT a fixed
+    `pred_*` prefix. The resolver must use the same `*.parquet` glob as the eligibility gate
+    (`_member_predictions_exists`) — otherwise a run passes eligibility but fails target-attach."""
+    run_dir = tmp_path / "runs" / "run-a"
+    pred_dir = run_dir / "artifacts" / "predictions"
+    pred_dir.mkdir(parents=True)
+    config_named = pred_dir / "xgb_small_charlie60_champ_s42.parquet"  # no `pred_` prefix
+    config_named.write_bytes(b"")
+
+    # Both the eligibility gate and the resolver must agree this run is blendable.
+    assert research_module._member_predictions_exists(run_dir) is True
+    assert research_module._resolve_member_prediction_file(run_dir) == config_named

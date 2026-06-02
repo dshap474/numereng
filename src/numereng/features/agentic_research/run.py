@@ -1332,9 +1332,14 @@ def _attach_target_to_blend(*, blend_path: Path, target_col: str, member_run_dir
 
 
 def _resolve_member_prediction_file(run_dir: Path) -> Path | None:
+    """Resolve a member run's prediction parquet to re-attach the trained target from.
+    Must use the SAME glob as `_member_predictions_exists` (the eligibility gate) and the
+    canonical writer (`scoring/run_service.py`): prediction files are named from the run's
+    config (e.g. `xgb_small_charlie60_champ_s42.parquet`), not a fixed `pred_*` prefix, so a
+    narrower glob would let a run pass eligibility yet fail target-attach."""
     pred_dir = run_dir / "artifacts" / "predictions"
     if pred_dir.is_dir():
-        files = sorted(item for item in pred_dir.glob("pred_*.parquet") if item.is_file())
+        files = sorted(item for item in pred_dir.glob("*.parquet") if item.is_file())
         if files:
             return files[0]
     fallback = run_dir / "predictions.parquet"
