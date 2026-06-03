@@ -1728,6 +1728,12 @@ def _call_codex_exec(
         cmd.extend(["-c", f'model_reasoning_effort="{config.active_model_reasoning_effort}"'])
     cmd.extend(
         [
+            # The research call only needs JSON back — never image generation. codex
+            # advertises a built-in image_generation tool by default (stable, on); a
+            # transient OpenAI 400 on its `gpt-image-2` model bailed a live run at r625.
+            # Disabling the tool removes that failure mode entirely (≡ -c features.image_generation=false).
+            "--disable",
+            "image_generation",
             "--skip-git-repo-check",
             "--ephemeral",
             "--output-schema",

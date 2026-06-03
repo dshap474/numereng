@@ -752,6 +752,9 @@ def test_call_codex_exec_uses_configured_model_and_reasoning(
     assert cmd[cmd.index("--model") + 1] == "gpt-5.5"
     assert cmd[cmd.index("-c") + 1] == 'model_reasoning_effort="high"'
     assert "--output-schema" in cmd
+    # Built-in image_generation tool is disabled — research only needs JSON back, and a
+    # transient OpenAI 400 on its gpt-image-2 model bailed a live run (r625).
+    assert cmd[cmd.index("--disable") + 1] == "image_generation"
     assert captured["timeout"] == research_module.CODEX_TIMEOUT_SECONDS
     assert captured["encoding"] == "utf-8"
     assert captured["errors"] == "replace"
