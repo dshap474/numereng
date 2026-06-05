@@ -62,6 +62,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - Use `ensemble ...` when combining scored runs into one ranked blend.
 - Use `serve ...` when freezing a production model bundle, rebuilding live predictions, or preparing a Numerai model upload.
 - Use `run submit` when a submit-ready parquet or run artifact already exists.
+- Use `submissions calibration update` to pull resolved live rounds from Numerai and rebuild the local-BMC200-vs-live calibration dashboard artifacts; see the `submissions-ops` skill for the refresh/materialize/update commands and the resolved-round gating.
 - Use `remote ...` for SSH-driven remote repo sync, experiment launch, pullback, and maintenance.
 - Use `cloud ...` for EC2, managed AWS, or Modal workflows.
 - Use `store ...` when the filesystem artifacts and SQLite index need repair or reconciliation.
@@ -99,6 +100,7 @@ uv run numereng experiment details --id <experiment_id>
 uv run numereng experiment report --id <experiment_id>
 uv run numereng run score --run-id <run_id>
 uv run numereng monitor snapshot --json
+uv run numereng submissions calibration update --format json
 just viz
 ```
 
