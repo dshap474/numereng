@@ -120,6 +120,11 @@ def submissions_calibration_update(
             dry_run=resolved_request.dry_run,
         )
     )
+    # Dry-run refresh does not write `live_rounds.parquet`, so materializing/reporting now would
+    # reflect stale on-disk rounds, not the fresh pull. Preview the pull only; the calibration
+    # artifacts and report are rebuilt only on a real run.
+    if resolved_request.dry_run:
+        return SubmissionCalibrationUpdateResponse(refresh=refresh, materialize=None, report=None)
     materialize = submissions_calibration_materialize(
         SubmissionCalibrationMaterializeRequest(
             workspace_root=resolved_request.workspace_root,

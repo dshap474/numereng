@@ -254,6 +254,12 @@ def _print_update(response: api.SubmissionCalibrationUpdateResponse, *, output_f
         print(response.model_dump_json(indent=2))
         return 0
     _print_refresh(response.refresh, output_format="table")
+    if response.materialize is None or response.report is None:
+        print(
+            "dry-run: previewed the Numerai pull only; calibration artifacts and report "
+            "are rebuilt on a real run (drop --dry-run)."
+        )
+        return 0
     _print_materialize(response.materialize, output_format="table")
     _print_report(response.report, output_format="table")
     return 0

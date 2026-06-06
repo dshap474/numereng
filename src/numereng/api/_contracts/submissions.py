@@ -83,8 +83,10 @@ class SubmissionCalibrationUpdateRequest(WorkspaceBoundRequest):
 
 class SubmissionCalibrationUpdateResponse(BaseModel):
     refresh: SubmissionRefreshResponse
-    materialize: SubmissionCalibrationMaterializeResponse
-    report: SubmissionCalibrationReportResponse
+    # In dry-run, refresh does not write `live_rounds.parquet`, so materialize/report would be
+    # computed from stale on-disk rounds. They are skipped (left None) and rebuilt only on a real run.
+    materialize: SubmissionCalibrationMaterializeResponse | None = None
+    report: SubmissionCalibrationReportResponse | None = None
 
 
 __all__ = [
