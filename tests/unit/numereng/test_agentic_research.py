@@ -820,7 +820,9 @@ def test_call_codex_exec_writes_debug_artifacts_on_failure(
     assert "agentic_research_codex_failed" in (tmp_path / "r002.debug.error.txt").read_text(encoding="utf-8")
 
 
-def test_materialize_rejects_value_outside_program_cap(tmp_path: Path) -> None:
+def test_materialize_clamps_value_outside_program_cap(tmp_path: Path) -> None:
+    """Out-of-range numeric proposals are clamped into the phase range, not rejected —
+    a cap violation no longer wastes a round (see harden 2026-06-06, item 2)."""
     store_root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
     _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
@@ -838,8 +840,85 @@ def test_materialize_rejects_value_outside_program_cap(tmp_path: Path) -> None:
         changes=(research_module.ResearchChange(path="model.params.learning_rate", value=0.9, reason="over the cap"),),
         stop_reason=None,
     )
-    with pytest.raises(AgenticResearchValidationError, match="agentic_research_change_value_out_of_range"):
-        research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+    path = research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["model"]["params"]["learning_rate"] == 0.30
+
+
+def test_materialize_clamps_num_leaves_up_to_phase_floor(tmp_path: Path) -> None:
+    """The documented family-switch case: switching to LGBM in deep phase mirrors
+    XGBoost's small max_leaves into num_leaves below the floor. Clamp UP to the floor
+    instead of failing the round."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {"agentic_research_value_caps": {"model.params.num_leaves": [128, 1024]}},
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(research_module.ResearchChange(path="model.params.num_leaves", value=8, reason="mirrored leaves"),),
+        stop_reason=None,
+    )
+    path = research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["model"]["params"]["num_leaves"] == 128  # clamped up, int preserved
+
+
+def test_derive_target_horizon_by_suffix() -> None:
+    assert research_module._derive_target_horizon("target_alpha_20") == "20d"
+    assert research_module._derive_target_horizon("target_ender_60") == "60d"
+    assert research_module._derive_target_horizon("target") is None  # unknown suffix left untouched
+    assert research_module._derive_target_horizon(None) is None
+
+
+def test_materialize_auto_derives_target_horizon_from_target_col(tmp_path: Path) -> None:
+    """target_horizon is controller-managed: changing target_col alone rewrites the
+    horizon to match the suffix (item 1)."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(research_module.ResearchChange(path="data.target_col", value="target_alpha_20", reason="new target"),),
+        stop_reason=None,
+    )
+    path = research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["data"]["target_horizon"] == "20d"
+
+
+def test_normalize_strips_controller_managed_target_horizon() -> None:
+    """A bundled target_horizon change is dropped before it counts against the budget
+    or shows up as no-op normalization noise (item 1)."""
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="config_001.json",
+        changes=(
+            research_module.ResearchChange(path="data.target_col", value="target_alpha_60", reason="target"),
+            research_module.ResearchChange(path="data.target_horizon", value="60d", reason="coupled"),
+        ),
+        stop_reason=None,
+    )
+    parent_payload = {"data": {"target_col": "target_alpha_20", "target_horizon": "20d"}}
+    normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
+    assert [c.path for c in normalized.changes] == ["data.target_col"]
+    assert summary["dropped_managed_paths"] == ["data.target_horizon"]
+    assert summary["kept_count"] == 1
 
 
 def test_materialize_rejects_path_outside_program_allowed_list(tmp_path: Path) -> None:
@@ -1044,6 +1123,83 @@ def test_duplicate_via_effective_leaf_cap_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(AgenticResearchValidationError, match="agentic_research_candidate_duplicate"):
         research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+
+
+def test_duplicate_raises_typed_subclass_for_soft_skip_routing(tmp_path: Path) -> None:
+    """A duplicate must raise AgenticResearchDuplicateCandidate specifically, so the
+    driver routes it to the soft-skip recorder instead of the failure-bail path (item 3)."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    configs_dir = experiment.manifest_path.parent / "configs"
+    _write_training_config(configs_dir / "seed.json", learning_rate=0.1)
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    # Re-proposing the parent's own value yields the identical config hash.
+    decision = research_module.ResearchDecision(
+        action="run",
+        learning="x",
+        belief_update="x",
+        next_hypothesis="x",
+        parent_config="seed.json",
+        changes=(research_module.ResearchChange(path="model.params.learning_rate", value=0.1, reason="no-op core"),),
+        stop_reason=None,
+    )
+    with pytest.raises(research_module.AgenticResearchDuplicateCandidate):
+        research_module._materialize_decision_config(experiment=experiment, round_label="r002", decision=decision)
+
+
+def test_record_duplicate_skip_round_does_not_count_toward_bail(tmp_path: Path) -> None:
+    """The soft-skip recorder resets the consecutive-failure counter and completes the
+    round, so a late-plateau cluster of duplicates can never trip the bail (item 3)."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    state: dict[str, object] = {
+        "status": "running",
+        "next_round_number": 5,
+        "total_rounds_completed": 4,
+        "failed_rounds_counter": 3,
+        "pending_decision": {"action": "run", "parent_config": "config_004.json"},
+    }
+    result = research_module._record_duplicate_skip_round(
+        experiment=experiment,
+        state=state,
+        error=research_module.AgenticResearchDuplicateCandidate("agentic_research_candidate_duplicate:abc123"),
+    )
+    assert result.status == "skipped"
+    assert state["failed_rounds_counter"] == 0
+    assert state["next_round_number"] == 6
+    assert state["total_rounds_completed"] == 5
+    assert state["status"] == "running"
+    experiment_dir = experiment.manifest_path.parent
+    assert (experiment_dir / "agentic_research" / "rounds" / "r005.md").is_file()
+    events = {e["event"] for e in _trace_events(experiment_dir / "agentic_research" / "trace.jsonl")}
+    assert "round_completed" in events
+
+
+def test_tried_signatures_context_is_compact_and_capped() -> None:
+    """The prompt projection drops verbose keys, rounds the metric, and caps the count
+    so a deeper memory window does not re-bloat the prompt (item 4)."""
+    sigs = [
+        {
+            "action": "run",
+            "run_id": f"run-{i}",
+            "family": "XGBoostRegressor",
+            "feature_set": "small",
+            "target": "target_alpha_20",
+            "primary": 0.0039334567,
+            "seed": 42,
+        }
+        for i in range(research_module.TRIED_SIGNATURES_CONTEXT_LIMIT + 25)
+    ]
+    out = research_module._tried_signatures_context({"tried_signatures": sigs})
+    assert len(out) == research_module.TRIED_SIGNATURES_CONTEXT_LIMIT  # capped
+    assert all("run_id" not in item and "action" not in item for item in out)  # verbose keys stripped
+    assert out[0]["primary"] == 0.003933  # rounded to 6 dp
+
+
+def test_ensemble_context_surfaces_rounds_since_improved() -> None:
+    state = {"ensemble_rounds_since_improved": 7, "phase_plateau_counter": 3}
+    ctx = research_module._ensemble_context(state=state, eligible_rows=[])
+    assert ctx["rounds_since_improved"] == 7
 
 
 def test_change_path_allows_model_module_path_and_predictions_name() -> None:
@@ -2150,7 +2306,10 @@ def test_run_research_continues_after_training_failure(
 
     monkeypatch.setattr(research_module, "train_experiment", _boom)
 
-    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+    # One round: the training failure must be recorded and tick the failure counter.
+    # (A 2nd round here would re-propose the identical config, which now soft-skips as a
+    # duplicate and resets the counter — a separate, intended behavior tested elsewhere.)
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
     assert result.rounds[0].status == "failed"
     state_path = experiment.manifest_path.parent / "agentic_research" / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -3166,9 +3325,10 @@ def test_reuse_finished_run_on_hash_collision_skips_unrelated_error(
 
 
 def test_normalize_decision_changes_drops_noop_against_parent() -> None:
-    """A change whose new value equals the parent's existing value at the same
-    path is dropped. Modeled after the diversification-experiment LLM that kept
-    bundling `data.target_horizon: '60d' → '60d'` whenever it changed target_col."""
+    """A change whose new value equals the parent's existing value at the same path is
+    dropped. `data.target_horizon` is now stripped earlier as a controller-managed path
+    (it lands in `dropped_managed_paths`, not `dropped_no_op_paths`), so this uses an
+    ordinary no-op (`data.feature_set: 'small' -> 'small'`) to exercise no-op dropping."""
     parent_payload: dict[str, object] = {
         "data": {"target_col": "target_ender_60", "target_horizon": "60d", "feature_set": "small"},
         "model": {"params": {"learning_rate": 0.1}},
@@ -3181,13 +3341,13 @@ def test_normalize_decision_changes_drops_noop_against_parent() -> None:
         parent_config="config_017.json",
         changes=(
             research_module.ResearchChange(path="data.target_col", value="target_alpha_60", reason="swap"),
-            research_module.ResearchChange(path="data.target_horizon", value="60d", reason="coordinated"),
+            research_module.ResearchChange(path="data.feature_set", value="small", reason="unchanged no-op"),
         ),
         stop_reason=None,
     )
     normalized, summary = research_module._normalize_decision_changes(decision=decision, parent_payload=parent_payload)
     assert [c.path for c in normalized.changes] == ["data.target_col"]
-    assert summary["dropped_no_op_paths"] == ["data.target_horizon"]
+    assert summary["dropped_no_op_paths"] == ["data.feature_set"]
     assert summary["kept_count"] == 1
     assert summary["raw_count"] == 2
 
@@ -3567,6 +3727,8 @@ def test_run_research_builds_and_scores_ensemble_round(
     assert state["confirmed_champion"] is None  # single-model track untouched
     assert state["phase_plateau_counter"] == 50  # ensemble rounds neither tick nor reset plateau
     assert state["failed_rounds_counter"] == 0
+    # r1 set the first best_ensemble (improved -> 0); r2 dedup-skip did not improve (-> 1).
+    assert state["ensemble_rounds_since_improved"] == 1
 
     decisions = (
         (experiment_dir / "agentic_research" / "rounds" / "decision.json").read_text(encoding="utf-8").splitlines()

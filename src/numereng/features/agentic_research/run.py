@@ -96,7 +96,16 @@ ARTIFACT_ROTATION_PRESERVE_NAMES: frozenset[str] = frozenset(
 )
 ARTIFACT_ROTATION_RECENT_ROUND_GRACE = 10
 CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 5
-TRIED_SIGNATURES_WINDOW = 100
+# How many recent config signatures to retain in state. Sized to span a long run so
+# the LLM's tried-config memory does not lag behind the round count (a 100-entry window
+# on a 795-round run let it re-propose identical cores hundreds of rounds apart). The
+# dedup gate itself globs every config on disk and is never window-limited; this only
+# bounds the LLM-facing memory.
+TRIED_SIGNATURES_WINDOW = 250
+# Signatures surfaced to the prompt are projected to a compact core (see
+# `_tried_signatures_context`) and capped here, so a deeper memory window does not
+# re-inflate the prompt that fix 2026-06-01 trimmed.
+TRIED_SIGNATURES_CONTEXT_LIMIT = 150
 # Cap on generated configs surfaced in the prompt. The configs list is the single
 # largest prompt term and grows one entry per round (~500 configs = ~500 KB on the
 # 521-round run — the dominant cause of the codex stream-disconnect that killed it).
@@ -139,6 +148,9 @@ ALLOWED_CHANGE_PATHS = (
     "data.feature_set",
     "data.target_col",
     "data.scoring_targets",
+    # Controller-managed (see _CONTROLLER_MANAGED_PATHS): kept here so an LLM that still
+    # bundles it is not hard-failed at parse time, but stripped before materialization
+    # and auto-derived from `data.target_col`.
     "data.target_horizon",
     "preprocessing.nan_missing_all_twos",
     "preprocessing.missing_value",
@@ -157,6 +169,27 @@ ALLOWED_CHANGE_PATHS = (
     "output.predictions_name",
 )
 
+# Paths the controller owns and derives itself — the LLM must not spend a change slot on
+# them. `data.target_horizon` is fully determined by the `data.target_col` suffix, so the
+# controller strips any proposed change (no normalization noise, no failure) and derives
+# the value during materialization. On the 795-round run the LLM bundled target_horizon
+# as a no-op 190 times — by far the largest single source of wasted change-budget.
+_CONTROLLER_MANAGED_PATHS = ("data.target_horizon",)
+
+
+def _derive_target_horizon(target_col: object) -> str | None:
+    """Map a target column to its horizon by suffix (`_20` -> `20d`, `_60` -> `60d`).
+
+    Returns None for any target whose suffix is not a recognized horizon, so the
+    controller leaves an unfamiliar config's horizon untouched rather than guessing."""
+    if not isinstance(target_col, str):
+        return None
+    if target_col.endswith("_20"):
+        return "20d"
+    if target_col.endswith("_60"):
+        return "60d"
+    return None
+
 
 class AgenticResearchError(Exception):
     """Base error for agentic research workflows."""
@@ -164,6 +197,14 @@ class AgenticResearchError(Exception):
 
 class AgenticResearchValidationError(AgenticResearchError):
     """Raised when an LLM decision or local research state is invalid."""
+
+
+class AgenticResearchDuplicateCandidate(AgenticResearchValidationError):
+    """Raised when a proposed config hashes to one already on disk.
+
+    A duplicate is not a real failure — it is a no-progress round. The driver routes
+    this to a soft-skip recorder that does NOT count toward the consecutive-failure
+    bail, mirroring the ensemble dedup-skip path. Carries the colliding 12-char hash."""
 
 
 @dataclass(frozen=True)
@@ -309,6 +350,8 @@ def run_research(
                 result = _run_one_round(root=root, experiment_id=experiment.experiment_id, state=state)
             except (KeyboardInterrupt, SystemExit):
                 raise
+            except AgenticResearchDuplicateCandidate as exc:
+                result = _record_duplicate_skip_round(experiment=experiment, state=state, error=exc)
             except Exception as exc:
                 result = _record_failed_round(experiment=experiment, state=state, error=exc)
             rounds.append(result)
@@ -491,6 +534,17 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             decision=decision,
             state=state,
         )
+    except AgenticResearchDuplicateCandidate as exc:
+        # A duplicate is a no-progress round, not a failure. Trace it as a soft skip; the
+        # driver routes it to _record_duplicate_skip_round (no consecutive-failure tick).
+        _append_trace(
+            experiment,
+            round_number=round_number,
+            round_label=round_label,
+            event="candidate_duplicate_skipped",
+            payload={"decision": decision_payload, "error": str(exc)},
+        )
+        raise
     except Exception as exc:
         _append_trace(
             experiment,
@@ -1118,6 +1172,12 @@ def _record_ensemble_round(
         },
     }
     state.pop("pending_decision", None)
+    # Ensemble-specific plateau signal: consecutive ensemble rounds that did NOT raise
+    # best_ensemble. The single-model `phase_plateau_counter` never moves on ensemble
+    # rounds, so without this the LLM had no signal that *ensemble* search had converged
+    # — on the 795-round run it kept adding near-zero-weight members for 265 rounds after
+    # the blend stopped improving at r546. Surfaced as `ensemble.rounds_since_improved`.
+    ensemble_since_improved = 0 if improved else _as_int(state.get("ensemble_rounds_since_improved"), default=0) + 1
     state.update(
         {
             "status": "running",
@@ -1127,6 +1187,7 @@ def _record_ensemble_round(
             "last_round_label": round_label,
             "last_run_id": synthetic_run_id,
             "failed_rounds_counter": 0,
+            "ensemble_rounds_since_improved": ensemble_since_improved,
             "updated_at": _utc_now_iso(),
         }
     )
@@ -1527,6 +1588,83 @@ def _record_failed_round(
     )
 
 
+def _record_duplicate_skip_round(
+    *,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    error: AgenticResearchDuplicateCandidate,
+) -> ResearchRoundResult:
+    """Record a duplicate-by-hash proposal as a soft skip, not a failure.
+
+    The config the LLM proposed already exists on disk, so there is nothing to train.
+    Unlike `_record_failed_round`, this resets the consecutive-failure counter (a
+    duplicate is no progress, not a fault) so a late-plateau cluster of duplicates can
+    never trip the bail. Mirrors the ensemble dedup-skip semantics."""
+    round_number = _as_int(state.get("next_round_number"), default=1)
+    round_label = f"r{round_number:03d}"
+    artifact_dir = _rounds_dir(experiment)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    message = str(error) or error.__class__.__name__
+    learning = f"Round skipped: {message}"
+    pending_decision_raw = state.pop("pending_decision", None)
+    pending_decision = pending_decision_raw if isinstance(pending_decision_raw, dict) else None
+    payload: dict[str, object] = {
+        "round_number": round_number,
+        "round_label": round_label,
+        "action": "run",
+        "round_type": "duplicate",
+        "status": "skipped",
+        "run_id": None,
+        "metric_value": None,
+        "learning": learning,
+        "error": message,
+        "completed_at": _utc_now_iso(),
+    }
+    if pending_decision is not None:
+        payload["pending_decision"] = pending_decision
+    _append_decision_log(_decision_log_path(experiment), payload)
+    lines = [
+        f"# {round_label} Research State",
+        "",
+        "## Duplicate skip",
+        f"The proposed config matched one already on disk (`{message}`), so it was skipped "
+        "without retraining. This counts as a completed round but resets nothing — the "
+        "existing config's score already stands in the report.",
+    ]
+    _write_text(artifact_dir / f"{round_label}.md", "\n".join(lines) + "\n")
+    state.pop("pending_decision", None)
+    state.update(
+        {
+            "status": "running",
+            "next_round_number": round_number + 1,
+            "total_rounds_completed": _as_int(state.get("total_rounds_completed"), default=0) + 1,
+            "last_checkpoint": "round_completed",
+            "last_round_label": round_label,
+            "failed_rounds_counter": 0,
+            "updated_at": _utc_now_iso(),
+        }
+    )
+    _append_trace(
+        experiment,
+        round_number=round_number,
+        round_label=round_label,
+        event="round_completed",
+        payload={"config_path": None, "run_id": None, "metric_value": None, "round_type": "duplicate"},
+    )
+    _save_state(experiment, state)
+    return ResearchRoundResult(
+        round_number=round_number,
+        round_label=round_label,
+        action="run",
+        status="skipped",
+        config_path=None,
+        run_id=None,
+        metric_value=None,
+        learning=learning,
+        artifact_dir=artifact_dir,
+    )
+
+
 def _build_context(
     *,
     root: Path,
@@ -1573,7 +1711,7 @@ def _build_context(
         "canonical_seed_trio": list(CANONICAL_SEED_TRIO),
         "confirmations": _recent_confirmations(state, limit=30),
         "confirmed_champion": state.get("confirmed_champion"),
-        "tried_signatures": state.get("tried_signatures", []),
+        "tried_signatures": _tried_signatures_context(state),
         "state": _state_context(state),
         "configs": _config_context(experiment, state=state),
         "report": _report_context(report),
@@ -1609,6 +1747,11 @@ def _ensemble_context(*, state: dict[str, object], eligible_rows: list[dict[str,
     return {
         "available": len(eligible_rows) >= ENSEMBLE_MIN_MEMBERS,
         "plateau_counter": _as_int(state.get("phase_plateau_counter"), default=0),
+        # Consecutive ensemble rounds with no new best_ensemble. When this climbs, the
+        # blend has converged — stop adding members (they rarely help past 3-4 diverse
+        # ones) and either try a materially different member set or return to
+        # single-model exploration. See PROGRAM.md "Ensembling".
+        "rounds_since_improved": _as_int(state.get("ensemble_rounds_since_improved"), default=0),
         "method": "rank_avg",
         "min_members": ENSEMBLE_MIN_MEMBERS,
         "max_members": ENSEMBLE_MAX_MEMBERS,
@@ -2016,9 +2159,14 @@ def _normalize_decision_changes(
     Returns the normalized decision and a summary dict suitable for a trace
     event. Order of the kept changes follows the last occurrence per path."""
     raw_changes = list(decision.changes)
+    # Drop controller-managed paths first: the LLM does not own these (e.g.
+    # `data.target_horizon` is derived from `data.target_col` during materialization).
+    # Stripping here keeps them out of the change budget and the no-op normalization tally.
+    managed_paths = [c.path for c in raw_changes if c.path in _CONTROLLER_MANAGED_PATHS]
+    actionable = [c for c in raw_changes if c.path not in _CONTROLLER_MANAGED_PATHS]
     last_by_path: dict[str, ResearchChange] = {}
     duplicate_paths: list[str] = []
-    for change in raw_changes:
+    for change in actionable:
         if change.path in last_by_path:
             duplicate_paths.append(change.path)
         last_by_path[change.path] = change
@@ -2045,6 +2193,7 @@ def _normalize_decision_changes(
         "kept_count": len(kept),
         "dropped_no_op_paths": no_op_paths,
         "dropped_duplicate_paths": duplicate_paths,
+        "dropped_managed_paths": managed_paths,
     }
     return normalized, summary
 
@@ -2067,6 +2216,7 @@ def _materialize_decision_config(
         if state is not None
         else _program_value_caps(experiment)
     )
+    clamped_values: dict[str, object] = {}
     for change in decision.changes:
         if not _matches_any_path(change.path, allowed_paths):
             raise AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{change.path}")
@@ -2082,20 +2232,26 @@ def _materialize_decision_config(
             value = float(change.value)
             lo, hi = bounds
             if not (lo <= value <= hi):
-                raise AgenticResearchValidationError(
-                    f"agentic_research_change_value_out_of_range:{change.path}:{value}:[{lo},{hi}]"
-                )
+                # Clamp into the phase range instead of wasting the round on a hard
+                # failure. The dominant case is a family switch to LGBM that mirrors
+                # XGBoost's small `max_leaves` into `num_leaves` below the deep-phase
+                # floor — the floor value is the correct deep config. Preserve int-ness
+                # so leaf normalization and the duplicate-by-hash gate stay stable.
+                clamped = min(max(value, lo), hi)
+                clamped_values[change.path] = int(clamped) if isinstance(change.value, int) else clamped
     _reject_inert_change(state=state, decision=decision)
     for change in decision.changes:
-        _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
+        new_value = clamped_values.get(change.path, change.value)
+        _assign_dotted(payload, change.path.split("."), deepcopy(new_value))
     _apply_family_switch_cleanup(payload)
+    _apply_derived_target_horizon(payload)
     validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
     _normalize_effective_leaf_params(validated)
     _reject_overconcentrated_discovery(state=state, validated_config=validated)
     candidate_hash = compute_config_hash(validated)
     existing_hashes = _existing_config_hashes(config_dir)
     if candidate_hash in existing_hashes:
-        raise AgenticResearchValidationError(f"agentic_research_candidate_duplicate:{candidate_hash[:12]}")
+        raise AgenticResearchDuplicateCandidate(f"agentic_research_candidate_duplicate:{candidate_hash[:12]}")
     filename = _round_config_filename(round_label)
     path = _unique_config_path(config_dir, filename)
     _write_json(path, validated)
@@ -2221,6 +2377,21 @@ def _apply_family_switch_cleanup(payload: dict[str, object]) -> None:
         for key in list(params.keys()):
             if params[key] is None:
                 params.pop(key)
+
+
+def _apply_derived_target_horizon(payload: dict[str, object]) -> None:
+    """Set `data.target_horizon` from the `data.target_col` suffix, in place.
+
+    The horizon is fully determined by the target name, so the controller owns it (see
+    `_CONTROLLER_MANAGED_PATHS`) rather than asking the LLM to keep the two in sync.
+    Leaves the existing value untouched when the suffix is not a recognized horizon."""
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return
+    data_dict = cast(dict[str, object], data)
+    horizon = _derive_target_horizon(data_dict.get("target_col"))
+    if horizon is not None:
+        data_dict["target_horizon"] = horizon
 
 
 def _normalize_lgbm_effective_params(payload: dict[str, object]) -> dict[str, object]:
@@ -2703,6 +2874,35 @@ def _append_tried_signature(state: dict[str, object], signature: dict[str, objec
         signatures = []
     signatures.append(signature)
     state["tried_signatures"] = signatures[-TRIED_SIGNATURES_WINDOW:]
+
+
+# Verbose per-signature keys dropped from the prompt projection: they don't help the
+# LLM avoid re-proposing a duplicate core, and at ~259 bytes/signature the full list
+# would re-inflate the prompt as the memory window grows.
+_SIGNATURE_CONTEXT_OMIT_KEYS = ("run_id", "action")
+
+
+def _tried_signatures_context(state: dict[str, object]) -> list[dict[str, object]]:
+    """Compact, prompt-facing view of the tried-config memory.
+
+    Surfaces the most recent `TRIED_SIGNATURES_CONTEXT_LIMIT` signatures projected to
+    their config core (verbose keys stripped, primary metric rounded) so the LLM can
+    see deep history without the full window re-bloating the prompt."""
+    signatures = state.get("tried_signatures")
+    if not isinstance(signatures, list):
+        return []
+    recent = [s for s in signatures if isinstance(s, dict)][-TRIED_SIGNATURES_CONTEXT_LIMIT:]
+    projected: list[dict[str, object]] = []
+    for sig in recent:
+        sig_dict = cast(dict[str, object], sig)
+        item: dict[str, object] = {
+            key: value for key, value in sig_dict.items() if key not in _SIGNATURE_CONTEXT_OMIT_KEYS
+        }
+        primary = item.get("primary")
+        if isinstance(primary, float):
+            item["primary"] = round(primary, 6)
+        projected.append(item)
+    return projected
 
 
 def _signature_cell(signature: dict[str, object]) -> tuple[object, object, object]:
@@ -3500,6 +3700,9 @@ _STATE_DEFAULTS: dict[str, object] = {
     # top blend found; tried_ensembles is the dedup ledger of member-set signatures.
     "best_ensemble": None,
     "tried_ensembles": [],
+    # Consecutive ensemble rounds with no new best_ensemble (the ensemble analog of
+    # phase_plateau_counter; see _ensemble_context).
+    "ensemble_rounds_since_improved": 0,
 }
 
 # Defaults applied only when the experiment defines a phases config (the phase

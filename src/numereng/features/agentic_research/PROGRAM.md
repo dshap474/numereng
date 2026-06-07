@@ -170,7 +170,7 @@ Use this as a map, not permission to wander. Only request changes to paths liste
 | Axis | Examples | Research rule |
 | --- | --- | --- |
 | Data/version/scope | dataset version, full vs downsampled, train vs train+validation | Do not compare across scopes unless the experiment is about scope. |
-| Target/horizon | explicit targets, 20D vs 60D, payout vs auxiliary target | Target choice is a major lever; hold other axes fixed when testing it. |
+| Target/horizon | explicit targets, 20D vs 60D, payout vs auxiliary target | Target choice is a major lever; hold other axes fixed when testing it. Change only `data.target_col` — `data.target_horizon` is controller-managed (derived from the target suffix) and must NOT be in your `changes`. |
 | Feature set | small, medium, all, custom subsets | Feature-scope results do not necessarily transfer. |
 | Validation surface | walk-forward, purging, embargo, holdout eras | Keep model selection surface stable inside one experiment. |
 | Model family | LGBM, linear, NGBoost, neural nets, custom models | Changing model family is a new hypothesis unless explicitly allowed. |
@@ -335,7 +335,9 @@ file is preserved unchanged. Do not echo the prior content as a no-op — null m
 Return exactly one JSON object conforming to the provided schema. The top-level fields are
 `decision_form`, `round_markdown`, and `experiment_markdown`.
 
-For a new run:
+For a new run change 1 to 3 config values. Do not include `data.target_horizon` — it is derived from
+`data.target_col` by the controller, and any out-of-phase-range numeric value (e.g. a leaf count below the
+phase floor after a family switch) is clamped into range rather than rejected:
 
 ```json
 {
@@ -385,6 +387,14 @@ individually-strong members from `ensemble.eligible_runs`; avoid blending many n
 Ensembles are deterministic (no seed trio) and tracked separately as `ensemble.best_ensemble`; they
 never enter the single-model confirmation/promotion flow. Do not repeat an already-tried member set
 (see `ensemble.best_ensemble` and your rolling memo) — it is a wasted round.
+
+**Ensemble search converges too — watch `ensemble.rounds_since_improved`.** A rank-average blend rarely
+improves past 3–4 genuinely diverse members; piling on a 5th–8th near-zero-weight member is busywork that
+moves the metric by noise. When `ensemble.rounds_since_improved` climbs (several ensemble rounds with no new
+`best_ensemble`), the blend has converged: do NOT keep adding members. Either try a *materially different*
+member set (drop the weak members, swap in a different family/target) or return to single-model exploration of
+an untested cell. Adding one more member to the current best blend is the ensemble equivalent of re-tuning a
+saturated knob.
 
 ```json
 {
