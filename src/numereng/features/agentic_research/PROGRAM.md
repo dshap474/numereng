@@ -244,6 +244,12 @@ cell (family / feature set / target), not to keep re-probing the same exhausted 
 Continuing to test new combinations past a peak is itself the objective: every round yields
 information about the design space even when it does not set a new champion.
 
+When `coverage.surface_declared` is true and `state.phase_plateau_counter >= 12`, prefer a cell
+from `coverage.untested_sample` over another champion-neighborhood tweak unless you are completing
+a confirmation trio or pursuing a clearly promising candidate. Coverage is a tiebreaker for stalled
+rounds, not an override of evidence. If `coverage.untested_sample` is empty, diversify by evidence
+and the rolling memo; do not infer saturation or stop.
+
 The run ends only when (a) the round budget is exhausted, (b) a human halts it after monitoring
 progress, or (c) the controller bails on repeated failures — none of these are your decision. Your
 job is to keep proposing the most useful next run, every round, until the budget is spent.

@@ -58,6 +58,7 @@ ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 PHASES_METADATA_KEY = "agentic_research_phases"
 BUDGET_ROUNDS_METADATA_KEY = "agentic_research_budget_rounds"
+COVERAGE_SURFACE_METADATA_KEY = "agentic_research_coverage_surface"
 # Ensembling is an additional LLM action, available as a structural precondition
 # (not a tuned heuristic): it is offered whenever at least ENSEMBLE_MIN_MEMBERS
 # blendable runs exist — you physically cannot blend fewer. WHEN to ensemble (e.g.
@@ -106,6 +107,7 @@ TRIED_SIGNATURES_WINDOW = 250
 # `_tried_signatures_context`) and capped here, so a deeper memory window does not
 # re-inflate the prompt that fix 2026-06-01 trimmed.
 TRIED_SIGNATURES_CONTEXT_LIMIT = 150
+COVERAGE_UNTESTED_SAMPLE_LIMIT = 8
 # Cap on generated configs surfaced in the prompt. The configs list is the single
 # largest prompt term and grows one entry per round (~500 configs = ~500 KB on the
 # 521-round run — the dominant cause of the codex stream-disconnect that killed it).
@@ -1675,6 +1677,7 @@ def _build_context(
 ) -> dict[str, object]:
     phase_caps = _current_phase_caps(experiment=experiment, state=state)
     diversification_streaks = _diversification_streaks(state)
+    allowed_paths = _program_allowed_paths(experiment)
     return {
         "objective": {
             "primary_metric": PRIMARY_METRIC_FIELD,
@@ -1682,7 +1685,7 @@ def _build_context(
             "sanity_checks": ["corr_mean", "mmc_mean", "cwmm_mean"],
             "scoring_stage": SCORING_STAGE,
         },
-        "allowed_change_paths": list(ALLOWED_CHANGE_PATHS),
+        "allowed_change_paths": list(allowed_paths),
         "experiment": {
             "experiment_id": experiment.experiment_id,
             "name": experiment.name,
@@ -1703,6 +1706,7 @@ def _build_context(
             "hard_threshold": DIVERSIFICATION_HARD_THRESHOLD,
             "directive": _diversification_directive(diversification_streaks),
         },
+        "coverage": _coverage_context(root=root, experiment=experiment),
         "phase": state.get("phase"),
         "phase_history": state.get("phase_history", []),
         "ensemble": _ensemble_context(state=state, eligible_rows=eligible_ensemble_rows),
@@ -1787,6 +1791,216 @@ def _eligible_ensemble_rows(*, root: Path, report: ExperimentReport | None) -> l
             }
         )
     return rows
+
+
+def _coverage_context(*, root: Path, experiment: ExperimentRecord) -> dict[str, object]:
+    tested = _coverage_tested_cells(root=root, experiment=experiment)
+    surface = _coverage_surface(experiment)
+    if surface is None:
+        return {
+            "surface_declared": False,
+            "cells_total": None,
+            "cells_tested": len(tested),
+            "cells_untested": None,
+            "tested_outside_surface": 0,
+            "untested_sample": [],
+        }
+
+    all_cells = _coverage_surface_cells(surface)
+    tested_inside = set(tested).intersection(all_cells)
+    untested = sorted(all_cells.difference(tested_inside))
+    return {
+        "surface_declared": True,
+        "cells_total": len(all_cells),
+        "cells_tested": len(tested_inside),
+        "cells_untested": len(untested),
+        "tested_outside_surface": len(tested) - len(tested_inside),
+        "untested_sample": [
+            {"family": family, "feature_set": feature_set, "target": target}
+            for family, feature_set, target in untested[:COVERAGE_UNTESTED_SAMPLE_LIMIT]
+        ],
+    }
+
+
+def _coverage_surface(experiment: ExperimentRecord) -> dict[str, tuple[str, ...]] | None:
+    raw = experiment.metadata.get(COVERAGE_SURFACE_METADATA_KEY)
+    if not isinstance(raw, dict):
+        return None
+    families = _coverage_surface_axis(raw.get("families"))
+    feature_sets = _coverage_surface_axis(raw.get("feature_sets"))
+    targets = _coverage_surface_axis(raw.get("targets"))
+    if families is None or feature_sets is None or targets is None:
+        return None
+    return {"families": families, "feature_sets": feature_sets, "targets": targets}
+
+
+def _coverage_surface_axis(raw: object) -> tuple[str, ...] | None:
+    if not isinstance(raw, list):
+        return None
+    values: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        value = _optional_str(item)
+        if value is None or value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    return tuple(values) if values else None
+
+
+def _coverage_surface_cells(surface: dict[str, tuple[str, ...]]) -> set[tuple[str, str, str]]:
+    cells: set[tuple[str, str, str]] = set()
+    for family in surface["families"]:
+        for feature_set in surface["feature_sets"]:
+            for target in surface["targets"]:
+                cells.add((family, feature_set, target))
+    return cells
+
+
+def _coverage_tested_cells(
+    *, root: Path, experiment: ExperimentRecord
+) -> dict[tuple[str, str, str], dict[str, object]]:
+    tested: dict[tuple[str, str, str], dict[str, object]] = {}
+    for row in _coverage_decision_rows(_decision_log_path(experiment)):
+        if row.get("status") != "completed" or row.get("action") not in {"baseline", "run"}:
+            continue
+        metric = _coerce_metric(row.get("metric_value"))
+        config_raw = _optional_str(row.get("config_path"))
+        if metric is None or config_raw is None:
+            continue
+        config = _load_coverage_config(experiment=experiment, raw_path=config_raw)
+        if config is None:
+            continue
+        cell = _coverage_cell_from_config(config)
+        if cell is not None:
+            _record_coverage_cell(tested, cell=cell, metric=metric)
+    _add_report_coverage_cells(root=root, experiment=experiment, tested=tested)
+    return tested
+
+
+def _coverage_decision_rows(path: Path) -> list[dict[str, object]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, object]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(cast(dict[str, object], payload))
+    return rows
+
+
+def _load_coverage_config(*, experiment: ExperimentRecord, raw_path: str) -> dict[str, object] | None:
+    path = _resolve_coverage_config_path(experiment=experiment, raw_path=raw_path)
+    if path is None:
+        return None
+    try:
+        payload = load_training_config_json(path)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _resolve_coverage_config_path(*, experiment: ExperimentRecord, raw_path: str) -> Path | None:
+    experiment_dir = experiment.manifest_path.parent
+    normalized = raw_path.replace("\\", "/")
+    candidates: list[Path] = []
+    path = Path(normalized).expanduser()
+    if path.is_absolute():
+        candidates.append(path)
+    if normalized.startswith("configs/"):
+        candidates.append(experiment_dir / normalized)
+    marker = "/configs/"
+    if marker in normalized:
+        candidates.append(experiment_dir / "configs" / normalized.rsplit(marker, 1)[1])
+    candidates.append(experiment_dir / normalized)
+    candidates.append(experiment_dir / "configs" / Path(normalized).name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _coverage_cell_from_config(payload: dict[str, object]) -> tuple[str, str, str] | None:
+    model = payload.get("model")
+    data = payload.get("data")
+    family = _optional_str(cast(dict[str, object], model).get("type")) if isinstance(model, dict) else None
+    feature_set = _optional_str(cast(dict[str, object], data).get("feature_set")) if isinstance(data, dict) else None
+    target = _optional_str(cast(dict[str, object], data).get("target_col")) if isinstance(data, dict) else None
+    if family is None or feature_set is None or target is None:
+        return None
+    return (family, feature_set, target)
+
+
+def _record_coverage_cell(
+    tested: dict[tuple[str, str, str], dict[str, object]], *, cell: tuple[str, str, str], metric: float
+) -> None:
+    current = tested.get(cell)
+    if current is None:
+        tested[cell] = {"run_count": 1, "best_metric": metric}
+        return
+    current["run_count"] = _as_int(current.get("run_count"), default=0) + 1
+    best = _coerce_metric(current.get("best_metric"))
+    if best is None or metric > best:
+        current["best_metric"] = metric
+
+
+def _add_report_coverage_cells(
+    *,
+    root: Path,
+    experiment: ExperimentRecord,
+    tested: dict[tuple[str, str, str], dict[str, object]],
+) -> None:
+    if not experiment.runs:
+        return
+    try:
+        report = report_experiment(
+            store_root=root,
+            experiment_id=experiment.experiment_id,
+            metric=PRIMARY_METRIC,
+            limit=max(1, len(experiment.runs)),
+        )
+    except ExperimentError:
+        return
+    for row in report.rows:
+        if row.status != "FINISHED":
+            continue
+        metric = _coerce_metric(getattr(row, PRIMARY_METRIC_FIELD))
+        if metric is None:
+            continue
+        run_dir = root / "runs" / row.run_id
+        if not (run_dir / "run.json").is_file():
+            continue
+        cell = _coverage_cell_from_run_dir(run_dir)
+        if cell is not None:
+            _record_coverage_cell(tested, cell=cell, metric=metric)
+
+
+def _coverage_cell_from_run_dir(run_dir: Path) -> tuple[str, str, str] | None:
+    manifest: dict[str, object] = {}
+    run_json = run_dir / "run.json"
+    try:
+        loaded = json.loads(run_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        loaded = None
+    if isinstance(loaded, dict):
+        manifest = loaded
+    data_config = _member_data_config(run_dir, manifest)
+    model = manifest.get("model")
+    family = _optional_str(cast(dict[str, object], model).get("type")) if isinstance(model, dict) else None
+    feature_set = _optional_str(data_config.get("feature_set"))
+    target = _optional_str(data_config.get("target_col"))
+    if family is None or feature_set is None or target is None:
+        return None
+    return (family, feature_set, target)
 
 
 def _member_target_and_family(run_dir: Path) -> tuple[str | None, str | None]:

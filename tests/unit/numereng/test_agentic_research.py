@@ -39,6 +39,21 @@ def _write_training_config(path: Path, *, learning_rate: float = 0.01) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _write_cell_config(path: Path, *, family: str, feature_set: str, target: str) -> None:
+    payload: dict[str, object] = {
+        "data": {
+            "data_version": "v5.2",
+            "dataset_variant": "non_downsampled",
+            "feature_set": feature_set,
+            "target_col": target,
+        },
+        "model": {"type": family, "params": {"learning_rate": 0.01}},
+        "training": {},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def _report(*rows: ExperimentReportRow) -> ExperimentReport:
     return ExperimentReport(
         experiment_id=EXPERIMENT_ID,
@@ -98,6 +113,13 @@ def _trace_events(path: Path) -> list[dict[str, object]]:
 def _run_plan_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def _append_decision_row(experiment_dir: Path, payload: dict[str, object]) -> None:
+    path = experiment_dir / "agentic_research" / "rounds" / "decision.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
@@ -626,6 +648,216 @@ def test_context_includes_only_latest_round_markdown(tmp_path: Path) -> None:
     assert context["latest_round_markdown"] == "latest memo"
     assert "old memo" not in json.dumps(context)
     assert "debug prompt" not in json.dumps(context)
+
+
+def test_coverage_surface_metadata_requires_three_nonempty_axes(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {
+            "agentic_research_coverage_surface": {
+                "families": ["LGBMRegressor", "LGBMRegressor", " XGBoostRegressor "],
+                "feature_sets": ["small"],
+                "targets": ["target_ender_20"],
+            }
+        },
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    assert research_module._coverage_surface(experiment) == {
+        "families": ("LGBMRegressor", "XGBoostRegressor"),
+        "feature_sets": ("small",),
+        "targets": ("target_ender_20",),
+    }
+
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {"agentic_research_coverage_surface": {"families": ["LGBMRegressor"], "feature_sets": [], "targets": []}},
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    assert research_module._coverage_surface(experiment) is None
+
+
+def test_coverage_context_uses_completed_decision_log_cells(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    experiment_dir = experiment.manifest_path.parent
+    _write_cell_config(
+        experiment_dir / "configs" / "config_001.json",
+        family="LGBMRegressor",
+        feature_set="small",
+        target="target_ender_20",
+    )
+    _write_cell_config(
+        experiment_dir / "configs" / "config_002.json",
+        family="LGBMRegressor",
+        feature_set="small",
+        target="target_ender_20",
+    )
+    _write_cell_config(
+        experiment_dir / "configs" / "config_003.json",
+        family="XGBoostRegressor",
+        feature_set="medium",
+        target="target_alpha_60",
+    )
+    _write_cell_config(
+        experiment_dir / "configs" / "config_004.json",
+        family="LGBMRegressor",
+        feature_set="medium",
+        target="target_alpha_60",
+    )
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {
+            "agentic_research_coverage_surface": {
+                "families": ["LGBMRegressor", "XGBoostRegressor"],
+                "feature_sets": ["small", "medium"],
+                "targets": ["target_ender_20", "target_alpha_60"],
+            }
+        },
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    windows_path = f"D:\\workspace\\numereng\\.numereng\\experiments\\{EXPERIMENT_ID}\\configs\\config_003.json"
+    _append_decision_row(
+        experiment_dir,
+        {"action": "baseline", "status": "completed", "config_path": "configs\\config_001.json", "metric_value": 0.1},
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "run", "status": "completed", "config_path": "configs/config_002.json", "metric_value": 0.2},
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "run", "status": "completed", "config_path": windows_path, "metric_value": 0.05},
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "run", "status": "skipped", "config_path": "configs/config_004.json", "metric_value": 0.9},
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "ensemble", "status": "completed", "config_path": None, "metric_value": 0.8},
+    )
+
+    tested = research_module._coverage_tested_cells(root=store_root, experiment=experiment)
+    assert tested[("LGBMRegressor", "small", "target_ender_20")] == {"run_count": 2, "best_metric": 0.2}
+    assert tested[("XGBoostRegressor", "medium", "target_alpha_60")] == {"run_count": 1, "best_metric": 0.05}
+    assert ("LGBMRegressor", "medium", "target_alpha_60") not in tested
+
+    context = research_module._coverage_context(root=store_root, experiment=experiment)
+    assert context["surface_declared"] is True
+    assert context["cells_total"] == 8
+    assert context["cells_tested"] == 2
+    assert context["cells_untested"] == 6
+    assert context["tested_outside_surface"] == 0
+    assert len(cast(list[object], context["untested_sample"])) == 6
+
+
+def test_coverage_context_degrades_without_surface_metadata(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    experiment_dir = experiment.manifest_path.parent
+    _write_cell_config(
+        experiment_dir / "configs" / "config_001.json",
+        family="LGBMRegressor",
+        feature_set="small",
+        target="target_ender_20",
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "run", "status": "completed", "config_path": "configs/config_001.json", "metric_value": 0.1},
+    )
+
+    context = research_module._coverage_context(root=store_root, experiment=experiment)
+
+    assert context == {
+        "surface_declared": False,
+        "cells_total": None,
+        "cells_tested": 1,
+        "cells_untested": None,
+        "tested_outside_surface": 0,
+        "untested_sample": [],
+    }
+
+
+def test_coverage_supplements_from_uncapped_report_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    run_ids = [f"run-{i:02d}" for i in range(30)]
+    _set_experiment_runs(experiment.manifest_path, run_ids)
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+    for index, run_id in enumerate(run_ids):
+        run_dir = store_root / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "status": "FINISHED",
+                    "model": {"type": "LGBMRegressor"},
+                    "data": {"feature_set": "small", "target_col": f"target_{index:02d}_20"},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def fake_report_experiment(**kwargs: object) -> ExperimentReport:
+        assert kwargs["limit"] == len(run_ids)
+        return _report(*[_row(run_id, float(index)) for index, run_id in enumerate(run_ids)])
+
+    monkeypatch.setattr(research_module, "report_experiment", fake_report_experiment)
+
+    tested = research_module._coverage_tested_cells(root=store_root, experiment=experiment)
+
+    assert len(tested) == 30
+    assert tested[("LGBMRegressor", "small", "target_29_20")] == {"run_count": 1, "best_metric": 29.0}
+
+
+def test_build_context_caps_coverage_sample_and_uses_program_allowed_paths(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    experiment_dir = experiment.manifest_path.parent
+    _write_cell_config(
+        experiment_dir / "configs" / "config_001.json",
+        family="LGBMRegressor",
+        feature_set="small",
+        target="target_ender_20",
+    )
+    _append_decision_row(
+        experiment_dir,
+        {"action": "run", "status": "completed", "config_path": "configs/config_001.json", "metric_value": 0.1},
+    )
+    _set_experiment_metadata(
+        experiment.manifest_path,
+        {
+            "agentic_research_allowed_change_paths": ["model.params.learning_rate"],
+            "agentic_research_coverage_surface": {
+                "families": ["LGBMRegressor", "XGBoostRegressor", "TabPFNRegressor"],
+                "feature_sets": ["small", "medium", "all"],
+                "targets": ["target_ender_20", "target_alpha_60"],
+            },
+        },
+    )
+    experiment = research_module.get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    context = research_module._build_context(
+        root=store_root,
+        experiment=experiment,
+        report=_report(_row("run-0", 0.10)),
+        state={},
+        eligible_ensemble_rows=[],
+    )
+
+    assert context["allowed_change_paths"] == ["model.params.learning_rate"]
+    coverage = cast(dict[str, object], context["coverage"])
+    assert coverage["cells_total"] == 18
+    assert coverage["cells_tested"] == 1
+    assert coverage["cells_untested"] == 17
+    assert len(cast(list[object], coverage["untested_sample"])) == research_module.COVERAGE_UNTESTED_SAMPLE_LIMIT
 
 
 def test_run_research_traces_decision_parse_failure(
