@@ -741,8 +741,9 @@ def test_coverage_context_uses_completed_decision_log_cells(tmp_path: Path) -> N
     )
 
     tested = research_module._coverage_tested_cells(root=store_root, experiment=experiment)
-    assert tested[("LGBMRegressor", "small", "target_ender_20")] == {"run_count": 2, "best_metric": 0.2}
-    assert tested[("XGBoostRegressor", "medium", "target_alpha_60")] == {"run_count": 1, "best_metric": 0.05}
+    assert len(tested) == 2
+    assert ("LGBMRegressor", "small", "target_ender_20") in tested
+    assert ("XGBoostRegressor", "medium", "target_alpha_60") in tested
     assert ("LGBMRegressor", "medium", "target_alpha_60") not in tested
 
     context = research_module._coverage_context(root=store_root, experiment=experiment)
@@ -814,7 +815,7 @@ def test_coverage_supplements_from_uncapped_report_rows(
     tested = research_module._coverage_tested_cells(root=store_root, experiment=experiment)
 
     assert len(tested) == 30
-    assert tested[("LGBMRegressor", "small", "target_29_20")] == {"run_count": 1, "best_metric": 29.0}
+    assert ("LGBMRegressor", "small", "target_29_20") in tested
 
 
 def test_build_context_caps_coverage_sample_and_uses_program_allowed_paths(tmp_path: Path) -> None:

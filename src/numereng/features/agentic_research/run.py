@@ -1807,7 +1807,7 @@ def _coverage_context(*, root: Path, experiment: ExperimentRecord) -> dict[str, 
         }
 
     all_cells = _coverage_surface_cells(surface)
-    tested_inside = set(tested).intersection(all_cells)
+    tested_inside = tested.intersection(all_cells)
     untested = sorted(all_cells.difference(tested_inside))
     return {
         "surface_declared": True,
@@ -1857,10 +1857,8 @@ def _coverage_surface_cells(surface: dict[str, tuple[str, ...]]) -> set[tuple[st
     return cells
 
 
-def _coverage_tested_cells(
-    *, root: Path, experiment: ExperimentRecord
-) -> dict[tuple[str, str, str], dict[str, object]]:
-    tested: dict[tuple[str, str, str], dict[str, object]] = {}
+def _coverage_tested_cells(*, root: Path, experiment: ExperimentRecord) -> set[tuple[str, str, str]]:
+    tested: set[tuple[str, str, str]] = set()
     for row in _coverage_decision_rows(_decision_log_path(experiment)):
         if row.get("status") != "completed" or row.get("action") not in {"baseline", "run"}:
             continue
@@ -1873,7 +1871,7 @@ def _coverage_tested_cells(
             continue
         cell = _coverage_cell_from_config(config)
         if cell is not None:
-            _record_coverage_cell(tested, cell=cell, metric=metric)
+            tested.add(cell)
     _add_report_coverage_cells(root=root, experiment=experiment, tested=tested)
     return tested
 
@@ -1940,24 +1938,11 @@ def _coverage_cell_from_config(payload: dict[str, object]) -> tuple[str, str, st
     return (family, feature_set, target)
 
 
-def _record_coverage_cell(
-    tested: dict[tuple[str, str, str], dict[str, object]], *, cell: tuple[str, str, str], metric: float
-) -> None:
-    current = tested.get(cell)
-    if current is None:
-        tested[cell] = {"run_count": 1, "best_metric": metric}
-        return
-    current["run_count"] = _as_int(current.get("run_count"), default=0) + 1
-    best = _coerce_metric(current.get("best_metric"))
-    if best is None or metric > best:
-        current["best_metric"] = metric
-
-
 def _add_report_coverage_cells(
     *,
     root: Path,
     experiment: ExperimentRecord,
-    tested: dict[tuple[str, str, str], dict[str, object]],
+    tested: set[tuple[str, str, str]],
 ) -> None:
     if not experiment.runs:
         return
@@ -1981,7 +1966,7 @@ def _add_report_coverage_cells(
             continue
         cell = _coverage_cell_from_run_dir(run_dir)
         if cell is not None:
-            _record_coverage_cell(tested, cell=cell, metric=metric)
+            tested.add(cell)
 
 
 def _coverage_cell_from_run_dir(run_dir: Path) -> tuple[str, str, str] | None:
