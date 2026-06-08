@@ -2647,7 +2647,7 @@ def _collect_cloud_execution_signals(
             provider = _normalize_cloud_provider(_to_nonempty_str(row["provider"]), backend)
             if run_id is None or backend is None or provider is None:
                 continue
-            metadata = _parse_json_object(row["metadata_json"])
+            metadata = _parse_json_object(row["metadata_json"]) or {}
             execution = build_run_execution(
                 kind="cloud",
                 provider=provider,

@@ -747,6 +747,42 @@ def test_upsert_cloud_job_merges_metadata_json(tmp_path: Path) -> None:
     assert metadata["status"] == "Completed"
 
 
+def test_doctor_store_tolerates_legacy_cloud_job_invalid_metadata_json(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    init_store_db(store_root=store_root)
+    invalid_windows_json = '{"state_path": "C:' + "\\" + "Users" + "\\" + "dansh" + "\\" + 'state.json"}'
+
+    with sqlite3.connect(store_root / "numereng.db") as conn:
+        conn.execute(
+            """
+            INSERT INTO cloud_jobs (
+                run_id,
+                provider,
+                backend,
+                provider_job_id,
+                status,
+                metadata_json,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-cloud-run",
+                "sagemaker",
+                "sagemaker",
+                "legacy-job",
+                "Completed",
+                invalid_windows_json,
+                "2026-03-27T18:58:20Z",
+            ),
+        )
+
+    report = doctor_store(store_root=store_root)
+
+    assert report.ok is True
+    assert report.issues == ()
+
+
 def test_init_store_db_migrates_cloud_jobs_legacy_primary_key(tmp_path: Path) -> None:
     store_root = tmp_path / ".numereng"
     store_root.mkdir(parents=True)
