@@ -2549,6 +2549,76 @@ def test_run_research_continues_after_training_failure(
     assert state["failed_rounds_counter"] >= 1
 
 
+def test_run_research_records_stale_run_reuse_as_failed_round(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cross-experiment run collision is a failed round, not a duplicate skip."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    stale_run_id = "abcdef012345"
+    stale_run_dir = store_root / "runs" / stale_run_id
+    stale_run_dir.mkdir(parents=True)
+    stale_run_dir.joinpath("run.json").write_text(
+        json.dumps(
+            {
+                "run_id": stale_run_id,
+                "status": "FINISHED",
+                "experiment_id": "2026-02-21_old-exp",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        research_module,
+        "_safe_report",
+        lambda **_: _report(_row("run-0", 0.10)),
+    )
+    monkeypatch.setattr(
+        research_module,
+        "_call_research_llm",
+        lambda **_: (
+            _llm_response(
+                {
+                    "action": "run",
+                    "learning": "x",
+                    "belief_update": "x",
+                    "next_hypothesis": "x",
+                    "parent_config": "seed.json",
+                    "changes": [{"path": "model.params.learning_rate", "value": 0.02, "reason": "x"}],
+                    "stop_reason": None,
+                },
+            ),
+            "test",
+        ),
+    )
+
+    def _stale_collision(**_: object) -> object:
+        raise TrainingError(f"training_run_dir_not_fresh:{stale_run_id}:preexisting=run.json:reset_required")
+
+    monkeypatch.setattr(research_module, "train_experiment", _stale_collision)
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    assert result.rounds[0].status == "failed"
+    assert "agentic_research_stale_run_reuse_blocked" in result.rounds[0].learning
+    manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
+    assert stale_run_id not in manifest_after.get("runs", [])
+    experiment_dir = experiment.manifest_path.parent
+    decisions = (
+        (experiment_dir / "agentic_research" / "rounds" / "decision.json").read_text(encoding="utf-8").splitlines()
+    )
+    payload = json.loads(decisions[-1])
+    assert payload["status"] == "failed"
+    assert payload.get("round_type") != "duplicate"
+    state = json.loads((experiment_dir / "agentic_research" / "state.json").read_text(encoding="utf-8"))
+    assert state["failed_rounds_counter"] == 1
+    events = {e["event"] for e in _trace_events(experiment_dir / "agentic_research" / "trace.jsonl")}
+    assert "round_failed" in events
+
+
 def test_run_research_catches_codex_executable_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3551,10 +3621,7 @@ def test_reuse_finished_run_on_hash_collision_blocks_cross_experiment_reuse(
     exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
     monkeypatch.setattr(research_module, "index_run", lambda **_: None)
 
-    with pytest.raises(
-        research_module.AgenticResearchStaleRunReuse,
-        match="agentic_research_stale_run_reuse_blocked",
-    ):
+    with pytest.raises(AgenticResearchValidationError, match="agentic_research_stale_run_reuse_blocked"):
         research_module._reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
 
     manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))

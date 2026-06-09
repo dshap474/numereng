@@ -209,10 +209,6 @@ class AgenticResearchDuplicateCandidate(AgenticResearchValidationError):
     bail, mirroring the ensemble dedup-skip path. Carries the colliding 12-char hash."""
 
 
-class AgenticResearchStaleRunReuse(AgenticResearchDuplicateCandidate):
-    """Raised when a hash collision points at a run owned by another experiment."""
-
-
 @dataclass(frozen=True)
 class ResearchBestRun:
     """Best known run for the primary research metric."""
@@ -636,7 +632,7 @@ def _reuse_finished_run_on_hash_collision(
         return None
     source_experiment_id = run_manifest.get("experiment_id")
     if source_experiment_id != experiment.experiment_id:
-        raise AgenticResearchStaleRunReuse(
+        raise AgenticResearchValidationError(
             "agentic_research_stale_run_reuse_blocked:"
             f"{run_id}:source_experiment={source_experiment_id or 'unknown'}:"
             f"current_experiment={experiment.experiment_id}"
@@ -765,20 +761,7 @@ def _train_score_record_round(
         try:
             trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
         except TrainingError as exc:
-            try:
-                reused = _reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
-            except AgenticResearchStaleRunReuse as stale:
-                _append_trace(
-                    experiment,
-                    round_number=round_number,
-                    round_label=round_label,
-                    event="stale_run_reuse_blocked",
-                    payload={
-                        "config_path": str(config_path),
-                        "error": str(stale),
-                    },
-                )
-                raise
+            reused = _reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
             if reused is None:
                 raise
             trained = reused

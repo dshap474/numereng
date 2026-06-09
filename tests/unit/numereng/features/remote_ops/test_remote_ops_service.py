@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import json
 import subprocess
@@ -39,6 +40,25 @@ def _seed_staging_runs(staging_root: Path, run_manifests: dict[str, dict[str, ob
         (run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
         (run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.08}}), encoding="utf-8")
     return runs_root
+
+
+def _preflight_identity_files() -> tuple[str, ...]:
+    tree = ast.parse(remote_service._pull_preflight_python_script())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        has_identity_target = any(
+            isinstance(target, ast.Name) and target.id == "RUN_IDENTITY_FILES" for target in node.targets
+        )
+        if has_identity_target:
+            value = ast.literal_eval(node.value)
+            assert isinstance(value, tuple)
+            return value
+    raise AssertionError("RUN_IDENTITY_FILES assignment missing")
+
+
+def test_pull_preflight_identity_files_match_local_contract() -> None:
+    assert _preflight_identity_files() == remote_service._RUN_IDENTITY_FILES
 
 
 def test_sync_remote_repo_uses_git_visible_working_tree_only(
@@ -619,6 +639,60 @@ def test_pull_remote_experiment_blocks_existing_run_identity_conflict(
     assert not result.local_experiment_manifest_path.exists()
 
 
+def test_pull_remote_experiment_blocks_existing_run_missing_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    existing_run_dir = store_root / "runs" / "run-a"
+    existing_run_dir.mkdir(parents=True)
+    (existing_run_dir / "run.json").write_text(json.dumps({"run_id": "run-a", "status": "FINISHED"}), encoding="utf-8")
+    (existing_run_dir / "resolved.json").write_text(json.dumps({"seed": 1}), encoding="utf-8")
+    (existing_run_dir / "results.json").write_text(json.dumps({"ok": True}), encoding="utf-8")
+    (existing_run_dir / "metrics.json").write_text(json.dumps({"bmc": {"mean": 0.1}}), encoding="utf-8")
+    predictions_dir = existing_run_dir / "artifacts" / "predictions"
+    predictions_dir.mkdir(parents=True)
+    (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
+    remote_manifest = {
+        "experiment_id": "remote-exp",
+        "name": "Remote Experiment",
+        "status": "active",
+        "runs": ["run-a"],
+        "metadata": {},
+    }
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(
+        remote_service,
+        "_run_remote_python",
+        lambda *args, **kwargs: {
+            "experiment": remote_manifest,
+            "eligible_finished_run_ids": ["run-a"],
+            "skipped_non_finished_run_ids": [],
+            "failures": [],
+            "remote_manifest_path": r"C:\remote\.numereng\experiments\remote-exp\experiment.json",
+            "remote_experiment_dir": r"C:\remote\.numereng\experiments\remote-exp",
+        },
+    )
+    monkeypatch.setattr(
+        remote_service,
+        "_copy_remote_runs_to_staging",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("identity-missing run should not be copied")),
+    )
+
+    result = remote_service.pull_remote_experiment(
+        target_id="pc", experiment_id="remote-exp", mode="full", store_root=store_root
+    )
+
+    assert result.materialized_run_count == 0
+    assert result.already_materialized_run_ids == ()
+    assert len(result.failures) == 1
+    assert result.failures[0].run_id == "run-a"
+    assert result.failures[0].reason == "remote_run_identity_missing"
+    assert result.failures[0].missing_files == ("run_identity",)
+    assert not result.local_experiment_manifest_path.exists()
+
+
 def test_pull_remote_experiment_fails_on_incomplete_existing_run_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -674,6 +748,7 @@ def test_pull_remote_experiment_only_copies_missing_finished_runs(
     predictions_dir = existing_run_dir / "artifacts" / "predictions"
     predictions_dir.mkdir(parents=True)
     (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
+    remote_identity = remote_service._run_identity(existing_run_dir)
     remote_manifest = {
         "experiment_id": "exp-5",
         "name": "Remote Experiment",
@@ -690,6 +765,7 @@ def test_pull_remote_experiment_only_copies_missing_finished_runs(
         lambda *args, **kwargs: {
             "experiment": remote_manifest,
             "eligible_finished_run_ids": ["run-a", "run-b"],
+            "run_identities": {"run-a": remote_identity},
             "skipped_non_finished_run_ids": [],
             "failures": [],
             "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-5\experiment.json",
@@ -812,6 +888,7 @@ def test_pull_remote_experiment_upgrade_from_scoring_to_full_overwrites(
     scoring_dir = existing_run_dir / "artifacts" / "scoring"
     scoring_dir.mkdir(parents=True)
     (scoring_dir / "run_metric_series.parquet").write_bytes(b"\x00")
+    remote_identity = remote_service._run_identity(existing_run_dir)
 
     remote_manifest = {
         "experiment_id": "exp-upgrade",
@@ -834,6 +911,7 @@ def test_pull_remote_experiment_upgrade_from_scoring_to_full_overwrites(
         lambda *args, **kwargs: {
             "experiment": remote_manifest,
             "eligible_finished_run_ids": ["run-a"],
+            "run_identities": {"run-a": remote_identity},
             "skipped_non_finished_run_ids": [],
             "failures": [],
             "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-upgrade\experiment.json",
@@ -878,6 +956,7 @@ def test_pull_remote_experiment_scoring_mode_skips_when_local_is_full(
     predictions_dir = existing_run_dir / "artifacts" / "predictions"
     predictions_dir.mkdir(parents=True)
     (predictions_dir / "pred_target_ender_20_small_mod_s7.parquet").write_bytes(b"\x00")
+    remote_identity = remote_service._run_identity(existing_run_dir)
     remote_manifest = {
         "experiment_id": "exp-skip-scoring",
         "name": "Remote Experiment",
@@ -893,6 +972,7 @@ def test_pull_remote_experiment_scoring_mode_skips_when_local_is_full(
         lambda *args, **kwargs: {
             "experiment": remote_manifest,
             "eligible_finished_run_ids": ["run-a"],
+            "run_identities": {"run-a": remote_identity},
             "skipped_non_finished_run_ids": [],
             "failures": [],
             "remote_manifest_path": r"C:\remote\.numereng\experiments\exp-skip-scoring\experiment.json",

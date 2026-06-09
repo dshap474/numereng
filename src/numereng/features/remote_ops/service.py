@@ -1340,7 +1340,7 @@ def _classify_local_finished_runs(
     local_runs_root: Path,
     run_ids: tuple[str, ...],
     requested_mode: PullMode,
-    remote_run_identities: dict[str, dict[str, str]] | None = None,
+    remote_run_identities: dict[str, dict[str, str]],
 ) -> dict[str, tuple[str, ...] | tuple[RemoteExperimentPullFailure, ...]]:
     already_materialized_run_ids: list[str] = []
     run_ids_to_copy: list[str] = []
@@ -1384,23 +1384,31 @@ def _classify_local_finished_runs(
                 )
             )
             continue
-        remote_identity = (remote_run_identities or {}).get(run_id)
-        if remote_identity:
-            local_identity = _run_identity(run_dir)
-            mismatched_files = tuple(
-                relpath
-                for relpath, remote_hash in sorted(remote_identity.items())
-                if local_identity.get(relpath) != remote_hash
-            )
-            if mismatched_files:
-                failures.append(
-                    RemoteExperimentPullFailure(
-                        run_id=run_id,
-                        missing_files=mismatched_files,
-                        reason="local_run_identity_conflict",
-                    )
+        remote_identity = remote_run_identities.get(run_id)
+        if not remote_identity:
+            failures.append(
+                RemoteExperimentPullFailure(
+                    run_id=run_id,
+                    missing_files=("run_identity",),
+                    reason="remote_run_identity_missing",
                 )
-                continue
+            )
+            continue
+        local_identity = _run_identity(run_dir)
+        mismatched_files = tuple(
+            relpath
+            for relpath, remote_hash in sorted(remote_identity.items())
+            if local_identity.get(relpath) != remote_hash
+        )
+        if mismatched_files:
+            failures.append(
+                RemoteExperimentPullFailure(
+                    run_id=run_id,
+                    missing_files=mismatched_files,
+                    reason="local_run_identity_conflict",
+                )
+            )
+            continue
         # Local state is either "scoring" (no predictions) or "full" (predictions present).
         # - full local + any requested mode -> already materialized (never downgrade)
         # - scoring local + scoring requested -> already materialized
@@ -1433,6 +1441,13 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _run_identity_files_script_literal() -> str:
+    lines = ["("]
+    lines.extend(f'    "{relpath}",' for relpath in _RUN_IDENTITY_FILES)
+    lines.append(")")
+    return "\n".join(lines)
 
 
 def _copy_remote_runs_to_staging(
@@ -2066,13 +2081,7 @@ from pathlib import Path
 
 from numereng.features.store import resolve_workspace_layout_from_store_root
 
-RUN_IDENTITY_FILES = (
-    "run.json",
-    "resolved.json",
-    "results.json",
-    "metrics.json",
-    "score_provenance.json",
-)
+RUN_IDENTITY_FILES = __RUN_IDENTITY_FILES__
 
 
 def sha256_file(path: Path) -> str:
@@ -2181,7 +2190,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-""".strip()
+""".replace("__RUN_IDENTITY_FILES__", _run_identity_files_script_literal()).strip()
 
 
 def _experiment_exists_python_script() -> str:
