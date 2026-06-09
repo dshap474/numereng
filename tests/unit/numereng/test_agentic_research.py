@@ -2501,15 +2501,7 @@ def test_plateau_parity_replays_diversification_test_sequence() -> None:
     assert state["phase_plateau_counter"] == 1
 
 
-def test_run_research_continues_after_training_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A non-AgenticResearchError from train_experiment is caught and recorded as a failed round."""
-    store_root = tmp_path / ".numereng"
-    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
-    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
-
+def _stub_one_round_run_decision(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         research_module,
         "_safe_report",
@@ -2533,6 +2525,17 @@ def test_run_research_continues_after_training_failure(
             "test",
         ),
     )
+
+
+def test_run_research_continues_after_training_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-AgenticResearchError from train_experiment is caught and recorded as a failed round."""
+    store_root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID, name="Research")
+    _write_training_config(experiment.manifest_path.parent / "configs" / "seed.json")
+    _stub_one_round_run_decision(monkeypatch)
 
     def _boom(**_: object) -> object:
         raise RuntimeError("transient training failure")
@@ -2570,30 +2573,7 @@ def test_run_research_records_stale_run_reuse_as_failed_round(
         ),
         encoding="utf-8",
     )
-
-    monkeypatch.setattr(
-        research_module,
-        "_safe_report",
-        lambda **_: _report(_row("run-0", 0.10)),
-    )
-    monkeypatch.setattr(
-        research_module,
-        "_call_research_llm",
-        lambda **_: (
-            _llm_response(
-                {
-                    "action": "run",
-                    "learning": "x",
-                    "belief_update": "x",
-                    "next_hypothesis": "x",
-                    "parent_config": "seed.json",
-                    "changes": [{"path": "model.params.learning_rate", "value": 0.02, "reason": "x"}],
-                    "stop_reason": None,
-                },
-            ),
-            "test",
-        ),
-    )
+    _stub_one_round_run_decision(monkeypatch)
 
     def _stale_collision(**_: object) -> object:
         raise TrainingError(f"training_run_dir_not_fresh:{stale_run_id}:preexisting=run.json:reset_required")

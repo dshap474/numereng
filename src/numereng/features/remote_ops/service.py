@@ -1443,13 +1443,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _run_identity_files_script_literal() -> str:
-    lines = ["("]
-    lines.extend(f'    "{relpath}",' for relpath in _RUN_IDENTITY_FILES)
-    lines.append(")")
-    return "\n".join(lines)
-
-
 def _copy_remote_runs_to_staging(
     *,
     target: SshRemoteTargetProfile,
@@ -2190,7 +2183,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-""".replace("__RUN_IDENTITY_FILES__", _run_identity_files_script_literal()).strip()
+""".replace("__RUN_IDENTITY_FILES__", repr(_RUN_IDENTITY_FILES)).strip()
 
 
 def _experiment_exists_python_script() -> str:
