@@ -3497,15 +3497,20 @@ def test_round_md_omits_secondary_metrics_block_when_empty(tmp_path: Path) -> No
 def test_reuse_finished_run_on_hash_collision_returns_existing_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When training fails because the run dir already holds a FINISHED run, reuse it
-    and link the run into this experiment's manifest."""
+    """When a same-experiment retry collides with a FINISHED run, reuse it."""
     root = tmp_path / ".numereng"
     experiment = create_experiment(store_root=root, experiment_id="2026-05-21_reuse-test", name="Reuse Test")
     run_id = "abcdef012345"
     run_dir = root / "runs" / run_id
     (run_dir / "artifacts" / "predictions").mkdir(parents=True)
     run_dir.joinpath("run.json").write_text(
-        json.dumps({"status": "FINISHED", "output": {"predictions_name": "p"}}),
+        json.dumps(
+            {
+                "status": "FINISHED",
+                "experiment_id": "2026-05-21_reuse-test",
+                "output": {"predictions_name": "p"},
+            }
+        ),
         encoding="utf-8",
     )
     run_dir.joinpath("artifacts/predictions/p.parquet").write_bytes(b"")
@@ -3522,6 +3527,38 @@ def test_reuse_finished_run_on_hash_collision_returns_existing_run(
     manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
     assert run_id in manifest_after["runs"]
     assert manifest_after["status"] == "active"
+
+
+def test_reuse_finished_run_on_hash_collision_blocks_cross_experiment_reuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agentic research must not import a stale run owned by another experiment."""
+    root = tmp_path / ".numereng"
+    experiment = create_experiment(store_root=root, experiment_id="2026-05-21_reuse-test", name="Reuse Test")
+    run_id = "abcdef012345"
+    run_dir = root / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    run_dir.joinpath("run.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "FINISHED",
+                "experiment_id": "2026-05-20_old-experiment",
+            }
+        ),
+        encoding="utf-8",
+    )
+    exc = TrainingError(f"training_run_dir_not_fresh:{run_id}:preexisting=run.json:reset_required")
+    monkeypatch.setattr(research_module, "index_run", lambda **_: None)
+
+    with pytest.raises(
+        research_module.AgenticResearchStaleRunReuse,
+        match="agentic_research_stale_run_reuse_blocked",
+    ):
+        research_module._reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
+
+    manifest_after = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
+    assert run_id not in manifest_after.get("runs", [])
 
 
 def test_reuse_finished_run_on_hash_collision_skips_non_finished(

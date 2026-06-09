@@ -209,6 +209,10 @@ class AgenticResearchDuplicateCandidate(AgenticResearchValidationError):
     bail, mirroring the ensemble dedup-skip path. Carries the colliding 12-char hash."""
 
 
+class AgenticResearchStaleRunReuse(AgenticResearchDuplicateCandidate):
+    """Raised when a hash collision points at a run owned by another experiment."""
+
+
 @dataclass(frozen=True)
 class ResearchBestRun:
     """Best known run for the primary research metric."""
@@ -607,14 +611,12 @@ _TRAIN_RUN_DIR_NOT_FRESH_PREFIX = "training_run_dir_not_fresh:"
 def _reuse_finished_run_on_hash_collision(
     *, root: Path, experiment: ExperimentRecord, exc: TrainingError
 ) -> ExperimentTrainResult | None:
-    """Reuse an existing FINISHED run dir when a new round's config hashes to it.
+    """Reuse an existing FINISHED run dir only when it is owned by this experiment.
 
-    Runs are content-addressed: byte-identical training configs across experiments
-    share `.numereng/runs/<run_id>/`. The training service's freshness check then
-    rejects a second attempt. When the prior run is FINISHED, treat that run as
-    the result of this round instead of failing the round. Also link the reused
-    run into this experiment's manifest so downstream scoring/report flows find
-    it via the normal resolver."""
+    Agentic research is a freshness-sensitive loop: silently importing a scored run
+    from another experiment can promote stale historical evidence as if the current
+    round trained it. Same-experiment retries may still reuse the existing FINISHED
+    run as an idempotent recovery path."""
     msg = str(exc)
     if not msg.startswith(_TRAIN_RUN_DIR_NOT_FRESH_PREFIX):
         return None
@@ -632,6 +634,13 @@ def _reuse_finished_run_on_hash_collision(
         return None
     if run_manifest.get("status") != "FINISHED":
         return None
+    source_experiment_id = run_manifest.get("experiment_id")
+    if source_experiment_id != experiment.experiment_id:
+        raise AgenticResearchStaleRunReuse(
+            "agentic_research_stale_run_reuse_blocked:"
+            f"{run_id}:source_experiment={source_experiment_id or 'unknown'}:"
+            f"current_experiment={experiment.experiment_id}"
+        )
     predictions_name = None
     output_block = run_manifest.get("output")
     if isinstance(output_block, dict):
@@ -756,7 +765,20 @@ def _train_score_record_round(
         try:
             trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
         except TrainingError as exc:
-            reused = _reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
+            try:
+                reused = _reuse_finished_run_on_hash_collision(root=root, experiment=experiment, exc=exc)
+            except AgenticResearchStaleRunReuse as stale:
+                _append_trace(
+                    experiment,
+                    round_number=round_number,
+                    round_label=round_label,
+                    event="stale_run_reuse_blocked",
+                    payload={
+                        "config_path": str(config_path),
+                        "error": str(stale),
+                    },
+                )
+                raise
             if reused is None:
                 raise
             trained = reused

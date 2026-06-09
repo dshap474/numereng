@@ -103,6 +103,13 @@ _SCORING_MODE_ROOT_OPTIONAL: tuple[str, ...] = (
 )
 _SCORING_MODE_SUBDIR: tuple[str, ...] = ("artifacts", "scoring")
 _PREDICTIONS_SUBDIR: tuple[str, ...] = ("artifacts", "predictions")
+_RUN_IDENTITY_FILES: tuple[str, ...] = (
+    "run.json",
+    "resolved.json",
+    "results.json",
+    "metrics.json",
+    "score_provenance.json",
+)
 PullMode = Literal["scoring", "full"]
 
 
@@ -457,6 +464,7 @@ def pull_remote_experiment(
 
     pulled_at = _utc_now_iso()
     failures = _decode_pull_failures(preflight.get("failures"))
+    remote_run_identities = _decode_run_identities(preflight.get("run_identities"))
     materializable_run_ids = tuple(
         str(item) for item in preflight.get("eligible_finished_run_ids", []) if isinstance(item, str) and item.strip()
     )
@@ -474,6 +482,7 @@ def pull_remote_experiment(
             local_runs_root=local_runs_root,
             run_ids=materializable_run_ids,
             requested_mode=mode,
+            remote_run_identities=remote_run_identities,
         )
         already_materialized_run_ids = existing_state["already_materialized_run_ids"]
         run_ids_to_copy = existing_state["run_ids_to_copy"]
@@ -1298,6 +1307,22 @@ def _decode_pull_failures(payload: Any) -> tuple[RemoteExperimentPullFailure, ..
     return tuple(failures)
 
 
+def _decode_run_identities(payload: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(payload, dict):
+        return {}
+    identities: dict[str, dict[str, str]] = {}
+    for raw_run_id, raw_files in payload.items():
+        if not isinstance(raw_run_id, str) or not raw_run_id.strip() or not isinstance(raw_files, dict):
+            continue
+        files: dict[str, str] = {}
+        for raw_relpath, raw_hash in raw_files.items():
+            if isinstance(raw_relpath, str) and raw_relpath.strip() and isinstance(raw_hash, str) and raw_hash:
+                files[raw_relpath] = raw_hash
+        if files:
+            identities[raw_run_id.strip()] = files
+    return identities
+
+
 def _detect_local_run_mode(run_dir: Path) -> Literal["missing", "incomplete", "scoring", "full"]:
     """Classify the on-disk materialization state of one local run directory."""
     if not run_dir.exists() or not run_dir.is_dir():
@@ -1315,6 +1340,7 @@ def _classify_local_finished_runs(
     local_runs_root: Path,
     run_ids: tuple[str, ...],
     requested_mode: PullMode,
+    remote_run_identities: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, tuple[str, ...] | tuple[RemoteExperimentPullFailure, ...]]:
     already_materialized_run_ids: list[str] = []
     run_ids_to_copy: list[str] = []
@@ -1358,6 +1384,23 @@ def _classify_local_finished_runs(
                 )
             )
             continue
+        remote_identity = (remote_run_identities or {}).get(run_id)
+        if remote_identity:
+            local_identity = _run_identity(run_dir)
+            mismatched_files = tuple(
+                relpath
+                for relpath, remote_hash in sorted(remote_identity.items())
+                if local_identity.get(relpath) != remote_hash
+            )
+            if mismatched_files:
+                failures.append(
+                    RemoteExperimentPullFailure(
+                        run_id=run_id,
+                        missing_files=mismatched_files,
+                        reason="local_run_identity_conflict",
+                    )
+                )
+                continue
         # Local state is either "scoring" (no predictions) or "full" (predictions present).
         # - full local + any requested mode -> already materialized (never downgrade)
         # - scoring local + scoring requested -> already materialized
@@ -1373,6 +1416,23 @@ def _classify_local_finished_runs(
         "upgrade_run_ids": tuple(upgrade_run_ids),
         "failures": tuple(failures),
     }
+
+
+def _run_identity(run_dir: Path) -> dict[str, str]:
+    identity: dict[str, str] = {}
+    for relpath in _RUN_IDENTITY_FILES:
+        path = run_dir / relpath
+        if path.is_file():
+            identity[relpath] = _sha256_file(path)
+    return identity
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _copy_remote_runs_to_staging(
@@ -1999,11 +2059,37 @@ if __name__ == "__main__":
 
 def _pull_preflight_python_script() -> str:
     return """
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 from numereng.features.store import resolve_workspace_layout_from_store_root
+
+RUN_IDENTITY_FILES = (
+    "run.json",
+    "resolved.json",
+    "results.json",
+    "metrics.json",
+    "score_provenance.json",
+)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run_identity(run_dir: Path) -> dict[str, str]:
+    identity = {}
+    for relpath in RUN_IDENTITY_FILES:
+        path = run_dir / relpath
+        if path.is_file():
+            identity[relpath] = sha256_file(path)
+    return identity
 
 
 def main() -> None:
@@ -2051,6 +2137,7 @@ def main() -> None:
 
     failures = []
     eligible_finished_run_ids = []
+    run_identities = {}
     skipped_non_finished_run_ids = []
     for raw_run_id in run_ids:
         if not isinstance(raw_run_id, str) or not raw_run_id.strip():
@@ -2075,6 +2162,7 @@ def main() -> None:
         status = str(run_manifest.get("status") or "").strip()
         if status == "FINISHED":
             eligible_finished_run_ids.append(run_id)
+            run_identities[run_id] = run_identity(run_dir)
             continue
         skipped_non_finished_run_ids.append(run_id)
 
@@ -2084,6 +2172,7 @@ def main() -> None:
         "remote_experiment_dir": str(resolved_experiment_dir),
         "remote_manifest_path": str(experiment_manifest_path),
         "eligible_finished_run_ids": eligible_finished_run_ids,
+        "run_identities": run_identities,
         "skipped_non_finished_run_ids": skipped_non_finished_run_ids,
         "failures": failures,
     }
