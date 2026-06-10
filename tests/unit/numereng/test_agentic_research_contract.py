@@ -102,6 +102,10 @@ def _write_run_manifest(store_root: Path, run_id: str, *, experiment_id: str) ->
         "output": {"predictions_name": "predictions"},
     }
     (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+    # Reusable runs are *already scored*: persist the primary metric so the
+    # reuse path sees a scored run (an unscored reused run is rescored instead).
+    metrics = {"bmc_last_200_eras": {"mean": 0.12}}
+    (run_dir / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

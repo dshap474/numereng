@@ -771,8 +771,13 @@ def _train_score_record_round(
     _record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     # Reused runs were already scored when first trained; the resolver matches runs to
     # rounds by config stem in run.json, and a content-shared run's stem points at the
-    # original experiment's config name. Skip the score step to avoid a false miss.
-    if not reused_existing_run:
+    # original experiment's config name. Skip the score step to avoid a false miss —
+    # but only when the reused run actually has a scored primary metric on disk. A
+    # reused run without one (its original round's scoring failed or was interrupted)
+    # must be scored now or fail the round honestly: silently skipping would let the
+    # baseline branch loop forever on unscored "completed" rounds and would link a
+    # run to the experiment without its metric ever materializing.
+    if not reused_existing_run or _run_primary_metric_from_disk(root=root, run_id=trained.run_id) is None:
         with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
             score_experiment_round(
                 store_root=root,
