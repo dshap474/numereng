@@ -164,6 +164,8 @@ def _train_score_record_round(
 ) -> ResearchRoundResult:
     started_at = time.monotonic()
     reused = False
+    state["_pending_config"] = config_path.name
+    state["_pending_config_path"] = str(config_path)
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
         try:
             trained = train_experiment(store_root=root, experiment_id=experiment.experiment_id, config_path=config_path)
@@ -174,6 +176,7 @@ def _train_score_record_round(
             if trained is None:
                 raise
             reused = True
+    state["_pending_run_id"] = trained.run_id
     boundary.record_round_config_in_run_plan(experiment=experiment, round_label=round_label, config_path=config_path)
     if not reused or context.run_primary_metric_from_disk(root=root, run_id=trained.run_id) is None:
         with bind_launch_metadata(source="feature.agentic_research.score_round", operation_type="run", job_type="run"):
@@ -225,6 +228,9 @@ def _train_score_record_round(
         }
     )
     state.pop("_pending_parent", None)
+    state.pop("_pending_config", None)
+    state.pop("_pending_config_path", None)
+    state.pop("_pending_run_id", None)
     _save(experiment, state)
     return ResearchRoundResult(
         round_number,
@@ -265,14 +271,19 @@ def _record_terminal_round(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     message = str(error) or error.__class__.__name__
     learning = f"Round skipped: {message}"
+    config_name = ar_types.optional_str(state.get("_pending_config"))
+    config_path_raw = ar_types.optional_str(state.get("_pending_config_path"))
+    config_path = Path(config_path_raw) if config_path_raw is not None else None
+    run_id = ar_types.optional_str(state.get("_pending_run_id"))
+    typed_action: ResearchAction = "run"
     entry = _journal_entry(
         round=round_number,
         round_label=round_label,
-        action="run",
+        action=typed_action,
         status=status,
-        config=None,
+        config=config_name,
         parent_config=ar_types.optional_str(state.get("_pending_parent")),
-        run_id=None,
+        run_id=run_id,
         seed=None,
         metric=None,
         is_champion=False,
@@ -286,6 +297,9 @@ def _record_terminal_round(
     memory.write_round_markdown(experiment, entry, memo=None)
     state.update({"status": "running", "next_round_number": round_number + 1, "updated_at": ar_types.utc_now_iso()})
     state.pop("_pending_parent", None)
+    state.pop("_pending_config", None)
+    state.pop("_pending_config_path", None)
+    state.pop("_pending_run_id", None)
     if status == "skipped":
         state.update(
             {
@@ -299,6 +313,8 @@ def _record_terminal_round(
     else:
         failures = ar_types.as_int(state.get("failed_rounds_counter"), default=0) + 1
         state.update({"last_checkpoint": "round_failed", "failed_rounds_counter": failures, "last_error": message})
+        if run_id is not None:
+            state["last_run_id"] = run_id
         if failures >= ar_types.CONSECUTIVE_FAILURE_BAIL_THRESHOLD:
             state.update(
                 {
@@ -308,7 +324,9 @@ def _record_terminal_round(
                 }
             )
     _save(experiment, state)
-    return ResearchRoundResult(round_number, round_label, "run", status, None, None, None, learning, artifact_dir)
+    return ResearchRoundResult(
+        round_number, round_label, typed_action, status, config_path, run_id, None, learning, artifact_dir
+    )
 
 
 def _take_pending_changes(state: dict[str, object]) -> list[dict[str, object]]:

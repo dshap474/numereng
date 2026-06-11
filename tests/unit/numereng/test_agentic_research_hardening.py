@@ -2,8 +2,8 @@
 
 Each test pins the ACTUAL behavior of one reliability path from the 7-invariants
 rebuild spec (crash mid-round, partial-state recovery, transport failures). Tests
-asserting rebuild-surviving contracts are unmarked; tests that characterize a HOLE
-deferred to the rebuild carry a `# HOLE:` comment and pass against current behavior.
+asserting rebuild-surviving contracts are unmarked; tests that characterize a
+remaining HOLE carry a `# HOLE:` comment and pass against current behavior.
 
 Fixed (no longer a hole): reuse-without-scoring — a same-experiment reused run with
 no primary metric on disk is now rescored (or the round fails honestly) instead of
@@ -30,7 +30,7 @@ from numereng.features.agentic_research import (
     get_research_status,
     run_research,
 )
-from numereng.features.agentic_research import run as research_module
+from numereng.features.agentic_research import loop as research_module
 from numereng.features.experiments import (
     ExperimentReport,
     ExperimentReportRow,
@@ -245,42 +245,35 @@ def test_score_failure_after_train_fails_round_but_run_plan_row_survives(
     plan_rows = _run_plan_rows(experiment_dir)
     assert [(row["round"], row["config_path"]) for row in plan_rows] == [("r001", "configs/config_001.json")]
     assert seams.score_calls == [("r001", "post_training_core")]
-    # HOLE: the round trained run-1 (compute spent, run linked by train_experiment)
-    # but the failed-round record drops the run_id entirely — the memory says no
-    # run happened. state counts it as a failure with no run.
-    assert result.rounds[0].run_id is None
+    # Fixed behavior: failed scoring still records the trained run/config for recovery.
+    assert result.rounds[0].run_id == "run-1"
+    assert result.rounds[0].config_path == experiment_dir / "configs" / "config_001.json"
     state = _read_state(experiment_dir)
     assert state["failed_rounds_counter"] == 1
     assert state["total_rounds_completed"] == 0
-    assert state["last_run_id"] is None
+    assert state["last_run_id"] == "run-1"
 
 
 def test_score_failure_then_identical_proposal_dedup_skips_without_rescore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # HOLE (deferred to rebuild): after a score failure the config file is already
-    # on disk, so when the model re-proposes the same mutation the duplicate-by-hash
-    # gate soft-skips it BEFORE training — the reuse-rescore path never gets a
-    # chance, so the loop never retries scoring. The trained run stays unscored
-    # (invisible to best-tracking), and the dup-skip memo claims "the existing
-    # config's score already stands in the report" — which is false here.
+    # Fixed behavior: a failed journal row does not poison duplicate detection,
+    # so the retried proposal is adopted and trained/scored instead of skipped.
     store_root, experiment_dir = _setup_experiment(tmp_path)
     seams = _install_seams(monkeypatch, store_root, experiment_dir)
     seams.add_row("run-0", 0.10)
     same = _mutation_response(value=0.02)
     seams.llm_queue = [same, same]
-    seams.train_queue = [("run-1", 0.13)]
-    seams.score_queue = [RuntimeError("score_exploded")]
+    seams.train_queue = [("run-1", 0.13), ("run-2", 0.14)]
+    seams.score_queue = [RuntimeError("score_exploded"), None]
 
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
 
-    assert [round_.status for round_ in result.rounds] == ["failed", "skipped"]
-    assert "agentic_research_candidate_duplicate" in result.rounds[1].learning
-    # Scoring was attempted exactly once (the failed attempt) — never retried.
-    assert seams.score_calls == [("r001", "post_training_core")]
+    assert [round_.status for round_ in result.rounds] == ["failed", "completed"]
+    assert result.rounds[1].run_id == "run-2"
+    assert result.rounds[1].metric_value == pytest.approx(0.14)
+    assert seams.score_calls == [("r001", "post_training_core"), ("r002", "post_training_core")]
     state = _read_state(experiment_dir)
-    # The dup skip counts as a completed round and resets the failure counter,
-    # so this state can repeat indefinitely without tripping the bail.
     assert state["failed_rounds_counter"] == 0
     assert state["total_rounds_completed"] == 1
 
@@ -318,15 +311,15 @@ def test_systemexit_mid_round_escapes_without_state_save_then_resume_dedup_skips
 
     # Resume: the model retries the SAME mutation (the likely move after a crash).
     seams.llm_queue = [_mutation_response(value=0.02)]
+    seams.train_queue = [("run-1", 0.11)]
     resumed = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
     assert resumed.rounds[0].round_label == "r001"  # numbering consistent
-    # HOLE: the crash orphan hash-collides with the retry, so the mutation is
-    # soft-skipped and NEVER trained — the candidate is permanently untestable
-    # until a human deletes the orphaned config file.
-    assert resumed.rounds[0].status == "skipped"
-    assert "agentic_research_candidate_duplicate" in resumed.rounds[0].learning
-    assert seams.train_queue == []  # train was never attempted on resume
+    # Fixed behavior: an orphan config has no journaled run, so the retry adopts
+    # the candidate and trains it instead of soft-skipping.
+    assert resumed.rounds[0].status == "completed"
+    assert resumed.rounds[0].run_id == "run-1"
+    assert seams.train_queue == []
     state = _read_state(experiment_dir)
     assert state["next_round_number"] == 2
     assert state["total_rounds_completed"] == 1

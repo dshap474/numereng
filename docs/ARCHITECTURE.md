@@ -98,7 +98,7 @@ src/numereng/
     baseline/                  # shared benchmark baseline construction from persisted runs
     feature_neutralization/    # prediction neutralization; vectorized least-squares engine with numerai-tools-style intercept parity
     experiments/               # experiment lifecycle + run linkage
-    agentic_research/          # program-driven continuous research supervisor with persisted program snapshots
+    agentic_research/          # six-module program-driven config-research supervisor
     hpo/                       # Optuna study execution + trial persistence
     ensemble/                  # rank-average build + experiment-aware selection workflow
     dataset-tools/             # local dataset downsampling tools
@@ -208,7 +208,12 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
   src/numereng/features/models/custom_models/
   src/numereng/features/agentic_research/
     PROGRAM.md
-    run.py
+    types.py
+    memory.py
+    boundary.py
+    llm.py
+    context.py
+    loop.py
   .agents/
     skills/
   .numereng/
@@ -234,9 +239,8 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
       configs/*.json
       agentic_research/
         state.json
-        trace.jsonl
+        journal.jsonl
         rounds/
-          decision.json
           rNNN.md
           rNNN.debug.*     # only on LLM/Codex failure
         hpo/<study_id>/...
@@ -521,26 +525,21 @@ cli research status|run
   -> features.agentic_research.get_research_status|run_research
       - persist supervisor state under:
           .numereng/experiments/<root>/agentic_research/state.json
-          .numereng/experiments/<root>/agentic_research/trace.jsonl
-          .numereng/experiments/<root>/agentic_research/rounds/decision.json
+          .numereng/experiments/<root>/agentic_research/journal.jsonl
           .numereng/experiments/<root>/agentic_research/rounds/rNNN.md
+          .numereng/experiments/<root>/EXPERIMENT.md
       - `research run` initializes state on first use
       - the prompt policy lives in `src/numereng/features/agentic_research/PROGRAM.md`
-      - runtime layout is localized into `PROGRAM.md` plus `run.py`
+      - runtime layout is localized into `PROGRAM.md` plus `types.py`, `memory.py`, `boundary.py`, `llm.py`, `context.py`, and `loop.py`
       - select planner compute source from `src/numereng/config/openrouter/active-model.py`
       - checked-in default: `ACTIVE_MODEL_SOURCE=codex-exec`
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
       - `codex-exec` inherits the user’s normal Codex configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
-      - the LLM sees configs, report rows, experiment notes, recent decision rows, research memory, and the latest rolling round markdown
+      - the LLM sees configs, report rows, experiment notes, recent journal rows, research memory, and the latest rolling round markdown
       - the LLM returns schema-constrained `decision_form` plus cumulative `round_markdown`
-      - `trace.jsonl` keeps the full prompt/raw-response/event trace for debugging, but is not fed back into future prompts
-      - the LLM can return one of two actions per round:
-          - `"run"`: mutate one parent config, validate the child `TrainingConfig`, train, score, and record the round
-          - `"ensemble"`: blend 2–8 existing scored experiment runs via rank average, score with the same primary metric (`bmc_last_200_eras_mean`), and record under `state.best_ensemble` / `state.tried_ensembles` — never enters the single-model seed-trio promotion track
-      - the `"ensemble"` action is offered whenever ≥2 blendable runs exist (FINISHED, scored, predictions on disk) — a structural precondition (`_eligible_ensemble_rows`), not a plateau gate; via output-schema enum for `codex-exec`, re-checked in `_run_one_round` for OpenRouter. *When* to ensemble (e.g. once single-model search plateaus) is the LLM's judgment, guided by `PROGRAM.md` and the `ensemble.plateau_counter` / `ensemble.eligible_runs` context signals
-      - ensemble rounds record `round_type: "ensemble"` and a synthetic `run_id` of form `ensemble:<ensemble_id>` in the decision log; no training run directory is created
-      - ensemble member predictions must be on disk; identical member sets are soft-skipped; ensemble rounds do not tick or reset `phase_plateau_counter`
+      - `journal.jsonl` records one append-only machine row per round attempt; it is bounded back into future prompts via recent journal rows
+      - the LLM returns the single action `"run"`: mutate one parent config, validate the child `TrainingConfig`, train, score, and record the round
       - Python validates allowed config paths, writes the strict machine decision, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
       - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation
 ```

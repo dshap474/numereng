@@ -29,7 +29,7 @@ from numereng.features.agentic_research import (
     get_research_status,
     run_research,
 )
-from numereng.features.agentic_research import run as research_module
+from numereng.features.agentic_research import loop as research_module
 from numereng.features.experiments import (
     ExperimentReport,
     ExperimentReportRow,

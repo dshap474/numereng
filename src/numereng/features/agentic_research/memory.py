@@ -85,7 +85,7 @@ def journal_tail(experiment: ExperimentRecord, *, limit: int) -> list[dict[str, 
 
 def journal_has_recorded_run(experiment: ExperimentRecord, config_name: str) -> bool:
     return any(
-        entry.get("config") == config_name and entry.get("run_id")
+        entry.get("config") == config_name and entry.get("run_id") and entry.get("status") != "failed"
         for entry in _journal_entries(journal_path(experiment))
     )
 
