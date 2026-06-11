@@ -6,17 +6,19 @@ This folder owns model implementations used by the training pipeline.
 ## Source-of-Truth Modules
 
 - `lgbm.py`: built-in LightGBM wrapper exposed as model type `LGBMRegressor`
+- `xgboost.py`: built-in XGBoost wrapper exposed as model type `XGBoostRegressor`
 - `src/numereng/features/models/custom_models/*.py`: tracked plugin modules loaded through `MODEL_REGISTRY`
 - `__init__.py`: public exports for this feature slice
 - `features/training/model_factory.py`: model resolution + plugin discovery entrypoint
 
 ## Built-in Model Contract
 
-- Built-in type string is exactly: `LGBMRegressor`
-- Resolved class location: `src/numereng/features/models/lgbm.py`
-- The wrapper exposes `fit`/`predict` and supports optional `feature_cols` filtering.
-- If LightGBM is not installed, training raises:
-  - `training_model_backend_missing_lightgbm`
+- Built-in type strings and wrappers are:
+  - `LGBMRegressor`: `src/numereng/features/models/lgbm.py`
+    - missing backend token: `training_model_backend_missing_lightgbm`
+  - `XGBoostRegressor`: `src/numereng/features/models/xgboost.py`
+    - missing backend token: `training_model_backend_missing_xgboost`
+- Built-in wrappers expose `fit`/`predict` and support optional `feature_cols` filtering.
 
 ## Custom Model Location (Canonical)
 
@@ -41,7 +43,7 @@ Treat `template_model.py` as the tracked reference example. Treat other files in
 
 Model resolution happens in `features/training/model_factory.py`:
 
-1. If `model.type` is built-in (`LGBMRegressor`), built-in class is used.
+1. If `model.type` is built-in (`LGBMRegressor` or `XGBoostRegressor`), built-in class is used.
 2. Otherwise plugin discovery runs:
   - If `model.module_path` is set:
     - absolute path: used directly

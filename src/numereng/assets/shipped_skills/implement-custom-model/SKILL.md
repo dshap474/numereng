@@ -35,7 +35,8 @@ Default path for a new custom model plugin:
 2. Choose the closest starting point:
    - use `template_model.py` for a novel or unusual estimator API
    - use the closest tracked sklearn-style wrapper when the estimator is similar to an existing wrapper
-   - use `xgboost_model.py` or `catboost_model.py` when the backend is optional and should raise a backend-missing error
+   - use `catboost_model.py` when the backend is optional and should raise a backend-missing error
+   - use built-in `XGBoostRegressor` directly instead of creating a custom `xgboost_model.py`
 3. Rename the class and `MODEL_REGISTRY` key to the real model type.
 4. Keep the wrapper contract intact:
    - accept `feature_cols` and `**params` in `__init__`
@@ -80,7 +81,9 @@ first-class shared repo default rather than a custom-model plugin.
 - Sklearn-like estimator:
   - copy the closest wrapper already in `src/numereng/features/models/custom_models/`
 - Optional third-party backend:
-  - copy `xgboost_model.py` or `catboost_model.py` to preserve backend-missing error behavior
+  - copy `catboost_model.py` to preserve backend-missing error behavior
+  - consult `src/numereng/features/models/xgboost.py` for XGBoost-specific behavior; add
+    `MODEL_REGISTRY` yourself if using that built-in as inspiration for a custom plugin
 - Wrapper class requirements:
   - `__init__(self, feature_cols: list[str] | None = None, **params)`
   - `fit(self, X, y, **kwargs)`

@@ -11,10 +11,14 @@ from typing import Any
 
 from numereng.config.settings import load_settings
 from numereng.features.models.lgbm import LGBMRegressor
+from numereng.features.models.xgboost import XGBoostRegressor
 from numereng.features.training.errors import TrainingModelError
 from numereng.features.training.target_transforms import TargetTransformWrapper
 
-_BUILTIN_MODELS = {"LGBMRegressor": LGBMRegressor}
+_BUILTIN_MODELS = {
+    "LGBMRegressor": LGBMRegressor,
+    "XGBoostRegressor": XGBoostRegressor,
+}
 
 
 def _resolve_custom_models_root() -> Path:

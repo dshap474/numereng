@@ -7,13 +7,13 @@ training model factory.
 
 If you want to add a custom model that works with numereng, use this path first:
 
-1. Check `src/numereng/features/models/custom_models/` to see whether the estimator already has a
-   tracked wrapper.
+1. Check built-ins first, then `src/numereng/features/models/custom_models/` to see whether the
+   estimator already has a wrapper.
 2. Start from the closest wrapper:
    - use `template_model.py` for a novel estimator API
    - use the nearest sklearn-style wrapper when the estimator shape is similar
-   - use `xgboost_model.py` or `catboost_model.py` when the backend is optional and should raise
-     a backend-missing error
+   - use `catboost_model.py` when the backend is optional and should raise a backend-missing error
+   - use built-in `XGBoostRegressor` directly instead of creating a custom `xgboost_model.py`
 3. Rename the class and `MODEL_REGISTRY` key to the real model type you want to expose.
 4. Replace the placeholder or copied `fit` and `predict` bodies with your estimator logic.
 5. Add a config with:
@@ -29,10 +29,10 @@ If you want to add a custom model that works with numereng, use this path first:
 
 Start with the nearest wrapper. `template_model.py` remains the canonical lowest-level fallback.
 
-## Built-in model
+## Built-in models
 
-- `LGBMRegressor` is the only built-in model type shipped in code
-  (`src/numereng/features/models/lgbm.py`).
+- `LGBMRegressor` ships in `src/numereng/features/models/lgbm.py`.
+- `XGBoostRegressor` ships in `src/numereng/features/models/xgboost.py`.
 
 ## Custom model directory
 
@@ -109,7 +109,6 @@ These files show real wrapper patterns already used in this repo:
 - `linear_regression_model.py`
 - `random_forest_model.py`
 - `mlp_regressor_model.py`
-- `xgboost_model.py`
 - `catboost_model.py`
 
 They are useful examples when the estimator shape is similar. Use `template_model.py` when the API
@@ -133,7 +132,7 @@ When you add or change a tracked wrapper, update the matching tests here:
   numereng did not find the requested model type in built-ins or discovered plugins.
 - `training_model_invalid_model_class:<type>`:
   the registry entry is missing `fit` or `predict`.
-- `xgboost` missing in model environment raises:
+- built-in `XGBoostRegressor` with `xgboost` missing in the model environment raises:
   - `training_model_backend_missing_xgboost`
 - `catboost` missing in model environment raises:
   - `training_model_backend_missing_catboost`
