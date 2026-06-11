@@ -32,6 +32,7 @@ from numereng.features.store import (
     index_run,
     resolve_store_root,
     resolve_workspace_layout_from_store_root,
+    run_has_persisted_predictions,
     upsert_experiment,
 )
 from numereng.features.training import TrainingProfile, run_training
@@ -642,17 +643,7 @@ def _resolve_round_run_ids(
 def _round_run_is_eligible(*, root: Path, run_id: str, run_manifest: dict[str, object]) -> bool:
     if _as_str(run_manifest.get("status")) != "FINISHED":
         return False
-    return _run_predictions_exist(root=root, run_id=run_id, run_manifest=run_manifest)
-
-
-def _run_predictions_exist(*, root: Path, run_id: str, run_manifest: dict[str, object]) -> bool:
-    run_dir = root / "runs" / run_id
-    artifacts = _as_mapping(run_manifest.get("artifacts"))
-    predictions_rel = _as_str(artifacts.get("predictions"))
-    if predictions_rel is not None:
-        return (run_dir / predictions_rel).is_file()
-    predictions_dir = run_dir / "artifacts" / "predictions"
-    return len(tuple(predictions_dir.glob("*.parquet"))) == 1
+    return run_has_persisted_predictions(root=root, run_id=run_id, run_manifest=run_manifest)
 
 
 def _parse_run_created_at(run_manifest: dict[str, object]) -> datetime:

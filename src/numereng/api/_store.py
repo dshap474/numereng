@@ -12,6 +12,10 @@ from numereng.api.contracts import (
     StoreMaterializeVizArtifactsFailureResponse,
     StoreMaterializeVizArtifactsRequest,
     StoreMaterializeVizArtifactsResponse,
+    StorePrunePredictionsExcludedResponse,
+    StorePrunePredictionsRequest,
+    StorePrunePredictionsResponse,
+    StorePrunePredictionsRunResponse,
     StoreRebuildFailureResponse,
     StoreRebuildRequest,
     StoreRebuildResponse,
@@ -137,6 +141,43 @@ def store_materialize_viz_artifacts(
     )
 
 
+def store_prune_predictions(request: StorePrunePredictionsRequest) -> StorePrunePredictionsResponse:
+    """Dry-run or delete persisted prediction artifacts for selected runs."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.prune_predictions(
+            store_root=request.store_root,
+            run_ids=request.run_ids,
+            experiment_id=request.experiment_id,
+            all_runs=request.all,
+            apply=request.apply,
+        )
+    except StoreError as exc:
+        raise PackageError(str(exc)) from exc
+
+    return StorePrunePredictionsResponse(
+        store_root=str(result.store_root),
+        dry_run=result.dry_run,
+        candidate_count=result.candidate_count,
+        pruned_count=result.pruned_count,
+        excluded_count=result.excluded_count,
+        reclaimable_bytes=result.reclaimable_bytes,
+        reclaimed_bytes=result.reclaimed_bytes,
+        pruned=[
+            StorePrunePredictionsRunResponse(
+                run_id=item.run_id,
+                bytes=item.bytes,
+                predictions_dir=str(item.predictions_dir),
+            )
+            for item in result.pruned
+        ],
+        excluded=[
+            StorePrunePredictionsExcludedResponse(run_id=item.run_id, reason=item.reason) for item in result.excluded
+        ],
+    )
+
+
 def store_repair_run_lifecycles(
     request: StoreRunLifecycleRepairRequest | None = None,
 ) -> StoreRunLifecycleRepairResponse:
@@ -196,6 +237,7 @@ __all__ = [
     "store_index_run",
     "store_init",
     "store_materialize_viz_artifacts",
+    "store_prune_predictions",
     "store_repair_run_lifecycles",
     "store_rebuild",
 ]

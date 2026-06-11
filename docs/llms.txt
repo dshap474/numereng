@@ -44,7 +44,7 @@ Source map:
 - `src/numereng/features/agentic_research/*`: config-research loop split across `types.py`, `memory.py`, `boundary.py`, `llm.py`, `context.py`, and `loop.py`. `PROGRAM.md` is the tracked base LLM policy; `custom_programs/` is local-only and gitignored for experiment-specific prompt programs. The LLM reads experiment configs, reports, notes, recent journal rows, and research memory, then returns one JSON decision with the single action `action: "run"` (mutate one config, train, score). Planner compute source is selected from `src/numereng/config/openrouter/active-model.py` via `ACTIVE_MODEL_SOURCE` (`codex-exec|openrouter`); the checked-in default is `codex-exec`.
 - `src/numereng/features/hpo/*`: Optuna orchestration + trial/study persistence.
 - `src/numereng/features/ensemble/*`: rank-average build plus experiment-aware ensemble selection (candidate freeze from all available runs per target by default, pruning, equal-weight screening, exact weighted sweep) and persistence.
-- `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout.
+- `src/numereng/features/store/*`: sqlite schema/index/doctor/rebuild/layout plus safe predictions pruning.
 - `src/numereng/features/docs_sync.py`: explicit repo-local Numerai docs mirror sync into `docs/numerai/`.
 - `src/numereng/features/telemetry/*`: local run telemetry write path.
 - `src/numereng/features/dataset-tools/*`: local dataset downsampling utilities for stored derived downsampled artifacts.
@@ -174,6 +174,7 @@ Wiring map:
 - Store:
   `cli store * -> api.store_* -> features.store`
   - `cli store repair-run-lifecycles [--run-id <id>|--all] -> api.store_repair_run_lifecycles -> features.telemetry.reconcile_run_lifecycles`
+  - `cli store prune-predictions (--run-id <id>...|--experiment-id <id>|--all) [--apply] -> api.store_prune_predictions -> features.store.prune_predictions`
 - Monitor:
   `cli monitor snapshot [--workspace <path>] [--no-refresh-cloud] [--json] -> api.build_monitor_snapshot -> numereng_viz.build_monitor_snapshot`
   `cli remote list|bootstrap-viz|doctor|repo sync|experiment sync|experiment pull|experiment launch|experiment status|experiment maintain|experiment stop|config push|run train -> api.remote_* -> features.remote_ops.*`
@@ -283,6 +284,7 @@ Viz/frontend topology:
 - There is one official persisted-run scorer. It supports stage selection: `all`, `run_metric_series`, `post_fold`, `post_training_core`, `post_training_full`.
 - The canonical scorer preserves existing public contracts but now executes core per-era metric math through NumPy/Numba kernels instead of pandas `groupby.apply` callbacks.
 - Viz prefers persisted scoring artifacts, and historical runs can be backfilled via `numereng store materialize-viz-artifacts --kind scoring-artifacts ...`; `--kind per-era-corr` is a deprecated alias to the same backfill path. Explicit `run_id` scope hard-fails with `store_run_not_found:<id>` when absent, while `experiment_id` scope skips unreadable unrelated runs. Legacy scoring fallback is read-only and does not write artifacts on request.
+- `numereng store prune-predictions` is dry-run by default and deletes only `runs/<run_id>/artifacts/predictions/` with `--apply`; it excludes champion runs, runs referenced by submission packages, non-FINISHED runs, and runs without the same persisted-predictions predicate used by experiment round scoring.
 
 Critical invariants:
 - `baseline build` requires at least two persisted run IDs, a safe baseline name, and a `default_target` shared by every source run.
@@ -385,7 +387,7 @@ CLI families:
 - `numereng ensemble build|select|list|details`
 - `numereng neutralize apply`
 - `numereng dataset-tools build-downsampled-full`
-- `numereng store init|index|rebuild|doctor|materialize-viz-artifacts`
+- `numereng store init|index|rebuild|doctor|materialize-viz-artifacts|prune-predictions`
 - `numereng cloud ec2 ...`
 - `numereng cloud aws image|train ...`
 - `numereng cloud modal deploy|data sync|train ...`

@@ -28,6 +28,7 @@ from numereng.features.store import (
     index_run,
     resolve_store_root,
     resolve_workspace_layout_from_store_root,
+    run_has_persisted_predictions,
     upsert_experiment,
 )
 from numereng.features.training.run_lock import is_lock_payload_active, read_run_lock, resolve_run_lock_path
@@ -496,7 +497,7 @@ def _repair_manifest_links_for_round(*, root: Path, experiment_id: str, round_la
         config_path = _as_str(config_payload.get("path")) if isinstance(config_payload, dict) else None
         if config_path is None or Path(config_path).stem not in expected_stems:
             continue
-        if not _run_predictions_exist(root=root, run_id=run_id, run_manifest=run_manifest):
+        if not run_has_persisted_predictions(root=root, run_id=run_id, run_manifest=run_manifest):
             continue
         created_at = _as_str(run_manifest.get("created_at")) or ""
         candidates.append((created_at, run_id))
@@ -526,16 +527,6 @@ def _repair_manifest_links_for_round(*, root: Path, experiment_id: str, round_la
         updated_at=record.updated_at,
         metadata=record.metadata,
     )
-
-
-def _run_predictions_exist(*, root: Path, run_id: str, run_manifest: dict[str, object]) -> bool:
-    run_dir = root / "runs" / run_id
-    artifacts = run_manifest.get("artifacts")
-    predictions_rel = _as_str(artifacts.get("predictions")) if isinstance(artifacts, dict) else None
-    if predictions_rel is not None:
-        return (run_dir / predictions_rel).is_file()
-    predictions_dir = run_dir / "artifacts" / "predictions"
-    return any(predictions_dir.glob("*.parquet"))
 
 
 def _read_json_dict(path: Path) -> dict[str, Any]:

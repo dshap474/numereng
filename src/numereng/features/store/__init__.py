@@ -8,6 +8,13 @@ from numereng.features.store.layout import (
     resolve_workspace_layout_from_store_root,
     resolve_workspace_root,
 )
+from numereng.features.store.predictions import run_has_persisted_predictions
+from numereng.features.store.prune import (
+    StorePrunePredictionsExcluded,
+    StorePrunePredictionsResult,
+    StorePrunePredictionsRun,
+    prune_predictions,
+)
 from numereng.features.store.service import (
     StoreCloudJobUpsert,
     StoreDoctorResult,
@@ -79,6 +86,9 @@ __all__ = [
     "StoreInitResult",
     "StoreMaterializeVizArtifactsFailure",
     "StoreMaterializeVizArtifactsResult",
+    "StorePrunePredictionsExcluded",
+    "StorePrunePredictionsResult",
+    "StorePrunePredictionsRun",
     "StoreRebuildFailure",
     "StoreRebuildResult",
     "StoreRunExecutionBackfillResult",
@@ -99,6 +109,7 @@ __all__ = [
     "list_hpo_studies",
     "list_hpo_trials",
     "materialize_viz_artifacts",
+    "prune_predictions",
     "rebuild_run_index",
     "replace_ensemble_components",
     "replace_ensemble_metrics",
@@ -107,6 +118,7 @@ __all__ = [
     "resolve_workspace_layout",
     "resolve_workspace_layout_from_store_root",
     "resolve_workspace_root",
+    "run_has_persisted_predictions",
     "upsert_ensemble",
     "upsert_experiment",
     "upsert_hpo_study",

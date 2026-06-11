@@ -68,6 +68,7 @@ USAGE = (
     "  numereng store backfill-run-execution (--run-id <id> | --all) [--workspace <path>]\n"
     "  numereng store repair-run-lifecycles [--run-id <id>] [--workspace <path>] [--all]\n"
     "  numereng store materialize-viz-artifacts --kind <scoring-artifacts|per-era-corr(deprecated)> (--run-id <id> | --experiment-id <id> | --all) [--workspace <path>]\n"  # noqa: E501
+    "  numereng store prune-predictions (--run-id <id> [--run-id <id> ...] | --experiment-id <id> | --all) [--apply] [--workspace <path>] [--format <table|json>]\n"  # noqa: E501
     "  numereng cloud ec2 init-iam [--region <region>] [--bucket <bucket>] [--role-name <name>] [--security-group-name <name>]\n"  # noqa: E501
     "  numereng cloud ec2 setup-data --data-version <v> [--cache-dir <path>] [--region <region>] [--bucket <bucket>]\n"  # noqa: E501
     "  numereng cloud ec2 provision --run-id <id> [--tier <tier>] [--spot|--on-demand] [--region <region>] [--bucket <bucket>] [--state-path <path>]\n"  # noqa: E501

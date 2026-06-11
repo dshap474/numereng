@@ -102,7 +102,7 @@ src/numereng/
     hpo/                       # Optuna study execution + trial persistence
     ensemble/                  # rank-average build + experiment-aware selection workflow
     dataset-tools/             # local dataset downsampling tools
-    store/                     # sqlite schema/index/rebuild/doctor/layout
+    store/                     # sqlite schema/index/rebuild/doctor/layout/prediction pruning
     telemetry/                 # run job/event/log/sample persistence
     viz/                       # read-only API adapter over store
     cloud/
@@ -165,7 +165,7 @@ Command families:
 - `serve`: `package create|list|inspect|score|sync-diagnostics`, `live build|submit`, `pickle build|upload`
 - `neutralize`: `apply`
 - `dataset-tools`: `build-downsampled-full`
-- `store`: `init`, `index`, `rebuild`, `doctor`, `backfill-run-execution`, `repair-run-lifecycles`, `materialize-viz-artifacts`
+- `store`: `init`, `index`, `rebuild`, `doctor`, `backfill-run-execution`, `repair-run-lifecycles`, `materialize-viz-artifacts`, `prune-predictions`
 - `monitor`: `snapshot`
 - `viz`
 - `remote`: `list`, `bootstrap-viz`, `doctor`, `repo sync`, `experiment sync`, `experiment fetch`, `experiment pull`, `experiment launch`, `experiment status`, `experiment maintain`, `experiment stop`, `config push`, `run train`
@@ -666,6 +666,13 @@ cli store materialize-viz-artifacts --kind <per-era-corr|scoring-artifacts> (--r
       - explicit `--run-id` hard-fails with `store_run_not_found:<id>` when the target run does not exist
       - `--experiment-id` scope skips unreadable unrelated run manifests while continuing to backfill matching readable runs
       - refresh `artifacts/scoring/*`, `results.json`, `metrics.json`, `score_provenance.json`, and run manifest artifact links
+
+cli store prune-predictions (--run-id <id>... | --experiment-id <id> | --all) [--apply]
+  -> api.store_prune_predictions
+  -> features.store.prune_predictions
+      - dry-run by default; `--apply` deletes only `runs/<run_id>/artifacts/predictions/`
+      - excludes champion runs across live and archived experiments, submission-package source runs, non-FINISHED runs, and runs without the shared persisted-predictions predicate
+      - re-indexes each pruned run through `store.index_run` so artifact rows reflect missing predictions without changing run metadata
 ```
 
 ### 7.8 Cloud

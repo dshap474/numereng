@@ -1584,6 +1584,80 @@ def test_cli_store_materialize_viz_artifacts_success(
     assert payload["skipped_count"] == 1
 
 
+def test_cli_store_prune_predictions_success_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_prune(
+        request: api_module.StorePrunePredictionsRequest,
+    ) -> api_module.StorePrunePredictionsResponse:
+        assert request.store_root == ".numereng"
+        assert request.run_ids == ["run-1", "run-2"]
+        assert request.experiment_id is None
+        assert request.all is False
+        assert request.apply is True
+        return api_module.StorePrunePredictionsResponse(
+            store_root="/tmp/.numereng",
+            dry_run=False,
+            candidate_count=2,
+            pruned_count=1,
+            excluded_count=1,
+            reclaimable_bytes=4,
+            reclaimed_bytes=4,
+            pruned=[
+                api_module.StorePrunePredictionsRunResponse(
+                    run_id="run-1",
+                    bytes=4,
+                    predictions_dir="/tmp/.numereng/runs/run-1/artifacts/predictions",
+                )
+            ],
+            excluded=[
+                api_module.StorePrunePredictionsExcludedResponse(
+                    run_id="run-2",
+                    reason="champion_run:exp-1",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(api_module, "store_prune_predictions", fake_prune)
+
+    exit_code = cli.main(
+        [
+            "store",
+            "prune-predictions",
+            "--run-id",
+            "run-1",
+            "--run-id",
+            "run-2",
+            "--apply",
+            "--format",
+            "json",
+        ]
+    )
+    payload = _parse_stdout_json(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["dry_run"] is False
+    assert payload["pruned"][0]["run_id"] == "run-1"
+    assert payload["excluded"][0]["reason"] == "champion_run:exp-1"
+
+
+def test_cli_store_prune_predictions_selector_required(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["store", "prune-predictions"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "exactly one of --run-id, --experiment-id, or --all is required" in captured.err
+
+
+def test_cli_store_prune_predictions_selector_xor(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(["store", "prune-predictions", "--run-id", "run-1", "--all"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    assert "exactly one of --run-id, --experiment-id, or --all is required" in captured.err
+
+
 def test_cli_numerai_datasets_list_success(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

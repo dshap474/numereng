@@ -130,6 +130,43 @@ class StoreMaterializeVizArtifactsResponse(BaseModel):
     failures: list[StoreMaterializeVizArtifactsFailureResponse]
 
 
+class StorePrunePredictionsRequest(WorkspaceBoundRequest):
+    run_ids: list[str] = Field(default_factory=list)
+    experiment_id: str | None = None
+    all: bool = False
+    apply: bool = False
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> StorePrunePredictionsRequest:
+        scope_flags = int(bool(self.run_ids)) + int(self.experiment_id is not None) + int(self.all)
+        if scope_flags != 1:
+            raise ValueError("exactly one of run_ids, experiment_id, or all=true is required")
+        return self
+
+
+class StorePrunePredictionsRunResponse(BaseModel):
+    run_id: str
+    bytes: int
+    predictions_dir: str
+
+
+class StorePrunePredictionsExcludedResponse(BaseModel):
+    run_id: str
+    reason: str
+
+
+class StorePrunePredictionsResponse(BaseModel):
+    store_root: str
+    dry_run: bool
+    candidate_count: int
+    pruned_count: int
+    excluded_count: int
+    reclaimable_bytes: int
+    reclaimed_bytes: int
+    pruned: list[StorePrunePredictionsRunResponse]
+    excluded: list[StorePrunePredictionsExcludedResponse]
+
+
 __all__ = [
     "StoreDoctorRequest",
     "StoreDoctorResponse",
@@ -140,6 +177,10 @@ __all__ = [
     "StoreMaterializeVizArtifactsFailureResponse",
     "StoreMaterializeVizArtifactsRequest",
     "StoreMaterializeVizArtifactsResponse",
+    "StorePrunePredictionsExcludedResponse",
+    "StorePrunePredictionsRequest",
+    "StorePrunePredictionsResponse",
+    "StorePrunePredictionsRunResponse",
     "StoreRebuildFailureResponse",
     "StoreRebuildRequest",
     "StoreRebuildResponse",
