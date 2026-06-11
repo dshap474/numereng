@@ -32,7 +32,7 @@ boundary violations.
 - `types.py` — exceptions, the public result dataclasses, decision/response types, shared constants
   and small utils.
 - `memory.py` — `state.json` load/save (+ defaults), `journal.jsonl` append/tail, `rounds/rN.md`
-  writer, `EXPERIMENT.md` passthrough, failure debug dumps, artifact rotation, heartbeat.
+  writer, `EXPERIMENT.md` passthrough, failure debug dumps, heartbeat.
 - `boundary.py` — decision → config materialization (path allowlist, value caps, horizon/target
   match, strict `TrainingConfig` validation, hash dedup), baseline config, stale-run-reuse guard,
   run-plan recording, frozen-scoring assertion.

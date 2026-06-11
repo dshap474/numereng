@@ -85,7 +85,7 @@ flowchart TD
     Champ -- no --> Keep[champion unchanged]
 
     Advance --> Persist
-    Keep --> Persist[write rounds/rN.md + append journal<br/>+ EXPERIMENT.md passthrough<br/>+ rotation + heartbeat + save_state]
+    Keep --> Persist[write rounds/rN.md + append journal<br/>+ EXPERIMENT.md passthrough<br/>+ heartbeat + save_state]
     Persist --> Done([return COMPLETED])
 
     Skip --> Persist
@@ -120,8 +120,6 @@ Key guards:
   (`agentic_research_stale_run_reuse_blocked:`).
 - **Scored-or-failed rule.** A round that links a FINISHED run must end with that run scored. A reused
   run with no primary metric on disk is rescored; never "complete" a round with an unscored run.
-- **Run-artifact rotation.** Heavy prediction parquets outside a recent-round grace window are
-  deleted; champion, recent rounds, and metric/manifest files are preserved.
 
 ## 4. Artifacts Written
 
