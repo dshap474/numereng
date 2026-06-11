@@ -202,7 +202,8 @@ The only intended variation axis is:
 ## Evidence Rules
 
 - Single-seed discovery is directional only (noise ~`3e-4`).
-- Confirm with the seed trio `42 / 17 / 99`; compute the trio mean yourself from `report.rows`.
+- Confirm with the seed trio `42 / 17 / 99`; compute the trio mean yourself from your memo ledger
+  (`recent_journal` carries seed+metric for only the last 12 rounds).
 - Treat improvements below ~`1e-4`–`3e-4` as provisional until trio-confirmed.
 - Primary metric `bmc_last_200_eras_mean`; tie-break `bmc_mean`; sanity `corr_mean`, `mmc_mean`,
   `cwmm_mean`.

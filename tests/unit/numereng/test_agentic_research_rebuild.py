@@ -17,6 +17,7 @@ import pytest
 from numereng.features.agentic_research import boundary, context, memory
 from numereng.features.agentic_research import loop as research_module
 from numereng.features.agentic_research.types import (
+    BUDGET_ROUNDS_METADATA_KEY,
     AgenticResearchDuplicateCandidate,
     AgenticResearchValidationError,
     ResearchChange,
@@ -39,10 +40,15 @@ EXPERIMENT_ID = "2026-06-10_rebuild-exp"
 # ---------------------------------------------------------------------------
 
 
-def _write_training_config(path: Path, *, learning_rate: float = 0.01, target_col: str = "target") -> None:
+def _write_training_config(
+    path: Path, *, learning_rate: float = 0.01, target_col: str = "target", random_state: int | None = None
+) -> None:
+    params: dict[str, object] = {"learning_rate": learning_rate}
+    if random_state is not None:
+        params["random_state"] = random_state
     payload: dict[str, object] = {
         "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled", "target_col": target_col},
-        "model": {"type": "LGBMRegressor", "params": {"learning_rate": learning_rate}},
+        "model": {"type": "LGBMRegressor", "params": params},
         "training": {},
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,6 +328,19 @@ def test_context_is_bounded_and_does_not_grow_with_round_count(tmp_path: Path) -
             assert len(value) <= 12_000 + 64  # cap + truncation marker
 
 
+def test_context_budget_rounds_is_metadata_int_or_null(tmp_path: Path) -> None:
+    store_root, _ = _setup_experiment(tmp_path)
+    experiment = _experiment(store_root)
+    state = memory.initial_state(experiment)
+
+    unset_ctx = context.build_context(root=store_root, experiment=experiment, report=None, state=state)
+    assert unset_ctx["budget"]["budget_rounds"] is None
+
+    experiment.metadata[BUDGET_ROUNDS_METADATA_KEY] = 500
+    set_ctx = context.build_context(root=store_root, experiment=experiment, report=None, state=state)
+    assert set_ctx["budget"]["budget_rounds"] == 500
+
+
 # ---------------------------------------------------------------------------
 # loop happy-path (five seams patched ON loop)
 # ---------------------------------------------------------------------------
@@ -426,6 +445,28 @@ def test_loop_happy_path_baseline_then_mutation_round(tmp_path: Path, monkeypatc
     state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
     assert state["champion"]["run_id"] == "run-2"
     assert state["champion"]["metric"] == pytest.approx(0.15)
+    entries = [
+        json.loads(line)
+        for line in (experiment_dir / "agentic_research" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [entry["seed"] for entry in entries] == [None, None]
+
+
+def test_loop_journal_and_round_markdown_record_config_seed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    _write_training_config(experiment_dir / "configs" / "seed.json", random_state=42)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10), ("run-2", 0.15)]
+    seams.llm_queue = [_mutation_response(value=0.02)]
+
+    research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    entries = [
+        json.loads(line)
+        for line in (experiment_dir / "agentic_research" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [entry["seed"] for entry in entries] == [42, 42]
+    assert "- seed: 42" in (_rounds_dir(experiment_dir) / "r002.md").read_text(encoding="utf-8")
 
 
 def test_loop_champion_advances_only_on_strict_improvement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

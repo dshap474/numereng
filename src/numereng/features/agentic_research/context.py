@@ -11,6 +11,7 @@ from numereng.config.training import load_training_config_json
 from numereng.features.agentic_research import memory
 from numereng.features.agentic_research.boundary import ALLOWED_CHANGE_PATHS
 from numereng.features.agentic_research.types import (
+    BUDGET_ROUNDS_METADATA_KEY,
     CONFIG_CONTEXT_RECENT,
     MAX_CONTEXT_CHARS,
     PAYOUT_TARGET_COL,
@@ -50,6 +51,10 @@ def build_context(
     state: dict[str, object],
 ) -> dict[str, object]:
     """Assemble the bounded context dict shown to the model each round."""
+    raw_budget_rounds = experiment.metadata.get(BUDGET_ROUNDS_METADATA_KEY)
+    budget_rounds: int | None = as_int(raw_budget_rounds, default=0) if raw_budget_rounds is not None else None
+    if budget_rounds is not None and budget_rounds <= 0:
+        budget_rounds = None
     return {
         "objective": {
             "primary_metric": PRIMARY_METRIC_FIELD,
@@ -71,6 +76,7 @@ def build_context(
             "next_round_number": as_int(state.get("next_round_number"), default=1),
             "total_rounds_completed": as_int(state.get("total_rounds_completed"), default=0),
             "failed_rounds_counter": as_int(state.get("failed_rounds_counter"), default=0),
+            "budget_rounds": budget_rounds,
         },
         "allowed_change_paths": list(ALLOWED_CHANGE_PATHS),
         "value_caps": {path: list(bounds) for path, bounds in _value_caps(experiment).items()},

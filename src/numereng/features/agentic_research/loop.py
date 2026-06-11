@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from numereng.config.training import load_training_config_json
 from numereng.features.agentic_research import boundary, context, llm, memory
 from numereng.features.agentic_research.context import _safe_report
 from numereng.features.agentic_research.llm import _call_research_llm
@@ -235,6 +236,11 @@ def _train_score_record_round(
         run_id=trained.run_id,
         metric=metric_value,
     )
+    config_payload = load_training_config_json(config_path)
+    model_payload = config_payload.get("model")
+    params_payload = model_payload.get("params") if isinstance(model_payload, dict) else None
+    raw_seed = params_payload.get("random_state") if isinstance(params_payload, dict) else None
+    seed = raw_seed if isinstance(raw_seed, int) and not isinstance(raw_seed, bool) else None
 
     entry = _journal_entry(
         round_number=round_number,
@@ -244,6 +250,7 @@ def _train_score_record_round(
         config_path=config_path,
         parent_config=parent_config,
         run_id=trained.run_id,
+        seed=seed,
         metric=optional_float(metric_value),
         is_champion=is_champion,
         learning=learning,
@@ -335,6 +342,7 @@ def _record_terminal_round(
         config_path=None,
         parent_config=optional_str(state.get("_pending_parent")),
         run_id=None,
+        seed=None,
         metric=None,
         is_champion=False,
         learning=learning,
@@ -398,6 +406,7 @@ def _journal_entry(
     config_path: Path | None,
     parent_config: str | None,
     run_id: str | None,
+    seed: int | None,
     metric: float | None,
     is_champion: bool,
     learning: str,
@@ -415,7 +424,7 @@ def _journal_entry(
         "config": config_path.name if config_path is not None else None,
         "parent_config": parent_config,
         "run_id": run_id,
-        "seed": None,
+        "seed": seed,
         "metric": metric,
         "is_champion": is_champion,
         "error": error,

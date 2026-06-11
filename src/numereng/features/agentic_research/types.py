@@ -16,6 +16,7 @@ PROGRAM_METADATA_KEY = "agentic_research_program"
 ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 VALUE_CAPS_METADATA_KEY = "agentic_research_value_caps"
 ARTIFACT_ROTATION_METADATA_KEY = "agentic_research_artifact_rotation"
+BUDGET_ROUNDS_METADATA_KEY = "agentic_research_budget_rounds"
 
 AGENTIC_DIRNAME = "agentic_research"
 STATE_FILENAME = "state.json"
