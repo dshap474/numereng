@@ -322,7 +322,8 @@ def test_context_is_bounded_and_does_not_grow_with_round_count(tmp_path: Path) -
     assert len(ctx_200["configs"]) <= 41  # champion + last 40
     assert len(ctx_200["recent_journal"]) <= 12
     assert len(ctx_200["report"]["rows"]) <= 25
-    for field_name in ("last_round_memo", "experiment_notes", "research_memory"):
+    assert "research_memory" not in ctx_200
+    for field_name in ("last_round_memo", "experiment_notes"):
         value = ctx_200.get(field_name)
         if value is not None:
             assert len(value) <= 12_000 + 64  # cap + truncation marker

@@ -27,7 +27,15 @@ The harness makes no research-strategy decision: what to try, when to confirm, w
 what to believe all live in the program file and the model. The only things the harness rejects are
 boundary violations.
 
-## Module Layout (6 files, ≤1,000 lines)
+## Experiment Isolation And Knowledge Flow
+
+Each program run is an isolated experiment. The harness injects no cross-experiment memory into the
+prompt: the single program file is the only cross-experiment knowledge input. After a run completes,
+a human-driven distillation pass writes durable learnings to `.numereng/notes/__RESEARCH_MEMORY__/`.
+The next run gets a freshly authored program file that encodes the selected learnings. This keeps
+the run auditable: "what did run X know?" is answered by reading that run's program file.
+
+## Module Layout (6 small modules)
 
 - `types.py` — exceptions, the public result dataclasses, decision/response types, shared constants
   and small utils.
@@ -39,7 +47,7 @@ boundary violations.
 - `llm.py` — prompt render, codex-exec + openrouter transport, static response schema, parse/validate
   (rejects non-`run` action), failure debug dumps.
 - `context.py` — bounded context assembly (champion, capped report rows, recent journal, last memo,
-  EXPERIMENT.md, research memory, last error); no term grows with round count.
+  EXPERIMENT.md, last error); no term grows with round count.
 - `loop.py` — the seam anchor: session lifecycle (`run_research`, `get_research_status`,
   `program_markdown`), round driver, keep/discard, failure counting.
 

@@ -11,6 +11,10 @@ copies this structure and declares one concrete hypothesis, a fixed surface, and
 axis. A custom program must be fully self-contained: the harness loads exactly one program file, so
 copy anything you need from here into it.
 
+This program file is your only cross-experiment knowledge input. The harness injects no repo
+research memory; everything you should know from prior experiments has been encoded here by the
+program author.
+
 ## 1. Role And Objective
 
 Optimize a single scalar fitness metric on a frozen evaluator, round after round, until the budget
@@ -299,7 +303,6 @@ You receive the following keys (all bounded — no term grows with round count):
   is the run's `model.params.random_state`. Older attempts live only in your memo.
 - `last_round_memo` — your previous `round_markdown` (capped).
 - `experiment_notes` — the current `EXPERIMENT.md` (capped).
-- `research_memory` — durable repo-local research notes, if any (capped).
 - `configs` — config projections: the champion plus the last ≤ 40 configs (mutable-path views only).
 - `last_error` — the rejection token from the previous round, if it failed; use it to correct course.
 

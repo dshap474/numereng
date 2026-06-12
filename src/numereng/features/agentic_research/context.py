@@ -67,9 +67,6 @@ def build_context(
         "experiment_notes": memory.read_text(
             memory.experiment_markdown_path(experiment), limit=ar_types.MAX_CONTEXT_CHARS
         ),
-        "research_memory": memory.read_text(
-            root / "notes" / "__RESEARCH_MEMORY__" / "CURRENT.md", limit=ar_types.MAX_CONTEXT_CHARS
-        ),
         "last_error": ar_types.optional_str(state.get("last_error")),
     }
 

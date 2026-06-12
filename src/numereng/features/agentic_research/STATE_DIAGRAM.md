@@ -135,8 +135,10 @@ Key guards:
 
 ## 5. state.json (v2)
 
-`schema_version: 2`; an older state loads via `apply_state_defaults` (champion derives fresh from the
-report). Keys: `experiment_id`, `status`, `next_round_number`, `total_rounds_completed`,
+`schema_version: 2`; an older state loads via `apply_state_defaults` (missing keys are defaulted;
+`champion` defaults to `null` and is rebuilt by subsequent rounds' mechanical advancement;
+`best_overall` derives from the experiment report). Keys: `experiment_id`, `status`,
+`next_round_number`, `total_rounds_completed`,
 `failed_rounds_counter`, `stop_reason`, `champion {config, run_id, metric, round} | null`,
 `best_overall` (public-typed view derived from the report), `last_round_label`, `last_run_id`,
 `last_checkpoint`, `last_error`, `last_heartbeat`, `created_at`, `updated_at`.
