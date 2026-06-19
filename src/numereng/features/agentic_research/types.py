@@ -21,7 +21,7 @@ AGENTIC_DIRNAME, STATE_FILENAME, JOURNAL_FILENAME = "agentic_research", "state.j
 STATE_SCHEMA_VERSION = 2
 
 PRIMARY_METRIC, PRIMARY_METRIC_FIELD = "bmc_last_200_eras.mean", "bmc_last_200_eras_mean"
-PAYOUT_TARGET_COL, SCORING_STAGE = "target_ender_20", "post_training_core"
+PAYOUT_TARGET_COL, SCORING_STAGE = "target_ender_20", "post_training_full"
 RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 
 REPORT_LIMIT, RECENT_JOURNAL_LIMIT, CONFIG_CONTEXT_RECENT = 25, 12, 40

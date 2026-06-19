@@ -165,6 +165,7 @@ class ExperimentReportRowResponse(BaseModel):
     corr_mean: float | None = None
     mmc_mean: float | None = None
     cwmm_mean: float | None = None
+    fnc_mean: float | None = None
     bmc_mean: float | None = None
     bmc_last_200_eras_mean: float | None = None
     is_champion: bool = False

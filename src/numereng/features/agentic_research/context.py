@@ -38,7 +38,7 @@ def build_context(
         "objective": {
             "primary_metric": ar_types.PRIMARY_METRIC_FIELD,
             "tie_break": "bmc_mean",
-            "sanity_checks": ["corr_mean", "mmc_mean", "cwmm_mean"],
+            "sanity_checks": ["corr_mean", "mmc_mean", "cwmm_mean", "fnc_mean"],
             "scoring_stage": ar_types.SCORING_STAGE,
             "payout_target": ar_types.PAYOUT_TARGET_COL,
         },

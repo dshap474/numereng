@@ -81,6 +81,7 @@ class ExperimentReportRow:
     bmc_mean: float | None
     bmc_last_200_eras_mean: float | None
     is_champion: bool
+    fnc_mean: float | None = None
 
 
 @dataclass(frozen=True)

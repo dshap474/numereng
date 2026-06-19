@@ -201,7 +201,7 @@ def _install_seams(monkeypatch: pytest.MonkeyPatch, store_root: Path, experiment
         return ExperimentScoreRoundResult(
             experiment_id=EXPERIMENT_ID,
             round=round_label,
-            stage="post_training_core",
+            stage="post_training_full",
             run_ids=("scored-run",),
         )
 
@@ -244,7 +244,7 @@ def test_score_failure_after_train_fails_round_but_run_plan_row_survives(
     assert "config_001.json" in _config_files(experiment_dir)
     plan_rows = _run_plan_rows(experiment_dir)
     assert [(row["round"], row["config_path"]) for row in plan_rows] == [("r001", "configs/config_001.json")]
-    assert seams.score_calls == [("r001", "post_training_core")]
+    assert seams.score_calls == [("r001", "post_training_full")]
     # Fixed behavior: failed scoring still records the trained run/config for recovery.
     assert result.rounds[0].run_id == "run-1"
     assert result.rounds[0].config_path == experiment_dir / "configs" / "config_001.json"
@@ -272,7 +272,7 @@ def test_score_failure_then_identical_proposal_dedup_skips_without_rescore(
     assert [round_.status for round_ in result.rounds] == ["failed", "completed"]
     assert result.rounds[1].run_id == "run-2"
     assert result.rounds[1].metric_value == pytest.approx(0.14)
-    assert seams.score_calls == [("r001", "post_training_core"), ("r002", "post_training_core")]
+    assert seams.score_calls == [("r001", "post_training_full"), ("r002", "post_training_full")]
     state = _read_state(experiment_dir)
     assert state["failed_rounds_counter"] == 0
     assert state["total_rounds_completed"] == 1
@@ -483,7 +483,7 @@ def test_baseline_score_failure_reused_unscored_run_is_rescored_on_retry(
     # baseline (run.py:1539) — minor misleading-state wart, pinned as-is.
     assert [round_.action for round_ in result.rounds] == ["run", "baseline"]
     # Scoring ran on BOTH rounds: the original failure AND the reuse retry.
-    assert seams.score_calls == [("r001", "post_training_core"), ("r002", "post_training_core")]
+    assert seams.score_calls == [("r001", "post_training_full"), ("r002", "post_training_full")]
     # The reuse round ends scored — the linked run carries its metric.
     assert result.rounds[1].run_id == "run-1"
     assert result.rounds[1].metric_value == pytest.approx(0.12)

@@ -385,6 +385,7 @@ def report_experiment(
             corr_mean=_extract_metric(metrics, "corr.mean"),
             mmc_mean=_extract_metric(metrics, "mmc.mean"),
             cwmm_mean=_extract_metric(metrics, "cwmm.mean"),
+            fnc_mean=_extract_metric(metrics, "fnc.mean"),
             bmc_mean=_extract_metric(metrics, "bmc.mean"),
             bmc_last_200_eras_mean=_extract_metric(metrics, "bmc_last_200_eras.mean"),
             is_champion=(champion_run_id == run_id),

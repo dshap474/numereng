@@ -40,6 +40,7 @@ def experiment_report(request: ExperimentReportRequest) -> ExperimentReportRespo
                 corr_mean=row.corr_mean,
                 mmc_mean=row.mmc_mean,
                 cwmm_mean=row.cwmm_mean,
+                fnc_mean=row.fnc_mean,
                 bmc_mean=row.bmc_mean,
                 bmc_last_200_eras_mean=row.bmc_last_200_eras_mean,
                 is_champion=row.is_champion,

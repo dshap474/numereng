@@ -228,7 +228,7 @@ def _install_seams(monkeypatch: pytest.MonkeyPatch, store_root: Path, experiment
         return ExperimentScoreRoundResult(
             experiment_id=EXPERIMENT_ID,
             round=round_label,
-            stage="post_training_core",
+            stage="post_training_full",
             run_ids=("scored-run",),
         )
 
@@ -347,9 +347,9 @@ def test_first_round_is_baseline_copy_of_seed_config(tmp_path: Path, monkeypatch
     assert baseline_config.is_file()
     assert json.loads(baseline_config.read_text(encoding="utf-8"))["model"]["params"]["learning_rate"] == 0.01
     assert (_rounds_dir(experiment_dir) / "r001.md").is_file()
-    # Frozen evaluator: the loop requested the post_training_core stage, after
+    # Frozen evaluator: the loop requested the post_training_full stage, after
     # the run_plan row for the round existed.
-    assert seams.score_calls == [("r001", "post_training_core", True)]
+    assert seams.score_calls == [("r001", "post_training_full", True)]
     state = _read_state(experiment_dir)
     assert state["total_rounds_completed"] == 1
     assert state["next_round_number"] == 2
@@ -386,9 +386,9 @@ def test_llm_mutation_round_materializes_config_and_records_artifacts(
     plan_rows = _run_plan_rows(experiment_dir)
     assert [(row["round"], row["config_path"]) for row in plan_rows] == [("r001", "configs/config_001.json")]
     # Frozen evaluator, durable artifact: the run_plan row pins the default stage.
-    assert plan_rows[0]["score_stage_default"] == "post_training_core"
+    assert plan_rows[0]["score_stage_default"] == "post_training_full"
     # score_experiment_round ran AFTER the run_plan row existed, at the frozen stage.
-    assert seams.score_calls == [("r001", "post_training_core", True)]
+    assert seams.score_calls == [("r001", "post_training_full", True)]
     state = _read_state(experiment_dir)
     assert state["status"] == "stopped"
     assert state["total_rounds_completed"] == 1

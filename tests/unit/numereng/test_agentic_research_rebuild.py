@@ -417,7 +417,7 @@ def _install_seams(monkeypatch: pytest.MonkeyPatch, store_root: Path, experiment
 
     def fake_score(**kwargs: object) -> ExperimentScoreRoundResult:
         return ExperimentScoreRoundResult(
-            experiment_id=EXPERIMENT_ID, round=str(kwargs.get("round")), stage="post_training_core", run_ids=("x",)
+            experiment_id=EXPERIMENT_ID, round=str(kwargs.get("round")), stage="post_training_full", run_ids=("x",)
         )
 
     def fake_llm(**_: object) -> tuple[str, str]:
