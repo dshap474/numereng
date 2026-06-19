@@ -41,6 +41,16 @@ and still produced models that lose money live. Here is why, and what changed.
 - **Live MMC is not predictable from local metrics.** Across the fleet, local metrics explain almost
   none of live MMC (R² ≈ 0.01–0.04; MMC60 trends negative). Do not try to steer toward MMC; you
   cannot see it from here. Steer by BMC200 (primary) and FNC (co-primary directional).
+- **What v1 established — bare capacity is inert here.** The prior medium-lane run (v1) swept
+  `max_depth` 6→9, `num_leaves` to 256, `n_estimators` to 5000, and `learning_rate` down to 0.006 —
+  and the per-era metric stayed **flat within seed noise** (its "champion" was a single lucky seed;
+  the depth-8 trio mean was slightly *negative*). Critically, v1 ran every tree on only **10% of
+  features** (`colsample_bytree=0.1`) and **never touched `reg_alpha`, `reg_lambda`, or
+  `min_child_samples`** beyond one probe. The most likely reason capacity did nothing: at 10% feature
+  subsampling the trees are starved, so depth has nothing to work with. **Do not re-climb the bare
+  capacity ladder; it is closed by evidence.** The open question v1 never asked is whether
+  un-starving the trees (higher `colsample_bytree`) plus real regularization moves the metric — and
+  whether it moves FNC.
 - **The stump/`small`/`alpha` lane is closed.** It is the gravity well two prior runs fell into:
   largely exhausted (reg_lambda / gamma / min_child_weight / row-subsample are bit-identical inert
   on stumps) and its absolute ceiling is far below break-even. Do not go there.
@@ -180,10 +190,18 @@ lane, never out of it. Heeding these is how you earn your budget:
   `n_estimators` by large increments, halve/double `learning_rate`, make real moves in
   `colsample_bytree` / `min_child_samples`. Find the coarse region that moves the metric **first**;
   only refine around a knob that has already shown a supra-noise, FNC-clean effect.
-- **Capacity is the primary axis.** The live edge of this lane comes from *moderate-to-higher*
-  capacity, not stumps. Explore upward in `max_depth` / `num_leaves` / `n_estimators` (paired with a
-  lower `learning_rate`) before fiddling with second-order regularization knobs. Watch FNC as you add
-  capacity — capacity that buys BMC200 while dropping FNC is the overfit trap (§2.1).
+- **Open with one coarse probe per knob family (first ~10 rounds).** Before refining anything, take
+  one decisive, supra-noise probe in each family — feature subsampling (`colsample_bytree`), tree
+  regularization (`min_child_samples`, `reg_alpha`, `reg_lambda`), and capacity (`max_depth` /
+  `num_leaves` / `n_estimators`) — each branched from the baseline. The opening's job is to find which
+  family actually moves BMC200 and/or FNC above the `3e-4` floor; refine only the families that move.
+- **Decorrelation and regularization are the primary axis; raw capacity is secondary.** v1 proved the
+  bare capacity ladder is inert at `colsample_bytree=0.1` (§0). Lead with the knobs v1 never explored
+  and that most directly drive FNC: **`colsample_bytree` first** — raise it well above 0.1 (e.g. 0.2,
+  0.4) to un-starve the trees — then `min_child_samples` and `reg_alpha`/`reg_lambda`. Re-test
+  capacity (`max_depth` / `num_leaves` / `n_estimators`) **only after** colsample is at a healthier
+  level, since depth may only pay off once trees see enough features. These knobs move FNC the most,
+  so watch the BMC-vs-FNC divergence (§2.1) on every one.
 - **Respect the LGBM leaf cap** (§9): raise `max_depth` before raising `num_leaves`.
 - **Stop re-probing inert axes.** If a knob moves BMC200 by less than the `~3e-4` floor across
   several configs, record it as inert in `EXPERIMENT.md` and move on — do not keep spending rounds
