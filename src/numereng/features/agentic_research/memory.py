@@ -27,6 +27,8 @@ _STATE_DEFAULTS: dict[str, object] = {
     "last_run_id": None,
     "stop_reason": None,
     "champion": None,
+    "believed_best": None,
+    "believed_best_changed_round": None,
     "best_overall": None,
     "last_error": None,
     "last_heartbeat": None,
@@ -81,6 +83,10 @@ def append_journal(experiment: ExperimentRecord, entry: dict[str, object]) -> No
 
 def journal_tail(experiment: ExperimentRecord, *, limit: int) -> list[dict[str, object]]:
     return _journal_entries(journal_path(experiment))[-limit:]
+
+
+def journal_all(experiment: ExperimentRecord) -> list[dict[str, object]]:
+    return _journal_entries(journal_path(experiment))
 
 
 def journal_has_recorded_run(experiment: ExperimentRecord, config_name: str) -> bool:

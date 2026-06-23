@@ -115,8 +115,9 @@ Because FNC predicts live BMC better than local BMC200 does (§0), watch how the
   neutralization — exactly the failure that produced live-negative models before. Treat such a
   "winner" with suspicion: do not promote it in your beliefs on BMC200 alone, and prefer the
   comparable recipe that kept FNC.
-- **Among near-tied BMC200 (within the ~3e-4 floor), pick the higher FNC.** This is the one place
-  FNC overrides the hairline BMC200 ordering for what you carry forward and confirm.
+- **Among near-tied BMC200 (within the seed-noise floor, `context.observed_seed_noise`), pick the
+  higher FNC.** This is the one place FNC overrides the hairline BMC200 ordering for what you carry
+  forward and confirm.
 
 FNC never changes the harness's mechanical champion (that is BMC200-only, §3). It changes **what you
 believe and what you confirm**.
@@ -152,31 +153,37 @@ informative legal config I can test right now?
 
 ## 5. Evidence Doctrine (Model-Owned)
 
-The harness records each run's seed and score and gives you the leaderboard. It does **no
-confirmation accounting**. The seed-trio protocol is yours to run and track.
+The harness records each run's seed, BMC200, and FNC, groups runs by recipe (ignoring seed), and
+gives you `context.recipe_leaderboard` with each recipe's seed-trio mean already computed. It does
+**no confirmation accounting and forms no beliefs** — grouping is clerical; judgment is yours.
 
-- **Single-seed results are directional only.** `bmc_last_200_eras_mean` has single-seed noise on
-  the order of `3e-4`. A single seed beating the champion identifies a *candidate*, not a winner.
+- **Single-seed results are directional only.** A single seed beating the champion identifies a
+  *candidate*, not a winner. The **seed-noise floor is `context.observed_seed_noise`** — the pooled
+  per-seed SD the harness measures from your own confirmed recipes. Until enough multi-seed recipes
+  exist it is `null`; use the prior `~3e-4` then, and switch to the measured value once present.
+  Treat any BMC200 gap below the floor as noise, not signal.
 - **The seed trio is `42 / 17 / 99`.** Use seed `42` for discovery. To confirm a candidate, run the
   same config under `17` and `99` by proposing exactly one change, `model.params.random_state`, with
-  `parent_config` set to the candidate's own `config_NNN.json` (never the seed config). With all
-  three seeds, compute the **trio mean** yourself from your memo ledger.
+  `parent_config` set to the candidate's own `config_NNN.json` (never the seed config). Once all three
+  seeds exist, the recipe's **trio mean** appears in `context.recipe_leaderboard` — read it there.
 - **Confirm by the trio mean, not the luckiest seed.** A believed-better config is one whose trio
   mean beats the trio mean of your current believed-best **and** whose FNC is not materially worse
   (§2.1). Gate entry to confirmation on a single seed clearing the believed-best's *trio mean*.
-- **Treat improvements below `~1e-4`–`3e-4` as provisional** until trio-confirmed. The trio-mean
-  standard error is roughly `noise/√3 ≈ 1.5e-4`; judge trio-vs-trio at that scale. Sub-floor BMC200
+- **Treat improvements below the seed-noise floor as provisional** until trio-confirmed. The
+  trio-mean standard error is roughly `floor/√3`; judge trio-vs-trio at that scale. Sub-floor BMC200
   gaps are noise — let FNC and capacity reasoning break them, not another decimal place of BMC200.
 - **Branch from the best comparable parent**, not automatically the previous round. Chaining off a
   regression compounds two changes and makes the result unattributable.
-- **Your memo is the durable seed record — the harness keeps no per-seed history.** `report.rows`
-  does not carry seeds and is the top ≤25 by metric (not most-recent). `recent_journal` carries
-  `seed`+`metric` but only for the last ≤12 attempts. **Write every run's (config → seed →
-  BMC200 → FNC) into your `round_markdown` tried-configs ledger the round it happens, and carry it
-  forward.** If you do not write a seed, metric, and FNC down, it is lost.
+- **The harness owns the seed ledger; you own the belief.** `context.recipe_leaderboard` is the
+  system of record for per-recipe seed history (params, seeds present, per-seed BMC200+FNC, trio
+  mean, trio FNC) — you no longer hand-track it. Each round, **declare the recipe you currently
+  trust in `decision_form.believed_best`** (a `config_NNN.json` from a confirmed recipe); the harness
+  persists it, enriched with that recipe's trio stats, to `context.believed_best`. Your memo holds
+  *reasoning*, not the ledger.
 
-Hold this every round: what the **harness ranks** (best single BMC200 run) vs what **you believe**
-(trio-confirmed, FNC-clean). Optimize the harness metric; make claims only on confirmed evidence.
+Hold this every round: what the **harness ranks** (best single BMC200 run, `context.champion`) vs
+what **you believe** (`context.believed_best` — trio-confirmed, FNC-clean). Optimize the harness
+metric; make claims only on confirmed evidence.
 
 ## 6. Search Discipline Within The Lane (Advice, Not Enforcement)
 
@@ -184,17 +191,18 @@ You are pinned to medium-scope LGBM on `target_ender_20`. Diversification means 
 lane, never out of it. Heeding these is how you earn your budget:
 
 - **Move coarsely enough to clear the noise floor in one shot.** The dominant prior failure was
-  hundreds of rounds of ±1 nudges whose effects were *smaller than the `3e-4` seed noise* — the
-  search just mapped the noise floor and promoted lucky seeds. Do not do that. Take **steps large
-  enough to plausibly move BMC200 by more than `3e-4`**: change `max_depth` in steps of ~2, scale
-  `n_estimators` by large increments, halve/double `learning_rate`, make real moves in
-  `colsample_bytree` / `min_child_samples`. Find the coarse region that moves the metric **first**;
-  only refine around a knob that has already shown a supra-noise, FNC-clean effect.
+  hundreds of rounds of ±1 nudges whose effects were *smaller than the seed noise* — the search just
+  mapped the noise floor and promoted lucky seeds. Do not do that. Take **steps large enough to
+  plausibly move BMC200 by more than the seed-noise floor** (`context.observed_seed_noise`, ~3e-4
+  prior): change `max_depth` in steps of ~2, scale `n_estimators` by large increments, halve/double
+  `learning_rate`, make real moves in `colsample_bytree` / `min_child_samples`. Find the coarse
+  region that moves the metric **first**; only refine around a knob that has already shown a
+  supra-noise, FNC-clean effect.
 - **Open with one coarse probe per knob family (first ~10 rounds).** Before refining anything, take
   one decisive, supra-noise probe in each family — feature subsampling (`colsample_bytree`), tree
   regularization (`min_child_samples`, `reg_alpha`, `reg_lambda`), and capacity (`max_depth` /
   `num_leaves` / `n_estimators`) — each branched from the baseline. The opening's job is to find which
-  family actually moves BMC200 and/or FNC above the `3e-4` floor; refine only the families that move.
+  family actually moves BMC200 and/or FNC above the seed-noise floor; refine only the families that move.
 - **Decorrelation and regularization are the primary axis; raw capacity is secondary.** v1 proved the
   bare capacity ladder is inert at `colsample_bytree=0.1` (§0). Lead with the knobs v1 never explored
   and that most directly drive FNC: **`colsample_bytree` first** — raise it well above 0.1 (e.g. 0.2,
@@ -203,11 +211,21 @@ lane, never out of it. Heeding these is how you earn your budget:
   level, since depth may only pay off once trees see enough features. These knobs move FNC the most,
   so watch the BMC-vs-FNC divergence (§2.1) on every one.
 - **Respect the LGBM leaf cap** (§9): raise `max_depth` before raising `num_leaves`.
-- **Stop re-probing inert axes.** If a knob moves BMC200 by less than the `~3e-4` floor across
+- **Stop re-probing inert axes.** If a knob moves BMC200 by less than the seed-noise floor across
   several configs, record it as inert in `EXPERIMENT.md` and move on — do not keep spending rounds
   resolving sub-noise differences.
 - **A plateau means diversify within the lane** (a different capacity region or learning schedule),
   not quit, and never a return to `small`/stumps/`alpha` — that lane is closed (§0).
+- **Plateau rule (binding on you).** The harness surfaces `context.rounds_since_new_believed_best`
+  (completed rounds since your `believed_best` last changed) and `context.coverage` (the distinct
+  values already tried per path). **When `rounds_since_new_believed_best ≥ 5`, your next `changes`
+  MUST move into a region absent from `coverage`** — an untried value or knob combination — not
+  another tweak of the believed-best's neighborhood. Re-tweaking a covered cell on a plateau wastes
+  the round. (The harness does not reject a covered move — this discipline is yours to keep.)
+- **Cap-limited knobs.** `context.caps_binding` lists believed-best knobs sitting at a `value_caps`
+  edge. A binding cap means the optimum may lie beyond the cap you are allowed to reach: record it in
+  `EXPERIMENT.md` as cap-limited (a handoff note for a future program that raises the cap), and do
+  not keep re-proposing the capped value as if it were a free optimum.
 
 ## 7. Memo And EXPERIMENT.md Contracts
 
@@ -219,15 +237,14 @@ block to the round memo.
 Return the cumulative research state after your decision. Anything you do not carry forward is gone
 from your reasoning context. Include, in any order:
 
-1. **Leaderboard** — top runs by `bmc_last_200_eras_mean`, with `run_id`, distinguishing params, and
-   each row's `fnc_mean`.
-2. **Tried-configs ledger** — compact (param-tuple → seed → BMC200 → FNC) to avoid duplicates.
-3. **Plateau state** — rounds since your last believed-best; which capacity regions you've covered.
-4. **Confirmation ledger** — which candidates have which seeds done; which are trio-confirmed; which
-   are FNC-clean.
-5. **Beliefs** — confirmed vs unconfirmed, with the evidence each rests on (incl. BMC200-vs-FNC).
-6. **This decision** — the specific hypothesis the next config tests.
-7. **Open questions** — seed variance, BMC200-vs-FNC divergences, handoff candidates.
+1. **Beliefs** — confirmed vs unconfirmed, with the evidence each rests on (incl. BMC200-vs-FNC).
+   Name the recipe you trust and why; the harness keeps the trio-stat ledger (`recipe_leaderboard`)
+   and your declared `believed_best`, so do **not** re-transcribe per-seed tables here.
+2. **Interpretation** — what `recipe_leaderboard`, `coverage`, and the BMC-vs-FNC divergence say
+   that the raw numbers do not: which knob families moved the metric, which are inert.
+3. **This decision** — the specific hypothesis the next config tests, and why it is the most
+   informative legal move now (e.g. confirm a candidate, or diversify off a plateau per §6).
+4. **Open questions** — seed variance, BMC200-vs-FNC divergences, handoff candidates.
 
 Keep it information-dense, not a log. Drop prose a later finding has subsumed.
 
@@ -292,6 +309,9 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
 - `decision_form.action` is always `"run"`.
 - `changes` holds 1 to 5 `{path, value, reason}` entries on allowed paths within the value caps.
 - `parent_config` is an existing `config_NNN.json` filename to branch from.
+- `believed_best` is the `config_NNN.json` of the recipe you currently trust (trio-confirmed,
+  FNC-clean when possible). The harness persists it to `context.believed_best`, enriched with the
+  recipe's trio stats. Set it every round; until a recipe is confirmed, name your strongest candidate.
 - `stop_reason` is kept for shape stability only; set it to `null`.
 - `round_markdown` is your verbatim round memo (§7).
 - `experiment_markdown` overwrites `EXPERIMENT.md`, or `null` to preserve it (§7).
@@ -304,6 +324,7 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
     "belief_update": "What you now believe about this medium-LGBM recipe.",
     "next_hypothesis": "The specific hypothesis tested by the next config.",
     "parent_config": "config_001.json",
+    "believed_best": "config_001.json",
     "changes": [
       {
         "path": "model.params.max_depth",
@@ -331,6 +352,18 @@ You receive the following keys (all bounded — no term grows with round count):
 - `allowed_change_paths` — the paths you may change (LGBM params + `random_state` only).
 - `value_caps` — numeric bounds per path the harness enforces.
 - `champion` — the harness's mechanical champion `{config, run_id, metric, round}` or `null`.
+- `believed_best` — the recipe you last declared, enriched by the harness:
+  `{config, recipe_key, trio_mean, trio_fnc, seed_count, run_ids, declared_round}` or `null`.
+- `recipe_leaderboard` — top ≤15 recipes (runs grouped by config ignoring seed), each with
+  `params`, `seeds`, `seed_count`, `trio_mean`, `trio_fnc_mean`, `bmc_std`, and `per_seed`
+  (`{seed, bmc, fnc}`). This is the harness-owned seed ledger; read trio means here.
+- `rounds_since_new_believed_best` — completed rounds since your `believed_best` last changed; at
+  `≥ 5`, the plateau rule (§6) binds your next move.
+- `coverage` — per allowed-path map of distinct values already tried (cardinality-capped; a large
+  cell becomes `{min, max, count, recent_samples}`). Use it to pick genuinely untried regions.
+- `caps_binding` — believed-best knobs sitting at a `value_caps` edge (`{path, value, edge, cap}`).
+- `observed_seed_noise` — pooled per-seed BMC200 SD from confirmed recipes, or `null` until enough
+  multi-seed data exists. This is the empirical noise floor (prior `~3e-4`).
 - `report` — `rows`: top ≤25 runs ranked **by the primary metric (best-first), not most-recent**,
   with config, run_id, primary metric, and sanity metrics **including `fnc_mean` every round** (full
   stage). No seeds.

@@ -35,21 +35,26 @@ a human-driven distillation pass writes durable learnings to `.numereng/notes/__
 The next run gets a freshly authored program file that encodes the selected learnings. This keeps
 the run auditable: "what did run X know?" is answered by reading that run's program file.
 
-## Module Layout (6 small modules)
+## Module Layout (7 small modules)
 
 - `types.py` — exceptions, the public result dataclasses, decision/response types, shared constants
   and small utils.
-- `memory.py` — `state.json` load/save (+ defaults), `journal.jsonl` append/tail, `rounds/rN.md`
+- `memory.py` — `state.json` load/save (+ defaults), `journal.jsonl` append/tail/all, `rounds/rN.md`
   writer, `EXPERIMENT.md` passthrough, failure debug dumps, heartbeat.
+- `aggregate.py` — seed-normalized recipe bookkeeping: `recipe_key` (seed + naming/execution knobs
+  stripped, mirrors the run-hash strip set), `aggregate_recipes` (per-recipe seed-trio stats from the
+  journal), `observed_seed_noise` (empirical noise floor). Deterministic clerical work, no strategy.
 - `boundary.py` — decision → config materialization (path allowlist, value caps, horizon/target
   match, strict `TrainingConfig` validation, hash dedup), baseline config, stale-run-reuse guard,
   run-plan recording, frozen-scoring assertion.
 - `llm.py` — prompt render, codex-exec + openrouter transport, static response schema, parse/validate
   (rejects non-`run` action), failure debug dumps.
-- `context.py` — bounded context assembly (champion, capped report rows, recent journal, last memo,
-  EXPERIMENT.md, last error); no term grows with round count.
+- `context.py` — bounded context assembly (champion, believed_best, recipe_leaderboard, plateau +
+  coverage + caps_binding + observed_seed_noise signals, capped report rows, recent journal, last
+  memo, EXPERIMENT.md, last error); no term grows with round count, with a total-size backstop.
 - `loop.py` — the seam anchor: session lifecycle (`run_research`, `get_research_status`,
-  `program_markdown`), round driver, keep/discard, failure counting.
+  `program_markdown`), round driver, champion + believed_best advancement, keep/discard, failure
+  counting.
 
 `__init__.py` re-exports the public surface from `loop` and `types`.
 
@@ -100,6 +105,7 @@ action and no ensemble fields. `stop_reason` is kept in the schema for shape sta
     "belief_update": "What you now believe about this hypothesis.",
     "next_hypothesis": "The specific hypothesis tested by the next config.",
     "parent_config": "config_007.json",
+    "believed_best": "config_005.json",
     "changes": [
       {
         "path": "model.params.learning_rate",
@@ -115,6 +121,9 @@ action and no ensemble fields. `stop_reason` is kept in the schema for shape sta
 ```
 
 - `changes` carries 1 to 5 `{path, value, reason}` entries on allowed paths within the value caps.
+- `believed_best` is the `config_NNN.json` the model currently trusts; the harness persists it to
+  `state.json`/`context.believed_best`, enriched with that recipe's seed-trio stats. Optional and
+  parsed leniently (falls back to the current champion config) so older programs do not bail.
 - `round_markdown` is the model's verbatim round memo; the harness appends a `## Machine Result`
   block below it.
 - `experiment_markdown` overwrites `EXPERIMENT.md`, or `null` to preserve the prior file.
@@ -138,8 +147,8 @@ a duplicate is the one exception (soft skip, no count):
 
 | Artifact | Role |
 | --- | --- |
-| `agentic_research/state.json` (schema_version 2) | small session state: status, counters, champion, heartbeat |
-| `agentic_research/journal.jsonl` | one append-only line per round attempt (machine-readable) |
+| `agentic_research/state.json` (schema_version 2) | small session state: status, counters, champion, believed_best (+ believed_best_changed_round), heartbeat |
+| `agentic_research/journal.jsonl` | one append-only line per round attempt (machine-readable); carries per-run `seed`, `metric` (BMC200), and `fnc` |
 | `agentic_research/rounds/rN.md` | model memo verbatim + one `## Machine Result` block |
 | `EXPERIMENT.md` | model-curated working set (passthrough write; `null` preserves prior) |
 
@@ -203,18 +212,21 @@ The only intended variation axis is:
 
 ## Frozen Evaluator
 
-- Stage `post_training_core`; metric `bmc_last_200_eras_mean` = BMC against the payout target
+- Stage `post_training_full`; metric `bmc_last_200_eras_mean` = BMC against the payout target
   `target_ender_20`, orthogonal to the meta-model, last 200 eras. `data.target_col` is just the best
   training label for an `ender_20`-contributing signal; the metric never scores the trained target.
 
 ## Evidence Rules
 
-- Single-seed discovery is directional only (noise ~`3e-4`).
-- Confirm with the seed trio `42 / 17 / 99`; compute the trio mean yourself from your memo ledger
-  (`recent_journal` carries seed+metric for only the last 12 rounds).
-- Treat improvements below ~`1e-4`–`3e-4` as provisional until trio-confirmed.
+- Single-seed discovery is directional only; the seed-noise floor is `context.observed_seed_noise`
+  (empirical, prior `~3e-4` until enough multi-seed recipes exist).
+- Confirm with the seed trio `42 / 17 / 99`; the harness groups runs by recipe and surfaces each
+  recipe's trio mean in `context.recipe_leaderboard` — read it there, do not hand-track seeds.
+- Declare the recipe you trust in `decision_form.believed_best`; the harness persists it (enriched
+  with trio stats) to `context.believed_best`.
+- Treat improvements below the seed-noise floor as provisional until trio-confirmed.
 - Primary metric `bmc_last_200_eras_mean`; tie-break `bmc_mean`; sanity `corr_mean`, `mmc_mean`,
-  `cwmm_mean`.
+  `cwmm_mean`, `fnc_mean`.
 
 ## Known Traps
 
@@ -222,12 +234,14 @@ The only intended variation axis is:
 - `data.target_horizon` must match the `data.target_col` suffix (`_20`→`20d`, `_60`→`60d`) or the
   round is rejected; set it yourself when changing `target_col`.
 - Switching `model.type` requires nulling the prior family's params yourself.
-- Duplicate-by-hash wastes a round; check your tried-configs ledger first.
+- Duplicate-by-hash wastes a round; `context.coverage` lists values already tried per path — consult
+  it before proposing.
 
 ## Sweep Discipline
 
 - Change 1 to 5 values per round; prefer one variable at a time.
-- Keep a tried-configs table in `round_markdown`. Record what should not be repeated.
+- Use `context.coverage` to avoid repeats and pick genuinely untried regions; when
+  `context.rounds_since_new_believed_best` is high, diversify into an uncovered region.
 
 ## Autonomy
 
@@ -235,9 +249,9 @@ Never stop. Every round returns `action: "run"`. A plateau is a reason to divers
 
 ## Round Markdown And EXPERIMENT.md
 
-Carry forward the leaderboard, tried-configs ledger, plateau/diversification state, confirmation
-ledger, beliefs, the current hypothesis, and open questions. Curate `EXPERIMENT.md` under 4000 chars;
-return `null` to preserve it unchanged.
+Carry forward your beliefs, interpretation of the harness-owned ledgers (`recipe_leaderboard`,
+`coverage`, `caps_binding`), the current hypothesis, and open questions — not a hand-kept seed table.
+Curate `EXPERIMENT.md` under 4000 chars; return `null` to preserve it unchanged.
 
 ## Output
 

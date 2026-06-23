@@ -146,6 +146,7 @@ def _parse_decision_object(payload: dict[str, object]) -> ar_types.ResearchDecis
         parent_config=ar_types.optional_str(payload.get("parent_config")),
         changes=tuple(_parse_change(item) for item in ar_types.as_list(payload.get("changes"))),
         stop_reason=ar_types.optional_str(payload.get("stop_reason")),
+        believed_best=ar_types.optional_str(payload.get("believed_best")),
     )
     if decision.parent_config is None:
         raise ar_types.AgenticResearchValidationError("agentic_research_parent_config_missing")
@@ -176,6 +177,7 @@ _DECISION_PROPS: dict[str, object] = {
     "belief_update": {"type": "string"},
     "next_hypothesis": {"type": ["string", "null"]},
     "parent_config": {"type": ["string", "null"]},
+    "believed_best": {"type": ["string", "null"]},
     "changes": {
         "type": "array",
         "items": {

@@ -25,7 +25,9 @@ PAYOUT_TARGET_COL, SCORING_STAGE = "target_ender_20", "post_training_full"
 RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 
 REPORT_LIMIT, RECENT_JOURNAL_LIMIT, CONFIG_CONTEXT_RECENT = 25, 12, 40
+RECIPE_LEADERBOARD_LIMIT, COVERAGE_VALUE_LIMIT, PLATEAU_DIVERSIFY_ROUNDS = 15, 12, 5
 MAX_CONTEXT_CHARS, CONSECUTIVE_FAILURE_BAIL_THRESHOLD = 12_000, 5
+MAX_TOTAL_CONTEXT_CHARS = 96_000
 CODEX_TIMEOUT_SECONDS = 600.0
 
 
@@ -113,6 +115,7 @@ class ResearchDecision:
     parent_config: str | None
     changes: tuple[ResearchChange, ...]
     stop_reason: str | None
+    believed_best: str | None = None
 
 
 @dataclass(frozen=True)

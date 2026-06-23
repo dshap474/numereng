@@ -7,7 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from numereng.config.training import load_training_config_json
-from numereng.features.agentic_research import boundary, context, llm, memory
+from numereng.features.agentic_research import aggregate, boundary, context, llm, memory
 from numereng.features.agentic_research import types as ar_types
 from numereng.features.agentic_research.context import _safe_report
 from numereng.features.agentic_research.llm import _call_research_llm
@@ -107,6 +107,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
             parent_config=config_path.name,
             learning=learning,
             next_hypothesis=None,
+            believed_best=config_path.name,
             memo=f"# {round_label} Research State\n\n{learning}\n",
             experiment_markdown=None,
         )
@@ -142,6 +143,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         parent_config=decision.parent_config,
         learning=decision.learning,
         next_hypothesis=decision.next_hypothesis,
+        believed_best=decision.believed_best,
         memo=llm_response.round_markdown,
         experiment_markdown=llm_response.experiment_markdown,
     )
@@ -159,6 +161,7 @@ def _train_score_record_round(
     parent_config: str | None,
     learning: str,
     next_hypothesis: str | None,
+    believed_best: str | None,
     memo: str,
     experiment_markdown: str | None,
 ) -> ResearchRoundResult:
@@ -191,6 +194,8 @@ def _train_score_record_round(
         if metric_value is not None
         else context.run_primary_metric_from_disk(root=root, run_id=trained.run_id)
     )
+    fnc_value = row.fnc_mean if row is not None else None
+    fnc_value = fnc_value if fnc_value is not None else context.run_fnc_mean_from_disk(root=root, run_id=trained.run_id)
     is_champion = _advance_champion(
         state=state, round_label=round_label, config_path=config_path, run_id=trained.run_id, metric=metric_value
     )
@@ -204,6 +209,7 @@ def _train_score_record_round(
         run_id=trained.run_id,
         seed=_config_seed(config_path),
         metric=ar_types.optional_float(metric_value),
+        fnc=ar_types.optional_float(fnc_value),
         is_champion=is_champion,
         learning=learning,
         next_hypothesis=next_hypothesis,
@@ -213,6 +219,13 @@ def _train_score_record_round(
     memory.append_journal(experiment, entry)
     memory.write_round_markdown(experiment, entry, memo=memo)
     memory.write_experiment_markdown(experiment, experiment_markdown)
+    believed, believed_changed_round = _resolve_believed_best(
+        experiment=experiment,
+        state=state,
+        declared=believed_best,
+        fallback_config=config_path.name,
+        round_number=round_number,
+    )
     state.update(
         {
             "status": "running",
@@ -223,6 +236,8 @@ def _train_score_record_round(
             "last_run_id": trained.run_id,
             "last_error": None,
             "best_overall": asdict(context.best_run_from_report(report)),
+            "believed_best": believed,
+            "believed_best_changed_round": believed_changed_round,
             "failed_rounds_counter": 0,
             "updated_at": ar_types.utc_now_iso(),
         }
@@ -262,6 +277,43 @@ def _advance_champion(
     return True
 
 
+def _resolve_believed_best(
+    *,
+    experiment: ExperimentRecord,
+    state: dict[str, object],
+    declared: str | None,
+    fallback_config: str,
+    round_number: int,
+) -> tuple[dict[str, object], int | None]:
+    """Persist the model-declared trusted recipe, enriched with its seed-trio stats.
+
+    Falls back to the current champion config, then this round's config, so the field is always
+    populated (the model may omit it on the openrouter transport). The change-round counter shipped
+    here is consumed by the plateau signal; updating it on declared-config change is the only state
+    bookkeeping — belief itself remains the model's to declare.
+    """
+    champion = state.get("champion")
+    champion_config = champion.get("config") if isinstance(champion, dict) else None
+    config_name = declared or (champion_config if isinstance(champion_config, str) else None) or fallback_config
+    configs = aggregate.load_config_cache(experiment.manifest_path.parent / "configs")
+    groups = aggregate.aggregate_recipes(memory.journal_all(experiment), configs=configs)
+    group = aggregate.group_for_config(groups, config_name, configs)
+    record: dict[str, object] = {
+        "config": config_name,
+        "recipe_key": group.recipe_key if group else None,
+        "trio_mean": group.trio_mean if group else None,
+        "trio_fnc": group.trio_fnc_mean if group else None,
+        "seed_count": group.count if group else None,
+        "run_ids": list(group.run_ids) if group else [],
+        "declared_round": round_number,
+    }
+    prior = state.get("believed_best")
+    prior_config = prior.get("config") if isinstance(prior, dict) else None
+    if config_name != prior_config:
+        return record, round_number
+    return record, ar_types.as_int(state.get("believed_best_changed_round"), default=round_number)
+
+
 def _record_terminal_round(
     *, experiment: ExperimentRecord, state: dict[str, object], error: Exception, status: str
 ) -> ResearchRoundResult:
@@ -286,6 +338,7 @@ def _record_terminal_round(
         run_id=run_id,
         seed=None,
         metric=None,
+        fnc=None,
         is_champion=False,
         learning=learning,
         next_hypothesis=None,

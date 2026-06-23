@@ -98,7 +98,7 @@ src/numereng/
     baseline/                  # shared benchmark baseline construction from persisted runs
     feature_neutralization/    # prediction neutralization; vectorized least-squares engine with numerai-tools-style intercept parity
     experiments/               # experiment lifecycle + run linkage
-    agentic_research/          # six-module program-driven config-research supervisor
+    agentic_research/          # seven-module program-driven config-research supervisor
     hpo/                       # Optuna study execution + trial persistence
     ensemble/                  # rank-average build + experiment-aware selection workflow
     dataset-tools/             # local dataset downsampling tools
@@ -210,6 +210,7 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
     PROGRAM.md
     types.py
     memory.py
+    aggregate.py
     boundary.py
     llm.py
     context.py

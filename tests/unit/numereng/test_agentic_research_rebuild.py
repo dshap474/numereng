@@ -482,3 +482,35 @@ def test_loop_champion_advances_only_on_strict_improvement(tmp_path: Path, monke
     state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
     # Equal metric does not advance: the champion remains the first (baseline) run.
     assert state["champion"]["run_id"] == "run-1"
+
+
+def test_loop_persists_believed_best_explicit_then_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10), ("run-2", 0.15)]
+    # The mutation response declares believed_best explicitly.
+    declared = json.loads(_mutation_response(value=0.02))
+    declared["decision_form"]["believed_best"] = "config_002.json"
+    seams.llm_queue = [json.dumps(declared)]
+
+    research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
+    # Explicit declaration is honored, and a change-round is stamped for the plateau signal.
+    assert state["believed_best"]["config"] == "config_002.json"
+    assert state["believed_best_changed_round"] == 2
+
+
+def test_loop_believed_best_defaults_to_champion_when_omitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10), ("run-2", 0.15)]
+    # Mutation response omits believed_best entirely (old-style program): must not bail.
+    seams.llm_queue = [_mutation_response(value=0.02)]
+
+    result = research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    assert [r.status for r in result.rounds] == ["completed", "completed"]
+    state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
+    # Falls back to the current champion's config (run-2 / config_002.json won the round).
+    assert state["believed_best"]["config"] == state["champion"]["config"]
