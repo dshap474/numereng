@@ -598,6 +598,7 @@ def _fit_and_predict_package_subprocess(
         payload_path = live_dir / f"{component.component_id}.payload.json"
         output_path = live_dir / f"{component.component_id}.predictions.parquet"
         log_path = live_dir / f"{component.component_id}.worker.log"
+        status_path = live_dir / f"{component.component_id}.status.json"
         payload_path.write_text(
             json.dumps(
                 {
@@ -605,6 +606,7 @@ def _fit_and_predict_package_subprocess(
                     "config_path": str(config_path),
                     "live_path": str(live_path),
                     "output_path": str(output_path),
+                    "status_path": str(status_path),
                     "component": {
                         "component_id": component.component_id,
                         "weight": component.weight,
@@ -618,6 +620,21 @@ def _fit_and_predict_package_subprocess(
             encoding="utf-8",
         )
         with log_path.open("w", encoding="utf-8") as log_handle:
+            log_handle.write(
+                json.dumps(
+                    {
+                        "event": "serving_component_worker_start",
+                        "component_id": component.component_id,
+                        "config_path": str(config_path),
+                        "payload_path": str(payload_path),
+                        "output_path": str(output_path),
+                        "status_path": str(status_path),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            log_handle.flush()
             try:
                 subprocess.run(
                     [
@@ -634,8 +651,24 @@ def _fit_and_predict_package_subprocess(
                 )
             except subprocess.CalledProcessError as exc:
                 raise ServingRuntimeError(
-                    f"serving_component_worker_failed:{component.component_id}:{log_path}"
+                    _component_worker_error(
+                        code="serving_component_worker_failed",
+                        component_id=component.component_id,
+                        log_path=log_path,
+                        status_path=status_path,
+                        returncode=exc.returncode,
+                    )
                 ) from exc
+        if not output_path.is_file():
+            raise ServingRuntimeError(
+                _component_worker_error(
+                    code="serving_component_worker_missing_output",
+                    component_id=component.component_id,
+                    log_path=log_path,
+                    status_path=status_path,
+                    returncode=0,
+                )
+            )
         component_predictions.append(
             (
                 ServingPredictionMember(component_id=component.component_id, weight=component.weight),
@@ -643,6 +676,55 @@ def _fit_and_predict_package_subprocess(
             )
         )
     return component_predictions
+
+
+def _component_worker_error(
+    *,
+    code: str,
+    component_id: str,
+    log_path: Path,
+    status_path: Path,
+    returncode: int,
+) -> str:
+    status = _read_worker_status(status_path)
+    tail = _tail_text(log_path, max_lines=12)
+    parts = [
+        code,
+        component_id,
+        f"returncode={returncode}",
+        f"log={log_path}",
+        f"status={status_path}",
+    ]
+    if status:
+        parts.append(f"last_status={status}")
+    if tail:
+        parts.append(f"log_tail={tail}")
+    return ":".join(parts)
+
+
+def _read_worker_status(status_path: Path) -> str:
+    if not status_path.is_file():
+        return ""
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    phase = payload.get("phase")
+    state = payload.get("state")
+    updated_at = payload.get("updated_at")
+    if not phase:
+        return ""
+    return ",".join(str(item) for item in (state, phase, updated_at) if item)
+
+
+def _tail_text(path: Path, *, max_lines: int) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\\n".join(lines[-max_lines:])
 
 
 def _maybe_load_artifact_backed_component(

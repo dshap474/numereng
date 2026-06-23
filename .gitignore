@@ -7,7 +7,8 @@
 /custom_models/
 /research_programs/
 /.agents/
-/AGENTS.local.md
+AGENTS.local.md
+CLAUDE.local.md
 src/numereng/features/models/custom_models/*
 !src/numereng/features/models/custom_models/template_model.py
 src/numereng/features/agentic_research/custom_programs/*
@@ -19,6 +20,7 @@ output/
 notebooks/
 predictions/
 numerai-example/
+.project/
 
 # Python
 __pycache__/

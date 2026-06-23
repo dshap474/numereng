@@ -12,6 +12,7 @@ from numereng.features.models.lgbm import LGBMRegressor
 from numereng.features.serving import (
     ServingBlendRule,
     ServingComponentSpec,
+    ServingRuntimeError,
     ServingUnsupportedConfigError,
     ServingValidationError,
     build_live_submission_package,
@@ -431,6 +432,68 @@ def test_build_live_submission_package_writes_rank_blend_for_multi_component_pac
     assert submission["prediction"].tolist() == pytest.approx([0.6, 0.9])
     assert result.current_round == 777
     assert result.package.artifacts["preflight_local_live_compatible"] == "true"
+
+
+def test_component_subprocess_reports_missing_output_with_status_and_log_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    plugin = _write_custom_plugin(tmp_path, name="dummy_plugin", expression='X["feature_a"]')
+    config_path = _write_config(
+        tmp_path,
+        name="component",
+        model_type="DummyRegressor",
+        params={},
+        module_path=plugin,
+    )
+    package = create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-1",
+        components=(ServingComponentSpec(component_id="dummy", weight=1.0, config_path=config_path),),
+    )
+
+    def fake_run(args: list[str], **kwargs: object) -> object:
+        payload_path = Path(args[args.index("--payload") + 1])
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        Path(str(payload["status_path"])).write_text(
+            json.dumps(
+                {
+                    "component_id": payload["component"]["component_id"],
+                    "phase": "fit_component",
+                    "state": "running",
+                    "updated_at": "2026-05-15T00:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        stdout = kwargs.get("stdout")
+        if stdout is not None:
+            stdout.write("worker reached fit_component\n")
+            stdout.flush()
+        return serving_service_module.subprocess.CompletedProcess(args=args, returncode=0)
+
+    monkeypatch.setattr(serving_service_module.subprocess, "run", fake_run)
+
+    with pytest.raises(ServingRuntimeError) as exc_info:
+        serving_service_module._fit_and_predict_package_subprocess(
+            workspace_root=tmp_path,
+            package=package,
+            components=package.components,
+            live_features=pd.DataFrame(
+                {
+                    "id": ["live_1"],
+                    "era": ["0999"],
+                    "feature_a": [0.1],
+                    "feature_b": [0.2],
+                }
+            ),
+        )
+
+    message = str(exc_info.value)
+    assert "serving_component_worker_missing_output:dummy" in message
+    assert "last_status=running,fit_component,2026-05-15T00:00:00Z" in message
+    assert "worker reached fit_component" in message
 
 
 def test_build_submission_pickle_round_trips_artifact_backed_predictor(tmp_path: Path) -> None:
