@@ -247,6 +247,41 @@ def test_build_model_discover_module_from_custom_root(monkeypatch: pytest.Monkey
     assert hasattr(model, "fit")
 
 
+def test_build_model_discovery_skips_test_modules_under_custom_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "custom_models"
+    root.mkdir()
+    _write_model_file(root / "discovered.py", "DiscoveredModel")
+
+    # Neither of these defines MODEL_REGISTRY, so importing them as plugins would raise.
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_x.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (root / "test_y.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    monkeypatch.setattr(model_factory, "_resolve_custom_models_root", lambda: root)
+
+    discovered = model_factory._iter_module_paths(None)
+    assert [path.name for path in discovered] == ["discovered.py"]
+
+    model = model_factory.build_model("DiscoveredModel", {}, {})
+    assert model.__class__.__name__ == "DiscoveredModel"
+
+
+def test_explicit_module_path_still_resolves_test_named_modules(tmp_path: Path) -> None:
+    module_path = tmp_path / "test_y.py"
+    _write_model_file(module_path, "ExplicitTestNamedModel")
+
+    model = model_factory.build_model(
+        "ExplicitTestNamedModel",
+        {},
+        {"module_path": str(module_path)},
+    )
+    assert model.__class__.__name__ == "ExplicitTestNamedModel"
+
+
 def test_build_model_xgboost_builtin_takes_precedence_over_explicit_module_path(
     tmp_path: Path,
 ) -> None:

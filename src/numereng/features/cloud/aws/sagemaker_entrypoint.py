@@ -160,7 +160,7 @@ def required_dataset_keys(config_payload: Mapping[str, object]) -> list[str]:
     if not isinstance(data_payload_raw, dict):
         return []
     data_payload = data_payload_raw
-    data_version = str(data_payload.get("data_version", "v5.2"))
+    data_version = str(data_payload.get("data_version", "v5.3"))
     dataset_variant = str(data_payload.get("dataset_variant", ""))
     if dataset_variant not in _SUPPORTED_DATASET_VARIANTS:
         raise ValueError(f"dataset_variant_invalid:{dataset_variant}")

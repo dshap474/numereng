@@ -399,7 +399,7 @@ def handle_cloud_ec2_command(args: Sequence[str]) -> int:
         try:
             setup_request = api.Ec2SetupDataRequest(
                 cache_dir=values.get("--cache-dir"),
-                data_version=values.get("--data-version", "v5.2"),
+                data_version=values.get("--data-version", "v5.3"),
                 region=values.get("--region"),
                 bucket=values.get("--bucket"),
             )
@@ -444,7 +444,7 @@ def handle_cloud_ec2_command(args: Sequence[str]) -> int:
                 run_id=values.get("--run-id"),
                 region=values.get("--region"),
                 bucket=values.get("--bucket"),
-                data_version=values.get("--data-version", "v5.2"),
+                data_version=values.get("--data-version", "v5.3"),
                 use_spot=use_spot,
                 state_path=values.get("--state-path"),
             )

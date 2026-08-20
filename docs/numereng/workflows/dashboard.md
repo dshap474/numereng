@@ -7,7 +7,7 @@ Numereng ships a repo-local read-only monitoring stack over the current checkout
 Preferred shortcut:
 
 ```bash
-just viz
+just dev
 ```
 
 This starts:

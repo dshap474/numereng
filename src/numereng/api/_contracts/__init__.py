@@ -16,6 +16,8 @@ from numereng.api._contracts.remote import *  # noqa: F403
 from numereng.api._contracts.remote import __all__ as _remote_all
 from numereng.api._contracts.research import *  # noqa: F403
 from numereng.api._contracts.research import __all__ as _research_all
+from numereng.api._contracts.research_portfolio import *  # noqa: F403
+from numereng.api._contracts.research_portfolio import __all__ as _research_portfolio_all
 from numereng.api._contracts.run import *  # noqa: F403
 from numereng.api._contracts.run import __all__ as _run_all
 from numereng.api._contracts.serving import *  # noqa: F403
@@ -34,6 +36,7 @@ __all__ = [
     *_run_all,
     *_experiment_all,
     *_research_all,
+    *_research_portfolio_all,
     *_hpo_all,
     *_ensemble_all,
     *_store_all,

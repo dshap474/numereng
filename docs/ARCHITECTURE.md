@@ -33,7 +33,7 @@ It orchestrates:
 - read-only dashboard APIs for monitoring and inspection
 
 ## 2. Design Principles
-1. Dependency direction is strict: `config -> platform -> features -> api -> cli`.
+1. Dependency direction is strict: `config -> platform -> features -> api -> cli`. `agentic_research/` is a top-level package at the features layer: it may import `features/*` and vice versa, and follows the same config/platform/api/cli rules as a feature slice.
 2. Platform isolation: `platform/*` never imports `features/*`.
 3. Thin boundaries: CLI parses/dispatches; API translates errors; features own behavior.
 4. Deterministic identity: run IDs derive from resolved training identity hash.
@@ -59,10 +59,11 @@ It orchestrates:
                  |                                     |
                  +------------------+------------------+
                                     v
-                       +------------+------------+
-                       | Feature Slices          |
-                       | src/numereng/features/* |
-                       +------------+------------+
+                       +------------+--------------------+
+                       | Feature Slices                  |
+                       | src/numereng/features/*         |
+                       | src/numereng/agentic_research/* |
+                       +------------+--------------------+
                                     |
                      +--------------+---------------+
                      |                              |
@@ -89,6 +90,8 @@ src/numereng/
     forum_scraper.py
     numerai_client.py
 
+  agentic_research/            # top-level program-driven config-research supervisor; code in engine/ (7 loop modules + engine/closeout/ post-run distillation chain), closeout prompts in prompts/, programs in programs/
+
   features/
     docs_sync.py                 # repo-local Numerai docs mirror sync
     training/                  # training pipeline, run manifests/artifacts
@@ -98,9 +101,9 @@ src/numereng/
     baseline/                  # shared benchmark baseline construction from persisted runs
     feature_neutralization/    # prediction neutralization; vectorized least-squares engine with numerai-tools-style intercept parity
     experiments/               # experiment lifecycle + run linkage
-    agentic_research/          # seven-module program-driven config-research supervisor
+    research_portfolio/        # read-only lane/candidate resolution over registry + live run evidence (P1); cross-lane diversity report (P2); bounded combination study (P3)
     hpo/                       # Optuna study execution + trial persistence
-    ensemble/                  # rank-average build + experiment-aware selection workflow
+    ensemble/                  # rank-average build + experiment-aware selection workflow; panel + diversity-metric primitives
     dataset-tools/             # local dataset downsampling tools
     store/                     # sqlite schema/index/rebuild/doctor/layout/prediction pruning
     telemetry/                 # run job/event/log/sample persistence
@@ -125,6 +128,7 @@ src/numereng/
     _store.py
     _numerai.py
     _dataset_tools.py
+    _research_portfolio.py   # portfolio status/report handler (P1) + diversity report handler (P2) + combination-study handlers (P3)
     _health.py
     _factories.py
     cloud/{_ec2.py,_aws.py,_modal.py}
@@ -159,9 +163,9 @@ Command families:
 - `run`: `train`, `score`, `submit`, `cancel`
 - `experiment`: `create`, `list`, `details`, `archive`, `unarchive`, `train`, `run-plan`, `score-round`, `promote`, `report`, `pack`
 - `baseline`: `build`
-- `research`: `program list`, `program show`, `init`, `status`, `run`
+- `research`: `status`, `run`, `closeout`, `closeout-status`, `portfolio status`, `portfolio report`, `portfolio diversity`
 - `hpo`: `create`, `list`, `details`, `trials`
-- `ensemble`: `build`, `select`, `list`, `details`
+- `ensemble`: `build`, `select`, `list`, `details`, `study freeze|run|finalize|status`
 - `serve`: `package create|list|inspect|score|sync-diagnostics`, `live build|submit`, `pickle build|upload`
 - `neutralize`: `apply`
 - `dataset-tools`: `build-downsampled-full`
@@ -175,7 +179,7 @@ Command families:
 ## 6. Runtime Persistence Model
 Numereng has two path surfaces:
 
-- source-tree extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/features/agentic_research/PROGRAM.md`
+- source-tree extension paths: `src/numereng/features/models/custom_models/`, `src/numereng/agentic_research/programs/PROGRAM.md`
 - local ignored custom-skill path: `.agents/skills/`
 - optional synced vendor docs path: `docs/numerai/` (manual local mirror)
 - repo-root dev files: `pyproject.toml`, `.python-version`, `.venv/`
@@ -206,15 +210,18 @@ Dynamic runtime-store dirs may also appear under `.numereng/`:
   docs/
     numerai/                     # optional local mirror from `numereng docs sync numerai`
   src/numereng/features/models/custom_models/
-  src/numereng/features/agentic_research/
-    PROGRAM.md
-    types.py
-    memory.py
-    aggregate.py
-    boundary.py
-    llm.py
-    context.py
-    loop.py
+  src/numereng/agentic_research/
+    prompts/                     # closeout phase prompts
+    programs/                    # PROGRAM.md (tracked canonical program) + local-only custom programs
+    engine/
+      types.py
+      memory.py
+      aggregate.py
+      boundary.py
+      llm.py
+      context.py
+      loop.py
+      closeout/
   .agents/
     skills/
   .numereng/
@@ -442,6 +449,7 @@ Data loading and CV rules:
 - `model.device` is valid only for `LGBMRegressor`; legacy `model.params.device_type` remains supported but must exactly match when both are present.
 - Windows LightGBM GPU/OpenCL targets should use legacy `model.params.device_type=gpu` without top-level `model.device`; `model.device=gpu` is not a valid contract.
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
+- Model capability flag: a model class declaring `accepts_era = True` receives `era=<pd.Series>` (row-aligned with `X`) as an extra kwarg in both `fit` and `predict`, on the per-fold and full-history paths; models without the flag are called unchanged, and `era` is never added as an `X` column.
 - FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set, then correlating against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).
 - `corr`, `fnc`, and `mmc` are delegated to `numerai_tools`; `cwmm` is computed locally using the official diagnostic semantics of Pearson correlation between the Numerai-transformed submission and the raw meta-model series.
 - Scoring implementation is optimized behind the existing boundary: `features.scoring.metrics` orchestrates cached parquet reads and canonical artifact/provenance assembly, while `features.scoring._fastops` owns the NumPy/Numba per-era kernels that replace the older pandas callback hot path.
@@ -452,7 +460,7 @@ Data loading and CV rules:
 - Training scoring does not emit payout estimate fields because Numereng does not implement an official expected-payout estimator from validation metrics.
 - Deferred or failed post-training scoring still leaves `results.json` and `metrics.json` on disk with `training.scoring.policy`, `status`, `requested_stage`, `refreshed_stages`, and optional `reason` / `error` metadata. `score_provenance.json` appears once scoring materializes successfully.
 - Canonical post-run feature diagnostics are FNC-only. Training neutralizes to `fncv3_features`, persists `fnc` summaries in `post_training_full_summary`, and no longer emits feature-exposure summaries as canonical scoring outputs.
-- `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, `fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`), benchmark source metadata (`active` or explicit path), join row/era counts, benchmark/meta missing-row/era counts, and the persisted scoring-artifact manifest summary.
+- `score_provenance.json` captures the fixed scoring policy (`fnc_feature_set=fncv3_features`, `fnc_target_policy=scoring_target`, `benchmark_min_overlap_ratio=0.0`), benchmark source metadata (`active` or explicit path), join row/era counts, benchmark/meta missing-row/era counts, and the persisted scoring-artifact manifest summary. When a frozen-holdout era filter is applied (see §7.5a2), it also records `era_filter` (`mode` plus the excluded eras) so the exclusion is auditable.
 - Benchmark post-run scoring joins require strict era alignment, but `bmc` / `bmc_last_200_eras` are computed on the maximum available overlapping benchmark window whenever any overlap exists.
 - Meta-model post-run scoring joins require strict era alignment, but `mmc` / `cwmm` are computed on the maximum available overlapping meta-model window whenever any overlap exists.
 - Horizon resolution prefers explicit `data.target_horizon` (`20d|60d`), then falls back to `target_col` name inference.
@@ -477,6 +485,9 @@ cli experiment create
           configs/
           run_plan.csv
           run_scripts/launch_all.py|.sh|.ps1
+      - optional `--holdout-n-eras`/`--holdout-era-gap` seed a requested (unfrozen)
+        frozen-holdout spec into `metadata.agentic_research_holdout`; default OFF
+        (absent key = zero behavior change). See §7.5a2.
       - upsert experiment index row
 ```
 
@@ -523,26 +534,162 @@ cli experiment archive|unarchive
 ```text
 cli research status|run
   -> api.research_status|api.research_run
-  -> features.agentic_research.get_research_status|run_research
+  -> agentic_research.get_research_status|run_research
       - persist supervisor state under:
           .numereng/experiments/<root>/agentic_research/state.json
           .numereng/experiments/<root>/agentic_research/journal.jsonl
           .numereng/experiments/<root>/agentic_research/rounds/rNNN.md
           .numereng/experiments/<root>/EXPERIMENT.md
       - `research run` initializes state on first use
-      - the prompt policy lives in `src/numereng/features/agentic_research/PROGRAM.md`
+      - the prompt policy lives in `src/numereng/agentic_research/programs/PROGRAM.md`
       - runtime layout is localized into `PROGRAM.md` plus `types.py`, `memory.py`, `boundary.py`, `llm.py`, `context.py`, and `loop.py`
       - select planner compute source from `src/numereng/config/openrouter/active-model.py`
       - checked-in default: `ACTIVE_MODEL_SOURCE=codex-exec`
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
-      - `codex-exec` inherits the user’s normal Codex configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
+      - `ACTIVE_MODEL_SOURCE=droid-exec` uses Factory's headless `droid exec` (JSON envelope output; the response schema is appended to the prompt since droid has no output-schema flag)
+      - `codex-exec` and `droid-exec` inherit the user’s normal CLI configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
       - the LLM sees configs, report rows, experiment notes, recent journal rows, research memory, and the latest rolling round markdown
       - the LLM returns schema-constrained `decision_form` plus cumulative `round_markdown`
       - `journal.jsonl` records one append-only machine row per round attempt; it is bounded back into future prompts via recent journal rows
       - the LLM returns the single action `"run"`: mutate one parent config, validate the child `TrainingConfig`, train, score, and record the round
       - Python validates allowed config paths, writes the strict machine decision, validates the resulting `TrainingConfig`, rejects duplicates, writes one child config, trains, scores, and records the round
       - if no scored primary-metric row exists yet, the first round is a deterministic baseline copy before any LLM mutation
+      - if the experiment has a requested frozen-holdout spec, the first trained run of a
+        round lazy-freezes it (partition the run's era order into search/gap/holdout suffix
+        blocks, fingerprint, persist) BEFORE that round is scored, so no loop-visible metric
+        ever sees the holdout; freeze is idempotent across rounds and seeds
+```
+
+### 7.5a2 Frozen Chronological-Suffix Holdout
+```text
+features.holdout (pure helpers; imports only features.store)
+  - one trailing block of eras is invisible to every metric the agentic loop sees, then
+    scored exactly once at closeout and sealed against reuse (mirrors research_portfolio
+    combination.py: chronological_suffix split, sha256 fingerprint, one-time seal)
+  - freeze: experiments.freeze_experiment_holdout persists the frozen spec into
+    `metadata.agentic_research_holdout` (mode=chronological_suffix, holdout_eras, gap_eras,
+    fingerprint, frozen_at); default OFF when no `--holdout-n-eras` was requested
+  - loop-visible exclusion: `run score` and `experiment score-round` resolve the run's
+    experiment spec and, when frozen, drop holdout+gap eras at the two metrics.py `_read_table`
+    choke points before any metric is computed. The canonical prediction parquet keeps all eras;
+    only the in-memory scoring frame is filtered. `era_filter` is an explicit optional param
+    (default None = today's behavior), NOT LLM-mutable, and recorded in `score_provenance.json`.
+  - one-time open: closeout evidence verifies the fingerprint (raises on tamper), scores the
+    believed-best runs restricted to the holdout eras, writes `closeout/holdout_result.json`,
+    and seals the spec; a second open is refused (`holdout_reuse_blocked`). Reads the persisted
+    record on restart so closeout stays idempotent.
+```
+
+### 7.5a1 Agentic Research Closeout
+```text
+cli research closeout|closeout-status
+  -> api.research_closeout|api.research_closeout_status
+  -> agentic_research.run_closeout|get_closeout_status
+      - post-run distillation chain in src/numereng/agentic_research/engine/closeout/
+        (types.py, evidence.py, context.py, phases.py, runner.py)
+      - persists closeout state under .numereng/experiments/<root>/agentic_research/closeout/
+      - gate: run must be finished/stopped (not still running), budget-complete, with a valid memory root
+      - phase 0 builds deterministic evidence (leaderboard, believed_best, journal integrity) and RAISES on corruption
+      - FINALIZE asks the codex transport for one EXPERIMENT.closeout.md memo, validated for required sections before commit
+      - commit-journal protocol (stage -> commit.json -> apply -> mark done -> cleanup) rolls forward idempotently after a crash
+      - an O_EXCL experiment lock blocks concurrent invocation; a memory-root identity guard blocks a changed --memory-root
+      - EXTRACT creates the experiment memory branch; SYNTHESIZE merges it into the six ledgers and CURRENT.md
+      - the chain ends at SYNTHESIZE; next-experiment design happens pre-run via
+        src/numereng/agentic_research/prompts/INIT-PROGRAM.md, behind a human launch gate
+```
+
+### 7.5b Research Portfolio (P1, read-only)
+```text
+cli research portfolio status|report
+  -> api.portfolio_status
+  -> features.research_portfolio.portfolio_status
+      - reads the human-maintained registry at .numereng/portfolio/registry.json
+        (strict schema v1: policy + lanes; intent only, never computed facts)
+      - missing registry -> empty portfolio (portfolio_present=false); malformed -> PackageError
+      - resolves each lane live: candidate recipes from the scale experiment's
+        journal.jsonl + configs, per-seed run facts (bmc/fnc from metrics.json,
+        artifact mode via features.store.classify_run_mode, config-hash check,
+        comparison_surface_id from resolved.json + score_provenance.json + panel)
+      - trio {42,17,99} membership drives evidence tier; duplicate (recipe,seed)
+        runs and malformed journal lines are surfaced/hard-failed, never collapsed
+      - blank gated policy params and lane blockers aggregate into report blockers
+      - `report` (or `status --write`) persists .numereng/portfolio/reports/status-<ts>.json
+```
+
+### 7.5c Cross-Lane Diversity (P2, read-only)
+```text
+cli research portfolio diversity [--lanes a,b] [--format table|json]
+  -> api.portfolio_diversity
+  -> features.research_portfolio.portfolio_diversity
+      - gates (each raises PackageError / exit 1): registry present,
+        policy diversity_bmc_tolerance set, one resolvable comparison_surface_id
+        shared by all members, >=2 lanes remaining after tolerance exclusion
+      - per lane picks artifact-ready candidates (trio_complete + surface match +
+        every seed at artifact_mode "full"); a non-standalone candidate whose
+        trio_bmc_mean < best_bmc - tolerance is excluded (standalone is exempt)
+      - assembles ONE ranked panel over all member runs (features.ensemble
+        .load_ranked_components), seed-averages each candidate's columns, attaches
+        the active benchmark, then computes per-era pairwise Spearman, BMC-series
+        correlation, joint bottom-decile drawdown, and a leave-one-lane-out blend
+        delta with a paired circular moving-block bootstrap CI (features.ensemble
+        .diversity_metrics + panel); lanes weight equally (member count never buys
+        weight); LOO bootstrap needs >=2 full blocks else CI fields are null
+      - persists .numereng/portfolio/reports/diversity-<id>/{report.json,
+        era_bmc.parquet,pairwise_correlation.parquet,correlation_matrix.parquet}
+        and stamps each included lane's latest_diversity_report_id in status
+```
+
+### 7.5d Bounded Combination Study (P3, deterministic + ledgered)
+```text
+cli ensemble study freeze --config freeze.json [--format table|json]
+  -> api.study_freeze
+  -> features.research_portfolio.combination.study_freeze
+      - gates (each raises PackageError / exit 1): policy caps set
+        (combination_trial_cap, cross_lane_weight_cap, diversity_bmc_tolerance)
+        and study_trial_cap <= combination_trial_cap; decision_record_id present;
+        >=2 lanes; every member a scale-confirmed trio with all seeds OOF
+        (purged_walk_forward) at artifact_mode "full"; one shared
+        comparison_surface_id; optional neutralizer resolves + covers the panel
+      - assembles ONE ranked panel over all member runs (seed-averaged per
+        candidate, active benchmark attached), partitions eras into search /
+        purge gap / holdout, and builds expanding|rolling search folds
+      - materializes an immutable snapshot WITHOUT scoring: frozen_manifest.json
+        (input hashes, panel_hash, split, folds, freeze config) +
+        holdout_fingerprint.json; refuses re-freeze and refuses reusing a holdout
+        fingerprint under the same decision record unless exploratory
+
+cli ensemble study run --trials trials.json
+  -> api.study_run
+  -> features.research_portfolio.combination.study_run
+      - refuses a sealed study; recomputes every hashed frozen input and aborts
+        on any change (frozen_input_tampered:<key>)
+      - validates + canonicalizes trials (study-id match, unique ids + specs,
+        selection within members, per-lane weight <= cross_lane_weight_cap,
+        <=3 distinct positive neutralization_p) then rejects the WHOLE file if
+        the distinct-spec count exceeds study_trial_cap (trials_over_cap)
+      - scores each trial's blend on the search folds vs the fixed baseline
+        (paired circular moving-block bootstrap diff), appending one ledger.jsonl
+        line per trial; resume skips lines whose spec_hash matches and supersedes
+        changed specs (idempotent)
+
+cli ensemble study finalize --study-id S1 --select <trial|baseline>
+  -> api.study_finalize
+  -> features.research_portfolio.combination.study_finalize
+      - refuses a sealed study; re-verifies frozen inputs; scores the selected
+        trial (or the baseline candidate) on the HELD-OUT eras
+      - writes artifacts/{predictions,weights,correlation_matrix,era_metrics}
+        .parquet + lineage.json + holdout_result.json, then seals (sealed.json)
+
+cli ensemble study status --study-id S1
+  -> api.study_status
+  -> features.research_portfolio.combination.study_status
+      - read-only lifecycle snapshot (frozen, sealed, trials_executed / cap,
+        selected_trial)
+
+The holdout fingerprint is an accidental-reuse guard for one cooperative human,
+explicitly NOT a security boundary. Studies live under
+.numereng/experiments/<id>/combination_study/<study_id>/.
 ```
 
 ### 7.6 HPO
@@ -608,6 +755,7 @@ cli serve package create|inspect|list|score|sync-diagnostics
       - `score` executes the final package artifact on local validation data (`runtime=auto|pickle|local`)
       - `score` persists package-native predictions, summaries, provenance, and metric series under `artifacts/eval/validation/<runtime>/`
       - `score` reuses `features.scoring.metrics.score_prediction_file_with_details(...)` directly instead of the run scorer and emits explicit target-labeled metrics
+      - `score --runtime local` attaches baseline inputs from each component's own recorded training baseline parquet through the same loader and id-intersecting join training used, because validation eras have no `live_benchmark_models` frame; an unreadable baseline raises `serving_historical_baseline_attach_failed:<component_id>:<cause>`
       - `sync-diagnostics` polls the exact uploaded compute-pickle id, then persists upload-scoped compute status/logs plus the latest available Numerai model diagnostics snapshot under `artifacts/diagnostics/<upload_id>/`
 
 cli serve live build|submit
@@ -616,8 +764,10 @@ cli serve live build|submit
       - resolve current classic `live.parquet` and `live_benchmark_models.parquet`
       - inspect compatibility before build
       - prefer persisted `full_history_refit` model artifacts for run-backed components
-      - use config-backed retraining only as a local/dev fallback
+      - use config-backed retraining only as a local/dev fallback, and only when no artifact was persisted; any other artifact-load failure raises `serving_component_artifact_load_failed:<component_id>:<cause>` instead of silently refitting
       - prepare historical data once per compatible feature/data context only when retraining is required
+      - pass `era` to component `fit`/`predict` whenever the model declares `accepts_era`
+      - attach baseline inputs from the round's `live_benchmark_models` frame, never from the historical baseline parquet, resolving the column from the component's recorded benchmark provenance
       - rank-blend and optionally neutralize the final vector
       - write per-component live artifacts plus a submit-ready parquet
       - `submit` then hands the parquet to `features.submission`
@@ -626,13 +776,19 @@ cli serve pickle build|upload
   -> api.serve_pickle_*
   -> features.serving
       - inspect compatibility before build or upload
-      - reject local-only packages conservatively for hosted inference
+      - decide hosted compatibility from the loaded artifact (resolvable benchmark, invertible target transform, supported model type), not from the training-time manifest flag
       - require persisted run-backed model artifacts for every component
       - classify `model_upload_compatible` separately from verified `pickle_upload_ready`
       - validate requested data version / docker image against the Numerai API on upload
       - load persisted fitted models without retraining
       - serialize a self-contained Numerai-compatible `predict(live_features, live_benchmark_models)` callable
-      - run an isolated hosted-runtime smoke before marking the pickle upload-ready
+      - carry custom-module (for example torch) components by value with `cloudpickle.register_pickle_by_value`, plus a dedicated reducer for `@lru_cache` module functions that registration does not reach
+      - prove the payload by reloading it with a recording unpickler: any surviving `numereng` reference or any distribution missing from the hosted runtime fails the build
+      - move every torch module, tensor, and recorded `torch.device` reachable from a carried model onto the CPU (and into eval mode) at payload-assembly time, because the hosted runtime is CPU-only and a GPU-fitted model otherwise pickles CUDA device locations; components with no torch state are untouched and local GPU inference is unaffected
+      - declare hosted pip requirements from the roots that reload actually observed, pinned to the numerai-predict environment
+      - record hosted `drift_risks` alongside the pickle artifact metadata
+      - run an isolated hosted-runtime smoke, exercising the real two-argument signature with a synthetic `live_benchmark_models` frame, before marking the pickle upload-ready
+      - stage the smoke probe, its column payload, and the derived pins as files under `artifacts/pickle/smoke/` so the `uvx` argv length never scales with feature or requirement count, which Windows `CreateProcess` caps near 32k characters
       - `upload` then hands the pickle to `features.submission`
       - optional `--wait-diagnostics` chains into package diagnostics sync after a successful upload without changing the package deployment status
 
@@ -887,7 +1043,7 @@ Important UI contract:
 - The mission-control overview is federated across the local store plus all enabled SSH remotes. The local viz backend remains the only UI/API process; remote hosts are polled over SSH via `numereng monitor snapshot --json` and are surfaced in `overview.sources` with `live|cached|unavailable` source state plus persisted bootstrap metadata.
 - The mission-control overview is canonicalized by `experiment_id`: when an experiment exists locally and on one remote, the overview keeps one local-primary row and annotates it with remote freshness overlay metadata instead of rendering duplicate local/remote rows.
 - The global left-rail experiment navigator now uses the local experiment list from the root layout, so unrelated routes stay fast and remote-free. Remote-aware canonicalized experiment rows remain on `/experiments`.
-- `just viz` is the canonical dashboard launcher for the repo-root workflow.
+- `just dev` is the canonical dashboard launcher for the repo-root workflow.
 - Mission-control live cards render one canonical progress instrument per live experiment. The frontend selects a `primary` run by `updated_at desc`, then `exact > estimated > indeterminate`, then `run_id`, and renders only that run's bar plus adjacent percent readout.
 - Experiment detail exposes Analysis + Progress + Run Ops tabs; launch/control remains monitor-only.
 - Launch/control actions are CLI/API-only by design.

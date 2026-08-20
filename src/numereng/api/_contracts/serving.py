@@ -47,7 +47,7 @@ class ServePackageCreateRequest(WorkspaceBoundRequest):
     experiment_id: str
     package_id: str
     tournament: Literal["classic"] = "classic"
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     components: list[ServeComponentRequest]
     blend_rule: ServeBlendRuleRequest = Field(default_factory=ServeBlendRuleRequest)
     neutralization: ServeNeutralizationRequest | None = None

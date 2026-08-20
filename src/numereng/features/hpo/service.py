@@ -1080,7 +1080,7 @@ def _extract_metric_value_from_predictions(
         raise HpoExecutionError(f"hpo_trial_config_invalid:{trial_config_path}") from exc
 
     data_config = _as_mapping(trial_config.get("data"))
-    data_version = str(data_config.get("data_version", "v5.2"))
+    data_version = str(data_config.get("data_version", "v5.3"))
     dataset_variant = str(data_config.get("dataset_variant", ""))
     if dataset_variant not in {"non_downsampled", "downsampled"}:
         raise HpoExecutionError("hpo_trial_dataset_variant_invalid")

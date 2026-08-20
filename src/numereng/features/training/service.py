@@ -13,8 +13,8 @@ import pandas as pd
 
 from numereng.config.training.contracts import PostTrainingScoringPolicy
 from numereng.features.scoring.metrics import (
-    attach_benchmark_predictions,  # noqa: F401
-    load_custom_benchmark_predictions,  # noqa: F401
+    attach_benchmark_predictions,
+    load_custom_benchmark_predictions,
 )
 from numereng.features.scoring.models import BenchmarkSource, CanonicalScoringStage, ResolvedScoringPolicy
 from numereng.features.scoring.service import run_post_training_scoring, run_scoring  # noqa: F401
@@ -39,6 +39,7 @@ from numereng.features.training.cv import (
 from numereng.features.training.errors import TrainingCanceledError, TrainingConfigError, TrainingError
 from numereng.features.training.mlflow_tracking import maybe_log_training_run  # noqa: F401
 from numereng.features.training.models import (
+    BaselineAttachment,
     TrainingRunPreview,
     TrainingRunResult,
     build_lazy_parquet_data_loader,  # noqa: F401
@@ -906,6 +907,56 @@ def _resolve_baseline_path(path: str, baselines_dir: Path) -> Path:
     if candidate.is_absolute():
         return candidate.resolve()
     return (baselines_dir / candidate).resolve()
+
+
+def attach_baseline_predictions_frame(
+    full: pd.DataFrame | None,
+    *,
+    baseline_spec: dict[str, object],
+    era_col: str,
+    id_col: str,
+    baselines_dir: Path,
+) -> BaselineAttachment:
+    """Resolve, load, and join the configured baseline column onto a training frame.
+
+    Single implementation of the training baseline attach, shared by
+    `_pipeline.load_training_data` and experiment-local tooling so the two cannot drift.
+    The join intersects ids, so callers that need pre-join era coverage must snapshot their
+    era list before calling.
+    """
+    baseline_name = baseline_spec.get("name")
+    baseline_path = baseline_spec.get("predictions_path")
+    pred_col = str(baseline_spec.get("pred_col", "prediction"))
+    if not baseline_name or not baseline_path:
+        raise TrainingConfigError("training_baseline_config_missing_name_or_predictions_path")
+    if not id_col:
+        raise TrainingConfigError("training_id_col_required_for_baseline")
+    resolved_baseline_path = _resolve_baseline_path(str(baseline_path), baselines_dir)
+    baseline, baseline_col = load_custom_benchmark_predictions(
+        resolved_baseline_path,
+        str(baseline_name),
+        pred_col=pred_col,
+        era_col=era_col,
+        id_col=id_col,
+    )
+    if baseline_col is None:
+        raise TrainingConfigError("training_baseline_column_missing")
+    if full is None:
+        raise TrainingConfigError("training_data_loading_materialized_missing_frame")
+    return BaselineAttachment(
+        frame=attach_benchmark_predictions(
+            full,
+            baseline,
+            baseline_col,
+            era_col=era_col,
+            id_col=id_col,
+        ),
+        baseline=baseline,
+        baseline_col=baseline_col,
+        baseline_name=str(baseline_name),
+        baseline_predictions_path=str(resolved_baseline_path),
+        baseline_pred_col=pred_col,
+    )
 
 
 def _scoring_policy_payload(policy: ResolvedScoringPolicy) -> dict[str, object]:

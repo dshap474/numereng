@@ -35,7 +35,7 @@ There are three `remote experiment` verbs with distinct data directions:
 
 | Verb | Direction | What it moves |
 | ---- | --------- | ------------- |
-| `remote experiment sync` | PUSH ↑ | Authoring bundle: `EXPERIMENT.md`, `run_plan.csv`, `configs/`, `run_scripts/`. Does **not** push the `agentic_research/` record. |
+| `remote experiment sync` | PUSH ↑ | Authoring bundle: `EXPERIMENT.md`, `run_plan.csv`, `configs/`, `run_scripts/`, plus `name`/`hypothesis`/`tags` and `agentic_research_*` manifest metadata. Preserves remote run/status state and does **not** push the `agentic_research/` record. |
 | `remote experiment fetch` | PULL ↓ | Experiment record written by the controller: `agentic_research/` (state.json, trace.jsonl, rounds/), `configs/`, `EXPERIMENT.md`, `run_plan.csv`, `run_scripts/`. Does **not** pull `runs/` artifacts. |
 | `remote experiment pull --mode scoring\|full` | PULL ↓ | Run artifacts only: `runs/<run_id>/` subtree. Does **not** touch the experiment record. |
 

@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from numereng.features.ensemble import panel
 from numereng.features.ensemble.contracts import (
     EnsembleSelectionRequest,
     EnsembleSelectionResult,
@@ -21,7 +22,6 @@ from numereng.features.ensemble.contracts import (
     EnsembleSelectionVariantName,
 )
 from numereng.features.ensemble.metrics import correlation_matrix
-from numereng.features.scoring._fastops import correlation_contribution_matrix, numerai_corr_matrix_vs_target
 from numereng.features.scoring.metrics import (
     attach_benchmark_predictions,
     attach_scoring_targets,
@@ -1015,43 +1015,17 @@ def _score_weight_matrix(
     era_ranges: tuple[tuple[str, int, int], ...],
     weight_matrix: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    n_eras = len(era_ranges)
-    n_variants = weight_matrix.shape[0]
-    corr_scores = np.full((n_eras, n_variants), np.nan, dtype=np.float64)
-    bmc_scores = np.full((n_eras, n_variants), np.nan, dtype=np.float64)
+    """Compatibility wrapper delegating to panel.score_weight_matrix (last-200 window)."""
 
-    for era_index, (_era, start, end) in enumerate(era_ranges):
-        pred_slice = prediction_matrix[start:end]
-        target_slice = target_vector[start:end]
-        benchmark_slice = benchmark_vector[start:end]
-        for offset in range(0, n_variants, _WEIGHT_CHUNK_SIZE):
-            chunk = weight_matrix[offset : offset + _WEIGHT_CHUNK_SIZE]
-            blended = pred_slice @ chunk.T
-            corr_scores[era_index, offset : offset + len(chunk)] = numerai_corr_matrix_vs_target(blended, target_slice)
-            bmc_scores[era_index, offset : offset + len(chunk)] = correlation_contribution_matrix(
-                blended,
-                benchmark_slice,
-                target_slice,
-            )
-
-    recent_window = bmc_scores[-min(200, n_eras) :, :]
-    corr_summary = _summary_columns(corr_scores)
-    bmc_summary = _summary_columns(bmc_scores)
-    recent_summary = _summary_columns(recent_window)
-    return {
-        "corr_mean": corr_summary["mean"],
-        "corr_std": corr_summary["std"],
-        "corr_sharpe": corr_summary["sharpe"],
-        "corr_max_drawdown": corr_summary["max_drawdown"],
-        "bmc_mean": bmc_summary["mean"],
-        "bmc_std": bmc_summary["std"],
-        "bmc_sharpe": bmc_summary["sharpe"],
-        "bmc_max_drawdown": bmc_summary["max_drawdown"],
-        "bmc_last_200_eras_mean": recent_summary["mean"],
-        "bmc_last_200_eras_std": recent_summary["std"],
-        "bmc_last_200_eras_sharpe": recent_summary["sharpe"],
-        "bmc_last_200_eras_max_drawdown": recent_summary["max_drawdown"],
-    }
+    return panel.score_weight_matrix(
+        prediction_matrix=prediction_matrix,
+        target_vector=target_vector,
+        benchmark_vector=benchmark_vector,
+        era_ranges=era_ranges,
+        weight_matrix=weight_matrix,
+        recent_window_eras=panel.DEFAULT_RECENT_WINDOW_ERAS,
+        chunk_size=_WEIGHT_CHUNK_SIZE,
+    )
 
 
 def _metrics_payload_from_summary(summary: dict[str, np.ndarray], *, index: int) -> dict[str, Any]:
@@ -1059,41 +1033,15 @@ def _metrics_payload_from_summary(summary: dict[str, np.ndarray], *, index: int)
 
 
 def _summary_columns(values: np.ndarray) -> dict[str, np.ndarray]:
-    mean = np.full(values.shape[1], np.nan, dtype=np.float64)
-    std = np.full(values.shape[1], np.nan, dtype=np.float64)
-    for column_index in range(values.shape[1]):
-        finite = values[np.isfinite(values[:, column_index]), column_index]
-        if finite.size == 0:
-            continue
-        mean[column_index] = float(np.mean(finite))
-        std[column_index] = float(np.std(finite, ddof=0))
-    sharpe = np.divide(mean, std, out=np.full_like(mean, np.nan), where=std != 0.0)
-    return {
-        "mean": mean,
-        "std": std,
-        "sharpe": sharpe,
-        "max_drawdown": _max_drawdown_per_column(values),
-    }
+    """Compatibility wrapper delegating to panel.summary_columns."""
+
+    return panel.summary_columns(values)
 
 
 def _max_drawdown_per_column(values: np.ndarray) -> np.ndarray:
-    out = np.full(values.shape[1], np.nan, dtype=np.float64)
-    for column_index in range(values.shape[1]):
-        series = values[:, column_index]
-        running = 0.0
-        peak = 0.0
-        worst = 0.0
-        for value in series:
-            if not np.isfinite(value):
-                continue
-            running += float(value)
-            if running > peak:
-                peak = running
-            drawdown = peak - running
-            if drawdown > worst:
-                worst = drawdown
-        out[column_index] = worst
-    return out
+    """Compatibility wrapper delegating to panel.max_drawdown_per_column."""
+
+    return panel.max_drawdown_per_column(values)
 
 
 def _weight_simplex(n_components: int, step: float) -> list[list[float]]:
@@ -1229,19 +1177,9 @@ def _seed_from_config_path(raw_value: Any) -> int | None:
 
 
 def _era_ranges(eras: list[str]) -> tuple[tuple[str, int, int], ...]:
-    if not eras:
-        return ()
-    rows: list[tuple[str, int, int]] = []
-    start = 0
-    current = eras[0]
-    for index, era in enumerate(eras[1:], start=1):
-        if era == current:
-            continue
-        rows.append((current, start, index))
-        current = era
-        start = index
-    rows.append((current, start, len(eras)))
-    return tuple(rows)
+    """Compatibility wrapper delegating to panel.era_ranges."""
+
+    return panel.era_ranges(eras)
 
 
 def _coerce_selection_mode(value: object) -> EnsembleSelectionSelectionMode:

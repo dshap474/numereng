@@ -20,6 +20,8 @@ class ExperimentCreateRequest(WorkspaceBoundRequest):
     name: str | None = None
     hypothesis: str | None = None
     tags: list[str] = Field(default_factory=list)
+    holdout_n_eras: int | None = None
+    holdout_era_gap: int = 0
 
 
 class ExperimentListRequest(WorkspaceBoundRequest):

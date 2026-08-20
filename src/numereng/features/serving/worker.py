@@ -1,4 +1,9 @@
-"""Subprocess worker for one serving component fit + live prediction build."""
+"""Subprocess worker for one serving component fit + prediction build.
+
+The payload's `baseline_source` selects where a baseline-consuming component reads its
+baseline column: `live` joins the round's benchmark-model frame, `historical` joins the
+component's own training baseline parquet for validation scoring.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +16,10 @@ from typing import Any
 import pandas as pd
 
 from numereng.features.serving.contracts import ServingComponentSpec
+from numereng.features.serving.hosted import resolve_live_benchmark_column
 from numereng.features.serving.runtime import (
     fit_component,
+    predict_component_historical,
     predict_component_live,
     prepare_component_plan,
     prepare_training_context,
@@ -68,6 +75,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     config_path = Path(str(payload["config_path"])).expanduser().resolve()
     live_path = Path(str(payload["live_path"])).expanduser().resolve()
+    raw_benchmark_path = payload.get("live_benchmark_path")
+    benchmark_path = None if raw_benchmark_path is None else Path(str(raw_benchmark_path)).expanduser().resolve()
+    data_version = str(payload.get("data_version") or "v5.3")
+    baseline_source = str(payload.get("baseline_source") or "live")
     output_path = Path(str(payload["output_path"])).expanduser().resolve()
 
     try:
@@ -119,9 +130,26 @@ def main(argv: list[str] | None = None) -> int:
             status_path=status_path,
             component_id=component_id,
             phase="predict_live",
-            details={"live_rows": int(len(live_features))},
+            details={"live_rows": int(len(live_features)), "baseline_source": baseline_source},
         )
-        predictions = predict_component_live(component=fitted, live_features=live_features)
+        if baseline_source == "historical":
+            predictions = predict_component_historical(component=fitted, features=live_features)
+        else:
+            live_benchmark_models = None if benchmark_path is None else pd.read_parquet(benchmark_path)
+            benchmark_model_col = (
+                None
+                if fitted.baseline_col is None
+                else resolve_live_benchmark_column(
+                    baseline_predictions_path=fitted.baseline_predictions_path,
+                    data_version=data_version,
+                )
+            )
+            predictions = predict_component_live(
+                component=fitted,
+                live_features=live_features,
+                live_benchmark_models=live_benchmark_models,
+                benchmark_model_col=benchmark_model_col,
+            )
         _write_phase(
             status_path=status_path,
             component_id=component_id,

@@ -50,6 +50,7 @@ def run_scoring(
         data_root=request.data_root,
         include_feature_neutral_metrics=request.stage in {"all", "post_training_full"},
         scoring_policy=policy,
+        era_filter=request.era_filter,
     )
     artifacts, benchmark_joins = build_scoring_artifact_bundle(
         run_id=request.run_id,
@@ -76,10 +77,16 @@ def run_scoring(
         data_root=request.data_root,
         requested_stage=request.stage,
         scoring_policy=policy,
+        era_filter=request.era_filter,
     )
     refreshed_stages = _refreshed_canonical_stages(request.stage, artifacts.stage_frames)
 
     score_provenance["execution"] = {"requested_stage": request.stage}
+    if request.era_filter is not None:
+        score_provenance["era_filter"] = {
+            "mode": request.era_filter.mode,
+            "eras": sorted(request.era_filter.eras),
+        }
     score_provenance["benchmark_source"] = {
         "mode": request.benchmark_source.mode,
         "name": request.benchmark_source.name,

@@ -21,7 +21,7 @@ Default assumption:
 uv sync --extra dev
 uv run numereng store init
 uv run numereng --help
-just viz
+just dev
 ```
 
 If Numerai docs are needed locally:
@@ -41,8 +41,8 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `.numereng/remote_ops/`: remote orchestration state
 - `docs/numerai/`: tracked synced Numerai docs mirror for local browsing; see `docs/numerai/SYNC_POLICY.md`
 - `src/numereng/features/models/custom_models/`: default custom model discovery root
-- `src/numereng/features/agentic_research/PROGRAM.md`: prompt policy for config-mutation research
-- `src/numereng/features/agentic_research/custom_programs/`: local-only custom agentic research prompts
+- `src/numereng/agentic_research/programs/PROGRAM.md`: prompt policy for config-mutation research
+- `src/numereng/agentic_research/programs/`: custom agentic research programs (local-only except `PROGRAM.md`)
 - `src/numereng/platform/remotes/profiles/`: local-only remote profile directory; keep real YAMLs gitignored
 - `.agents/skills/`: local custom skills; gitignored
 
@@ -51,6 +51,8 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `.env` and nested `.env.*` files, except `.env.example`
 - `src/numereng/platform/remotes/profiles/*.yaml` and `*.yml`
 - `docs/numerai/forum/`
+- `docs/numerai/community/numerai-council-of-elders/episodes/`
+- `docs/numerai/community/numerai-council-of-elders/shorts/`
 - `docs/numerai/.sync-meta.json`
 - `viz/*.pid`
 
@@ -62,11 +64,11 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - Use `ensemble ...` when combining scored runs into one ranked blend.
 - Use `serve ...` when freezing a production model bundle, rebuilding live predictions, or preparing a Numerai model upload.
 - Use `run submit` when a submit-ready parquet or run artifact already exists.
-- Use `submissions calibration update` to pull resolved live rounds from Numerai and rebuild the local-BMC200-vs-live calibration dashboard artifacts; see the `submissions-ops` skill for the refresh/materialize/update commands and the resolved-round gating.
+- Use `submissions calibration update` to pull resolved live rounds from Numerai and rebuild the local-BMC200-vs-live calibration dashboard artifacts; see the `numerai-submissions-ops` skill for the refresh/materialize/update commands and the resolved-round gating.
 - Use `remote ...` for SSH-driven remote repo sync, experiment launch, pullback, and maintenance.
 - Use `cloud ...` for EC2, managed AWS, or Modal workflows.
 - Use `store ...` when the filesystem artifacts and SQLite index need repair or reconciliation.
-- Use `monitor snapshot` and `just viz` / `numereng viz` for read-only monitoring.
+- Use `monitor snapshot` and `just dev` / `numereng viz` for read-only monitoring.
 
 ## Default Agent Loop
 1. Confirm the user’s current experiment or create one with `numereng experiment create`.
@@ -101,7 +103,7 @@ uv run numereng experiment report --id <experiment_id>
 uv run numereng run score --run-id <run_id>
 uv run numereng monitor snapshot --json
 uv run numereng submissions calibration update --format json
-just viz
+just dev
 ```
 
 ## When To Touch `src/`

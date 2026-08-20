@@ -5,23 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
-import cloudpickle
 import numpy as np
 import pandas as pd
 
 from numereng.features.feature_neutralization import neutralize_prediction_frame
 from numereng.features.scoring.metrics import attach_benchmark_predictions, load_custom_benchmark_predictions
 from numereng.features.serving.contracts import (
-    RankMethod,
     ServingBlendRule,
     ServingComponentSpec,
     ServingNeutralizationSpec,
 )
+from numereng.features.serving.live_benchmark import attach_live_benchmark
 from numereng.features.serving.repo import run_dir
 from numereng.features.store import resolve_workspace_layout
-from numereng.features.training.errors import TrainingModelError
+from numereng.features.training.errors import TrainingDataError, TrainingModelError
 from numereng.features.training.model_artifacts import ModelArtifactError, load_model_artifact
 from numereng.features.training.model_factory import build_model
 from numereng.features.training.models import build_x_cols, normalize_x_groups
@@ -134,26 +133,6 @@ class LoadedServingArtifact:
     uses_custom_module: bool
 
 
-class HostedComponentPayload(TypedDict):
-    """Hosted-safe serialized payload for one LightGBM component."""
-
-    component_id: str
-    weight: float
-    model_str: str
-    id_col: str
-    era_col: str
-    feature_cols: tuple[str, ...]
-
-
-class HostedBlendPayload(TypedDict):
-    """Hosted-safe serialized blend contract."""
-
-    per_era_rank: bool
-    rank_method: RankMethod
-    rank_pct: bool
-    final_rerank: bool
-
-
 def prepare_component_plan(
     *,
     workspace_root: str | Path,
@@ -170,7 +149,7 @@ def prepare_component_plan(
     output_config = _mapping_dict(config.get("output"))
 
     data_key = ServingDataContextKey(
-        data_version=str(data_config.get("data_version", "v5.2")),
+        data_version=str(data_config.get("data_version", "v5.3")),
         dataset_variant=str(data_config.get("dataset_variant", "non_downsampled")),
         feature_set=str(data_config.get("feature_set", "small")),
         target_col=str(data_config.get("target_col", "target")),
@@ -336,8 +315,11 @@ def fit_component(
     labeled = full[full[resolved_plan.target_col].notna()]
     if labeled.empty:
         raise ServingRuntimeError("serving_component_no_labeled_rows")
+    fit_kwargs: dict[str, Any] = {}
+    if getattr(model, "accepts_era", False):
+        fit_kwargs["era"] = labeled[key.era_col]
     try:
-        model.fit(labeled[list(feature_cols)], labeled[resolved_plan.target_col])
+        model.fit(labeled[list(feature_cols)], labeled[resolved_plan.target_col], **fit_kwargs)
     except MemoryError as exc:
         raise ServingRuntimeError("serving_resource_exhausted") from exc
     except OSError as exc:
@@ -397,36 +379,87 @@ def prediction_member_from_fitted(component: FittedComponent) -> ServingPredicti
     return ServingPredictionMember(component_id=component.component_id, weight=component.weight)
 
 
-def predict_component_live(*, component: FittedComponent, live_features: pd.DataFrame) -> pd.DataFrame:
-    """Run one fitted component on a live feature frame."""
+def predict_component_live(
+    *,
+    component: FittedComponent,
+    live_features: pd.DataFrame,
+    live_benchmark_models: pd.DataFrame | None = None,
+    benchmark_model_col: str | None = None,
+) -> pd.DataFrame:
+    """Run one fitted component on a live feature frame.
+
+    Baseline inputs are sourced from the round's `live_benchmark_models` frame, never
+    from the component's historical baseline parquet: that parquet holds no live ids,
+    so joining it at live time can only produce an empty intersection.
+    """
 
     live = _ensure_id_and_era_columns(live_features.copy(), id_col=component.id_col, era_col=component.era_col)
-    if component.baseline_col and component.baseline_name and component.baseline_predictions_path:
-        baseline_frame, baseline_col = load_custom_benchmark_predictions(
-            component.baseline_predictions_path,
-            component.baseline_name,
-            pred_col=component.baseline_pred_col,
-            era_col=component.era_col,
-            id_col=component.id_col,
-        )
-        live = attach_benchmark_predictions(
-            live,
-            baseline_frame,
-            baseline_col,
-            era_col=component.era_col,
-            id_col=component.id_col,
-        )
-    missing = [col for col in component.feature_cols if col not in live.columns]
+    if component.baseline_col:
+        if not benchmark_model_col:
+            raise ServingRuntimeError(f"serving_live_benchmark_column_unresolved:{component.component_id}")
+        try:
+            live = attach_live_benchmark(
+                live,
+                benchmark=live_benchmark_models,
+                id_col=component.id_col,
+                baseline_col=component.baseline_col,
+                benchmark_model_col=benchmark_model_col,
+            )
+        except ValueError as exc:
+            raise ServingRuntimeError(str(exc)) from exc
+    return _predict_prepared_frame(component=component, frame=live)
+
+
+def predict_component_historical(*, component: FittedComponent, features: pd.DataFrame) -> pd.DataFrame:
+    """Run one fitted component on historical eras, as package validation scoring does.
+
+    Baseline inputs come from the component's own recorded baseline parquet through the
+    same loader and id-intersecting join `fit_component` used at training time, so a
+    scored package number stays comparable with a real training run. The live path must
+    never take this branch: that parquet holds no live ids.
+    """
+
+    frame = _ensure_id_and_era_columns(features.copy(), id_col=component.id_col, era_col=component.era_col)
+    if component.baseline_col:
+        if not component.baseline_name or not component.baseline_predictions_path:
+            raise ServingRuntimeError(f"serving_historical_baseline_provenance_missing:{component.component_id}")
+        try:
+            baseline_frame, baseline_col = load_custom_benchmark_predictions(
+                component.baseline_predictions_path,
+                component.baseline_name,
+                pred_col=component.baseline_pred_col,
+                era_col=component.era_col,
+                id_col=component.id_col,
+            )
+            frame = attach_benchmark_predictions(
+                frame,
+                baseline_frame,
+                baseline_col,
+                era_col=component.era_col,
+                id_col=component.id_col,
+            )
+        except (OSError, TrainingDataError, ValueError) as exc:
+            raise ServingRuntimeError(
+                f"serving_historical_baseline_attach_failed:{component.component_id}:{exc}"
+            ) from exc
+    return _predict_prepared_frame(component=component, frame=frame)
+
+
+def _predict_prepared_frame(*, component: FittedComponent, frame: pd.DataFrame) -> pd.DataFrame:
+    missing = [col for col in component.feature_cols if col not in frame.columns]
     if missing:
         raise ServingRuntimeError("serving_live_feature_columns_missing:" + ",".join(missing[:5]))
+    predict_kwargs: dict[str, Any] = {}
+    if getattr(component.model, "accepts_era", False):
+        predict_kwargs["era"] = frame[component.era_col]
     try:
-        values = component.model.predict(live[list(component.feature_cols)])
+        values = component.model.predict(frame[list(component.feature_cols)], **predict_kwargs)
     except MemoryError as exc:
         raise ServingRuntimeError("serving_resource_exhausted") from exc
     return pd.DataFrame(
         {
-            "era": live[component.era_col].astype(str).to_numpy(),
-            "id": live[component.id_col].astype(str).to_numpy(),
+            "era": frame[component.era_col].astype(str).to_numpy(),
+            "id": frame[component.id_col].astype(str).to_numpy(),
             "prediction": np.asarray(values, dtype=float),
         }
     )
@@ -493,111 +526,6 @@ def write_blended_predictions(*, internal: pd.DataFrame, submission: pd.DataFram
     return internal_path, submission_path
 
 
-def build_pickled_predictor(
-    *,
-    fitted_components: tuple[FittedComponent, ...],
-    blend_rule: ServingBlendRule,
-    neutralization: ServingNeutralizationSpec | None,
-    pickle_path: Path,
-) -> Path:
-    """Serialize one Numerai-compatible predict callable."""
-    if neutralization is not None and neutralization.enabled:
-        raise ServingUnsupportedConfigError("serving_model_upload_neutralization_not_supported")
-
-    hosted_components = tuple(_hosted_component_payload(item) for item in fitted_components)
-    blend_payload: HostedBlendPayload = {
-        "per_era_rank": blend_rule.per_era_rank,
-        "rank_method": blend_rule.rank_method,
-        "rank_pct": blend_rule.rank_pct,
-        "final_rerank": blend_rule.final_rerank,
-    }
-
-    class HostedPredictor:
-        def __init__(
-            self,
-            *,
-            components: tuple[HostedComponentPayload, ...],
-            blend: HostedBlendPayload,
-        ) -> None:
-            self._components = components
-            self._blend = blend
-
-        def __call__(self, live_features, live_benchmark_models=None):
-            _ = live_benchmark_models
-            import lightgbm as lgb
-            import numpy as np
-            import pandas as pd
-
-            def _ensure_id_and_era(frame, *, id_col, era_col):
-                if id_col not in frame.columns:
-                    if frame.index.name == id_col:
-                        frame = frame.reset_index()
-                    else:
-                        raise ValueError(f"serving_live_missing_id_col:{id_col}")
-                if era_col not in frame.columns:
-                    frame[era_col] = "live"
-                return frame
-
-            def _rank_prediction_frame(frame):
-                ranked = frame.copy()
-                if self._blend["per_era_rank"] and "era" in ranked.columns:
-                    ranked["prediction"] = ranked.groupby("era", sort=False)["prediction"].rank(
-                        method=self._blend["rank_method"],
-                        pct=self._blend["rank_pct"],
-                    )
-                else:
-                    ranked["prediction"] = ranked["prediction"].rank(
-                        method=self._blend["rank_method"],
-                        pct=self._blend["rank_pct"],
-                    )
-                return ranked
-
-            component_predictions = []
-            for item in self._components:
-                live = _ensure_id_and_era(
-                    live_features.copy(),
-                    id_col=item["id_col"],
-                    era_col=item["era_col"],
-                )
-                missing = [col for col in item["feature_cols"] if col not in live.columns]
-                if missing:
-                    raise ValueError("serving_live_feature_columns_missing:" + ",".join(missing[:5]))
-                model = lgb.Booster(model_str=item["model_str"])
-                values = model.predict(live[list(item["feature_cols"])])
-                frame = pd.DataFrame(
-                    {
-                        "era": live[item["era_col"]].astype(str).to_numpy(),
-                        "id": live[item["id_col"]].astype(str).to_numpy(),
-                        "prediction": np.asarray(values, dtype=float),
-                    }
-                )
-                component_predictions.append((item["component_id"], float(item["weight"]), frame))
-
-            if not component_predictions:
-                raise ValueError("serving_component_predictions_empty")
-            anchor = component_predictions[0][2][["era", "id"]].copy()
-            blended = np.zeros(len(anchor), dtype=float)
-            for _, weight, frame in component_predictions:
-                if not frame[["era", "id"]].equals(anchor[["era", "id"]]):
-                    raise ValueError("serving_component_predictions_misaligned")
-                ranked = _rank_prediction_frame(frame)
-                blended += ranked["prediction"].to_numpy(dtype=float) * weight
-
-            internal = anchor.copy()
-            internal["prediction"] = blended
-            if self._blend["final_rerank"]:
-                internal = _rank_prediction_frame(internal)
-            return pd.DataFrame({"prediction": internal["prediction"].to_numpy(dtype=float)}, index=live_features.index)
-
-    predictor = HostedPredictor(components=hosted_components, blend=blend_payload)
-
-    resolved = Path(pickle_path).expanduser().resolve()
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    with resolved.open("wb") as handle:
-        cloudpickle.dump(predictor, handle)
-    return resolved
-
-
 def _apply_serving_resource_controls(*, model_type: str, model_params: dict[str, object]) -> dict[str, object]:
     normalized = dict(model_params)
     if model_type == "LGBMRegressor":
@@ -608,32 +536,6 @@ def _apply_serving_resource_controls(*, model_type: str, model_params: dict[str,
         if key in normalized:
             normalized[key] = min(_coerce_int(normalized.get(key), default=1), 1)
     return normalized
-
-
-def _hosted_component_payload(component: FittedComponent) -> HostedComponentPayload:
-    if component.baseline_predictions_path is not None:
-        raise ServingUnsupportedConfigError("serving_model_upload_baseline_inputs_not_supported")
-    model = component.model
-    if type(model).__module__ == "numereng.features.models.lgbm":
-        raw_model = getattr(model, "_model", None)
-        if raw_model is None:
-            raise ServingUnsupportedConfigError("serving_model_upload_model_unwrap_failed")
-        model = raw_model
-    elif type(model).__module__.startswith("lightgbm"):
-        model = model
-    else:
-        raise ServingUnsupportedConfigError("serving_model_upload_model_type_not_supported")
-    booster = getattr(model, "booster_", None)
-    if booster is None:
-        raise ServingUnsupportedConfigError("serving_model_upload_model_unwrap_failed")
-    return {
-        "component_id": component.component_id,
-        "weight": float(component.weight),
-        "model_str": booster.model_to_string(),
-        "id_col": component.id_col,
-        "era_col": component.era_col,
-        "feature_cols": tuple(component.feature_cols),
-    }
 
 
 def _ensure_id_and_era_columns(frame: pd.DataFrame, *, id_col: str, era_col: str) -> pd.DataFrame:
@@ -752,9 +654,9 @@ __all__ = [
     "ServingRuntimeError",
     "ServingUnsupportedConfigError",
     "blend_component_predictions",
-    "build_pickled_predictor",
     "fit_component",
     "load_run_backed_component",
+    "predict_component_historical",
     "prediction_member_from_fitted",
     "predict_component_live",
     "prepare_component_plan",

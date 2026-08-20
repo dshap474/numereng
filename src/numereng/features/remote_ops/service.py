@@ -55,6 +55,7 @@ from numereng.features.remote_ops.sync import (
     sync_entries_to_remote,
 )
 from numereng.features.store import (
+    classify_run_mode,
     index_run,
     init_store_db,
     resolve_store_root,
@@ -81,6 +82,7 @@ _REMOTE_WINDOWS_STARTUP_TIMEOUT_SECONDS = 10.0
 _REMOTE_WINDOWS_STARTUP_POLL_SECONDS = 0.25
 _REMOTE_PULL_STAGING_DIR = ("tmp", "remote_ops", "pulls")
 _REMOTE_PULL_COPY_TIMEOUT_SECONDS = 900
+_EXPERIMENT_AUTHORING_METADATA_PREFIX = "agentic_research_"
 _FINISHED_RUN_REQUIRED_LOCAL_FILES: tuple[str, ...] = (
     "run.json",
     "resolved.json",
@@ -102,7 +104,6 @@ _SCORING_MODE_ROOT_OPTIONAL: tuple[str, ...] = (
     "score_provenance.json",
 )
 _SCORING_MODE_SUBDIR: tuple[str, ...] = ("artifacts", "scoring")
-_PREDICTIONS_SUBDIR: tuple[str, ...] = ("artifacts", "predictions")
 _RUN_IDENTITY_FILES: tuple[str, ...] = (
     "run.json",
     "resolved.json",
@@ -305,6 +306,11 @@ def sync_remote_experiment(
         local_commit_sha=_git_head_sha(_repository_root()),
         dirty=_git_is_dirty(_repository_root()),
         timeout_seconds=max(target.command_timeout_seconds, _SYNC_TIMEOUT_SECONDS),
+    )
+    _sync_remote_experiment_authoring_manifest(
+        target=target,
+        experiment_id=experiment_id,
+        store_root=resolved_store_root,
     )
     return RemoteExperimentSyncResult(
         target_id=target.id,
@@ -995,6 +1001,21 @@ def _experiment_sync_entries(store_root: Path, *, experiment_id: str) -> list[Sy
                     remote_relpath=str(path.relative_to(workspace_layout.workspace_root)).replace("\\", "/"),
                 )
             )
+
+    # Program files authored into the experiment folder (agentic_research/<name>.md) must ride along
+    # so the remote run can resolve them. Top-level *.md only: never push rounds/ memos or state.json,
+    # which would clobber the remote's live run state on a re-sync.
+    program_dir = experiment_root / "agentic_research"
+    if program_dir.is_dir():
+        for path in sorted(program_dir.glob("*.md")):
+            if not path.is_file():
+                continue
+            entries.append(
+                SyncEntry(
+                    local_path=path,
+                    remote_relpath=str(path.relative_to(workspace_layout.workspace_root)).replace("\\", "/"),
+                )
+            )
     return entries
 
 
@@ -1032,6 +1053,41 @@ def _ensure_remote_experiment_created(
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or "remote_experiment_create_failed"
         raise RemoteExecutionError(f"remote_experiment_create_failed:{detail}")
+
+
+def _sync_remote_experiment_authoring_manifest(
+    *,
+    target: SshRemoteTargetProfile,
+    experiment_id: str,
+    store_root: Path,
+) -> None:
+    """Merge local authoring fields without replacing remote execution-owned manifest state."""
+    experiment_dir = resolve_workspace_layout_from_store_root(store_root).experiments_root / experiment_id
+    manifest = _read_json_dict(experiment_dir / "experiment.json")
+    metadata = manifest.get("metadata")
+    authoring_metadata = (
+        {
+            str(key): value
+            for key, value in metadata.items()
+            if isinstance(key, str) and key.startswith(_EXPERIMENT_AUTHORING_METADATA_PREFIX)
+        }
+        if isinstance(metadata, dict)
+        else {}
+    )
+    payload = {
+        "name": manifest.get("name"),
+        "hypothesis": manifest.get("hypothesis"),
+        "tags": manifest.get("tags"),
+        "metadata": authoring_metadata,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode("utf-8")).decode("ascii")
+    result = _run_remote_python(
+        target,
+        _experiment_authoring_merge_python_script(),
+        args=[experiment_id, target.store_root, encoded],
+    )
+    if not result or result.get("updated") is not True:
+        raise RemoteExecutionError(f"remote_experiment_authoring_sync_failed:{experiment_id}")
 
 
 def _remote_experiment_exists(*, target: SshRemoteTargetProfile, experiment_id: str) -> bool:
@@ -1325,14 +1381,7 @@ def _decode_run_identities(payload: Any) -> dict[str, dict[str, str]]:
 
 def _detect_local_run_mode(run_dir: Path) -> Literal["missing", "incomplete", "scoring", "full"]:
     """Classify the on-disk materialization state of one local run directory."""
-    if not run_dir.exists() or not run_dir.is_dir():
-        return "missing"
-    for relpath in _FINISHED_RUN_REQUIRED_LOCAL_FILES:
-        if not (run_dir / relpath).is_file():
-            return "incomplete"
-    predictions_dir = run_dir / _PREDICTIONS_SUBDIR[0] / _PREDICTIONS_SUBDIR[1]
-    has_predictions = predictions_dir.is_dir() and any(predictions_dir.glob("pred_*.parquet"))
-    return "full" if has_predictions else "scoring"
+    return classify_run_mode(run_dir=run_dir)
 
 
 def _classify_local_finished_runs(
@@ -2205,6 +2254,62 @@ def main() -> None:
     archived_dir = experiments_root / "_archive" / experiment_id
     exists = (experiment_dir / "experiment.json").is_file() or (archived_dir / "experiment.json").is_file()
     print(json.dumps({"exists": exists}, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+""".strip()
+
+
+def _experiment_authoring_merge_python_script() -> str:
+    return """
+import base64
+import json
+import sys
+from pathlib import Path
+
+from numereng.features.store import resolve_workspace_layout_from_store_root
+
+
+AUTHORING_METADATA_PREFIX = "agentic_research_"
+
+
+def main() -> None:
+    if len(sys.argv) != 4:
+        raise SystemExit("remote_experiment_authoring_sync_arguments_invalid")
+    experiment_id = sys.argv[1]
+    store_root = Path(sys.argv[2]).expanduser()
+    payload = json.loads(base64.urlsafe_b64decode(sys.argv[3].encode("ascii")).decode("utf-8"))
+    experiments_root = resolve_workspace_layout_from_store_root(store_root).experiments_root
+    manifest_path = experiments_root / experiment_id / "experiment.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(manifest, dict):
+        raise SystemExit("remote_experiment_authoring_sync_payload_invalid")
+
+    for key in ("name", "hypothesis", "tags"):
+        if key in payload:
+            manifest[key] = payload[key]
+
+    remote_metadata = manifest.get("metadata")
+    merged_metadata = dict(remote_metadata) if isinstance(remote_metadata, dict) else {}
+    for key in list(merged_metadata):
+        if isinstance(key, str) and key.startswith(AUTHORING_METADATA_PREFIX):
+            del merged_metadata[key]
+    local_metadata = payload.get("metadata")
+    if isinstance(local_metadata, dict):
+        merged_metadata.update(
+            {
+                str(key): value
+                for key, value in local_metadata.items()
+                if isinstance(key, str) and key.startswith(AUTHORING_METADATA_PREFIX)
+            }
+        )
+    manifest["metadata"] = merged_metadata
+
+    temp_path = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    temp_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    temp_path.replace(manifest_path)
+    print(json.dumps({"updated": True}, sort_keys=True))
 
 
 if __name__ == "__main__":

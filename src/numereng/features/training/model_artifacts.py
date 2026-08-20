@@ -1,20 +1,40 @@
-"""Persistence helpers for fitted full-history model artifacts."""
+"""Persistence helpers for fitted full-history model artifacts.
+
+USAGE:
+    from numereng.features.training.model_artifacts import load_model_artifact, save_model_artifact
+
+    save_model_artifact(run_dir=run_dir, model=fitted, manifest=manifest)
+    loaded = load_model_artifact(run_dir=run_dir)  # rebinds custom plugin modules
+
+Custom-model plugins are imported under a synthetic `numereng_custom_<md5(path)>`
+module name, so cloudpickle records that name by reference and a fresh process (or a
+different machine, where the path hash differs) cannot resolve it. Loading therefore
+goes through an unpickler that rebinds those names onto the locally discovered plugin
+module that actually defines the class.
+"""
 
 from __future__ import annotations
 
 import json
+import pickle
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import cloudpickle
 
+from numereng.features.training.model_factory import CUSTOM_MODULE_PREFIX, iter_custom_model_modules
 from numereng.features.training.repo import (
     resolve_model_artifact_path,
     resolve_model_manifest_path,
 )
 
 _MODEL_ARTIFACT_SCHEMA_VERSION = "1"
+
+# --------------------------------------------------------------------------- #
+# Contracts
+# --------------------------------------------------------------------------- #
 
 
 class ModelArtifactError(Exception):
@@ -50,6 +70,39 @@ class LoadedModelArtifact:
     manifest: ModelArtifactManifest
     artifact_path: Path
     manifest_path: Path
+
+
+# --------------------------------------------------------------------------- #
+# Custom plugin module rebinding
+# --------------------------------------------------------------------------- #
+
+
+class CustomModuleUnpickler(pickle.Unpickler):
+    """Unpickler that rebinds synthetic custom-plugin module names before lookup.
+
+    The recorded name hashes the training machine's absolute plugin path, so it is
+    never importable at load time. The class name is stable, so the locally
+    discovered plugin module that defines it is the correct binding.
+    """
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module.startswith(CUSTOM_MODULE_PREFIX) and module not in sys.modules:
+            _bind_custom_module(module_name=module, qualname=name)
+        return super().find_class(module, name)
+
+
+def _bind_custom_module(*, module_name: str, qualname: str) -> None:
+    attribute = qualname.split(".", 1)[0]
+    for module in iter_custom_model_modules():
+        if hasattr(module, attribute):
+            sys.modules[module_name] = module
+            return
+    raise ModelArtifactError(f"serving_model_artifact_custom_module_unresolved:{module_name}:{qualname}")
+
+
+# --------------------------------------------------------------------------- #
+# Persistence
+# --------------------------------------------------------------------------- #
 
 
 def save_model_artifact(
@@ -104,15 +157,22 @@ def load_model_artifact(*, run_dir: Path) -> LoadedModelArtifact:
     manifest = _manifest_from_payload(payload)
     try:
         with artifact_path.open("rb") as handle:
-            model = cloudpickle.load(handle)
-    except Exception as exc:  # pragma: no cover - dependency/backend-specific
-        raise ModelArtifactError("serving_model_artifact_load_failed") from exc
+            model = CustomModuleUnpickler(handle).load()
+    except ModelArtifactError:
+        raise
+    except Exception as exc:
+        raise ModelArtifactError(f"serving_model_artifact_load_failed:{type(exc).__name__}:{exc}") from exc
     return LoadedModelArtifact(
         model=model,
         manifest=manifest,
         artifact_path=artifact_path.resolve(),
         manifest_path=manifest_path.resolve(),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Internals
+# --------------------------------------------------------------------------- #
 
 
 def _manifest_from_payload(payload: dict[str, object]) -> ModelArtifactManifest:
@@ -147,6 +207,7 @@ def _manifest_from_payload(payload: dict[str, object]) -> ModelArtifactManifest:
 
 
 __all__ = [
+    "CustomModuleUnpickler",
     "LoadedModelArtifact",
     "ModelArtifactError",
     "ModelArtifactManifest",

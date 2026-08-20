@@ -43,6 +43,9 @@ Start with the nearest wrapper. `template_model.py` remains the canonical lowest
 - Discovery happens from:
   - explicit `model.module_path` in config, or
   - scanning `src/numereng/features/models/custom_models/**/*.py` when `module_path` is not set.
+- The scan skips `__init__.py`, any file under a `tests/` directory, and any file named `test_*.py`
+  or `*_test.py`, so test modules never need a `MODEL_REGISTRY`. An explicit `model.module_path`
+  bypasses the skip rule and is always loaded as given.
 
 ## Required module shape
 
@@ -58,6 +61,32 @@ Each registered class must:
 - implement `fit`
 - implement `predict`
 - filter `X` by `feature_cols` when it is provided
+
+## Optional capability flag: `accepts_era`
+
+A model class may declare `accepts_era = True` to opt into receiving era labels:
+
+```python
+class MyModelClass:
+    accepts_era = True
+
+    def fit(self, X, y, **kwargs):
+        era = kwargs["era"]  # pd.Series, positionally aligned with X rows
+        ...
+
+    def predict(self, X, **kwargs):
+        era = kwargs["era"]
+        ...
+```
+
+When (and only when) the flag is truthy, the training harness passes `era=<pd.Series>` as an
+extra keyword to both `fit` and `predict`, on the per-fold and full-history paths alike. The
+series is the batch's era column, positionally aligned with `X` (same frame slice — do not
+re-sort). Models without the flag see zero change and need no `**kwargs`. The flag is read via
+`getattr(model, "accepts_era", False)`, so it also resolves through `TargetTransformWrapper`.
+
+Note that `era` is delivered as a separate argument, never as an `X` column: `x_groups`
+validation still rejects `era` and `id` as features.
 
 Numereng may also normalize backend-specific asset paths when that keeps runtime
 behavior deterministic. `TabPFNRegressor`, for example, routes cache-managed

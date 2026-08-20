@@ -73,7 +73,7 @@ DEFAULT_REGION = (os.getenv("NUMERENG_AWS_REGION") or "us-east-2").strip()
 DEFAULT_BUCKET = (os.getenv("NUMERENG_S3_BUCKET") or "").strip()
 DEFAULT_IAM_ROLE = (os.getenv("NUMERENG_EC2_IAM_ROLE") or "").strip()
 DEFAULT_SECURITY_GROUP = (os.getenv("NUMERENG_EC2_SECURITY_GROUP") or "").strip()
-DEFAULT_DATA_VERSION = "v5.2"
+DEFAULT_DATA_VERSION = "v5.3"
 
 DEFAULT_CPU_AMI = (os.getenv("NUMERENG_EC2_AMI_CPU") or "").strip()
 DEFAULT_GPU_AMI = (os.getenv("NUMERENG_EC2_AMI_GPU") or "").strip()

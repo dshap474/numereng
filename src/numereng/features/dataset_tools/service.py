@@ -138,92 +138,6 @@ def _write_full_dataset_streaming(
     return rows_written
 
 
-def _iter_validation_benchmark_batches(
-    *,
-    validation_data_path: Path,
-    validation_benchmark_path: Path,
-) -> Iterator[pd.DataFrame]:
-    validation_meta_batches = iter(_iter_parquet_batches(validation_data_path))
-    validation_benchmark_batches = iter(_iter_parquet_batches(validation_benchmark_path))
-
-    while True:
-        try:
-            meta_batch = next(validation_meta_batches)
-        except StopIteration:
-            break
-        try:
-            benchmark_batch = next(validation_benchmark_batches)
-        except StopIteration as exc:
-            raise DatasetToolsExecutionError(
-                f"benchmark_validation_alignment_failed:{validation_data_path}:{validation_benchmark_path}"
-            ) from exc
-
-        if len(meta_batch) != len(benchmark_batch):
-            raise DatasetToolsExecutionError(
-                f"benchmark_validation_alignment_failed:{validation_data_path}:{validation_benchmark_path}"
-            )
-
-        if "data_type" not in meta_batch.columns:
-            yield benchmark_batch
-            continue
-
-        mask = meta_batch["data_type"] == "validation"
-        if bool(mask.any()):
-            yield benchmark_batch.loc[mask.to_numpy()]
-
-    try:
-        next(validation_benchmark_batches)
-    except StopIteration:
-        return
-    raise DatasetToolsExecutionError(
-        f"benchmark_validation_alignment_failed:{validation_data_path}:{validation_benchmark_path}"
-    )
-
-
-def _write_full_benchmark_streaming(
-    *,
-    train_benchmark_path: Path,
-    validation_benchmark_path: Path,
-    validation_data_path: Path,
-    full_path: Path,
-) -> int:
-    writer: pq.ParquetWriter | None = None
-    rows_written = 0
-
-    try:
-        for frame in _iter_parquet_batches(train_benchmark_path):
-            if frame.empty:
-                continue
-            table = pa.Table.from_pandas(frame, preserve_index=True)
-            if writer is None:
-                writer = _open_writer(full_path, table)
-            writer.write_table(table)
-            rows_written += int(len(frame))
-
-        for frame in _iter_validation_benchmark_batches(
-            validation_data_path=validation_data_path,
-            validation_benchmark_path=validation_benchmark_path,
-        ):
-            if frame.empty:
-                continue
-            table = pa.Table.from_pandas(frame, preserve_index=True)
-            if writer is None:
-                writer = _open_writer(full_path, table)
-            writer.write_table(table)
-            rows_written += int(len(frame))
-    except Exception as exc:
-        if writer is not None:
-            writer.close()
-        if full_path.exists():
-            full_path.unlink(missing_ok=True)
-        raise DatasetToolsExecutionError(f"parquet_write_failed:{full_path}") from exc
-
-    if writer is None:
-        raise DatasetToolsExecutionError(f"parquet_write_failed:{full_path}")
-    writer.close()
-    return rows_written
-
-
 def _era_sort_key(value: object) -> int:
     try:
         return int(str(value))
@@ -292,7 +206,6 @@ def _count_benchmark_rows_for_ids(
     *,
     train_benchmark_path: Path,
     validation_benchmark_path: Path,
-    validation_data_path: Path,
     id_values: set[object],
 ) -> int:
     rows_written = 0
@@ -306,13 +219,13 @@ def _count_benchmark_rows_for_ids(
         benchmark_batch = benchmark_batch.loc[benchmark_batch.index.intersection(id_index)]
         rows_written += int(len(benchmark_batch))
 
+    # Benchmark rows are matched by id against ids drawn from data_type ==
+    # "validation" rows, so no positional alignment with validation.parquet is
+    # required (upstream files no longer row-align).
     for frame in _iter_parquet_batches(train_benchmark_path):
         _count_filtered_batch(frame)
 
-    for frame in _iter_validation_benchmark_batches(
-        validation_data_path=validation_data_path,
-        validation_benchmark_path=validation_benchmark_path,
-    ):
+    for frame in _iter_parquet_batches(validation_benchmark_path):
         _count_filtered_batch(frame)
 
     return rows_written
@@ -370,7 +283,6 @@ def _build_downsampled_full_benchmark(
     *,
     train_benchmark_path: Path,
     validation_benchmark_path: Path,
-    validation_data_path: Path,
     downsampled_full_path: Path,
     version_dir: Path,
 ) -> tuple[Path, int]:
@@ -403,10 +315,7 @@ def _build_downsampled_full_benchmark(
         for frame in _iter_parquet_batches(train_benchmark_path):
             _write_filtered_batch(frame)
 
-        for frame in _iter_validation_benchmark_batches(
-            validation_data_path=validation_data_path,
-            validation_benchmark_path=validation_benchmark_path,
-        ):
+        for frame in _iter_parquet_batches(validation_benchmark_path):
             _write_filtered_batch(frame)
     except Exception as exc:
         if writer is not None:
@@ -474,7 +383,6 @@ def build_downsampled_full(
     expected_benchmark_rows = _count_benchmark_rows_for_ids(
         train_benchmark_path=train_benchmark_path,
         validation_benchmark_path=validation_benchmark_path,
-        validation_data_path=validation_path,
         id_values=expected_ids,
     )
 
@@ -502,7 +410,6 @@ def build_downsampled_full(
         downsampled_full_benchmark_path, downsampled_full_benchmark_rows = _build_downsampled_full_benchmark(
             train_benchmark_path=train_benchmark_path,
             validation_benchmark_path=validation_benchmark_path,
-            validation_data_path=validation_path,
             downsampled_full_path=downsampled_full_path,
             version_dir=version_dir,
         )

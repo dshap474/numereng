@@ -8,6 +8,8 @@ from typing import Literal
 
 import pandas as pd
 
+from numereng.features.holdout import EraFilter
+
 CanonicalScoringStage = Literal[
     "all",
     "run_metric_series",
@@ -61,6 +63,7 @@ class PostTrainingScoringRequest:
     data_root: Path
     scoring_targets_explicit: bool = False
     stage: CanonicalScoringStage = "all"
+    era_filter: EraFilter | None = None
 
 
 @dataclass(frozen=True)

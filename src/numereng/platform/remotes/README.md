@@ -58,7 +58,9 @@ The tracked remote inventory is also used by the public remote ops surface:
 Sync rules:
 
 - `remote repo sync` mirrors the local git-visible working tree only.
-- `remote experiment sync` mirrors experiment authoring files only.
+- `remote experiment sync` mirrors experiment authoring files plus the manifest's
+  `name`, `hypothesis`, `tags`, and `agentic_research_*` metadata. It preserves
+  remote run/status state and does not mirror `agentic_research/` runtime records.
 - Do not sync the full `.numereng` store.
 - Do not sync `profiles/*.yaml` to remotes.
 

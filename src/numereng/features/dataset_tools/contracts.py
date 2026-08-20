@@ -11,7 +11,7 @@ class BuildDownsampledFullRequest:
     """Input payload for official-style downsampled full dataset build."""
 
     data_dir: Path
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     rebuild: bool = False
     downsample_eras_step: int = 4
     downsample_eras_offset: int = 0

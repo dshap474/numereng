@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from numereng.agentic_research import (
+    AgenticResearchError,
+    AgenticResearchValidationError,
+)
 from numereng.api.contracts import (
     ResearchBestRunResponse,
     ResearchRoundResponse,
@@ -9,10 +13,6 @@ from numereng.api.contracts import (
     ResearchRunResponse,
     ResearchStatusRequest,
     ResearchStatusResponse,
-)
-from numereng.features.agentic_research import (
-    AgenticResearchError,
-    AgenticResearchValidationError,
 )
 from numereng.features.experiments import ExperimentError
 from numereng.features.training.errors import (

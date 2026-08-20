@@ -18,7 +18,7 @@ from numereng.platform.errors import OpenRouterClientError
 JsonDict = dict[str, Any]
 _INFERENCE_PATHS = {"/chat/completions", "/completions", "/responses"}
 _ACTIVE_MODEL_PATH = Path(__file__).resolve().parents[2] / "config" / "openrouter" / "active-model.py"
-OpenRouterModelSource = Literal["codex-exec", "openrouter"]
+OpenRouterModelSource = Literal["codex-exec", "openrouter", "droid-exec"]
 ModelReasoningEffort = Literal["low", "medium", "high", "xhigh"]
 
 
@@ -47,7 +47,7 @@ def load_openrouter_config() -> OpenRouterConfig:
         raise OpenRouterClientError("openrouter_config_load_failed") from exc
 
     source = getattr(module, "ACTIVE_MODEL_SOURCE", "codex-exec")
-    if source not in {"codex-exec", "openrouter"}:
+    if source not in {"codex-exec", "openrouter", "droid-exec"}:
         raise OpenRouterClientError("openrouter_active_model_source_invalid")
 
     active_model = getattr(module, "ACTIVE_MODEL", None)

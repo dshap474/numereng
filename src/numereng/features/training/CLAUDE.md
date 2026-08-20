@@ -89,6 +89,7 @@ When `score_provenance.json` exists, it must include:
 - `columns`: id/era/target/prediction/meta/benchmark names used
 - `sources`: fingerprinted paths for predictions, meta model, benchmark
 - `joins`: overlap counters (rows, eras)
+- `era_filter` (only when a frozen holdout exclusion was applied): `{mode, eras}` naming the eras dropped before metrics were computed. Loop-visible scoring resolves this from the run's experiment `metadata.agentic_research_holdout` (see `features.holdout`); it is an explicit optional scoring param (default None = no filter), never LLM-mutable, and leaves the prediction parquet unfiltered.
 
 Canonical feature-neutral diagnostics:
 

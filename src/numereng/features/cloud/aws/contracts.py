@@ -73,7 +73,7 @@ class Ec2SetupDataRequest(BaseModel):
     """Request payload for data sync to S3."""
 
     cache_dir: str | None = None
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     region: str | None = None
     bucket: str | None = None
 
@@ -85,7 +85,7 @@ class Ec2ProvisionRequest(CloudEc2RequestBase):
     run_id: str | None = None
     region: str | None = None
     bucket: str | None = None
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     use_spot: bool = True
 
 

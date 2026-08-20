@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,23 @@ def _seed_existing_finished_run(
         scoring_dir.mkdir(parents=True)
         (scoring_dir / "run_metric_series.parquet").write_bytes(b"\x00")
     return run_dir
+
+
+def _run_authoring_merge(store_root: Path, experiment_id: str, payload: dict[str, object]) -> None:
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode("utf-8")).decode("ascii")
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            remote_service._experiment_authoring_merge_python_script(),
+            experiment_id,
+            str(store_root),
+            encoded,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_sync_remote_repo_uses_git_visible_working_tree_only(
@@ -136,16 +154,25 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
     (experiment_root / "configs").mkdir(parents=True)
     (experiment_root / "run_scripts").mkdir(parents=True)
     (experiment_root / "results").mkdir(parents=True)
+    (experiment_root / "agentic_research" / "rounds").mkdir(parents=True)
     (experiment_root / "experiment.json").write_text("{}\n", encoding="utf-8")
     (experiment_root / "EXPERIMENT.md").write_text("# exp\n", encoding="utf-8")
     (experiment_root / "run_plan.csv").write_text("run_id\n", encoding="utf-8")
     (experiment_root / "configs" / "base.json").write_text("{}\n", encoding="utf-8")
     (experiment_root / "run_scripts" / "launch.ps1").write_text("Write-Host hi\n", encoding="utf-8")
     (experiment_root / "results" / "metrics.json").write_text("{}\n", encoding="utf-8")
+    # The program file authored into the experiment folder must ride along; the run-state files
+    # (rounds/ memos, state.json) must NOT — pushing them would clobber the remote's live state.
+    (experiment_root / "agentic_research" / "scale_full_v1.md").write_text("# program\n", encoding="utf-8")
+    (experiment_root / "agentic_research" / "state.json").write_text("{}\n", encoding="utf-8")
+    (experiment_root / "agentic_research" / "rounds" / "r001.md").write_text("# r001\n", encoding="utf-8")
 
     captured: dict[str, object] = {}
+    authoring_sync_calls: list[str] = []
+    sync_order: list[str] = []
 
     def fake_sync_entries_to_remote(**kwargs: object) -> SyncExecutionResult:
+        sync_order.append("files")
         entries = kwargs["entries"]
         assert isinstance(entries, list)
         captured["paths"] = [entry.remote_relpath for entry in entries]
@@ -165,8 +192,17 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
             remote_paths=tuple(entry.remote_relpath for entry in entries),
         )
 
+    def fake_sync_authoring_manifest(**kwargs: object) -> None:
+        authoring_sync_calls.append(str(kwargs["experiment_id"]))
+        sync_order.append("manifest")
+
     monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
     monkeypatch.setattr(remote_service, "_ensure_remote_experiment_created", lambda **kwargs: None)
+    monkeypatch.setattr(
+        remote_service,
+        "_sync_remote_experiment_authoring_manifest",
+        fake_sync_authoring_manifest,
+    )
     monkeypatch.setattr(remote_service, "sync_entries_to_remote", fake_sync_entries_to_remote)
     monkeypatch.setattr(remote_service, "_repository_root", lambda: tmp_path / "repo")
     monkeypatch.setattr(remote_service, "_git_head_sha", lambda repo_root: "abc")
@@ -179,8 +215,143 @@ def test_sync_remote_experiment_only_syncs_authoring_files(
         ".numereng/experiments/exp-1/run_plan.csv",
         ".numereng/experiments/exp-1/configs/base.json",
         ".numereng/experiments/exp-1/run_scripts/launch.ps1",
+        ".numereng/experiments/exp-1/agentic_research/scale_full_v1.md",
     ]
+    assert authoring_sync_calls == ["exp-1"]
+    assert sync_order == ["files", "manifest"]
     assert result.remote_experiment_dir.endswith(r".numereng\experiments\exp-1")
+
+
+def test_sync_remote_experiment_does_not_activate_metadata_when_file_sync_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_root = store_root / "experiments" / "exp-1"
+    experiment_root.mkdir(parents=True)
+    (experiment_root / "experiment.json").write_text("{}\n", encoding="utf-8")
+    authoring_sync_calls: list[str] = []
+
+    def fail_file_sync(**kwargs: object) -> SyncExecutionResult:
+        raise RuntimeError("file_sync_failed")
+
+    monkeypatch.setattr(remote_service, "_get_target", lambda target_id: _target())
+    monkeypatch.setattr(remote_service, "_ensure_remote_experiment_created", lambda **kwargs: None)
+    monkeypatch.setattr(remote_service, "sync_entries_to_remote", fail_file_sync)
+    monkeypatch.setattr(
+        remote_service,
+        "_sync_remote_experiment_authoring_manifest",
+        lambda **kwargs: authoring_sync_calls.append(str(kwargs["experiment_id"])),
+    )
+    monkeypatch.setattr(remote_service, "_repository_root", lambda: tmp_path / "repo")
+    monkeypatch.setattr(remote_service, "_git_head_sha", lambda repo_root: "abc")
+    monkeypatch.setattr(remote_service, "_git_is_dirty", lambda repo_root: False)
+
+    with pytest.raises(RuntimeError, match="file_sync_failed"):
+        remote_service.sync_remote_experiment(target_id="pc", experiment_id="exp-1", store_root=store_root)
+
+    assert authoring_sync_calls == []
+
+
+def test_new_remote_experiment_receives_agentic_authoring_metadata(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-07-14_agentic-remote-sync"
+    experiment_dir = store_root / "experiments" / experiment_id
+    experiment_dir.mkdir(parents=True)
+    manifest_path = experiment_dir / "experiment.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "experiment_id": experiment_id,
+                "name": experiment_id,
+                "hypothesis": None,
+                "tags": [],
+                "status": "draft",
+                "runs": [],
+                "champion_run_id": None,
+                "created_at": "remote-created",
+                "updated_at": "remote-created",
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    authoring_metadata = {
+        "agentic_research_program": "focused.md",
+        "agentic_research_budget_rounds": 20,
+        "agentic_research_allowed_change_paths": ["model.params.learning_rate"],
+        "agentic_research_value_caps": {"model.params.learning_rate": [0.01, 0.05]},
+    }
+
+    _run_authoring_merge(
+        store_root,
+        experiment_id,
+        {
+            "name": "Focused remote research",
+            "hypothesis": "Test one bounded axis.",
+            "tags": ["agentic", "remote"],
+            "metadata": {**authoring_metadata, "remote_pull": {"must_not_sync": True}},
+        },
+    )
+
+    merged = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert merged["name"] == "Focused remote research"
+    assert merged["hypothesis"] == "Test one bounded axis."
+    assert merged["tags"] == ["agentic", "remote"]
+    assert merged["metadata"] == authoring_metadata
+
+
+def test_remote_authoring_merge_preserves_execution_state_and_is_idempotent(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    experiment_id = "2026-07-14_existing-remote"
+    experiment_dir = store_root / "experiments" / experiment_id
+    agentic_dir = experiment_dir / "agentic_research"
+    agentic_dir.mkdir(parents=True)
+    manifest_path = experiment_dir / "experiment.json"
+    remote_manifest = {
+        "experiment_id": experiment_id,
+        "name": "Old name",
+        "hypothesis": "Old hypothesis",
+        "tags": ["old"],
+        "status": "active",
+        "runs": ["run-a", "run-b"],
+        "champion_run_id": "run-b",
+        "created_at": "remote-created",
+        "updated_at": "remote-updated",
+        "metadata": {
+            "agentic_research_program": "old.md",
+            "remote_pull": {"last_target_id": "pc"},
+        },
+    }
+    manifest_path.write_text(json.dumps(remote_manifest), encoding="utf-8")
+    state_path = agentic_dir / "state.json"
+    state_bytes = b'{"status":"running","next_round_number":7}\n'
+    state_path.write_bytes(state_bytes)
+    payload = {
+        "name": "New name",
+        "hypothesis": "New hypothesis",
+        "tags": ["new"],
+        "metadata": {
+            "agentic_research_program": "new.md",
+            "agentic_research_budget_rounds": 30,
+        },
+    }
+
+    _run_authoring_merge(store_root, experiment_id, payload)
+    first_bytes = manifest_path.read_bytes()
+    _run_authoring_merge(store_root, experiment_id, payload)
+
+    merged = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_path.read_bytes() == first_bytes
+    assert merged["status"] == "active"
+    assert merged["runs"] == ["run-a", "run-b"]
+    assert merged["champion_run_id"] == "run-b"
+    assert merged["created_at"] == "remote-created"
+    assert merged["updated_at"] == "remote-updated"
+    assert merged["metadata"]["remote_pull"] == {"last_target_id": "pc"}
+    assert merged["metadata"]["agentic_research_program"] == "new.md"
+    assert merged["metadata"]["agentic_research_budget_rounds"] == 30
+    assert state_path.read_bytes() == state_bytes
 
 
 def test_remote_run_train_syncs_repo_and_experiment_for_experiment_config(

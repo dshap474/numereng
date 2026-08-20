@@ -4,7 +4,6 @@ from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterStr
 from numereng.platform.errors import (
     ForumScraperError,
     NumeraiClientError,
-    NumeraiMcpAuthError,
     OpenRouterClientError,
     PackageError,
 )
@@ -21,7 +20,6 @@ __all__ = [
     "ForumScraperError",
     "NumeraiClient",
     "NumeraiClientError",
-    "NumeraiMcpAuthError",
     "OpenRouterClient",
     "OpenRouterClientError",
     "OpenRouterStreamEvent",

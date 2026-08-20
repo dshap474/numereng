@@ -50,7 +50,7 @@ class BenchmarkSourceConfig(_StrictConfigModel):
 class DataConfig(_StrictConfigModel):
     """Data loading and target-selection settings."""
 
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     dataset_variant: DatasetVariant
     feature_set: str = "small"
     target_col: str = "target"
@@ -135,10 +135,11 @@ class TrainingEngineConfig(_StrictConfigModel):
     """Training profile settings."""
 
     profile: TrainingProfile | None = None
-    # Legacy compatibility keys retained for migration.
+    # Legacy compatibility key retained for migration; still mapped by the dispatcher.
     mode: TrainingEngineMode | None = None
-    window_size_eras: int | None = Field(default=None, ge=1)
-    embargo_eras: int | None = Field(default=None, ge=1)
+    # `window_size_eras` / `embargo_eras` are intentionally absent: the profile dispatcher never
+    # accepts them (`training_profile_disallows_custom_parameters`), so `extra="forbid"` now rejects
+    # them at load time — naming the offending key — instead of failing later inside training.
 
     @field_validator("profile", mode="before")
     @classmethod

@@ -11,6 +11,7 @@ RankMethod = Literal["average", "min", "max", "first", "dense"]
 PackageScoreRuntime = Literal["auto", "pickle", "local"]
 PackageScoreStage = Literal["post_training_core", "post_training_full"]
 PackageEvaluationDataset = Literal["validation"]
+ServingBaselineSource = Literal["live", "historical"]
 
 
 @dataclass(frozen=True)
@@ -196,6 +197,7 @@ __all__ = [
     "PackageScoreRuntime",
     "PackageScoreStage",
     "PickleBuildResult",
+    "ServingBaselineSource",
     "ServingComponentInspection",
     "ServingBlendRule",
     "ServingComponentSpec",

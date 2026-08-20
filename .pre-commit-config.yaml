@@ -13,8 +13,8 @@ repos:
       - id: check-json
         exclude: |
           (?x)^(
-            \.codex/skills/numereng-experiment-ops/assets/training-config-template\.json
-            |src/numereng/assets/shipped_skills/numereng-experiment-ops/assets/training-config-template\.json
+            \.codex/skills/experiment-ops/assets/training-config-template\.json
+            |src/numereng/assets/shipped_skills/experiment-ops/assets/training-config-template\.json
           )$
       - id: check-merge-conflict
       - id: check-toml

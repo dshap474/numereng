@@ -13,11 +13,7 @@ from typing import cast
 import pandas as pd
 
 from numereng.config.training.contracts import PostTrainingScoringPolicy
-from numereng.features.scoring.metrics import (
-    append_post_fold_artifacts,
-    attach_benchmark_predictions,
-    load_custom_benchmark_predictions,
-)
+from numereng.features.scoring.metrics import append_post_fold_artifacts
 from numereng.features.scoring.models import BenchmarkSource, CanonicalScoringStage, PostTrainingScoringRequest
 from numereng.features.scoring.service import run_scoring
 from numereng.features.store import StoreError, index_run
@@ -112,7 +108,6 @@ from numereng.features.training.service import (
     _raise_if_cancel_requested,
     _record_telemetry_metrics,
     _record_telemetry_stage,
-    _resolve_baseline_path,
     _resolve_cache_policy,
     _resolve_dataset_scope,
     _resolve_dataset_scope_for_profile,
@@ -121,6 +116,7 @@ from numereng.features.training.service import (
     _resolve_scoring_target_cols,
     _resolve_store_root_for_run,
     _scoring_targets_explicit,
+    attach_baseline_predictions_frame,
     build_results_payload,
     is_round_post_training_scoring_policy,
     post_training_scoring_requested_stage,
@@ -184,7 +180,7 @@ class TrainingPipelineState:
     preprocessing_config: dict[str, object] = field(default_factory=dict)
     training_config: dict[str, object] = field(default_factory=dict)
     model_config: dict[str, object] = field(default_factory=dict)
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     dataset_variant: str = "non_downsampled"
     feature_set: str = "small"
     target_col: str = "target"
@@ -520,7 +516,7 @@ def _resolve_training_preview_state(state: TrainingPipelineState) -> TrainingPip
     state.model_config = _as_dict(state.config.get("model"))
     config = state.config
 
-    state.data_version = str(state.data_config.get("data_version", "v5.2"))
+    state.data_version = str(state.data_config.get("data_version", "v5.3"))
     state.dataset_variant = _resolve_dataset_variant(state.data_config.get("dataset_variant"))
     state.feature_set = str(state.data_config.get("feature_set", "small"))
     state.target_col = str(state.data_config.get("target_col", "target"))
@@ -666,36 +662,19 @@ def load_training_data(state: TrainingPipelineState) -> TrainingPipelineState:
     state.full_eras = int(state.full[state.era_col].nunique())
 
     if "baseline" in state.x_groups:
-        baseline_spec = _as_dict(state.model_config.get("baseline"))
-        baseline_name = baseline_spec.get("name")
-        baseline_path = baseline_spec.get("predictions_path")
-        pred_col = str(baseline_spec.get("pred_col", "prediction"))
-        if not baseline_name or not baseline_path:
-            raise TrainingConfigError("training_baseline_config_missing_name_or_predictions_path")
-        if not state.id_col:
-            raise TrainingConfigError("training_id_col_required_for_baseline")
-        resolved_baseline_path = _resolve_baseline_path(str(baseline_path), cast(Path, state.baselines_dir))
-        state.baseline_name = str(baseline_name)
-        state.baseline_predictions_path = str(resolved_baseline_path)
-        state.baseline_pred_col = pred_col
-        state.baseline, state.baseline_col = load_custom_benchmark_predictions(
-            resolved_baseline_path,
-            str(baseline_name),
-            pred_col=pred_col,
-            era_col=state.era_col,
-            id_col=state.id_col,
-        )
-        if state.baseline_col is None:
-            raise TrainingConfigError("training_baseline_column_missing")
-        if state.full is None:
-            raise TrainingConfigError("training_data_loading_materialized_missing_frame")
-        state.full = attach_benchmark_predictions(
+        attachment = attach_baseline_predictions_frame(
             state.full,
-            state.baseline,
-            state.baseline_col,
+            baseline_spec=_as_dict(state.model_config.get("baseline")),
             era_col=state.era_col,
             id_col=state.id_col,
+            baselines_dir=cast(Path, state.baselines_dir),
         )
+        state.baseline_name = attachment.baseline_name
+        state.baseline_predictions_path = attachment.baseline_predictions_path
+        state.baseline_pred_col = attachment.baseline_pred_col
+        state.baseline = attachment.baseline
+        state.baseline_col = attachment.baseline_col
+        state.full = attachment.frame
 
     state.x_cols = build_x_cols(
         x_groups=state.x_groups,

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from numereng.config.training.contracts import PostTrainingScoringPolicy
+from numereng.features import holdout
 from numereng.features.experiments.contracts import (
     ExperimentArchiveResult,
     ExperimentPackResult,
@@ -89,8 +90,16 @@ def create_experiment(
     name: str | None = None,
     hypothesis: str | None = None,
     tags: list[str] | None = None,
+    holdout_n_eras: int | None = None,
+    holdout_era_gap: int = 0,
 ) -> ExperimentRecord:
-    """Create one experiment manifest and index metadata in store DB."""
+    """Create one experiment manifest and index metadata in store DB.
+
+    Passing ``holdout_n_eras`` requests a frozen chronological-suffix holdout: the
+    trailing block is invisible to loop-visible scoring and scored once at closeout.
+    The request is recorded now; the eras + tamper fingerprint are pinned lazily on
+    the first training round (see ``freeze_experiment_holdout``).
+    """
 
     safe_experiment_id = _ensure_safe_id(experiment_id)
     _ensure_experiment_id_format(safe_experiment_id)
@@ -107,6 +116,15 @@ def create_experiment(
     (exp_dir / "run_scripts").mkdir(exist_ok=True)
     now = _utc_now_iso()
     normalized_tags = _normalize_tags(tags)
+    metadata: dict[str, object] = {}
+    if holdout_n_eras is not None:
+        if holdout_n_eras <= 0 or holdout_era_gap < 0:
+            raise ExperimentValidationError(
+                f"experiment_holdout_request_invalid:holdout={holdout_n_eras}:gap={holdout_era_gap}"
+            )
+        metadata[holdout.METADATA_KEY] = holdout.HoldoutSpec(
+            holdout_n_eras=holdout_n_eras, era_gap=holdout_era_gap
+        ).to_metadata()
 
     manifest: dict[str, object] = {
         "schema_version": "1",
@@ -119,7 +137,7 @@ def create_experiment(
         "updated_at": now,
         "champion_run_id": None,
         "runs": [],
-        "metadata": {},
+        "metadata": metadata,
     }
     _save_manifest(manifest_path, manifest)
     _save_run_plan_stub(exp_dir / "run_plan.csv")
@@ -127,6 +145,85 @@ def create_experiment(
     _save_experiment_doc(exp_dir / "EXPERIMENT.md", manifest)
     _index_experiment_manifest(root, manifest)
     return _manifest_to_record(manifest_path, manifest)
+
+
+def get_experiment_holdout(*, store_root: str | Path = ".numereng", experiment_id: str) -> holdout.HoldoutSpec | None:
+    """Return the experiment's holdout spec (requested or frozen), or None when unset."""
+    root = resolve_store_root(store_root)
+    manifest = _load_manifest(_resolved_manifest_path(root, _ensure_safe_id(experiment_id)))
+    return _read_holdout_spec(manifest)
+
+
+def freeze_experiment_holdout(
+    *, store_root: str | Path = ".numereng", experiment_id: str, run_id: str
+) -> holdout.HoldoutSpec | None:
+    """Lazily pin the holdout eras + fingerprint from one trained run's predictions.
+
+    Idempotent: no request -> None; already frozen -> the existing spec; otherwise it
+    reads the run's era order, partitions the chronological suffix, and persists the
+    frozen spec into experiment metadata. Called between train and score so the
+    holdout is invisible to every metric the LLM loop sees.
+    """
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    root = resolve_store_root(store_root)
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
+    manifest = _load_manifest(manifest_path)
+    spec = _read_holdout_spec(manifest)
+    if spec is None or spec.is_frozen:
+        return spec
+
+    predictions_path = _resolve_run_predictions_path(root=root, run_id=run_id)
+    era_order = holdout.read_prediction_era_order(predictions_path)
+    frozen = holdout.build_spec(era_order=era_order, holdout_n_eras=spec.holdout_n_eras, era_gap=spec.era_gap)
+    _persist_holdout_spec(root=root, manifest_path=manifest_path, manifest=manifest, spec=frozen)
+    return frozen
+
+
+def seal_experiment_holdout(*, store_root: str | Path = ".numereng", experiment_id: str) -> holdout.HoldoutSpec:
+    """Flip the frozen holdout to sealed; refuse if unset, unfrozen, or already sealed."""
+    safe_experiment_id = _ensure_safe_id(experiment_id)
+    root = resolve_store_root(store_root)
+    manifest_path = _resolved_manifest_path(root, safe_experiment_id)
+    manifest = _load_manifest(manifest_path)
+    spec = _read_holdout_spec(manifest)
+    if spec is None:
+        raise ExperimentValidationError(f"experiment_holdout_absent:{safe_experiment_id}")
+    sealed = holdout.seal(spec)
+    _persist_holdout_spec(root=root, manifest_path=manifest_path, manifest=manifest, spec=sealed)
+    return sealed
+
+
+def _read_holdout_spec(manifest: dict[str, object]) -> holdout.HoldoutSpec | None:
+    metadata = manifest.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    return holdout.spec_from_metadata(metadata.get(holdout.METADATA_KEY))
+
+
+def _persist_holdout_spec(
+    *, root: Path, manifest_path: Path, manifest: dict[str, object], spec: holdout.HoldoutSpec
+) -> None:
+    metadata = manifest.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata[holdout.METADATA_KEY] = spec.to_metadata()
+    manifest["metadata"] = metadata
+    manifest["updated_at"] = _utc_now_iso()
+    _save_manifest(manifest_path, manifest)
+    _index_experiment_manifest(root, manifest)
+
+
+def _resolve_run_predictions_path(*, root: Path, run_id: str) -> Path:
+    run_dir = root / "runs" / run_id
+    run_manifest = _load_json_mapping(run_dir / "run.json")
+    predictions_rel = _as_mapping(run_manifest.get("artifacts")).get("predictions")
+    if isinstance(predictions_rel, str) and predictions_rel.strip():
+        candidate = (run_dir / predictions_rel).resolve()
+        if candidate.is_file():
+            return candidate
+    parquet_files = sorted((run_dir / "artifacts" / "predictions").glob("*.parquet"))
+    if len(parquet_files) == 1:
+        return parquet_files[0].resolve()
+    raise ExperimentValidationError(f"experiment_holdout_predictions_missing:{run_id}")
 
 
 def list_experiments(

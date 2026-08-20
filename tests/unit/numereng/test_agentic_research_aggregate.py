@@ -12,8 +12,8 @@ import copy
 import json
 from pathlib import Path
 
-from numereng.features.agentic_research import aggregate, context, memory
-from numereng.features.agentic_research import types as ar_types
+from numereng.agentic_research.engine import aggregate, context, memory
+from numereng.agentic_research.engine import types as ar_types
 from numereng.features.experiments import create_experiment, get_experiment
 
 EXPERIMENT_ID = "2026-06-22_aggregate-exp"

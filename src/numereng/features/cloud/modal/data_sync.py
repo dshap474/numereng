@@ -71,7 +71,7 @@ def resolve_required_data_files(
         raise ValueError(str(exc)) from exc
 
     data_config = _as_dict(config.get("data"), field="data")
-    data_version = str(data_config.get("data_version", "v5.2"))
+    data_version = str(data_config.get("data_version", "v5.3"))
     dataset_variant = str(data_config.get("dataset_variant", ""))
     if dataset_variant not in _SUPPORTED_DATASET_VARIANTS:
         raise ValueError("modal_data_sync_dataset_variant_invalid")

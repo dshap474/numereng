@@ -9,6 +9,38 @@ import pandas as pd
 
 from numereng.features.training.errors import TrainingModelError
 
+SUPPORTED_TARGET_TRANSFORMS = frozenset(
+    {
+        "residual_to_benchmark",
+        "residualize_to_benchmark",
+        "subtract_benchmark",
+        "subtract_benchmark_zscore",
+    }
+)
+
+
+def prediction_inversion_kind(transform: dict[str, Any] | str | None) -> str:
+    """Name the prediction-time inversion implied by one fit-time target transform.
+
+    Every supported transform reshapes labels only: `TargetTransformWrapper.predict`
+    is a passthrough and the training pipeline persists raw model output as
+    `prediction`. Mirroring training-time behavior therefore means applying no
+    numeric inversion, so the only supported kind is `identity`. Unknown transforms
+    raise instead of being silently treated as invertible.
+    """
+    if transform is None or transform == {}:
+        return "identity"
+    if isinstance(transform, str):
+        transform = {"type": transform}
+    if not isinstance(transform, dict):
+        raise TrainingModelError("training_target_transform_invalid_type")
+    transform_type = transform.get("type")
+    if transform_type is None:
+        raise TrainingModelError("training_target_transform_missing_type")
+    if str(transform_type) in SUPPORTED_TARGET_TRANSFORMS:
+        return "identity"
+    raise TrainingModelError(f"training_target_transform_unknown:{transform_type}")
+
 
 def apply_target_transform(
     y: pd.Series,
@@ -290,8 +322,12 @@ class TargetTransformWrapper:
         self._model.fit(X, y_transformed, **kwargs)
         return self
 
-    def predict(self, X: pd.DataFrame) -> Any:
-        return self._model.predict(X)
+    def predict(self, X: pd.DataFrame, **kwargs: Any) -> Any:
+        return self._model.predict(X, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
+        # `_model` must never re-enter delegation: unpickling probes dunder hooks
+        # before `__dict__` is restored, and delegating then recurses forever.
+        if name.startswith("_TargetTransformWrapper") or name in {"_model", "_target_transform"}:
+            raise AttributeError(name)
         return getattr(self._model, name)

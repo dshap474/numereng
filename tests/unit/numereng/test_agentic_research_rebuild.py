@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from numereng.features.agentic_research import boundary, context, memory
-from numereng.features.agentic_research import loop as research_module
-from numereng.features.agentic_research.types import (
+from numereng.agentic_research.engine import boundary, context, llm, memory
+from numereng.agentic_research.engine import loop as research_module
+from numereng.agentic_research.engine.types import (
     BUDGET_ROUNDS_METADATA_KEY,
     AgenticResearchDuplicateCandidate,
     AgenticResearchValidationError,
@@ -467,7 +467,23 @@ def test_loop_journal_and_round_markdown_record_config_seed(tmp_path: Path, monk
         for line in (experiment_dir / "agentic_research" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert [entry["seed"] for entry in entries] == [42, 42]
+    # Every completed round carries the benchmark_corr field (None here: no metrics.json on disk).
+    assert all("benchmark_corr" in entry for entry in entries)
     assert "- seed: 42" in (_rounds_dir(experiment_dir) / "r002.md").read_text(encoding="utf-8")
+
+
+def test_run_benchmark_corr_from_disk_reads_bmc_window_avg_corr(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "run-x"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "metrics.json").write_text(
+        json.dumps({"bmc_last_200_eras": {"mean": 0.004, "avg_corr_with_benchmark": 0.61}}),
+        encoding="utf-8",
+    )
+    assert context.run_benchmark_corr_from_disk(root=tmp_path, run_id="run-x") == pytest.approx(0.61)
+    # Missing run and missing key both read as None (older v3-era journals lack the field).
+    assert context.run_benchmark_corr_from_disk(root=tmp_path, run_id="absent") is None
+    (run_dir / "metrics.json").write_text(json.dumps({"bmc_last_200_eras": {"mean": 0.004}}), encoding="utf-8")
+    assert context.run_benchmark_corr_from_disk(root=tmp_path, run_id="run-x") is None
 
 
 def test_loop_champion_advances_only_on_strict_improvement(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -514,3 +530,97 @@ def test_loop_believed_best_defaults_to_champion_when_omitted(tmp_path: Path, mo
     state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
     # Falls back to the current champion's config (run-2 / config_002.json won the round).
     assert state["believed_best"]["config"] == state["champion"]["config"]
+
+
+# ---------------------------------------------------------------------------
+# multi-seed rounds + seed-config pre-validation
+# ---------------------------------------------------------------------------
+
+
+def _mutation_response_with_seeds(*, value: object, seeds: list[int]) -> str:
+    payload = json.loads(_mutation_response(value=value))
+    payload["decision_form"]["seeds"] = seeds
+    return json.dumps(payload)
+
+
+def test_loop_multi_seed_round_is_one_round_with_one_run_per_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    _write_training_config(experiment_dir / "configs" / "seed.json", random_state=42)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    # Round 1 baseline, then a seed-trio round that materializes and trains one child per seed.
+    seams.train_queue = [("run-1", 0.10), ("run-42", 0.12), ("run-17", 0.20), ("run-99", 0.15)]
+    seams.llm_queue = [_mutation_response_with_seeds(value=0.02, seeds=[42, 17, 99])]
+
+    result = research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    # Two decisions -> two rounds, even though the trio round produced three runs.
+    assert [r.round_number for r in result.rounds] == [1, 2]
+    assert [r.action for r in result.rounds] == ["baseline", "run"]
+    state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
+    assert state["next_round_number"] == 3
+    assert state["total_rounds_completed"] == 2
+    # Champion is the best single run across the trio (run-17 @ 0.20), advanced per run as usual.
+    assert state["champion"]["run_id"] == "run-17"
+    entries = [
+        json.loads(line)
+        for line in (experiment_dir / "agentic_research" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    trio = [entry for entry in entries if entry["round"] == 2]
+    assert len(trio) == 3
+    assert sorted(entry["seed"] for entry in trio) == [17, 42, 99]
+    assert sorted(entry["run_id"] for entry in trio) == ["run-17", "run-42", "run-99"]
+    # One round memo, carrying a per-seed results block in the machine section.
+    md = (_rounds_dir(experiment_dir) / "r002.md").read_text(encoding="utf-8")
+    assert "per-seed results" in md
+    assert {"config_002_s42.json", "config_002_s17.json", "config_002_s99.json"} <= _config_files(experiment_dir)
+
+
+def test_loop_single_seed_round_unchanged_without_seeds_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10), ("run-2", 0.15)]
+    seams.llm_queue = [_mutation_response(value=0.02)]
+
+    research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    entries = [
+        json.loads(line)
+        for line in (experiment_dir / "agentic_research" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    # One journal line per round, and the mutation config keeps its plain (un-suffixed) name.
+    assert [entry["round"] for entry in entries] == [1, 2]
+    assert "config_002.json" in _config_files(experiment_dir)
+    assert not any(name.startswith("config_002_s") for name in _config_files(experiment_dir))
+
+
+def test_parse_seeds_rejects_too_many_and_non_int() -> None:
+    payload = json.loads(_mutation_response())
+    payload["decision_form"]["seeds"] = [42, 17, 99, 7]
+    with pytest.raises(AgenticResearchValidationError) as exc:
+        llm.parse_llm_response(json.dumps(payload))
+    assert "agentic_research_seeds_count_invalid" in str(exc.value)
+
+    payload["decision_form"]["seeds"] = [42, "seventeen"]
+    with pytest.raises(AgenticResearchValidationError) as exc_non_int:
+        llm.parse_llm_response(json.dumps(payload))
+    assert "agentic_research_seeds_invalid" in str(exc_non_int.value)
+
+
+def test_run_research_prevalidates_seed_config_and_names_bad_key(tmp_path: Path) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seed_path = experiment_dir / "configs" / "seed.json"
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    # A legacy engine knob the training dispatcher rejects — caught before round 1, not after a bail.
+    payload["training"] = {"engine": {"embargo_eras": 8}}
+    seed_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(AgenticResearchValidationError) as exc:
+        research_module.run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    message = str(exc.value)
+    assert "agentic_research_seed_config_invalid" in message
+    assert "embargo_eras" in message
+    # The bad seed must not have started a session.
+    assert not _state_path(experiment_dir).exists()

@@ -25,12 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from numereng.features.agentic_research import (
+from numereng.agentic_research import (
     AgenticResearchError,
     get_research_status,
     run_research,
 )
-from numereng.features.agentic_research import loop as research_module
+from numereng.agentic_research.engine import loop as research_module
 from numereng.features.experiments import (
     ExperimentReport,
     ExperimentReportRow,

@@ -16,6 +16,37 @@ class _FakeRefreshClient:
     def get_models(self) -> dict[str, str]:
         return {"model_a": "model-1"}
 
+    def list_datasets(self, round_num: int | None = None) -> list[str]:
+        raise AssertionError("live refresh should not list datasets")
+
+    def download_dataset(
+        self,
+        filename: str,
+        *,
+        dest_path: str | None = None,
+        round_num: int | None = None,
+    ) -> str:
+        raise AssertionError("live refresh should not download datasets")
+
+    def upload_predictions(self, *, file_path: str, model_id: str) -> str:
+        raise AssertionError("live refresh should not upload predictions")
+
+    def model_upload(
+        self,
+        *,
+        file_path: str,
+        model_id: str,
+        data_version: str | None = None,
+        docker_image: str | None = None,
+    ) -> str:
+        raise AssertionError("live refresh should not upload models")
+
+    def model_upload_data_versions(self) -> list[str]:
+        raise AssertionError("live refresh should not list data versions")
+
+    def model_upload_docker_images(self) -> list[str]:
+        raise AssertionError("live refresh should not list docker images")
+
     def round_model_performances_v2(self, *, model_id: str) -> list[dict[str, Any]]:
         self.calls.append(model_id)
         return [

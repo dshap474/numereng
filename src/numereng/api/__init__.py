@@ -42,7 +42,7 @@ def _agentic_research_api_module():
 
 
 def _agentic_research_feature_module():
-    return import_module("numereng.features.agentic_research")
+    return import_module("numereng.agentic_research")
 
 
 def research_run(*args, **kwargs):
@@ -53,12 +53,28 @@ def research_status(*args, **kwargs):
     return _agentic_research_api_module().research_status(*args, **kwargs)
 
 
+def research_closeout(*args, **kwargs):
+    return _agentic_research_api_module().research_closeout(*args, **kwargs)
+
+
+def research_closeout_status(*args, **kwargs):
+    return _agentic_research_api_module().research_closeout_status(*args, **kwargs)
+
+
 def get_research_status(*args, **kwargs):
     return _agentic_research_feature_module().get_research_status(*args, **kwargs)
 
 
 def run_research(*args, **kwargs):
     return _agentic_research_feature_module().run_research(*args, **kwargs)
+
+
+def run_closeout(*args, **kwargs):
+    return _agentic_research_feature_module().run_closeout(*args, **kwargs)
+
+
+def get_closeout_status(*args, **kwargs):
+    return _agentic_research_feature_module().get_closeout_status(*args, **kwargs)
 
 
 __all__ = list(

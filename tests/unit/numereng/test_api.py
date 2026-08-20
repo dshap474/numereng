@@ -10,6 +10,12 @@ from pydantic import ValidationError
 
 import numereng.api as api_module
 from numereng import __version__
+from numereng.agentic_research import (
+    ResearchBestRun,
+    ResearchRoundResult,
+    ResearchRunResult,
+    ResearchStatusResult,
+)
 from numereng.api import (
     AwsImageBuildPushRequest,
     AwsTrainCancelRequest,
@@ -133,12 +139,6 @@ from numereng.api import (
     store_repair_run_lifecycles,
     submit_predictions,
     sync_docs,
-)
-from numereng.features.agentic_research import (
-    ResearchBestRun,
-    ResearchRoundResult,
-    ResearchRunResult,
-    ResearchStatusResult,
 )
 from numereng.features.cloud.aws import CloudAwsError, CloudEc2Error
 from numereng.features.cloud.modal import CloudModalError
@@ -1721,6 +1721,8 @@ def test_experiment_create_success(monkeypatch: pytest.MonkeyPatch) -> None:
         name: str | None,
         hypothesis: str | None,
         tags: list[str] | None,
+        holdout_n_eras: int | None = None,
+        holdout_era_gap: int = 0,
     ) -> ExperimentRecord:
         assert store_root == ".numereng"
         assert experiment_id == "2026-02-22_test-exp"

@@ -102,8 +102,10 @@ def _normalized_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     if uploads:
         return uploads
 
-    hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
-    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    hosted_raw = metadata.get("hosted_pickle")
+    hosted: dict[str, Any] = hosted_raw if isinstance(hosted_raw, dict) else {}
+    source_raw = metadata.get("source")
+    source: dict[str, Any] = source_raw if isinstance(source_raw, dict) else {}
     upload_id = hosted.get("upload_id")
     if not isinstance(upload_id, str) or not upload_id.strip():
         return []

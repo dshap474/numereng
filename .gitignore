@@ -11,8 +11,9 @@ AGENTS.local.md
 CLAUDE.local.md
 src/numereng/features/models/custom_models/*
 !src/numereng/features/models/custom_models/template_model.py
-src/numereng/features/agentic_research/custom_programs/*
-!src/numereng/features/agentic_research/custom_programs/README.md
+src/numereng/agentic_research/programs/*
+!src/numereng/agentic_research/programs/README.md
+!src/numereng/agentic_research/programs/PROGRAM.md
 
 
 # Data directories (downloaded and generated files)
@@ -80,6 +81,7 @@ docs/numerai/forum/
 
 # Local viz runtime files
 viz/*.pid
+viz/ports.env
 
 # Public export output
 dist-public/
@@ -90,6 +92,8 @@ dev/
 !dev/hygiene/
 !dev/hygiene/*.json
 .codex/rules/
+.claude/
+/__RESEARCH_MEMORY__
 
 # Tracked README screenshots
 !docs/assets/screenshot-dashboard-hero.png
@@ -102,3 +106,7 @@ dev/
 !.github/ISSUE_TEMPLATE/
 !.github/ISSUE_TEMPLATE/*.md
 .omx/
+
+# Private overlay repo and its helper (local-only Numerai work; see .private/README.md)
+.git-private/
+.private/

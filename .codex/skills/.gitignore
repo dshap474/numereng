@@ -8,22 +8,22 @@
 # Shared OSS skills.
 !experiment-design/
 !experiment-design/**
-!numereng-experiment-ops/
-!numereng-experiment-ops/**
+!experiment-ops/
+!experiment-ops/**
 !numerai-api-ops/
 !numerai-api-ops/**
-!implement-custom-model/
-!implement-custom-model/**
-!store-ops/
-!store-ops/**
+!model-implement-custom/
+!model-implement-custom/**
+!utility-store-ops/
+!utility-store-ops/**
 
 
 # Keep Python cache artifacts in allowlisted skills local-only.
 numerai-api-ops/**/__pycache__/
 numerai-api-ops/**/*.py[cod]
-implement-custom-model/**/__pycache__/
-implement-custom-model/**/*.py[cod]
-numereng-experiment-ops/**/__pycache__/
-numereng-experiment-ops/**/*.py[cod]
-store-ops/**/__pycache__/
-store-ops/**/*.py[cod]
+model-implement-custom/**/__pycache__/
+model-implement-custom/**/*.py[cod]
+experiment-ops/**/__pycache__/
+experiment-ops/**/*.py[cod]
+utility-store-ops/**/__pycache__/
+utility-store-ops/**/*.py[cod]

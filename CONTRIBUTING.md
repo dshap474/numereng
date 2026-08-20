@@ -8,7 +8,7 @@ This file is contributor-facing. End users now clone the repo and work directly 
 
 - Python 3.12+
 - `uv`
-- Node.js 20+ (only needed for `just viz`)
+- Node.js 20+ (only needed for `just dev`)
 
 ## Setup
 

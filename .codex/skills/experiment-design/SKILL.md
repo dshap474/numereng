@@ -9,10 +9,10 @@ Use this workflow to plan, run, and report numereng experiments for any model id
 
 Note: run commands from `<workspace>` with `numereng ...`.
 
-Use `numereng-experiment-ops` for numereng-specific experiment layout, config templates, schema
-questions, `EXPERIMENT.md` formatting, and run artifact expectations. Use `store-ops` for drift,
-reindex, reset, or cleanup. Use `implement-custom-model` when the model type is new. Use
-`numereng-experiment-ops` after a champion is finalized and submission handoff is needed.
+Use `experiment-ops` for numereng-specific experiment layout, config templates, schema
+questions, `EXPERIMENT.md` formatting, and run artifact expectations. Use `utility-store-ops` for drift,
+reindex, reset, or cleanup. Use `model-implement-custom` when the model type is new. Use
+`experiment-ops` after a champion is finalized and submission handoff is needed.
 
 ## Use when
 - the user wants experiment strategy, round design, scout-to-scale decisions, plateau logic, or
@@ -22,10 +22,10 @@ reindex, reset, or cleanup. Use `implement-custom-model` when the model type is 
 
 ## Do not use when
 - the user needs experiment folder, manifest, schema, or template rules; use
-  `numereng-experiment-ops`
-- the user needs drift diagnosis, reindex, reset, or cleanup; use `store-ops`
-- the user needs a new custom model type implemented; use `implement-custom-model`
-- the user needs the concrete numereng submission handoff after champion selection; use `numereng-experiment-ops`
+  `experiment-ops`
+- the user needs drift diagnosis, reindex, reset, or cleanup; use `utility-store-ops`
+- the user needs a new custom model type implemented; use `model-implement-custom`
+- the user needs the concrete numereng submission handoff after champion selection; use `experiment-ops`
 
 ## Persistence expectation (required)
 
@@ -59,7 +59,7 @@ If the user's request is unclear or underspecified:
 
 ## Workflow
 Core loop (repeat for each experiment round):
-1. If the model type is new, implement it with the `implement-custom-model` skill.
+1. If the model type is new, implement it with the `model-implement-custom` skill.
 2. Create or update **4-5 configs** for the current round:
    - one base
    - single-variable variants
@@ -76,7 +76,7 @@ Core loop (repeat for each experiment round):
 
 ## Scout -> Scale
 1. **Use lower-cost scouts first**: Prefer the scout-friendly dataset variant and capacity choices
-   defined by `numereng-experiment-ops` to save time and compute while exploring.
+   defined by `experiment-ops` to save time and compute while exploring.
 2. **Pick the sweep dimension that matches the core idea**: Run a focused sweep only when it
    serves the research question; otherwise run a single experiment config and evaluate.
 3. **Iterate until improvements stop**: Keep sweeping on that dimension while a round produces a
@@ -134,7 +134,7 @@ question of whether this idea can produce a model with high BMC.
   - `run_plan.csv` only when ordering a planned sweep
 - Include a **baseline row** in result tables for comparisons.
 - Name configs to reflect the single variable change.
-- Use `numereng-experiment-ops` for the exact path, template, and manifest contract.
+- Use `experiment-ops` for the exact path, template, and manifest contract.
 
 ## Reporting expectations
 - Run experiments in **rounds** and wait for the round to finish so you do not report prematurely.
@@ -151,7 +151,7 @@ question of whether this idea can produce a model with high BMC.
   experiments.
 
 ## Dataset handling
-- Prefer the scout-friendly dataset variant and contract defaults from `numereng-experiment-ops`
+- Prefer the scout-friendly dataset variant and contract defaults from `experiment-ops`
   for quick iteration.
 - Only scale dataset scope or feature scope after a clear signal from earlier rounds.
 - If you override the default dataset variant for cost or debugging reasons, record the reason in
@@ -166,13 +166,13 @@ question of whether this idea can produce a model with high BMC.
 
 ## Deployment (after experiments complete)
 Once you have finalized your best model and have a submission-ready run artifact or predictions
-source using the `numereng-experiment-ops` skill:
+source using the `experiment-ops` skill:
 
 1. **Offer deployment**: Ask the user if they want to submit the champion through numereng.
 2. **Deployment options**:
    - submit from a live-eligible winning run artifact
    - submit from an explicit predictions file
-3. **Follow the `numereng-experiment-ops` skill** for the final refit and submission workflow.
+3. **Follow the `experiment-ops` skill** for the final refit and submission workflow.
 
 This allows the full research-to-submission workflow to happen in a single session.
 

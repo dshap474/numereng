@@ -162,6 +162,18 @@ class FoldJoinColumn:
     column: str
 
 
+@dataclass(frozen=True)
+class BaselineAttachment:
+    """Training frame with the configured baseline column joined on, plus resolved provenance."""
+
+    frame: pd.DataFrame
+    baseline: pd.DataFrame
+    baseline_col: str
+    baseline_name: str
+    baseline_predictions_path: str
+    baseline_pred_col: str
+
+
 def build_model_data_loader(
     *,
     full: pd.DataFrame,

@@ -71,8 +71,40 @@ class ResearchRunResponse(BaseModel):
     interrupted: bool = False
 
 
+class ResearchCloseoutRequest(WorkspaceBoundRequest):
+    experiment_id: str
+    until: str | None = None
+    restart_from: str | None = None
+    memory_root: str | None = None
+    accept_stale_running: bool = False
+    allow_incomplete: bool = False
+
+
+class ResearchCloseoutStatusRequest(WorkspaceBoundRequest):
+    experiment_id: str
+
+
+class ResearchCloseoutPhaseResponse(BaseModel):
+    name: str
+    status: str
+    notes: str | None = None
+    duration_seconds: float | None = None
+    outputs: dict[str, str] = Field(default_factory=dict)
+
+
+class ResearchCloseoutResponse(BaseModel):
+    experiment_id: str
+    phases: list[ResearchCloseoutPhaseResponse] = Field(default_factory=list)
+    stopped_at_phase: str | None = None
+    error: str | None = None
+
+
 __all__ = [
     "ResearchBestRunResponse",
+    "ResearchCloseoutPhaseResponse",
+    "ResearchCloseoutRequest",
+    "ResearchCloseoutResponse",
+    "ResearchCloseoutStatusRequest",
     "ResearchRoundResponse",
     "ResearchRunRequest",
     "ResearchRunResponse",

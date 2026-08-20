@@ -1,0 +1,6 @@
+# Local yt-dlp caption and metadata cache.
+raw/
+# Local-only rendered episode transcripts (not redistributed).
+episodes/
+# Local-only rendered shorts transcripts (not redistributed).
+shorts/

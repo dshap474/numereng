@@ -25,12 +25,25 @@ DEFAULT_ACTIVE_BENCHMARK_DIR = DEFAULT_BASELINES_DIR / "active_benchmark"
 DEFAULT_ACTIVE_BENCHMARK_PREDICTIONS = DEFAULT_ACTIVE_BENCHMARK_DIR / "predictions.parquet"
 DEFAULT_ACTIVE_BENCHMARK_METADATA = DEFAULT_ACTIVE_BENCHMARK_DIR / "benchmark.json"
 DEFAULT_BENCHMARK_MODEL = "v52_lgbm_ender20"
+_DEFAULT_BENCHMARK_MODEL_BASENAME = "lgbm_ender20"
 DEFAULT_DATASET_VARIANT = "non_downsampled"
 _SUPPORTED_DATASET_VARIANTS = {"non_downsampled", "downsampled"}
 _DOWNSAMPLED_VARIANT_FILENAME_MAP: dict[str, str] = {
     "full.parquet": "downsampled_full.parquet",
     "full_benchmark_models.parquet": "downsampled_full_benchmark_models.parquet",
 }
+
+
+def default_benchmark_model(data_version: str) -> str:
+    """Version-tagged default benchmark model (`v5.3` -> `v53_lgbm_ender20`).
+
+    Numerai prefixes each benchmark parquet's model columns with that dataset's version tag, so
+    the default column name must follow the data version instead of staying pinned to one release.
+    """
+    digits = "".join(ch for ch in data_version if ch.isdigit())
+    if not digits:
+        return DEFAULT_BENCHMARK_MODEL
+    return f"v{digits}_{_DEFAULT_BENCHMARK_MODEL_BASENAME}"
 
 
 def load_config(config_path: Path) -> dict[str, object]:
@@ -625,8 +638,10 @@ def _read_full_data_source(
         else:
             frame = _read_parquet(path, columns=[era_col, target_col] + feature_cols)
 
-        if id_col and id_col not in frame.columns:
-            frame[id_col] = frame.index
+    # Upstream Numerai parquets persist `id` as the pandas index, so a projected
+    # read can succeed while leaving `id` out of the columns; restore it either way.
+    if id_col and id_col not in frame.columns:
+        frame[id_col] = frame.index
 
     return frame
 

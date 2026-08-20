@@ -14,6 +14,7 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 
+from numereng.features.holdout import EraFilter
 from numereng.features.scoring._fastops import (
     correlation_contribution_matrix,
     cwmm_matrix_vs_reference,
@@ -36,6 +37,7 @@ from numereng.features.training.repo import (
     DEFAULT_BENCHMARK_MODEL,
     DEFAULT_DATASET_VARIANT,
     DEFAULT_DATASETS_DIR,
+    default_benchmark_model,
     load_features,
     load_fold_data_lazy,
     resolve_data_path,
@@ -834,6 +836,7 @@ def build_scoring_artifact_bundle(
     data_root: Path = DEFAULT_DATASETS_DIR,
     requested_stage: CanonicalScoringStage = "all",
     scoring_policy: ResolvedScoringPolicy | None = None,
+    era_filter: EraFilter | None = None,
 ) -> tuple[ScoringArtifactBundle, dict[str, object]]:
     """Build all canonical per-era, cumulative, and staged scoring artifact frames."""
 
@@ -848,6 +851,8 @@ def build_scoring_artifact_bundle(
     )
 
     predictions = _read_table(Path(predictions_path).expanduser().resolve())
+    if era_filter is not None:
+        predictions = era_filter.apply(predictions, era_col=era_col)
     prediction_target_cols = [col for col in resolved_scoring_targets if col in predictions.columns]
     prepared = _prepare_predictions_for_scoring(
         predictions,
@@ -1570,6 +1575,8 @@ def load_benchmark_predictions(
     data_root: Path = DEFAULT_DATASETS_DIR,
 ) -> tuple[pd.DataFrame, str]:
     """Load benchmark predictions for one split."""
+    if benchmark_model == DEFAULT_BENCHMARK_MODEL:
+        benchmark_model = default_benchmark_model(data_version)
     dataset_path = resolve_benchmark_predictions_path(
         client,
         data_version,
@@ -2387,8 +2394,11 @@ def _summarize_prediction_file_with_scores_materialized(
     data_root: Path = DEFAULT_DATASETS_DIR,
     include_feature_neutral_metrics: bool = True,
     scoring_policy: ResolvedScoringPolicy | None = None,
+    era_filter: EraFilter | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
     """Summarize prediction metrics and build per-run scoring provenance."""
+    if benchmark_model == DEFAULT_BENCHMARK_MODEL:
+        benchmark_model = default_benchmark_model(data_version)
     resolved_pred_cols = [str(col) for col in _as_list(pred_cols)]
     requested_scoring_targets = _normalize_requested_scoring_targets(scoring_target_cols)
     resolved_scoring_targets, optional_scoring_targets = _resolve_scoring_targets(
@@ -2398,6 +2408,8 @@ def _summarize_prediction_file_with_scores_materialized(
 
     predictions_path_resolved = Path(predictions_path).expanduser().resolve()
     prediction_frame = _read_table(predictions_path_resolved)
+    if era_filter is not None:
+        prediction_frame = era_filter.apply(prediction_frame, era_col=era_col)
     prediction_target_cols = [col for col in resolved_scoring_targets if col in prediction_frame.columns]
     predictions = _prepare_predictions_for_scoring(
         prediction_frame,
@@ -2916,6 +2928,7 @@ def score_prediction_file_with_details(
     data_root: Path = DEFAULT_DATASETS_DIR,
     include_feature_neutral_metrics: bool = True,
     scoring_policy: ResolvedScoringPolicy | None = None,
+    era_filter: EraFilter | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object], dict[str, pd.DataFrame]]:
     """Summarize prediction metrics and return canonical per-era metric frames."""
     return _summarize_prediction_file_with_scores_materialized(
@@ -2941,6 +2954,7 @@ def score_prediction_file_with_details(
         data_root=data_root,
         include_feature_neutral_metrics=include_feature_neutral_metrics,
         scoring_policy=_resolve_scoring_policy(scoring_policy),
+        era_filter=era_filter,
     )
 
 

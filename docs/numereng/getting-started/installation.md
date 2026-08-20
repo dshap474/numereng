@@ -54,7 +54,7 @@ This populates `docs/numerai/` in the current checkout.
 ## Launch The Dashboard
 
 ```bash
-just viz
+just dev
 ```
 
 This starts:

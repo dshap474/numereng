@@ -22,7 +22,7 @@ Use this skill when the task is to:
 ## Do Not Use When
 
 - Do not use this skill for numereng training, experiments, experiment design, or store maintenance workflows.
-- Do not use this skill for numereng-specific experiment winner handoff or predictions submission through the package surface; use `numereng-experiment-ops`.
+- Do not use this skill for numereng-specific experiment winner handoff or predictions submission through the package surface; use `experiment-ops`.
 - Do not use this skill for general Numerai research, community review, or documentation synthesis that is not an operational API task.
 
 ## Scope

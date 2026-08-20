@@ -26,6 +26,15 @@ def _parse_post_training_scoring(value: str) -> tuple[str | None, str | None]:
     return value, None
 
 
+def _parse_optional_int(value: str | None, flag: str) -> tuple[int | None, str | None]:
+    if value is None:
+        return None, None
+    try:
+        return int(value), None
+    except ValueError:
+        return None, f"invalid integer for {flag}: {value}"
+
+
 def _parse_experiment_output_format(value: str) -> tuple[str | None, str | None]:
     if value not in {"table", "json"}:
         return None, "invalid value for --format: expected table|json"
@@ -116,7 +125,15 @@ def handle_experiment_command(args: Sequence[str]) -> int:
     if args[0] == "create":
         values, toggles, parse_error = _parse_simple_options(
             args[1:],
-            value_flags={"--id", "--name", "--hypothesis", "--tags", "--workspace"},
+            value_flags={
+                "--id",
+                "--name",
+                "--hypothesis",
+                "--tags",
+                "--workspace",
+                "--holdout-n-eras",
+                "--holdout-era-gap",
+            },
         )
         if parse_error == "__help__":
             print(USAGE)
@@ -131,6 +148,16 @@ def handle_experiment_command(args: Sequence[str]) -> int:
             print(USAGE, file=sys.stderr)
             return 2
         tags = [item.strip() for item in values.get("--tags", "").split(",") if item.strip()]
+        holdout_n_eras, holdout_error = _parse_optional_int(values.get("--holdout-n-eras"), "--holdout-n-eras")
+        if holdout_error is not None:
+            print(holdout_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+        holdout_era_gap, gap_error = _parse_optional_int(values.get("--holdout-era-gap"), "--holdout-era-gap")
+        if gap_error is not None:
+            print(gap_error, file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
         try:
             create_payload = api.experiment_create(
                 api.ExperimentCreateRequest(
@@ -138,6 +165,8 @@ def handle_experiment_command(args: Sequence[str]) -> int:
                     name=values.get("--name"),
                     hypothesis=values.get("--hypothesis"),
                     tags=tags,
+                    holdout_n_eras=holdout_n_eras,
+                    holdout_era_gap=holdout_era_gap if holdout_era_gap is not None else 0,
                     workspace_root=values.get("--workspace", "."),
                 )
             )

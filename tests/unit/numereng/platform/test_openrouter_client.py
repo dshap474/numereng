@@ -85,6 +85,25 @@ def test_load_openrouter_config_reads_active_source_and_model(
     assert active_model_source() == "codex-exec"
 
 
+def test_load_openrouter_config_accepts_droid_exec_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "active-model.py"
+    config_path.write_text(
+        'ACTIVE_MODEL_SOURCE = "droid-exec"\nACTIVE_MODEL = "claude-fable-5"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(openrouter_module, "_ACTIVE_MODEL_PATH", config_path)
+
+    assert load_openrouter_config() == OpenRouterConfig(
+        active_model_source="droid-exec",
+        active_model="claude-fable-5",
+        active_model_reasoning_effort=None,
+    )
+    assert active_model_source() == "droid-exec"
+
+
 def test_openrouter_client_list_models_uses_env_key_and_query_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

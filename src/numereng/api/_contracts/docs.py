@@ -10,7 +10,7 @@ from numereng.api._contracts.shared import WorkspaceBoundRequest
 
 
 class DatasetToolsBuildDownsampleRequest(BaseModel):
-    data_version: str = "v5.2"
+    data_version: str = "v5.3"
     data_dir: str = ".numereng/datasets"
     rebuild: bool = False
     downsample_eras_step: int = 4

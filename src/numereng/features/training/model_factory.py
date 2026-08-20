@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from numereng.config.settings import load_settings
@@ -14,6 +15,8 @@ from numereng.features.models.lgbm import LGBMRegressor
 from numereng.features.models.xgboost import XGBoostRegressor
 from numereng.features.training.errors import TrainingModelError
 from numereng.features.training.target_transforms import TargetTransformWrapper
+
+CUSTOM_MODULE_PREFIX = "numereng_custom_"
 
 _BUILTIN_MODELS = {
     "LGBMRegressor": LGBMRegressor,
@@ -27,9 +30,24 @@ def _resolve_custom_models_root() -> Path:
     return (Path(__file__).resolve().parents[1] / "models" / "custom_models").resolve()
 
 
-def _load_model_registry(module_path: Path) -> dict[str, Any]:
-    """Load a module and return its MODEL_REGISTRY mapping."""
-    module_name = "numereng_custom_" + hashlib.md5(str(module_path.resolve()).encode("utf-8")).hexdigest()[:12]
+def custom_module_name(module_path: Path) -> str:
+    """Name the synthetic `sys.modules` entry one plugin file is imported under.
+
+    The name is derived from the absolute path, so it is machine-specific and only
+    exists inside a process that actually imported the plugin. Anything that reloads
+    a pickled custom model in a fresh process must rebind that name itself.
+    """
+
+    return CUSTOM_MODULE_PREFIX + hashlib.md5(str(module_path.resolve()).encode("utf-8")).hexdigest()[:12]
+
+
+def import_custom_model_module(module_path: Path) -> ModuleType:
+    """Import one plugin file under its synthetic module name and register it."""
+
+    module_name = custom_module_name(module_path)
+    cached = sys.modules.get(module_name)
+    if cached is not None:
+        return cached
 
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
@@ -40,15 +58,49 @@ def _load_model_registry(module_path: Path) -> dict[str, Any]:
     try:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001
+        sys.modules.pop(module_name, None)
         message = str(exc)
         if message.startswith("training_model_"):
             raise TrainingModelError(message) from exc
         raise TrainingModelError(f"training_model_custom_module_load_failed:{module_path}") from exc
+    return module
 
+
+def iter_custom_model_modules() -> list[ModuleType]:
+    """Import every discoverable plugin module, skipping ones that fail to import.
+
+    Discovery is best-effort on purpose: a plugin whose optional backend is missing
+    must not block callers that only need a different plugin's class.
+    """
+
+    modules: list[ModuleType] = []
+    for module_file in _iter_module_paths(None):
+        try:
+            modules.append(import_custom_model_module(module_file))
+        except TrainingModelError:
+            continue
+    return modules
+
+
+def _load_model_registry(module_path: Path) -> dict[str, Any]:
+    """Load a module and return its MODEL_REGISTRY mapping."""
+    module = import_custom_model_module(module_path)
     registry = getattr(module, "MODEL_REGISTRY", None)
     if not isinstance(registry, dict):
         raise TrainingModelError(f"training_model_registry_missing_or_invalid:{module_path}")
     return registry
+
+
+def _is_discovery_test_module(path: Path, workspace_root: Path) -> bool:
+    """Return True for pytest modules that discovery must not import as plugins."""
+    if path.name.startswith("test_") or path.name.endswith("_test.py"):
+        return True
+
+    try:
+        relative = path.relative_to(workspace_root)
+    except ValueError:
+        return False
+    return "tests" in relative.parts[:-1]
 
 
 def _iter_module_paths(module_path: str | None) -> list[Path]:
@@ -61,6 +113,8 @@ def _iter_module_paths(module_path: str | None) -> list[Path]:
             return module_paths
         for path in workspace_root.rglob("*.py"):
             if path.name == "__init__.py":
+                continue
+            if _is_discovery_test_module(path, workspace_root):
                 continue
             resolved = path.resolve()
             if resolved in seen:

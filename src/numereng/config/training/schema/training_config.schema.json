@@ -428,19 +428,6 @@
       "additionalProperties": false,
       "description": "Training profile settings.",
       "properties": {
-        "embargo_eras": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Embargo Eras"
-        },
         "mode": {
           "anyOf": [
             {
@@ -474,19 +461,6 @@
           ],
           "default": null,
           "title": "Profile"
-        },
-        "window_size_eras": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Window Size Eras"
         }
       },
       "title": "TrainingEngineConfig",

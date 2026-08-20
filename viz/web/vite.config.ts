@@ -6,7 +6,7 @@ export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
 	server: {
 		proxy: {
-			'/api': 'http://127.0.0.1:8502'
+			'/api': `http://127.0.0.1:${process.env.VIZ_API_PORT ?? '8502'}`
 		}
 	}
 });

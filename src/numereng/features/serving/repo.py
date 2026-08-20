@@ -199,7 +199,7 @@ def load_package(*, workspace_root: str | Path, experiment_id: str, package_id: 
         package_id=str(payload["package_id"]),
         experiment_id=str(payload["experiment_id"]),
         tournament=str(payload.get("tournament", "classic")),
-        data_version=str(payload.get("data_version", "v5.2")),
+        data_version=str(payload.get("data_version", "v5.3")),
         package_path=manifest_path.parent.resolve(),
         status=str(payload.get("status", "created")),
         components=components,

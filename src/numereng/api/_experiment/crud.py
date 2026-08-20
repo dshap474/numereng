@@ -47,6 +47,8 @@ def experiment_create(request: ExperimentCreateRequest) -> ExperimentResponse:
             name=request.name,
             hypothesis=request.hypothesis,
             tags=request.tags,
+            holdout_n_eras=request.holdout_n_eras,
+            holdout_era_gap=request.holdout_era_gap,
         )
     except (ExperimentAlreadyExistsError, ExperimentValidationError, ExperimentError) as exc:
         raise PackageError(str(exc)) from exc

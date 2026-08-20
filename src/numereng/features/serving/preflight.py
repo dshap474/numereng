@@ -10,6 +10,7 @@ from numereng.features.serving.contracts import (
     ServingInspectionResult,
     SubmissionPackageRecord,
 )
+from numereng.features.serving.hosted import hosted_component_blockers
 from numereng.features.serving.repo import source_config_path, utc_now_iso
 from numereng.features.serving.runtime import (
     ServingUnsupportedConfigError,
@@ -63,11 +64,16 @@ def inspect_submission_package(
                 if find_spec("cloudpickle") is None:
                     model_blockers.append("serving_model_upload_dependency_missing:cloudpickle")
                 if not loaded_artifact.model_upload_compatible:
-                    model_blockers.append("serving_model_upload_artifact_declared_local_only")
-                if loaded_artifact.uses_custom_module:
-                    model_blockers.append("serving_model_upload_custom_modules_not_supported")
-                if loaded_artifact.component.baseline_predictions_path is not None:
-                    model_blockers.append("serving_model_upload_baseline_inputs_not_supported")
+                    # The manifest flag is stale by construction: training writes it
+                    # once, before hosted support existed, and never revisits it.
+                    # Capability is decided from the loaded artifact instead.
+                    component_warnings.append("serving_model_upload_artifact_flag_superseded")
+                model_blockers.extend(
+                    hosted_component_blockers(
+                        component=loaded_artifact.component,
+                        data_version=package.data_version,
+                    )
+                )
                 if package.data_version != loaded_artifact.data_version:
                     component_warnings.append("serving_package_component_data_version_mismatch")
 
@@ -127,10 +133,9 @@ def inspect_submission_package(
             model_blockers.append("serving_component_dependency_missing:lightgbm")
         if find_spec("cloudpickle") is None:
             model_blockers.append("serving_model_upload_dependency_missing:cloudpickle")
-        if plan.baseline_predictions_path is not None:
-            model_blockers.append("serving_model_upload_baseline_inputs_not_supported")
-        if plan.uses_custom_module:
-            model_blockers.append("serving_model_upload_custom_modules_not_supported")
+        # Hosted capability is a property of the fitted artifact, not of the config, so
+        # this config-only branch adds no upload verdict beyond the artifact blocker
+        # below; it can never reach `model_upload_compatible` without `artifact_ready`.
         if plan.data_key.data_version != package.data_version:
             component_warnings.append("serving_package_component_data_version_mismatch")
         if artifact_backed:

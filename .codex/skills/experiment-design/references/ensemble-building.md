@@ -52,7 +52,7 @@ numereng experiment report --id <id> --metric bmc_last_200_eras.mean --limit 20 
 ```
 
 2. Build a candidate worksheet using:
-- `../numereng-experiment-ops/assets/weights-template.csv`
+- `../experiment-ops/assets/weights-template.csv`
 
 3. Build a blend with the CLI:
 
@@ -114,7 +114,7 @@ Use the run closest to the production blend inputs or the strongest standalone f
 
 - `ensemble list` / `ensemble details` show the saved blend and artifacts path.
 - Expected artifact files exist under the reported `artifacts_path`.
-- `../numereng-experiment-ops/assets/weights-template.csv` is filled with rank, weight, and rationale.
+- `../experiment-ops/assets/weights-template.csv` is filled with rank, weight, and rationale.
 - `EXPERIMENT.md` documents candidate selection and final blend logic.
 - Submission source (`--predictions`) is explicit when using external blends.
 - `EXPERIMENT.md` includes why added complexity (optimized weights/heavy diagnostics/neutralization) was justified.

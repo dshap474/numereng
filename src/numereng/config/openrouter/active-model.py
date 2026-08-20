@@ -1,6 +1,6 @@
 """
 Set ACTIVE_MODEL_SOURCE to one of:
-ACTIVE_MODEL_SOURCE=codex-exec|openrouter
+ACTIVE_MODEL_SOURCE=codex-exec|openrouter|droid-exec
 """
 
 ACTIVE_MODEL_SOURCE = "codex-exec"

@@ -19,11 +19,17 @@ from numereng.features.serving.contracts import (
     LiveSubmitResult,
     ModelUploadResult,
     PickleBuildResult,
+    ServingBaselineSource,
     ServingBlendRule,
     ServingComponentSpec,
     ServingInspectionResult,
     ServingNeutralizationSpec,
     SubmissionPackageRecord,
+)
+from numereng.features.serving.hosted import (
+    HostedPickleBuild,
+    build_pickled_predictor,
+    resolve_live_benchmark_column,
 )
 from numereng.features.serving.preflight import inspect_submission_package, inspection_payload
 from numereng.features.serving.repo import (
@@ -46,9 +52,9 @@ from numereng.features.serving.runtime import (
     ServingRuntimeError,
     ServingUnsupportedConfigError,
     blend_component_predictions,
-    build_pickled_predictor,
     fit_component,
     load_run_backed_component,
+    predict_component_historical,
     predict_component_live,
     prediction_member_from_fitted,
     prepare_component_plan,
@@ -62,6 +68,8 @@ from numereng.platform.numerai_client import NumeraiClient
 
 NumeraiTournament = Literal["classic"]
 _DEFAULT_MODEL_UPLOAD_DOCKER_IMAGE = "Python 3.12"
+# The one artifact-load outcome that is not a failure: nothing was ever persisted.
+_ARTIFACT_MISSING_CODE = "serving_model_artifact_missing"
 
 _LIVE_DATASET_PATTERN = re.compile(r"^v(?P<major>\d+)(?:\.(?P<minor>\d+))?(?:\.(?P<patch>\d+))?/live\.parquet$")
 _LIVE_BENCHMARK_PATTERN = re.compile(
@@ -119,7 +127,7 @@ def create_submission_package(
     experiment_id: str,
     package_id: str,
     components: tuple[ServingComponentSpec, ...],
-    data_version: str = "v5.2",
+    data_version: str = "v5.3",
     tournament: NumeraiTournament = "classic",
     blend_rule: ServingBlendRule | None = None,
     neutralization: ServingNeutralizationSpec | None = None,
@@ -137,7 +145,7 @@ def create_submission_package(
         package_id=safe_package_id,
         experiment_id=safe_experiment_id,
         tournament=tournament,
-        data_version=data_version.strip() or "v5.2",
+        data_version=data_version.strip() or "v5.3",
         package_path=package_dir(
             workspace_root=workspace_root, experiment_id=safe_experiment_id, package_id=safe_package_id
         ),
@@ -207,11 +215,13 @@ def build_live_submission_package(
                 destination=datasets_dir / "live_benchmark_models.parquet",
             )
         live_features = pd.read_parquet(live_path)
+        live_benchmark_models = None if benchmark_path is None else pd.read_parquet(benchmark_path)
         component_predictions = _fit_and_predict_package(
             workspace_root=workspace_root,
             client=numerai_client,
             package=package,
             live_features=live_features,
+            live_benchmark_models=live_benchmark_models,
         )
         live_dir = package.package_path / "artifacts" / "live" / _round_token(current_round)
         component_paths = write_component_predictions(
@@ -320,15 +330,18 @@ def build_submission_pickle(
     _ = client
     try:
         fitted_components = _load_pickle_compatible_components(workspace_root=workspace_root, package=package)
-        pickle_path = build_pickled_predictor(
+        build = build_pickled_predictor(
             fitted_components=fitted_components,
             blend_rule=package.blend_rule,
             neutralization=package.neutralization,
             pickle_path=package.package_path / "artifacts" / "pickle" / "model.pkl",
+            data_version=package.data_version,
         )
+        pickle_path = build.pickle_path
         smoke_details = _verify_isolated_pickle_runtime(
             pickle_path=pickle_path,
             fitted_components=fitted_components,
+            build=build,
             docker_image=resolved_docker_image,
             working_dir=package.package_path / "artifacts" / "pickle",
         )
@@ -339,9 +352,11 @@ def build_submission_pickle(
                 "pickle_path": str(pickle_path),
                 "pickle_size_bytes": str(pickle_path.stat().st_size),
                 "pickle_component_count": str(len(fitted_components)),
-                "pickle_uses_baseline_inputs": str(
-                    any(item.baseline_predictions_path is not None for item in fitted_components)
-                ).lower(),
+                "pickle_uses_baseline_inputs": str(build.uses_baseline_inputs).lower(),
+                "pickle_benchmark_model_cols": json.dumps(dict(build.benchmark_model_cols), sort_keys=True),
+                "pickle_serialization_kinds": ",".join(build.serialization_kinds),
+                "pickle_python_requirements": json.dumps(list(build.python_requirements)),
+                "pickle_drift_risks": json.dumps(list(build.drift_risks)),
                 "pickle_runtime_docker_image": resolved_docker_image,
                 "pickle_smoke_verified": "true",
                 "pickle_smoke_checked_at": smoke_details["checked_at"],
@@ -502,6 +517,8 @@ def _fit_and_predict_package(
     client: ServingClient,
     package: SubmissionPackageRecord,
     live_features: pd.DataFrame,
+    live_benchmark_models: pd.DataFrame | None = None,
+    baseline_source: ServingBaselineSource = "live",
 ) -> list[tuple[ServingPredictionMember, pd.DataFrame]]:
     component_predictions: list[tuple[ServingPredictionMember, pd.DataFrame]] = []
     pending_retrain: list[ServingComponentSpec] = []
@@ -516,7 +533,13 @@ def _fit_and_predict_package(
         component_predictions.append(
             (
                 prediction_member_from_fitted(loaded),
-                predict_component_live(component=loaded, live_features=live_features),
+                _predict_component(
+                    component=loaded,
+                    features=live_features,
+                    live_benchmark_models=live_benchmark_models,
+                    data_version=package.data_version,
+                    baseline_source=baseline_source,
+                ),
             )
         )
 
@@ -529,6 +552,8 @@ def _fit_and_predict_package(
                 package=package,
                 components=tuple(pending_retrain),
                 live_features=live_features,
+                live_benchmark_models=live_benchmark_models,
+                baseline_source=baseline_source,
             )
         )
         return component_predictions
@@ -569,12 +594,59 @@ def _fit_and_predict_package(
         component_predictions.append(
             (
                 prediction_member_from_fitted(fitted),
-                predict_component_live(component=fitted, live_features=live_features),
+                _predict_component(
+                    component=fitted,
+                    features=live_features,
+                    live_benchmark_models=live_benchmark_models,
+                    data_version=package.data_version,
+                    baseline_source=baseline_source,
+                ),
             )
         )
         del fitted
         gc.collect()
     return component_predictions
+
+
+def _predict_component(
+    *,
+    component: FittedComponent,
+    features: pd.DataFrame,
+    live_benchmark_models: pd.DataFrame | None,
+    data_version: str,
+    baseline_source: ServingBaselineSource,
+) -> pd.DataFrame:
+    """Predict one fitted component from the baseline frame the caller's eras require.
+
+    `historical` scoring joins the training baseline parquet and `live` joins the round's
+    benchmark-model frame; these are not interchangeable, so the caller states which.
+    """
+    if baseline_source == "historical":
+        return predict_component_historical(component=component, features=features)
+    return predict_component_live(
+        component=component,
+        live_features=features,
+        live_benchmark_models=live_benchmark_models,
+        benchmark_model_col=_component_benchmark_column(
+            baseline_col=component.baseline_col,
+            baseline_predictions_path=component.baseline_predictions_path,
+            data_version=data_version,
+        ),
+    )
+
+
+def _component_benchmark_column(
+    *,
+    baseline_col: str | None,
+    baseline_predictions_path: str | None,
+    data_version: str,
+) -> str | None:
+    if not baseline_col:
+        return None
+    return resolve_live_benchmark_column(
+        baseline_predictions_path=baseline_predictions_path,
+        data_version=data_version,
+    )
 
 
 def _fit_and_predict_package_subprocess(
@@ -583,11 +655,17 @@ def _fit_and_predict_package_subprocess(
     package: SubmissionPackageRecord,
     components: tuple[ServingComponentSpec, ...],
     live_features: pd.DataFrame,
+    live_benchmark_models: pd.DataFrame | None = None,
+    baseline_source: ServingBaselineSource = "live",
 ) -> list[tuple[ServingPredictionMember, pd.DataFrame]]:
     live_dir = package.package_path / "artifacts" / "live" / "tmp"
     live_dir.mkdir(parents=True, exist_ok=True)
     live_path = live_dir / "live_features.parquet"
     live_features.to_parquet(live_path, index=False)
+    benchmark_path: Path | None = None
+    if live_benchmark_models is not None:
+        benchmark_path = live_dir / "live_benchmark_models.parquet"
+        live_benchmark_models.to_parquet(benchmark_path, index=False)
     component_predictions: list[tuple[ServingPredictionMember, pd.DataFrame]] = []
     for component in components:
         config_path = source_config_path(
@@ -605,6 +683,9 @@ def _fit_and_predict_package_subprocess(
                     "workspace_root": str(Path(workspace_root).resolve()),
                     "config_path": str(config_path),
                     "live_path": str(live_path),
+                    "live_benchmark_path": None if benchmark_path is None else str(benchmark_path),
+                    "baseline_source": baseline_source,
+                    "data_version": package.data_version,
                     "output_path": str(output_path),
                     "status_path": str(status_path),
                     "component": {
@@ -732,12 +813,21 @@ def _maybe_load_artifact_backed_component(
     workspace_root: str | Path,
     component: ServingComponentSpec,
 ):
+    """Load one component's persisted artifact, or None when nothing was persisted.
+
+    Only "no artifact on disk" degrades to a config refit. Any other load failure is
+    raised: silently retraining a broken artifact would score a different model than
+    the one the package pins, which is exactly the drift this package must not hide.
+    """
+
     if component.run_id is None:
         return None
     try:
         loaded = load_run_backed_component(workspace_root=workspace_root, component=component)
-    except ServingRuntimeError:
-        return None
+    except ServingRuntimeError as exc:
+        if str(exc) == _ARTIFACT_MISSING_CODE:
+            return None
+        raise ServingRuntimeError(f"serving_component_artifact_load_failed:{component.component_id}:{exc}") from exc
     return loaded.component
 
 
@@ -763,13 +853,6 @@ def _load_pickle_compatible_components(
             loaded = load_run_backed_component(workspace_root=workspace_root, component=item)
         except Exception as exc:
             raise ServingUnsupportedConfigError("serving_model_upload_preflight_failed") from exc
-        if (
-            not loaded.model_upload_compatible
-            or loaded.uses_custom_module
-            or loaded.model_type != "LGBMRegressor"
-            or loaded.component.baseline_predictions_path is not None
-        ):
-            raise ServingUnsupportedConfigError("serving_model_upload_preflight_failed")
         loaded_components.append(loaded.component)
     return tuple(loaded_components)
 
@@ -778,6 +861,7 @@ def _verify_isolated_pickle_runtime(
     *,
     pickle_path: Path,
     fitted_components: tuple[FittedComponent, ...],
+    build: HostedPickleBuild,
     docker_image: str,
     working_dir: Path,
 ) -> dict[str, str]:
@@ -788,28 +872,19 @@ def _verify_isolated_pickle_runtime(
     feature_cols = sorted({col for item in fitted_components for col in item.feature_cols})
     id_cols = sorted({item.id_col for item in fitted_components})
     era_cols = sorted({item.era_col for item in fitted_components})
-    python_args = [] if python_version is None else ["--python", python_version]
-    script = _pickle_smoke_script(
+    benchmark_cols = sorted({col for _, col in build.benchmark_model_cols})
+    baseline_cols = {item.baseline_col for item in fitted_components if item.baseline_col}
+    command = _pickle_smoke_command(
+        uvx=uvx,
+        python_version=python_version,
+        requirements=tuple(build.python_requirements),
+        probe_dir=working_dir / "smoke",
         pickle_path=pickle_path,
-        feature_cols=feature_cols,
+        feature_cols=sorted(set(feature_cols) - baseline_cols),
         id_cols=id_cols,
         era_cols=era_cols,
+        benchmark_cols=benchmark_cols,
     )
-    command = [
-        uvx,
-        *python_args,
-        "--with",
-        "cloudpickle",
-        "--with",
-        "pandas",
-        "--with",
-        "numpy",
-        "--with",
-        "lightgbm",
-        "python",
-        "-c",
-        script,
-    ]
     try:
         subprocess.run(
             command,
@@ -826,44 +901,91 @@ def _verify_isolated_pickle_runtime(
         raise ServingRuntimeError("serving_model_upload_smoke_failed") from exc
     return {
         "checked_at": utc_now_iso(),
-        "command": " ".join(command[:-1] + ["<python-smoke-script>"]),
+        "command": " ".join(command),
         "runtime": docker_image,
     }
 
 
-def _pickle_smoke_script(
+def _pickle_smoke_command(
     *,
+    uvx: str,
+    python_version: str | None,
+    requirements: tuple[str, ...],
+    probe_dir: Path,
     pickle_path: Path,
     feature_cols: list[str],
     id_cols: list[str],
     era_cols: list[str],
-) -> str:
-    payload = {
-        "pickle_path": str(pickle_path.resolve()),
-        "feature_cols": feature_cols,
-        "id_cols": id_cols,
-        "era_cols": era_cols,
-    }
-    return (
-        "import json\n"
-        "import inspect\n"
-        "import pandas as pd\n"
-        f"payload = json.loads({json.dumps(json.dumps(payload))})\n"
-        "frame = pd.DataFrame({col: [0.0, 1.0] for col in payload['feature_cols']})\n"
-        "for col in payload['id_cols']:\n"
-        "    frame[col] = ['row_1', 'row_2']\n"
-        "for col in payload['era_cols']:\n"
-        "    frame[col] = ['live', 'live']\n"
-        "benchmark = pd.DataFrame(index=frame.index)\n"
-        "predictor = pd.read_pickle(payload['pickle_path'])\n"
-        "assert len(inspect.signature(predictor).parameters) in (1, 2)\n"
-        "submission = predictor(frame, benchmark)\n"
-        "assert isinstance(submission, pd.DataFrame)\n"
-        "assert list(submission.columns) == ['prediction']\n"
-        "assert len(submission) == len(frame)\n"
-        "assert submission['prediction'].notna().all()\n"
-        "assert submission['prediction'].between(0, 1).all()\n"
+    benchmark_cols: list[str],
+) -> list[str]:
+    """Write the smoke probe to disk and return an argv whose length does not grow with it.
+
+    Windows caps a full command line near 32k characters, and both the feature column
+    payload and the derived requirement pins are unbounded, so every variable-length part
+    is passed as a file path instead of by value. The probe itself is unchanged: it still
+    runs under `uvx` in an isolated environment built from the derived pins.
+    """
+
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    probe_path = probe_dir / "probe.py"
+    payload_path = probe_dir / "payload.json"
+    probe_path.write_text(_PICKLE_SMOKE_PROBE, encoding="utf-8")
+    payload_path.write_text(
+        json.dumps(
+            {
+                "pickle_path": str(pickle_path.resolve()),
+                "feature_cols": feature_cols,
+                "id_cols": id_cols,
+                "era_cols": era_cols,
+                "benchmark_cols": benchmark_cols,
+            }
+        ),
+        encoding="utf-8",
     )
+    command = [uvx]
+    if python_version is not None:
+        command.extend(["--python", python_version])
+    if requirements:
+        requirements_path = probe_dir / "requirements.txt"
+        requirements_path.write_text("\n".join(requirements) + "\n", encoding="utf-8")
+        command.extend(["--with-requirements", str(requirements_path.resolve())])
+    command.extend(["python", str(probe_path.resolve()), str(payload_path.resolve())])
+    return command
+
+
+# Runs inside the isolated `uvx` environment, so it may only import the hosted runtime's own
+# dependencies. Its one argument is the path to the JSON payload naming the frame columns.
+_PICKLE_SMOKE_PROBE = '''"""Isolated hosted-pickle smoke probe: load the pickle and call the real predict signature."""
+
+import inspect
+import json
+import sys
+
+import pandas as pd
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+ids = ["row_1", "row_2"]
+frame = pd.DataFrame({col: [0.0, 1.0] for col in payload["feature_cols"]})
+for col in payload["id_cols"]:
+    frame[col] = ids
+for col in payload["era_cols"]:
+    frame[col] = ["live", "live"]
+benchmark = pd.DataFrame({col: [0.25, 0.75] for col in payload["benchmark_cols"]})
+for col in payload["id_cols"]:
+    benchmark[col] = ids
+for col in payload["era_cols"]:
+    benchmark[col] = ["live", "live"]
+predictor = pd.read_pickle(payload["pickle_path"])
+assert len(inspect.signature(predictor).parameters) == 2
+submission = predictor(frame, benchmark)
+assert isinstance(submission, pd.DataFrame)
+assert list(submission.columns) == ["prediction"]
+assert len(submission) == len(frame)
+assert submission.index.equals(frame.index)
+assert submission["prediction"].notna().all()
+assert submission["prediction"].between(0, 1).all()
+'''
 
 
 def _docker_python_version(docker_image: str) -> str | None:

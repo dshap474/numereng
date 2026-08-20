@@ -43,6 +43,10 @@ class _FakeSubmissionClient:
     def get_models(self) -> dict[str, str]:
         return dict(self._models)
 
+    def round_model_performances_v2(self, *, model_id: str) -> list[dict[str, object]]:
+        _ = model_id
+        return []
+
     def list_datasets(self, round_num: int | None = None) -> list[str]:
         _ = round_num
         return list(self._dataset_names)

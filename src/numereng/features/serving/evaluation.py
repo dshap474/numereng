@@ -7,6 +7,7 @@ import math
 import time
 from dataclasses import replace
 from datetime import date, datetime
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -35,6 +36,7 @@ from numereng.features.serving.repo import (
     ServingValidationError,
     load_package,
     save_package,
+    source_config_path,
     utc_now_iso,
 )
 from numereng.features.serving.runtime import (
@@ -53,6 +55,7 @@ from numereng.features.store import resolve_workspace_layout
 from numereng.features.training.client import create_training_data_client
 from numereng.features.training.errors import TrainingDataError
 from numereng.features.training.repo import (
+    load_features,
     resolve_data_version_root,
     resolve_variant_dataset_filename,
 )
@@ -97,6 +100,16 @@ def score_submission_package(
     package_after_runtime: SubmissionPackageRecord
     predictions: pd.DataFrame
 
+    # Local runtime loads the validation frame into memory; restrict it to the
+    # columns the package models and scoring need to stay under the RAM ceiling.
+    local_score_columns = _resolve_local_score_columns(
+        workspace_root=workspace_root,
+        package=inspection.package,
+        client=runtime_client,
+        data_root=data_root,
+        data_version=package.data_version,
+    )
+
     if runtime == "pickle" or (runtime == "auto" and inspection.model_upload_compatible):
         try:
             validation_path = ensure_validation_dataset_path(
@@ -121,6 +134,7 @@ def score_submission_package(
                 client=runtime_client,
                 data_root=data_root,
                 data_version=package.data_version,
+                columns=local_score_columns,
             )
             runtime_used, package_after_runtime, predictions = _materialize_package_predictions(
                 workspace_root=workspace_root,
@@ -135,6 +149,7 @@ def score_submission_package(
             client=runtime_client,
             data_root=data_root,
             data_version=package.data_version,
+            columns=local_score_columns,
         )
         runtime_used, package_after_runtime, predictions = _materialize_package_predictions(
             workspace_root=workspace_root,
@@ -471,6 +486,7 @@ def _predict_with_local_runtime(
         client=client,
         package=package,
         live_features=validation_frame,
+        baseline_source="historical",
     )
     internal, _ = blend_component_predictions(
         component_predictions=component_predictions,
@@ -505,6 +521,57 @@ def _predict_with_pickle_runtime(
     return "pickle", built.package, predictions
 
 
+def _resolve_local_score_columns(
+    *,
+    workspace_root: str | Path,
+    package: SubmissionPackageRecord,
+    client: Any,
+    data_root: Path,
+    data_version: str,
+) -> list[str] | None:
+    """Minimal validation columns needed to score a package on local runtime.
+
+    Returns None to signal callers to fall back to a full validation load: the
+    full parquet is ~12GB in memory, so a subset is what keeps local scoring
+    under the RAM ceiling, but only when the needed columns resolve cleanly.
+    """
+    neutralization = package.neutralization
+    if neutralization is not None and neutralization.enabled and not neutralization.neutralizer_cols:
+        # neutralizer_cols=None neutralizes against every feature in the frame;
+        # a column subset would silently narrow that set.
+        return None
+    try:
+        feature_cols: set[str] = set()
+        for component in package.components:
+            config_path = source_config_path(
+                workspace_root=workspace_root,
+                config_path=component.config_path,
+                run_id=component.run_id,
+            )
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            feature_set = config.get("data", {}).get("feature_set")
+            if not isinstance(feature_set, str) or not feature_set:
+                return None
+            feature_cols.update(load_features(client, data_version, feature_set, data_root=data_root))
+    except Exception:
+        return None
+    if not feature_cols:
+        return None
+    needed = {"era", "id", "data_type", *_PACKAGE_SCORE_TARGETS, *feature_cols}
+    if neutralization is not None and neutralization.enabled and neutralization.neutralizer_cols:
+        needed.update(str(col) for col in neutralization.neutralizer_cols)
+    return sorted(needed)
+
+
+def _intersect_parquet_columns(dataset_path: Path, columns: list[str]) -> list[str]:
+    try:
+        pq = import_module("pyarrow.parquet")
+        available = {str(name) for name in pq.ParquetFile(dataset_path).schema_arrow.names}
+    except Exception:
+        return columns
+    return [col for col in columns if col in available]
+
+
 def _load_validation_frame(
     *,
     client: Any,
@@ -519,7 +586,8 @@ def _load_validation_frame(
     if not dataset_path.exists():
         dataset_path.parent.mkdir(parents=True, exist_ok=True)
         client.download_dataset(f"{data_version}/{dataset}.parquet", dest_path=str(dataset_path))
-    frame = pd.read_parquet(dataset_path, columns=columns)
+    read_columns = None if columns is None else _intersect_parquet_columns(dataset_path, columns)
+    frame = pd.read_parquet(dataset_path, columns=read_columns)
     if "data_type" in frame.columns:
         filtered = frame[frame["data_type"].astype(str) == dataset].copy()
         if not filtered.empty:

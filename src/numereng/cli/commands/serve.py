@@ -136,7 +136,7 @@ def _handle_package_create(args: Sequence[str]) -> int:
             api.ServePackageCreateRequest(
                 experiment_id=values["--experiment-id"],
                 package_id=values["--package-id"],
-                data_version=values.get("--data-version", "v5.2"),
+                data_version=values.get("--data-version", "v5.3"),
                 components=[api.ServeComponentRequest.model_validate(item) for item in components],
                 blend_rule=api.ServeBlendRuleRequest.model_validate(blend_rule_payload),
                 neutralization=None

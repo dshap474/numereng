@@ -177,9 +177,10 @@ def _write_parquet_atomic(frame: pd.DataFrame, path: Path) -> None:
 
 
 def _date_prefix(value: object) -> str | None:
-    if hasattr(value, "isoformat"):
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
         try:
-            return str(value.isoformat())[:10]
+            return str(isoformat())[:10]
         except Exception:
             return None
     if not isinstance(value, str) or not value:
@@ -257,7 +258,7 @@ def _normalize_round(row: dict[str, Any], *, pulled_at: str) -> dict[str, Any]:
 
 
 def _to_float_or_none(value: object) -> float | None:
-    if value is None:
+    if not isinstance(value, str | int | float):
         return None
     try:
         return float(value)
@@ -273,6 +274,8 @@ def _latest_round_number(rows: Iterable[dict[str, Any]]) -> int | None:
     values: list[int] = []
     for row in rows:
         value = row.get("round_number") or row.get("round")
+        if not isinstance(value, str | int | float):
+            continue
         try:
             values.append(int(value))
         except (TypeError, ValueError):

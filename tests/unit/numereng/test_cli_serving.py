@@ -172,7 +172,7 @@ def test_cli_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, caps
             pickle_upload_ready=False,
             deployment_classification="local_live_only",
             local_live_blockers=[],
-            model_upload_blockers=["serving_model_upload_custom_modules_not_supported"],
+            model_upload_blockers=["serving_model_upload_requires_persisted_model_artifact"],
             artifact_blockers=["serving_component_config_backed_only"],
             warnings=[],
             components=[
@@ -183,7 +183,7 @@ def test_cli_serve_package_inspect_success(monkeypatch: pytest.MonkeyPatch, caps
                     artifact_backed=False,
                     artifact_ready=False,
                     local_live_blockers=[],
-                    model_upload_blockers=["serving_model_upload_custom_modules_not_supported"],
+                    model_upload_blockers=["serving_model_upload_requires_persisted_model_artifact"],
                     artifact_blockers=["serving_component_config_backed_only"],
                     warnings=[],
                 )

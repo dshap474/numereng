@@ -39,7 +39,7 @@ Built for Numerai participants who want an end-to-end local workflow for iterati
 - **Feature neutralization.** Apply feature-neutralization to any set of predictions.
 - **Serving and hosted uploads.** Freeze production packages and push pickles to Numerai-hosted models.
 - **Remote and cloud training.** SSH-driven remote workstations, EC2, and Modal for when local compute runs out.
-- **Read-only dashboard.** `just viz` gives you a mission-control UI over the current checkout.
+- **Read-only dashboard.** `just dev` gives you a mission-control UI over the current checkout.
 - **Custom models.** Drop model wrappers into `src/numereng/features/models/custom_models/` and they are auto-discovered by the training pipeline.
 - **Agent-extensible.** Drop your own skills into `.codex/skills/` so Claude Code, Codex, or similar agents can be pointed at workflows you author.
 
@@ -48,7 +48,7 @@ Built for Numerai participants who want an end-to-end local workflow for iterati
 - Python 3.12+
 - [`uv`](https://docs.astral.sh/uv/) package manager
 - `git`
-- **Node.js 20+** — required for `just viz` (dashboard)
+- **Node.js 20+** — required for `just dev` (dashboard)
 - **Numerai API credentials** — `NUMERAI_PUBLIC_ID` and `NUMERAI_SECRET_KEY` exported in your shell. Required for dataset, round, and submission operations. See [Installation](docs/numereng/getting-started/installation.md#configure-numerai-credentials).
 - (Optional) Docker — only if building hosted Numerai pickle packages locally.
 
@@ -61,7 +61,7 @@ git clone https://github.com/dshap474/numereng.git
 cd numereng
 uv sync
 uv run numereng store init
-just viz
+just dev
 ```
 
 - Dashboard UI: [http://127.0.0.1:5173](http://127.0.0.1:5173)
@@ -91,7 +91,7 @@ The dashboard is read-only: it surfaces experiments, runs, notes, and the embedd
 | Submit a round                             | `uv run numereng run submit ...`                          |
 | Train on a remote machine over SSH         | `uv run numereng remote experiment launch ...`            |
 | Train on EC2 / Modal                       | `uv run numereng cloud ...`                               |
-| Monitor live state                         | `just viz` or `uv run numereng monitor snapshot`          |
+| Monitor live state                         | `just dev` or `uv run numereng monitor snapshot`          |
 | Sync official Numerai docs locally         | `uv run numereng docs sync numerai`                       |
 | Scrape the Numerai forum                   | `uv run numereng numerai forum scrape`                    |
 
@@ -151,8 +151,8 @@ The repo checkout is the workspace. Runtime state is local and gitignored:
 Extension and authoring roots:
 
 - `src/numereng/features/models/custom_models/` — drop in a custom model wrapper (auto-discovered)
-- `src/numereng/features/agentic_research/PROGRAM.md` — tracked base agentic research program
-- `src/numereng/features/agentic_research/custom_programs/` — local custom research programs (gitignored)
+- `src/numereng/agentic_research/programs/PROGRAM.md` — tracked base agentic research program
+- `src/numereng/agentic_research/programs/` — local custom research programs (gitignored except `PROGRAM.md` and `README.md`)
 - `.codex/skills/` — agent skills (shipped ones are tracked; add your own locally via the directory's gitignore allowlist)
 
 ## Python API
@@ -175,9 +175,9 @@ See the [Python API reference](docs/numereng/reference/python-api.md). For full 
 `numereng` ships a library of user-invocable agent skills under [`.codex/skills/`](.codex/skills/). Each is a self-contained `SKILL.md` you can point Claude Code, Codex, or a similar agent at to drive a specific workflow.
 
 - **`experiment-design`** — Plan and run numereng experiments: round design, scout-to-scale decisions, plateau logic, reporting, and champion handoff.
-- **`numereng-experiment-ops`** — Source of truth for the numereng experiment contract: layout, config schema, templates, run artifacts, and valid CLI entrypoints.
-- **`implement-custom-model`** — Add a custom model plugin under `custom_models/` using the existing wrapper and factory patterns.
-- **`store-ops`** — Safely maintain the local store: drift diagnosis, run cleanup and reset, reindex, and postcondition verification.
+- **`experiment-ops`** — Source of truth for the numereng experiment contract: layout, config schema, templates, run artifacts, and valid CLI entrypoints.
+- **`model-implement-custom`** — Add a custom model plugin under `custom_models/` using the existing wrapper and factory patterns.
+- **`utility-store-ops`** — Safely maintain the local store: drift diagnosis, run cleanup and reset, reindex, and postcondition verification.
 - **`numerai-api-ops`** — Run API-only Numerai operations through `numerapi` plus direct GraphQL helpers.
 
 ## Docs

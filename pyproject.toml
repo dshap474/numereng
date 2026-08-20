@@ -205,3 +205,15 @@ module = [
     "torch.*",
 ]
 ignore_missing_imports = true
+
+# Windows resolves torch from the PyTorch CUDA index (PyPI only ships +cpu
+# wheels for win32); macOS/Linux keep resolving torch from PyPI.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

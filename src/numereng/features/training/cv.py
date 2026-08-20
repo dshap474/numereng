@@ -317,8 +317,12 @@ def _run_fold_prediction(
         feature_cols=feature_cols,
         store_root=store_root,
     )
-    model.fit(train_data.X, train_data.y)
-    preds = model.predict(val_data.X)
+    if getattr(model, "accepts_era", False):
+        model.fit(train_data.X, train_data.y, era=train_data.era)
+        preds = model.predict(val_data.X, era=val_data.era)
+    else:
+        model.fit(train_data.X, train_data.y)
+        preds = model.predict(val_data.X)
 
     fold_predictions: dict[str, np.ndarray | int] = {}
     if id_col and val_data.id is not None:
@@ -406,8 +410,12 @@ def fit_full_history_model(
         feature_cols=feature_cols,
         store_root=store_root,
     )
-    model.fit(full_data.X, full_data.y)
-    preds = model.predict(full_data.X)
+    if getattr(model, "accepts_era", False):
+        model.fit(full_data.X, full_data.y, era=full_data.era)
+        preds = model.predict(full_data.X, era=full_data.era)
+    else:
+        model.fit(full_data.X, full_data.y)
+        preds = model.predict(full_data.X)
 
     predictions_payload: dict[str, np.ndarray] = {}
     if id_col and full_data.id is not None:

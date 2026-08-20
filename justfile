@@ -50,13 +50,13 @@ readiness:
 
 oss-preflight:
     echo "Running OSS preflight checks..."
-    forbidden=$(git ls-files --others --exclude-standard | rg '^(docs/numerai/forum/|viz/.*\.pid$|.*__pycache__/|.*\.py[co]$)' || true); \
+    forbidden=$(git ls-files --others --exclude-standard | grep -E '^(docs/numerai/forum/|viz/.*\.pid$|.*__pycache__/|.*\.py[co]$)' || true); \
     if [ -n "$forbidden" ]; then \
         echo "FAIL: non-ignored generated/local files detected:"; \
         echo "$forbidden"; \
         exit 1; \
     fi
-    tracked_generated=$(git ls-files | rg '(^|/)(__pycache__/|\\.mypy_cache/|\\.pytest_cache/|\\.ruff_cache/|.*\\.py[co]$|docs/numerai/forum/|viz/.*\\.pid$|docs/numerai/\\.sync-meta\\.json$)' || true); \
+    tracked_generated=$(git ls-files | grep -E '(^|/)(__pycache__/|\.mypy_cache/|\.pytest_cache/|\.ruff_cache/|.*\.py[co]$|docs/numerai/forum/|docs/numerai/community/numerai-council-of-elders/episodes/|docs/numerai/community/numerai-council-of-elders/shorts/|viz/.*\.pid$|docs/numerai/\.sync-meta\.json$)' || true); \
     if [ -n "$tracked_generated" ]; then \
         echo "FAIL: generated/cache files are tracked:"; \
         echo "$tracked_generated"; \
@@ -68,7 +68,7 @@ oss-preflight:
         echo "$tracked_remote_profiles"; \
         exit 1; \
     fi
-    tracked_env_files=$(git ls-files | rg '(^|/)\\.env(\\..+)?$' | rg -v '(^|/)\\.env\\.example$' || true); \
+    tracked_env_files=$(git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -Ev '(^|/)\.env\.example$' || true); \
     if [ -n "$tracked_env_files" ]; then \
         echo "FAIL: .env-style files are tracked and must remain local-only:"; \
         echo "$tracked_env_files"; \
@@ -104,11 +104,11 @@ security:
 build:
     uv build --package numereng --wheel --no-build-logs
 
-kill-viz:
-    ./scripts/viz-stop.sh
+kill:
+    ./scripts/dev-stop.sh
 
-viz:
-    ./scripts/viz-start.sh
+dev:
+    ./scripts/dev-start.sh
 
 ci:
     just security

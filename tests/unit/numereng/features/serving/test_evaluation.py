@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pytest
 
 from numereng.features.models.lgbm import LGBMRegressor
 from numereng.features.serving import (
     ServingBlendRule,
     ServingComponentSpec,
     ServingNeutralizationSpec,
+    ServingRuntimeError,
     create_submission_package,
     score_submission_package,
     sync_submission_package_diagnostics,
@@ -33,7 +35,7 @@ class _FakePackageEvalClient:
             raise AssertionError("dest_path must be provided")
         path = Path(dest_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if filename == "v5.2/features.json":
+        if filename == "v5.3/features.json":
             path.write_text(
                 json.dumps(
                     {
@@ -46,22 +48,22 @@ class _FakePackageEvalClient:
                 encoding="utf-8",
             )
             return str(path)
-        if filename == "v5.2/train.parquet":
+        if filename == "v5.3/train.parquet":
             _train_frame().to_parquet(path, index=False)
             return str(path)
-        if filename == "v5.2/validation.parquet":
+        if filename == "v5.3/validation.parquet":
             _validation_frame().to_parquet(path, index=False)
             return str(path)
-        if filename == "v5.2/train_benchmark_models.parquet":
+        if filename == "v5.3/train_benchmark_models.parquet":
             _train_benchmark_frame().to_parquet(path, index=False)
             return str(path)
-        if filename == "v5.2/validation_benchmark_models.parquet":
+        if filename == "v5.3/validation_benchmark_models.parquet":
             _validation_benchmark_frame().to_parquet(path, index=False)
             return str(path)
-        if filename == "v5.2/meta_model.parquet":
+        if filename == "v5.3/meta_model.parquet":
             _meta_model_frame().to_parquet(path, index=False)
             return str(path)
-        if filename == "v5.2/validation_example_preds.parquet":
+        if filename == "v5.3/validation_example_preds.parquet":
             _validation_example_preds_frame().to_parquet(path, index=False)
             return str(path)
         raise AssertionError(f"unexpected filename: {filename}")
@@ -188,7 +190,7 @@ def _train_benchmark_frame() -> pd.DataFrame:
         {
             "id": ["t1", "t2", "t3", "t4"],
             "era": ["0001", "0001", "0002", "0002"],
-            "v52_lgbm_ender20": [0.2, 0.45, 0.55, 0.75],
+            "v53_lgbm_ender20": [0.2, 0.45, 0.55, 0.75],
         }
     )
 
@@ -198,7 +200,7 @@ def _validation_benchmark_frame() -> pd.DataFrame:
         {
             "id": ["v1", "v2", "v3", "v4"],
             "era": ["0003", "0003", "0004", "0004"],
-            "v52_lgbm_ender20": [0.25, 0.55, 0.35, 0.65],
+            "v53_lgbm_ender20": [0.25, 0.55, 0.35, 0.65],
         }
     )
 
@@ -228,7 +230,7 @@ def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
     run_dir.mkdir(parents=True, exist_ok=True)
     resolved_config = {
         "data": {
-            "data_version": "v5.2",
+            "data_version": "v5.3",
             "dataset_variant": "non_downsampled",
             "feature_set": "small",
             "target_col": "target",
@@ -258,7 +260,7 @@ def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
         manifest=ModelArtifactManifest(
             run_id=run_id,
             model_type="LGBMRegressor",
-            data_version="v5.2",
+            data_version="v5.3",
             dataset_variant="non_downsampled",
             feature_set="small",
             target_col="target",
@@ -270,6 +272,101 @@ def _write_run_backed_component(tmp_path: Path, *, run_id: str) -> str:
         ),
     )
     return run_id
+
+
+def _write_active_benchmark(tmp_path: Path) -> str:
+    """Write the `active_benchmark` parquet that a baseline component trained against."""
+    baseline_dir = tmp_path / ".numereng" / "datasets" / "baselines" / "active_benchmark"
+    baseline_dir.mkdir(parents=True, exist_ok=True)
+    # Written so the live baseline path would resolve its benchmark column cleanly and
+    # then fail on the absent live frame, which is the regression this guards.
+    (baseline_dir / "benchmark.json").write_text(
+        json.dumps({"name": "official_v53_lgbm_ender20", "kind": "official_numerai_benchmark"}),
+        encoding="utf-8",
+    )
+    baseline_path = baseline_dir / "predictions.parquet"
+    pd.DataFrame(
+        {
+            "era": ["0001", "0001", "0002", "0002", "0003", "0003", "0004", "0004"],
+            "id": ["t1", "t2", "t3", "t4", "v1", "v2", "v3", "v4"],
+            "prediction": [0.2, 0.45, 0.55, 0.75, 0.25, 0.55, 0.35, 0.65],
+        }
+    ).to_parquet(baseline_path, index=False)
+    return str(baseline_path)
+
+
+def _write_baseline_backed_component(tmp_path: Path, *, run_id: str, baseline_predictions_path: str) -> str:
+    """Persist a run whose fitted model consumes the baseline column as a feature."""
+    run_dir = tmp_path / ".numereng" / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "resolved.json").write_text(
+        json.dumps(
+            {
+                "data": {
+                    "data_version": "v5.3",
+                    "dataset_variant": "non_downsampled",
+                    "feature_set": "small",
+                    "target_col": "target",
+                    "era_col": "era",
+                    "id_col": "id",
+                    "dataset_scope": "train_plus_validation",
+                },
+                "model": {"type": "LGBMRegressor", "params": {}},
+                "training": {"engine": {"profile": "full_history_refit"}, "post_training_scoring": "none"},
+                "preprocessing": {"nan_missing_all_twos": False, "missing_value": 2.0},
+                "output": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    feature_cols = ("feature_a", "bench_raw")
+    model = LGBMRegressor(
+        feature_cols=list(feature_cols),
+        n_estimators=5,
+        learning_rate=0.1,
+        num_leaves=8,
+        min_data_in_leaf=1,
+        verbosity=-1,
+    )
+    train = _train_frame()
+    train["bench_raw"] = [0.2, 0.45, 0.55, 0.75]
+    model.fit(train[list(feature_cols)], train["target"])
+    save_model_artifact(
+        run_dir=run_dir,
+        model=model,
+        manifest=ModelArtifactManifest(
+            run_id=run_id,
+            model_type="LGBMRegressor",
+            data_version="v5.3",
+            dataset_variant="non_downsampled",
+            feature_set="small",
+            target_col="target",
+            era_col="era",
+            id_col="id",
+            feature_cols=feature_cols,
+            baseline_col="bench_raw",
+            baseline_name="bench_raw",
+            baseline_predictions_path=baseline_predictions_path,
+            model_upload_compatible=True,
+            uses_custom_module=False,
+        ),
+    )
+    return run_id
+
+
+def _build_baseline_package(tmp_path: Path, *, baseline_predictions_path: str, package_id: str = "pkg-baseline"):
+    run_id = _write_baseline_backed_component(
+        tmp_path,
+        run_id="run-baseline",
+        baseline_predictions_path=baseline_predictions_path,
+    )
+    return create_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id=package_id,
+        components=(ServingComponentSpec(component_id="baseline", weight=1.0, run_id=run_id),),
+        blend_rule=ServingBlendRule(),
+    )
 
 
 def _build_package(tmp_path: Path, *, package_id: str = "pkg-1"):
@@ -305,6 +402,47 @@ def test_score_submission_package_local_writes_explicit_metrics(tmp_path: Path) 
     assert "corr_with_example_preds" in summaries
     metric_series = pd.read_parquet(result.metric_series_path)
     assert {"per_era", "cumulative"} == set(metric_series["series_type"])
+
+
+def test_score_submission_package_local_scores_a_baseline_component_on_validation_eras(tmp_path: Path) -> None:
+    """Historical scoring must read the training baseline parquet, not a live benchmark frame.
+
+    Validation eras have no `live_benchmark_models` frame, so sourcing the baseline the
+    live way fails outright; sourcing it any other way would score a different column
+    than training fitted against.
+    """
+    baseline_path = _write_active_benchmark(tmp_path)
+    _build_baseline_package(tmp_path, baseline_predictions_path=baseline_path)
+
+    result = score_submission_package(
+        workspace_root=tmp_path,
+        experiment_id="exp-1",
+        package_id="pkg-baseline",
+        runtime="local",
+        stage="post_training_core",
+        client=_FakePackageEvalClient(),
+    )
+
+    assert result.runtime_used == "local"
+    predictions = pd.read_parquet(result.predictions_path)
+    assert sorted(predictions["id"]) == ["v1", "v2", "v3", "v4"]
+
+
+def test_score_submission_package_local_reports_an_unreadable_training_baseline(tmp_path: Path) -> None:
+    _build_baseline_package(
+        tmp_path,
+        baseline_predictions_path=str(tmp_path / "missing_baseline.parquet"),
+    )
+
+    with pytest.raises(ServingRuntimeError, match="serving_historical_baseline_attach_failed:baseline"):
+        score_submission_package(
+            workspace_root=tmp_path,
+            experiment_id="exp-1",
+            package_id="pkg-baseline",
+            runtime="local",
+            stage="post_training_core",
+            client=_FakePackageEvalClient(),
+        )
 
 
 def test_score_submission_package_auto_falls_back_to_local_for_neutralized_package(tmp_path: Path) -> None:

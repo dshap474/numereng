@@ -4,11 +4,17 @@ from numereng.features.store.layout import (
     CANONICAL_STORE_DIRNAME,
     CANONICAL_WORKSPACE_TOP_LEVEL_DIRS,
     WorkspaceLayout,
+    resolve_portfolio_registry_path,
+    resolve_portfolio_reports_root,
+    resolve_portfolio_root,
     resolve_workspace_layout,
     resolve_workspace_layout_from_store_root,
     resolve_workspace_root,
 )
-from numereng.features.store.predictions import run_has_persisted_predictions
+from numereng.features.store.predictions import (
+    classify_run_mode,
+    run_has_persisted_predictions,
+)
 from numereng.features.store.prune import (
     StorePrunePredictionsExcluded,
     StorePrunePredictionsResult,
@@ -115,6 +121,10 @@ __all__ = [
     "replace_ensemble_metrics",
     "resolve_store_root",
     "WorkspaceLayout",
+    "classify_run_mode",
+    "resolve_portfolio_registry_path",
+    "resolve_portfolio_reports_root",
+    "resolve_portfolio_root",
     "resolve_workspace_layout",
     "resolve_workspace_layout_from_store_root",
     "resolve_workspace_root",

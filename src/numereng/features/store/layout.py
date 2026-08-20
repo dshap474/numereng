@@ -15,6 +15,7 @@ CANONICAL_STORE_TOP_LEVEL_DIRS: tuple[str, ...] = (
     "cache",
     "tmp",
     "remote_ops",
+    "portfolio",
 )
 CANONICAL_WORKSPACE_TOP_LEVEL_DIRS: tuple[str, ...] = (".agents",)
 CANONICAL_STORE_TOP_LEVEL_FILES: tuple[str, ...] = (
@@ -179,6 +180,24 @@ def resolve_tmp_root(*, store_root: str | Path = ".numereng") -> Path:
     return resolve_path(store_root) / "tmp"
 
 
+def resolve_portfolio_root(*, store_root: str | Path = ".numereng") -> Path:
+    """Return the canonical research-portfolio root under the store."""
+
+    return resolve_path(store_root) / "portfolio"
+
+
+def resolve_portfolio_registry_path(*, store_root: str | Path = ".numereng") -> Path:
+    """Return the canonical human-maintained portfolio registry path."""
+
+    return resolve_portfolio_root(store_root=store_root) / "registry.json"
+
+
+def resolve_portfolio_reports_root(*, store_root: str | Path = ".numereng") -> Path:
+    """Return the canonical persisted-report root under the portfolio."""
+
+    return resolve_portfolio_root(store_root=store_root) / "reports"
+
+
 def resolve_tmp_remote_configs_root(*, store_root: str | Path = ".numereng") -> Path:
     """Return the retention-managed remote config staging root."""
 
@@ -330,6 +349,9 @@ __all__ = [
     "resolve_default_workspace_root",
     "resolve_default_store_root",
     "resolve_legacy_cloud_state_path",
+    "resolve_portfolio_registry_path",
+    "resolve_portfolio_reports_root",
+    "resolve_portfolio_root",
     "resolve_tmp_remote_configs_root",
     "resolve_tmp_root",
     "resolve_path",

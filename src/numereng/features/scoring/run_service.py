@@ -9,6 +9,8 @@ from typing import cast
 
 import pandas as pd
 
+from numereng.features import holdout
+from numereng.features.holdout import EraFilter
 from numereng.features.scoring.models import (
     CanonicalScoringStage,
     PostTrainingScoringRequest,
@@ -79,45 +81,14 @@ def score_run(
         invalid_code="training_score_run_results_invalid",
     )
 
-    predictions_path = _resolve_predictions_path(run_dir, run_manifest, resolved)
-    if not predictions_path.is_file():
-        raise TrainingError(f"training_score_predictions_not_found:{predictions_path}")
-
-    data_config = _as_mapping(resolved.get("data"))
-    target_col = _coerce_required_str(
-        value=data_config.get("target_col") or _as_mapping(run_manifest.get("data")).get("target_col"),
-        error_code="training_score_target_col_missing",
-    )
-    data_version = _coerce_required_str(
-        value=data_config.get("data_version") or _as_mapping(run_manifest.get("data")).get("version"),
-        error_code="training_score_data_version_missing",
-    )
-    feature_set = _coerce_required_str(
-        value=data_config.get("feature_set") or _as_mapping(run_manifest.get("data")).get("feature_set"),
-        error_code="training_score_feature_set_missing",
-    )
-
-    request = PostTrainingScoringRequest(
-        run_id=safe_run_id,
-        config_hash=str(_as_mapping(run_manifest.get("config")).get("hash", "")),
-        seed=None,
-        predictions_path=predictions_path,
-        pred_cols=("prediction",),
-        target_col=target_col,
-        scoring_target_cols=_resolve_scoring_target_cols(data_config=data_config, target_col=target_col),
-        scoring_targets_explicit=_scoring_targets_explicit(data_config=data_config),
-        data_version=data_version,
-        dataset_variant=str(data_config.get("dataset_variant", _DEFAULT_DATASET_VARIANT)),
-        feature_set=feature_set,
-        feature_source_paths=None,
-        dataset_scope=str(data_config.get("dataset_scope", _DEFAULT_DATASET_SCOPE)),
-        benchmark_source=resolve_benchmark_source(data_config=data_config, data_root=DEFAULT_DATASETS_DIR),
-        meta_model_col=str(data_config.get("meta_model_col", "numerai_meta_model")),
-        meta_model_data_path=_optional_path(data_config.get("meta_model_data_path")),
-        era_col=str(data_config.get("era_col", "era")),
-        id_col=str(data_config.get("id_col", "id")),
-        data_root=DEFAULT_DATASETS_DIR,
+    era_filter = _resolve_loop_visible_era_filter(store_root=root, run_manifest=run_manifest)
+    request, predictions_path = _build_scoring_request(
+        run_dir=run_dir,
+        safe_run_id=safe_run_id,
+        run_manifest=run_manifest,
+        resolved=resolved,
         stage=stage,
+        era_filter=era_filter,
     )
 
     log_info(
@@ -217,6 +188,117 @@ def score_run(
         requested_stage=scoring_result.requested_stage,
         refreshed_stages=scoring_result.refreshed_stages,
     )
+
+
+def score_run_eras(
+    *,
+    run_id: str,
+    era_filter: EraFilter,
+    store_root: str | Path = ".numereng",
+    stage: CanonicalScoringStage = "all",
+    client: TrainingDataClient | None = None,
+) -> dict[str, object]:
+    """Score one persisted run over an explicit era filter WITHOUT persisting artifacts.
+
+    Used for the one-time closeout holdout opening: it reuses the canonical scoring
+    machinery restricted to the holdout eras and returns the metrics payload, leaving
+    the run's own metrics.json / provenance untouched.
+    """
+    safe_run_id = _ensure_safe_run_id(run_id)
+    root = resolve_store_root(store_root)
+    run_dir = root / "runs" / safe_run_id
+    if not run_dir.is_dir():
+        raise TrainingError(f"training_score_run_not_found:{safe_run_id}")
+
+    run_manifest = _load_required_json_mapping(
+        resolve_run_manifest_path(run_dir),
+        missing_code="training_score_run_manifest_not_found",
+        invalid_code="training_score_run_manifest_invalid",
+    )
+    resolved = _load_required_json_mapping(
+        run_dir / "resolved.json",
+        missing_code="training_score_run_resolved_not_found",
+        invalid_code="training_score_run_resolved_invalid",
+    )
+    request, _ = _build_scoring_request(
+        run_dir=run_dir,
+        safe_run_id=safe_run_id,
+        run_manifest=run_manifest,
+        resolved=resolved,
+        stage=stage,
+        era_filter=era_filter,
+    )
+    scoring_result = run_scoring(request=request, client=client or create_training_data_client())
+    return _metrics_payload_from_summaries(scoring_result.summaries)
+
+
+def _build_scoring_request(
+    *,
+    run_dir: Path,
+    safe_run_id: str,
+    run_manifest: dict[str, object],
+    resolved: dict[str, object],
+    stage: CanonicalScoringStage,
+    era_filter: EraFilter | None,
+) -> tuple[PostTrainingScoringRequest, Path]:
+    predictions_path = _resolve_predictions_path(run_dir, run_manifest, resolved)
+    if not predictions_path.is_file():
+        raise TrainingError(f"training_score_predictions_not_found:{predictions_path}")
+
+    data_config = _as_mapping(resolved.get("data"))
+    target_col = _coerce_required_str(
+        value=data_config.get("target_col") or _as_mapping(run_manifest.get("data")).get("target_col"),
+        error_code="training_score_target_col_missing",
+    )
+    data_version = _coerce_required_str(
+        value=data_config.get("data_version") or _as_mapping(run_manifest.get("data")).get("version"),
+        error_code="training_score_data_version_missing",
+    )
+    feature_set = _coerce_required_str(
+        value=data_config.get("feature_set") or _as_mapping(run_manifest.get("data")).get("feature_set"),
+        error_code="training_score_feature_set_missing",
+    )
+
+    request = PostTrainingScoringRequest(
+        run_id=safe_run_id,
+        config_hash=str(_as_mapping(run_manifest.get("config")).get("hash", "")),
+        seed=None,
+        predictions_path=predictions_path,
+        pred_cols=("prediction",),
+        target_col=target_col,
+        scoring_target_cols=_resolve_scoring_target_cols(data_config=data_config, target_col=target_col),
+        scoring_targets_explicit=_scoring_targets_explicit(data_config=data_config),
+        data_version=data_version,
+        dataset_variant=str(data_config.get("dataset_variant", _DEFAULT_DATASET_VARIANT)),
+        feature_set=feature_set,
+        feature_source_paths=None,
+        dataset_scope=str(data_config.get("dataset_scope", _DEFAULT_DATASET_SCOPE)),
+        benchmark_source=resolve_benchmark_source(data_config=data_config, data_root=DEFAULT_DATASETS_DIR),
+        meta_model_col=str(data_config.get("meta_model_col", "numerai_meta_model")),
+        meta_model_data_path=_optional_path(data_config.get("meta_model_data_path")),
+        era_col=str(data_config.get("era_col", "era")),
+        id_col=str(data_config.get("id_col", "id")),
+        data_root=DEFAULT_DATASETS_DIR,
+        stage=stage,
+        era_filter=era_filter,
+    )
+    return request, predictions_path
+
+
+def _resolve_loop_visible_era_filter(*, store_root: Path, run_manifest: dict[str, object]) -> EraFilter | None:
+    """Return the holdout exclusion filter for a run's experiment, or None when unset.
+
+    Loop-visible scoring (both `run score` and `experiment score-round`) must never
+    see the frozen holdout, so the exclusion is resolved from the experiment manifest
+    rather than being passed by the caller. It is not LLM-mutable.
+    """
+    experiment_id = run_manifest.get("experiment_id")
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
+        return None
+    spec = holdout.resolve_active_spec(store_root=store_root, experiment_id=experiment_id)
+    if spec is None or not spec.is_frozen:
+        return None
+    return holdout.exclusion_filter(spec)
 
 
 def _ensure_safe_run_id(run_id: str) -> str:

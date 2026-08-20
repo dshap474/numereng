@@ -16,7 +16,7 @@ cd numereng
 uv sync --extra dev
 uv run numereng store init
 uv run numereng --help
-just viz
+just dev
 ```
 
 If you want a local copy of the official Numerai docs:
@@ -39,7 +39,7 @@ uv run numereng docs sync numerai
 Repo-local extension roots:
 
 - `src/numereng/features/models/custom_models/` for custom model wrappers
-- `src/numereng/features/agentic_research/PROGRAM.md` for agentic config-research policy
+- `src/numereng/agentic_research/programs/PROGRAM.md` for agentic config-research policy
 - `.agents/skills/` for local custom skills; this path is gitignored
 
 Repo-local runtime state:

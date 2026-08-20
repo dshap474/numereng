@@ -13,7 +13,7 @@ def test_api_import_does_not_require_agentic_research(monkeypatch) -> None:
     original_api_attr = getattr(numereng, "api", None)
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "numereng.api._agentic_research" or name.startswith("numereng.features.agentic_research"):
+        if name == "numereng.api._agentic_research" or name.startswith("numereng.agentic_research"):
             raise ImportError("agentic_research_broken")
         return original_import(name, globals, locals, fromlist, level)
 
@@ -21,7 +21,7 @@ def test_api_import_does_not_require_agentic_research(monkeypatch) -> None:
     sys.modules.pop("numereng.api", None)
     sys.modules.pop("numereng.api._agentic_research", None)
     for key in tuple(sys.modules):
-        if key.startswith("numereng.features.agentic_research"):
+        if key.startswith("numereng.agentic_research"):
             sys.modules.pop(key, None)
 
     try:

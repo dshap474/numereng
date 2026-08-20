@@ -6,7 +6,7 @@ import json
 import math
 import os
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -366,7 +366,7 @@ def _build_calibration_rows(layout: WorkspaceLayout) -> tuple[list[dict[str, Any
             local_metrics, local_sources = _submission_offline_metrics(layout, upload_metadata)
             source_files.update(local_sources)
             tags = _submission_model_tags(model_name=model_name, metadata=upload_metadata)
-            source = upload_metadata.get("source") if isinstance(upload_metadata.get("source"), dict) else {}
+            source = _dict_field(upload_metadata, "source")
             live_started_at = _to_non_empty_str(upload.get("live_started_at")) or _submission_live_started_at(
                 upload_metadata
             )
@@ -682,8 +682,8 @@ def _assign_rank(items: list[dict[str, Any]], *, value_key: str, rank_key: str) 
 
 
 def _submission_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    parent_source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
-    parent_hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
+    parent_source = _dict_field(metadata, "source")
+    parent_hosted = _dict_field(metadata, "hosted_pickle")
     uploads_raw = metadata.get("uploads")
     uploads: list[dict[str, Any]] = []
     if isinstance(uploads_raw, list):
@@ -701,8 +701,8 @@ def _submission_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for item in uploads:
         upload = dict(item)
-        source = upload.get("source") if isinstance(upload.get("source"), dict) else parent_source
-        hosted = upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else parent_hosted
+        source = _dict_field(upload, "source", parent_source)
+        hosted = _dict_field(upload, "hosted_pickle", parent_hosted)
         upload["source"] = source
         upload["hosted_pickle"] = hosted
         upload["live_started_at"] = _to_non_empty_str(upload.get("live_started_at")) or _to_non_empty_str(
@@ -715,15 +715,13 @@ def _submission_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _metadata_for_upload(metadata: dict[str, Any], upload: dict[str, Any]) -> dict[str, Any]:
     upload_metadata = dict(metadata)
-    upload_metadata["source"] = upload.get("source") if isinstance(upload.get("source"), dict) else {}
-    upload_metadata["hosted_pickle"] = (
-        upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else {}
-    )
+    upload_metadata["source"] = _dict_field(upload, "source")
+    upload_metadata["hosted_pickle"] = _dict_field(upload, "hosted_pickle")
     return upload_metadata
 
 
 def _upload_id(upload: dict[str, Any], *, source: dict[str, Any], upload_index: int) -> str:
-    hosted = upload.get("hosted_pickle") if isinstance(upload.get("hosted_pickle"), dict) else {}
+    hosted = _dict_field(upload, "hosted_pickle")
     return (
         _to_non_empty_str(upload.get("upload_id"))
         or _to_non_empty_str(hosted.get("upload_id"))
@@ -752,7 +750,7 @@ def _round_attribution_date(round_row: dict[str, Any]) -> str | None:
 def _submission_offline_metrics(layout: WorkspaceLayout, metadata: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
     offline = metadata.get("offline_metrics")
     if not isinstance(offline, dict):
-        offline = metadata.get("offline_snapshot") if isinstance(metadata.get("offline_snapshot"), dict) else {}
+        offline = _dict_field(metadata, "offline_snapshot")
 
     metrics = {
         "local_bmc200_mean": _first_float(
@@ -828,7 +826,7 @@ def _submission_package_summaries(
     metadata: dict[str, Any],
 ) -> tuple[dict[str, Any], set[str]]:
     source_files: set[str] = set()
-    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    source = _dict_field(metadata, "source")
     package_path_raw = _to_non_empty_str(source.get("package_path"))
     package_path = Path(package_path_raw) if package_path_raw else None
     if package_path is not None and not package_path.is_absolute():
@@ -846,7 +844,7 @@ def _submission_package_summaries(
     package = _read_json_dict(package_json_path)
     if package_json_path.is_file():
         source_files.add(str(package_json_path))
-    artifacts = package.get("artifacts") if isinstance(package.get("artifacts"), dict) else {}
+    artifacts = _dict_field(package, "artifacts")
     summaries_path_raw = _to_non_empty_str(artifacts.get("last_validation_eval_summaries_path"))
     summaries_path = Path(summaries_path_raw) if summaries_path_raw else None
     if summaries_path is not None and not summaries_path.is_absolute():
@@ -894,8 +892,8 @@ def _summary_stat(summaries: dict[str, Any], stat: str, *groups: str) -> float |
 
 
 def _submission_live_started_at(metadata: dict[str, Any]) -> str | None:
-    hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
-    numerai = metadata.get("numerai") if isinstance(metadata.get("numerai"), dict) else {}
+    hosted = _dict_field(metadata, "hosted_pickle")
+    numerai = _dict_field(metadata, "numerai")
     return (
         _to_non_empty_str(hosted.get("uploaded_at"))
         or _to_non_empty_str(numerai.get("hosted_pickle_inserted_at"))
@@ -905,7 +903,7 @@ def _submission_live_started_at(metadata: dict[str, Any]) -> str | None:
 
 
 def _submission_model_tags(*, model_name: str, metadata: dict[str, Any]) -> dict[str, Any]:
-    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    source = _dict_field(metadata, "source")
     recipe = _to_non_empty_str(source.get("recipe"))
     package_id = _to_non_empty_str(source.get("package_id"))
     name = model_name.lower()
@@ -1017,7 +1015,7 @@ def _write_parquet_atomic(frame: pd.DataFrame, path: Path) -> None:
             temp_path.unlink()
 
 
-def _sanitize_row(row: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_row(row: Mapping[Any, Any]) -> dict[str, Any]:
     return {str(key): _sanitize_scalar(value) for key, value in row.items()}
 
 
@@ -1052,6 +1050,13 @@ def _sanitize_scalar(value: Any) -> Any:
         except Exception:
             return str(value)
     return value
+
+
+def _dict_field(payload: dict[str, Any], key: str, default: dict[str, Any] | None = None) -> dict[str, Any]:
+    value = payload.get(key)
+    if isinstance(value, dict):
+        return value
+    return {} if default is None else default
 
 
 def _to_non_empty_str(value: Any) -> str | None:
