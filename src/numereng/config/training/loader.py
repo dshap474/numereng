@@ -69,7 +69,7 @@ def export_training_config_schema(path: Path) -> None:
     """Export canonical JSON schema for the training config contract."""
     schema = TrainingConfig.model_json_schema()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(schema, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def canonical_schema_path() -> Path:

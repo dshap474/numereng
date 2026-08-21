@@ -1,7 +1,7 @@
 {
   "template": {
     "data": {
-      "data_version": "v5.2",
+      "data_version": "v5.3",
       "dataset_variant": "non_downsampled",
       "dataset_scope": "train_plus_validation",
       "feature_set": "small",
@@ -79,7 +79,7 @@
       "data_version": {
         "type": "string",
         "examples": [
-          "v5.2"
+          "v5.3"
         ]
       },
       "dataset_variant": [
@@ -165,7 +165,7 @@
         "type": "string_or_null",
         "examples": [
           null,
-          "v5.2/meta_model.parquet"
+          "v5.3/meta_model.parquet"
         ]
       },
       "meta_model_col": {
@@ -190,7 +190,7 @@
           null,
           ".numereng/baselines"
         ]
-      },
+      }
     },
     "preprocessing": {
       "nan_missing_all_twos": [
