@@ -44,7 +44,7 @@ def _install_transport(monkeypatch: pytest.MonkeyPatch, fixture: CloseoutFixture
             )
         return (payload, "codex-exec")
 
-    monkeypatch.setattr(llm, "_call_research_llm", fake)
+    monkeypatch.setattr(llm, "call_research_llm", fake)
     return calls
 
 

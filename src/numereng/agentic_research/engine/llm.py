@@ -22,7 +22,7 @@ def render_prompt(context: dict[str, object], *, program_path: Path = ar_types.P
     return program_path.read_text(encoding="utf-8").replace("{{CONTEXT_JSON}}", context_json)
 
 
-def _call_research_llm(
+def call_research_llm(
     *,
     prompt: str,
     artifact_dir: Path,
@@ -96,7 +96,7 @@ def _call_codex_exec(
         output_path = Path(handle.name)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False) as handle:
         schema_path = Path(handle.name)
-    memory.write_json(schema_path, LLM_RESPONSE_SCHEMA if schema is None else schema)
+    ar_types.write_json(schema_path, LLM_RESPONSE_SCHEMA if schema is None else schema)
     cmd = [_resolve_executable("codex"), "exec"]
     if config.active_model is not None:
         cmd.extend(["--model", config.active_model])
@@ -243,7 +243,7 @@ def _resolve_executable(name: str) -> str:
 
 
 def parse_llm_response(raw_response: str) -> ar_types.ResearchLLMResponse:
-    payload = _extract_json_object(raw_response)
+    payload = extract_json_object(raw_response)
     decision_form = payload.get("decision_form")
     if not isinstance(decision_form, dict):
         raise ar_types.AgenticResearchValidationError("agentic_research_decision_form_missing")
@@ -346,7 +346,7 @@ LLM_RESPONSE_SCHEMA: dict[str, object] = {
 }
 
 
-def _extract_json_object(text: str) -> dict[str, object]:
+def extract_json_object(text: str) -> dict[str, object]:
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", stripped)

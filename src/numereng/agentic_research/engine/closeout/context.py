@@ -72,8 +72,8 @@ def _round_memos_newest_first(experiment: ExperimentRecord) -> list[dict[str, st
     directory = memory.rounds_dir(experiment)
     if not directory.is_dir():
         return []
-    candidates = [path for path in directory.glob("r*.md") if path.stem[1:].isdigit()]
-    candidates.sort(key=lambda path: int(path.stem[1:]), reverse=True)
+    candidates = [path for path in directory.glob("r*.md") if memory.parse_round_label(path.stem) is not None]
+    candidates.sort(key=lambda path: memory.parse_round_label(path.stem) or 0, reverse=True)
     memos: list[dict[str, str]] = []
     for path in candidates:
         try:

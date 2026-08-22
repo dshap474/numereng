@@ -20,7 +20,7 @@ def _install_transport(monkeypatch: pytest.MonkeyPatch, fixture: CloseoutFixture
             "codex-exec",
         )
 
-    monkeypatch.setattr(llm, "_call_research_llm", fake)
+    monkeypatch.setattr(llm, "call_research_llm", fake)
 
 
 def test_cli_closeout_until_finalize_exit_zero(

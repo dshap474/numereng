@@ -54,6 +54,18 @@ class AgenticResearchDuplicateCandidate(AgenticResearchValidationError):
     pass
 
 
+class JournalLineError(AgenticResearchError):
+    """One malformed journal line, raised only by the strict journal reader.
+
+    Each strict caller catches this and re-raises its own domain error token, so the line number
+    travels without the readers having to share an error vocabulary.
+    """
+
+    def __init__(self, lineno: int) -> None:
+        super().__init__(f"agentic_research_journal_line_invalid:{lineno}")
+        self.lineno = lineno
+
+
 @dataclass(frozen=True)
 class ResearchBestRun:
     experiment_id: str | None = None
@@ -198,8 +210,21 @@ def write_json(path: Path, payload: object) -> None:
 
 
 def write_text(path: Path, text: str) -> None:
+    """Atomic text write (tmp + ``os.replace``), mirroring ``write_json``."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def get_dotted(payload: object, dotted_key: str) -> object | None:
+    """Walk a dotted key through nested dicts; ``None`` on any miss (no list indexing)."""
+    cursor = payload
+    for part in dotted_key.split("."):
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
 
 
 def extract_core_sections(text: str) -> dict[str, str]:

@@ -1,22 +1,20 @@
-"""Constants, error tokens, phase state models, and atomic write helpers for the closeout chain.
+"""Constants, error tokens, phase state models, and hashing helpers for the closeout chain.
 
 The closeout chain runs deterministic phases over a completed agentic experiment. This module
 holds the small shared vocabulary the rest of the subpackage builds on: phase names, error tokens
-(all carrying the ``agentic_research_closeout_`` prefix), the persisted phase-state models, and an
-atomic text writer (``types.write_text`` in the parent package is NOT atomic; the commit protocol
-needs one that is).
+(all carrying the ``agentic_research_closeout_`` prefix), the persisted phase-state models, and the
+content hashes the commit protocol compares. Atomic text writes come from the parent package's
+``types.write_text``.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import types as ct
     state = ct.CloseoutState.new(experiment_id="x", memory_root_identity="/abs")
-    ct.write_text_atomic(path, "content")
     digest = ct.sha256_text("content")
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -403,16 +401,8 @@ class CloseoutResult:
 
 
 # --------------------------------------------------------------------------- #
-# Atomic write + hashing helpers
+# Hashing helpers
 # --------------------------------------------------------------------------- #
-def write_text_atomic(path: Path, text: str) -> None:
-    """Atomic text write (tmp + os.replace); the parent package's write_text is not atomic."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
-
-
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

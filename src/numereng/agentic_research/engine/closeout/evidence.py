@@ -30,6 +30,7 @@ from numereng.features.experiments import (
     seal_experiment_holdout,
 )
 from numereng.features.scoring.run_service import score_run_eras
+from numereng.features.training.repo import resolve_metrics_path, resolve_run_manifest_path
 
 # Fixed enrichment metric set, dotted into runs/<run_id>/metrics.json (shape verified 2026-07-13).
 _ENRICHMENT_METRIC_KEYS = ("bmc.mean", "corr.mean", "mmc.mean", "cwmm.mean", "fnc.mean", "bmc.max_drawdown")
@@ -41,20 +42,10 @@ _LEADERBOARD_ENRICH_LIMIT = 5
 # --------------------------------------------------------------------------- #
 def _parse_journal_strict(journal_path: Path) -> list[tuple[int, dict[str, object]]]:
     """Return (lineno, entry) for each non-blank line; a malformed line fails closeout hard."""
-    if not journal_path.is_file():
-        return []
-    parsed: list[tuple[int, dict[str, object]]] = []
-    for lineno, line in enumerate(journal_path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ct.CloseoutError(ct.err_journal_malformed(lineno)) from exc
-        if not isinstance(payload, dict):
-            raise ct.CloseoutError(ct.err_journal_malformed(lineno))
-        parsed.append((lineno, payload))
-    return parsed
+    try:
+        return list(memory.iter_journal_lines(journal_path, strict=True))
+    except ar_types.JournalLineError as exc:
+        raise ct.CloseoutError(ct.err_journal_malformed(exc.lineno)) from exc
 
 
 def _validate_completed_configs(
@@ -201,9 +192,9 @@ def _sweep_abandoned(experiment: ExperimentRecord) -> dict[str, object]:
             except OSError:
                 continue
             if "SWEEP ABANDONED" in text:
-                stem = path.stem
-                if stem[1:].isdigit():
-                    rounds.append(int(stem[1:]))
+                number = memory.parse_round_label(path.stem)
+                if number is not None:
+                    rounds.append(number)
     return {"count": len(rounds), "rounds": sorted(rounds)}
 
 
@@ -233,24 +224,15 @@ def _rounds_table(parsed: list[tuple[int, dict[str, object]]]) -> list[dict[str,
 # --------------------------------------------------------------------------- #
 # Metrics enrichment (optional; structural "unavailable" markers, never silent omission)
 # --------------------------------------------------------------------------- #
-def _dig(payload: dict[str, object], dotted: str) -> object:
-    cursor: object = payload
-    for part in dotted.split("."):
-        if not isinstance(cursor, dict):
-            return None
-        cursor = cursor.get(part)
-    return cursor
-
-
 def _enrich_run(runs_dir: Path, run_id: str) -> dict[str, object]:
-    metrics_path = runs_dir / run_id / "metrics.json"
+    metrics_path = resolve_metrics_path(runs_dir / run_id)
     try:
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {key: "unavailable: run not pulled" for key in _ENRICHMENT_METRIC_KEYS}
     result: dict[str, object] = {}
     for key in _ENRICHMENT_METRIC_KEYS:
-        value = _dig(payload, key)
+        value = ar_types.get_dotted(payload, key)
         result[key] = (
             value if isinstance(value, (int, float)) and not isinstance(value, bool) else "unavailable: metric absent"
         )
@@ -345,7 +327,7 @@ def _open_holdout(
         payload = score_run_eras(
             run_id=run_id, era_filter=era_filter, store_root=store_root, stage=ar_types.SCORING_STAGE
         )
-        per_run[run_id] = _dig(payload, ar_types.PRIMARY_METRIC)
+        per_run[run_id] = ar_types.get_dotted(payload, ar_types.PRIMARY_METRIC)
     values = [value for value in per_run.values() if isinstance(value, (int, float)) and not isinstance(value, bool)]
     record: dict[str, object] = {
         "enabled": True,
@@ -373,7 +355,7 @@ def _open_holdout(
 
 def _run_era_order(runs_dir: Path, run_id: str) -> tuple[str, ...]:
     run_dir = runs_dir / run_id
-    run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    run_manifest = json.loads(resolve_run_manifest_path(run_dir).read_text(encoding="utf-8"))
     artifacts = run_manifest.get("artifacts") if isinstance(run_manifest, dict) else None
     predictions_rel = artifacts.get("predictions") if isinstance(artifacts, dict) else None
     if isinstance(predictions_rel, str) and predictions_rel.strip():
@@ -393,7 +375,7 @@ def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], st
     """Strict, deterministic evidence build. Raises ``CloseoutError`` on any evidence corruption."""
     runs_dir = store_root / "runs"
     journal_path = memory.journal_path(experiment)
-    config_dir = experiment.manifest_path.parent / "configs"
+    config_dir = memory.configs_dir(experiment)
     parsed = _parse_journal_strict(journal_path)
     configs = _validate_completed_configs(parsed, config_dir=config_dir)
 

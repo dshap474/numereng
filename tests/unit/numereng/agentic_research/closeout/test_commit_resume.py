@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from numereng.agentic_research.engine import types as ar_types
 from numereng.agentic_research.engine.closeout import runner
 from numereng.agentic_research.engine.closeout import types as ct
 
@@ -30,7 +31,7 @@ def _stage_commit(closeout_dir: Path, slots: dict[str, str], *, applied: set[str
     records: list[dict[str, object]] = []
     for index, (dest, content) in enumerate(sorted(slots.items())):
         stage_file = stage_dir / f"slot_{index}"
-        ct.write_text_atomic(stage_file, content)
+        ar_types.write_text(stage_file, content)
         records.append(
             {
                 "path": dest,
@@ -48,7 +49,7 @@ def _stage_commit(closeout_dir: Path, slots: dict[str, str], *, applied: set[str
     }
     (closeout_dir / ct.CLOSEOUT_COMMIT_FILENAME).write_text(json.dumps(commit), encoding="utf-8")
     for dest in applied:
-        ct.write_text_atomic(Path(dest), slots[dest])
+        ar_types.write_text(Path(dest), slots[dest])
     return commit
 
 
@@ -110,7 +111,7 @@ def test_conflicting_destination_raises(tmp_path: Path) -> None:
     dest = str(closeout_dir / ct.CLOSEOUT_MEMO_FILENAME)
     _stage_commit(closeout_dir, {dest: "final memo"}, applied=set())
     # A third party rewrote the destination to content matching neither old nor new.
-    ct.write_text_atomic(Path(dest), "foreign content")
+    ar_types.write_text(Path(dest), "foreign content")
 
     with pytest.raises(ct.CloseoutError) as exc:
         runner._roll_forward(closeout_dir, state, state_path)

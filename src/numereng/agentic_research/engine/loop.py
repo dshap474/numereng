@@ -8,8 +8,11 @@ from pathlib import Path
 
 from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory
 from numereng.agentic_research.engine import types as ar_types
-from numereng.agentic_research.engine.context import _safe_report
-from numereng.agentic_research.engine.llm import _call_research_llm
+
+# Bound under their underscore names on purpose: these two locals are the monkeypatch seam the
+# loop tests use (they patch ``loop._safe_report`` / ``loop._call_research_llm``).
+from numereng.agentic_research.engine.context import safe_report as _safe_report
+from numereng.agentic_research.engine.llm import call_research_llm as _call_research_llm
 from numereng.agentic_research.engine.types import (
     AgenticResearchDuplicateCandidate,
     AgenticResearchValidationError,
@@ -106,7 +109,7 @@ def _prevalidate_seed_configs(experiment: ExperimentRecord) -> None:
     session after five failures. Loading through the contract here surfaces it up front, with the
     training-config error naming the offending key.
     """
-    config_dir = experiment.manifest_path.parent / "configs"
+    config_dir = memory.configs_dir(experiment)
     configs = sorted(config_dir.glob("*.json"))
     seeds = [path for path in configs if not path.name.startswith("config_")]
     for path in seeds or configs[:1]:
@@ -137,7 +140,7 @@ def _prevalidate_program_core(experiment: ExperimentRecord) -> None:
 def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) -> ResearchRoundResult:
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
     round_number = ar_types.as_int(state.get("next_round_number"), default=1)
-    round_label = f"r{round_number:03d}"
+    round_label = memory.round_label(round_number)
     artifact_dir = memory.rounds_dir(experiment)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     report = _safe_report(root=root, experiment_id=experiment_id)
@@ -234,7 +237,7 @@ def _train_score_record_round(
         root=root, experiment=experiment, state=state, round_label=round_label, config_path=config_path
     )
     is_champion = _advance_champion(
-        state=state, round_label=round_label, config_path=config_path, run_id=run_id, metric=metric_value
+        state=state, round_number=round_number, config_path=config_path, run_id=run_id, metric=metric_value
     )
     entry = _journal_entry(
         round=round_number,
@@ -443,7 +446,7 @@ def _execute_seed(
             wall_seconds=time.monotonic() - started_at,
         )
     is_champion = _advance_champion(
-        state=state, round_label=round_label, config_path=config_path, run_id=run_id, metric=metric_value
+        state=state, round_number=round_number, config_path=config_path, run_id=run_id, metric=metric_value
     )
     entry = _journal_entry(
         round=round_number,
@@ -626,7 +629,7 @@ def _finalize_round(
 
 
 def _advance_champion(
-    *, state: dict[str, object], round_label: str, config_path: Path, run_id: str, metric: object
+    *, state: dict[str, object], round_number: int, config_path: Path, run_id: str, metric: object
 ) -> bool:
     typed = ar_types.optional_float(metric)
     champion = state.get("champion")
@@ -637,7 +640,7 @@ def _advance_champion(
         "config": config_path.name,
         "run_id": run_id,
         "metric": typed,
-        "round": int(round_label.removeprefix("r")) if round_label.removeprefix("r").isdigit() else None,
+        "round": round_number,
     }
     return True
 
@@ -660,7 +663,7 @@ def _resolve_believed_best(
     champion = state.get("champion")
     champion_config = champion.get("config") if isinstance(champion, dict) else None
     config_name = declared or (champion_config if isinstance(champion_config, str) else None) or fallback_config
-    configs = aggregate.load_config_cache(experiment.manifest_path.parent / "configs")
+    configs = aggregate.load_config_cache(memory.configs_dir(experiment))
     groups = aggregate.aggregate_recipes(memory.journal_all(experiment), configs=configs)
     group = aggregate.group_for_config(groups, config_name, configs)
     record: dict[str, object] = {
@@ -683,7 +686,7 @@ def _record_terminal_round(
     *, experiment: ExperimentRecord, state: dict[str, object], error: Exception, status: str
 ) -> ResearchRoundResult:
     round_number = ar_types.as_int(state.get("next_round_number"), default=1)
-    round_label = f"r{round_number:03d}"
+    round_label = memory.round_label(round_number)
     artifact_dir = memory.rounds_dir(experiment)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     message = str(error) or error.__class__.__name__

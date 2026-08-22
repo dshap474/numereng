@@ -21,6 +21,18 @@ def compute_config_hash(config: dict[str, object]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def strip_training_identity_noise(config: dict[str, object]) -> dict[str, object]:
+    """Return ``config`` without the fields excluded from training run identity.
+
+    Exactly the two strips ``compute_run_hash`` applies before hashing: the whole ``output`` block
+    and the legacy ``data.loading`` block. Shallow-copies like the hash path does; nested values are
+    shared with the input.
+    """
+    stripped = _strip_removed_training_identity_fields(dict(config))
+    stripped.pop("output", None)
+    return stripped
+
+
 def compute_run_hash(
     *,
     config: dict[str, object],
@@ -33,8 +45,7 @@ def compute_run_hash(
 ) -> str:
     """Compute deterministic training run identity hash."""
     output_config = _as_mapping(config.get("output"))
-    material_config = _strip_removed_training_identity_fields(dict(config))
-    material_config.pop("output", None)
+    material_config = strip_training_identity_noise(config)
 
     identity: dict[str, object] = {
         "config": material_config,

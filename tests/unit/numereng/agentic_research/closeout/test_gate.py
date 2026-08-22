@@ -114,4 +114,4 @@ def _install_fake_transport(monkeypatch: pytest.MonkeyPatch, fixture: CloseoutFi
             "codex-exec",
         )
 
-    monkeypatch.setattr(llm, "_call_research_llm", fake)
+    monkeypatch.setattr(llm, "call_research_llm", fake)

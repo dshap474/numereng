@@ -44,7 +44,7 @@ def _install_transport(monkeypatch: pytest.MonkeyPatch, fixture: CloseoutFixture
             "codex-exec",
         )
 
-    monkeypatch.setattr(llm, "_call_research_llm", fake)
+    monkeypatch.setattr(llm, "call_research_llm", fake)
 
 
 def _ledger_memory_root(fixture: CloseoutFixture):
@@ -176,7 +176,7 @@ def test_invalid_synthesize_response_creates_no_backup(
     closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_transport(monkeypatch, closeout_fixture)
-    original_call = llm._call_research_llm
+    original_call = llm.call_research_llm
 
     def invalid_current(**kwargs):
         if kwargs.get("round_label") == ct.PHASE_SYNTHESIZE:
@@ -185,7 +185,7 @@ def test_invalid_synthesize_response_creates_no_backup(
             return (json.dumps(payload), "codex-exec")
         return original_call(**kwargs)
 
-    monkeypatch.setattr(llm, "_call_research_llm", invalid_current)
+    monkeypatch.setattr(llm, "call_research_llm", invalid_current)
     memory_root = _ledger_memory_root(closeout_fixture)
 
     result = _run(closeout_fixture, memory_root, until="synthesize")

@@ -46,7 +46,7 @@ def _install_transport(
             )
         return payload, "codex-exec"
 
-    monkeypatch.setattr(llm, "_call_research_llm", fake)
+    monkeypatch.setattr(llm, "call_research_llm", fake)
 
 
 @pytest.mark.parametrize(
@@ -161,7 +161,7 @@ def test_legacy_completed_state_loads_as_master_without_memory_writes(
     def fail_transport(**kwargs):
         raise AssertionError("legacy completed closeout must not call the LLM")
 
-    monkeypatch.setattr(llm, "_call_research_llm", fail_transport)
+    monkeypatch.setattr(llm, "call_research_llm", fail_transport)
     result = runner.run_closeout(
         store_root=closeout_fixture.store_root,
         experiment_id=closeout_fixture.experiment_id,

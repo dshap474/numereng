@@ -107,7 +107,7 @@ CLASSIFY_SCHEMA: dict[str, object] = {
 
 def parse_classification(raw_response: str) -> dict[str, object]:
     """Parse the persisted closeout routing decision."""
-    payload = llm._extract_json_object(raw_response)
+    payload = llm.extract_json_object(raw_response)
     if set(payload) != {"disposition", "relevant_topics", "rationale"}:
         raise ct.CloseoutError(ct.err_classification_field_invalid("fields"))
     disposition = payload.get("disposition")
@@ -151,7 +151,7 @@ def _parse_files_list(files_raw: object) -> list[dict[str, str]]:
 
 def parse_files_envelope(raw_response: str) -> tuple[list[dict[str, str]], str]:
     """Parse the shared ``{files, notes}`` envelope; raise ``CloseoutError`` on structural problems."""
-    payload = llm._extract_json_object(raw_response)
+    payload = llm.extract_json_object(raw_response)
     files = _parse_files_list(payload.get("files"))
     notes = payload.get("notes")
     return files, notes if isinstance(notes, str) else ""
@@ -246,7 +246,7 @@ def parse_synthesize_envelope(
     relevant_topics: tuple[str, ...] = ct.MEMORY_TOPIC_FILES,
 ) -> tuple[dict[str, dict[str, str | None]], str, str]:
     """Parse ``{deltas, current_md, notes}``; return (deltas-by-topic, current_md, notes)."""
-    payload = llm._extract_json_object(raw_response)
+    payload = llm.extract_json_object(raw_response)
     deltas_raw = payload.get("deltas")
     if not isinstance(deltas_raw, list):
         raise ct.CloseoutError(f"{ct.ERROR_PREFIX}deltas_missing")

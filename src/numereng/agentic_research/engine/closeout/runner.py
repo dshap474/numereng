@@ -225,7 +225,7 @@ def _apply_commit(closeout_dir: Path, commit: dict[str, object], state: ct.Close
             content = stage.read_text(encoding="utf-8")
             if ct.sha256_text(content) != new_sha:
                 raise ct.CloseoutError(ct.err_commit_conflict(str(dest)))
-            ct.write_text_atomic(dest, content)
+            ar_types.write_text(dest, content)
             continue
         raise ct.CloseoutError(ct.err_commit_conflict(str(dest)))
     # Recorded outputs default to the whole-file slot hashes, but a phase may record a different
@@ -280,7 +280,7 @@ def _commit_phase(
     slot_records: list[dict[str, object]] = []
     for index, (dest_str, content) in enumerate(items):
         stage_file = stage_dir / f"slot_{index}"
-        ct.write_text_atomic(stage_file, content)
+        ar_types.write_text(stage_file, content)
         slot_records.append(
             {
                 "path": dest_str,
@@ -357,7 +357,7 @@ def _llm_phase[T](
 ) -> T:
     """Call the research LLM for one phase and parse it; on failure write the debug bundle and re-raise."""
     artifact_dir = ct.debug_dir(closeout_dir)
-    raw, _source = llm._call_research_llm(
+    raw, _source = llm.call_research_llm(
         prompt=prompt,
         artifact_dir=artifact_dir,
         round_label=phase,

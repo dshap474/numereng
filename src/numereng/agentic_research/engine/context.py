@@ -18,9 +18,10 @@ from numereng.features.experiments import (
     ExperimentReportRow,
     report_experiment,
 )
+from numereng.features.training.repo import resolve_metrics_path
 
 
-def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
+def safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
     try:
         return report_experiment(
             store_root=root, experiment_id=experiment_id, metric=ar_types.PRIMARY_METRIC, limit=ar_types.REPORT_LIMIT
@@ -33,7 +34,7 @@ def build_context(
     *, root: Path, experiment: ExperimentRecord, report: ExperimentReport | None, state: dict[str, object]
 ) -> dict[str, object]:
     budget_rounds = ar_types.as_int(experiment.metadata.get(ar_types.BUDGET_ROUNDS_METADATA_KEY), default=0)
-    configs = aggregate.load_config_cache(experiment.manifest_path.parent / "configs")
+    configs = aggregate.load_config_cache(memory.configs_dir(experiment))
     journal_entries = memory.journal_all(experiment)
     recipe_groups = aggregate.aggregate_recipes(journal_entries, configs=configs)
     assembled = {
@@ -72,7 +73,7 @@ def build_context(
         "recent_journal": journal_entries[-ar_types.RECENT_JOURNAL_LIMIT :],
         "configs": _config_context(experiment, state=state),
         "last_round_memo": memory.latest_round_markdown(experiment),
-        "experiment_notes": memory.read_text(
+        "experiment_notes": ar_types.read_text(
             memory.experiment_markdown_path(experiment), limit=ar_types.MAX_CONTEXT_CHARS
         ),
         "last_error": ar_types.optional_str(state.get("last_error")),
@@ -256,21 +257,15 @@ BENCHMARK_CORR_METRIC = "bmc_last_200_eras.avg_corr_with_benchmark"
 def load_run_metrics(*, root: Path, run_id: str) -> dict[str, object] | None:
     """Read a run's metrics.json once; callers dig it with ``metric_from_metrics``."""
     try:
-        payload: object = json.loads((root / "runs" / run_id / "metrics.json").read_text(encoding="utf-8"))
+        payload: object = json.loads(resolve_metrics_path(root / "runs" / run_id).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
 
 
 def metric_from_metrics(metrics: dict[str, object] | None, dotted: str) -> float | None:
-    current: object = metrics
-    for token in dotted.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(token)
-        if current is None:
-            return None
-    return float(current) if isinstance(current, (int, float)) else None
+    value = ar_types.get_dotted(metrics, dotted)
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def run_primary_metric_from_disk(*, root: Path, run_id: str) -> float | None:
@@ -292,7 +287,7 @@ def run_benchmark_corr_from_disk(*, root: Path, run_id: str) -> float | None:
 
 
 def _config_context(experiment: ExperimentRecord, *, state: dict[str, object]) -> list[dict[str, object]]:
-    config_dir = experiment.manifest_path.parent / "configs"
+    config_dir = memory.configs_dir(experiment)
     keep = _relevant_config_paths(sorted(config_dir.glob("*.json")), state=state)
     items: list[dict[str, object]] = []
     for path in sorted(keep, key=lambda path: path.name):
@@ -327,20 +322,11 @@ def _config_suffix_num(path: Path) -> int:
 def _mutable_config_view(payload: dict[str, object]) -> dict[str, object]:
     view: dict[str, object] = {}
     for path in ALLOWED_CHANGE_PATHS:
-        parts = (path[:-2] if path.endswith(".*") else path).split(".")
-        value = _get_dotted(payload, parts)
+        dotted = path[:-2] if path.endswith(".*") else path
+        value = ar_types.get_dotted(payload, dotted)
         if value is not None:
-            _assign_view(view, parts, value)
+            _assign_view(view, dotted.split("."), value)
     return view
-
-
-def _get_dotted(payload: dict[str, object], parts: list[str]) -> object | None:
-    cursor: object = payload
-    for part in parts:
-        if not isinstance(cursor, dict) or part not in cursor:
-            return None
-        cursor = cursor[part]
-    return cursor
 
 
 def _assign_view(payload: dict[str, object], parts: list[str], value: object) -> None:

@@ -75,7 +75,7 @@ def test_droid_source_dispatches_on_auto_and_codex_transports(tmp_path: Path, mo
     calls: list[str] = []
     monkeypatch.setattr(llm, "_call_droid_exec", lambda **kwargs: calls.append("droid") or "raw")
     for transport in ("auto", "codex"):
-        raw, source = llm._call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1", transport=transport)
+        raw, source = llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1", transport=transport)
         assert (raw, source) == ("raw", "droid-exec")
     assert calls == ["droid", "droid"]
 

@@ -15,14 +15,13 @@ from pathlib import Path
 
 from numereng.agentic_research.engine import types as ar_types
 from numereng.config.training import load_training_config_json
-from numereng.features.training.run_store import compute_config_hash
+from numereng.features.training.run_store import compute_config_hash, strip_training_identity_noise
 
 # Paths normalized out of a config before hashing so seed-trio runs of one recipe collapse to one
-# key. Mirrors what compute_run_hash strips for training identity (the whole `output` block and the
-# legacy `data.loading`) plus the seed and the two pure-execution resource knobs.
-_RECIPE_DROP_KEYS = ("output",)
+# key. The training-identity strips (the whole `output` block and the legacy `data.loading`) come
+# from `strip_training_identity_noise`; on top of them we drop the seed and the two pure-execution
+# resource knobs.
 _RECIPE_DROP_DOTTED = (
-    ("data", "loading"),
     ("model", "params", "random_state"),
     ("training", "resources", "parallel_folds"),
     ("training", "resources", "max_threads_per_worker"),
@@ -44,9 +43,7 @@ class RecipeGroup:
 
 def recipe_key(config: dict[str, object]) -> str:
     """Hash a config with seed + execution/naming knobs stripped (one key per training recipe)."""
-    stripped = deepcopy(config)
-    for key in _RECIPE_DROP_KEYS:
-        stripped.pop(key, None)
+    stripped = strip_training_identity_noise(deepcopy(config))
     for parts in _RECIPE_DROP_DOTTED:
         cursor: object = stripped
         for part in parts[:-1]:

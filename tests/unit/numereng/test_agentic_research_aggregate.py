@@ -47,6 +47,15 @@ def test_recipe_key_splits_on_a_real_param_change() -> None:
     assert aggregate.recipe_key(base) != aggregate.recipe_key(deeper)
 
 
+def test_recipe_key_ignores_run_store_stripped_identity_fields() -> None:
+    # `data.loading` is stripped by compute_run_hash's training-identity strip, which recipe_key
+    # now shares via strip_training_identity_noise; two configs differing only there are one recipe.
+    base = _config(random_state=42, predictions_name="p")
+    legacy = _config(random_state=42, predictions_name="p")
+    legacy["data"]["loading"] = {"chunked": True}
+    assert aggregate.recipe_key(base) == aggregate.recipe_key(legacy)
+
+
 def test_recipe_key_does_not_mutate_input() -> None:
     cfg = _config(random_state=42, predictions_name="p")
     snapshot = copy.deepcopy(cfg)

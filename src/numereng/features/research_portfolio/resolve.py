@@ -19,12 +19,14 @@ import json
 from pathlib import Path
 
 from numereng.agentic_research.engine import context as ar_context
+from numereng.agentic_research.engine import memory as ar_memory
 from numereng.agentic_research.engine.aggregate import (
     aggregate_recipes,
     load_config_cache,
     observed_seed_noise,
     recipe_key,
 )
+from numereng.agentic_research.engine.types import JournalLineError
 from numereng.config.research_portfolio import RegistryLane
 from numereng.features.experiments import ExperimentError, get_experiment
 from numereng.features.research_portfolio.surface import compute_surface_id
@@ -73,7 +75,7 @@ def resolve_lane(
             blockers.append(f"scale_experiment_not_found:{scale_id}")
         if experiment is not None:
             experiment_dir = experiment.manifest_path.parent
-            configs = load_config_cache(experiment_dir / "configs")
+            configs = load_config_cache(ar_memory.configs_dir(experiment))
             journal_entries = _read_journal_strict(
                 experiment_dir / "agentic_research" / "journal.jsonl",
                 lane_id=lane.lane_id,
@@ -271,20 +273,10 @@ def _seed_fact(
 def _read_journal_strict(path: Path, *, lane_id: str) -> list[dict[str, object]]:
     """Read journal.jsonl, hard-failing on any malformed line (§2.2.2)."""
 
-    if not path.is_file():
-        return []
-    entries: list[dict[str, object]] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise PortfolioValidationError(f"malformed_journal_line:{lane_id}:{path}:{number}") from exc
-        if not isinstance(payload, dict):
-            raise PortfolioValidationError(f"malformed_journal_line:{lane_id}:{path}:{number}")
-        entries.append(payload)
-    return entries
+    try:
+        return [entry for _, entry in ar_memory.iter_journal_lines(path, strict=True)]
+    except JournalLineError as exc:
+        raise PortfolioValidationError(f"malformed_journal_line:{lane_id}:{path}:{exc.lineno}") from exc
 
 
 def _load_state(path: Path) -> dict[str, object]:

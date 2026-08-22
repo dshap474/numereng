@@ -13,6 +13,7 @@ from numereng.agentic_research.engine import types as ar_types
 from numereng.config.training import TrainingConfig, load_training_config_json
 from numereng.features.experiments import ExperimentRecord, ExperimentTrainResult
 from numereng.features.training.errors import TrainingError
+from numereng.features.training.repo import resolve_run_manifest_path
 from numereng.features.training.run_store import compute_config_hash
 
 ALLOWED_CHANGE_PATHS = tuple(
@@ -30,7 +31,7 @@ _TRAIN_RUN_DIR_NOT_FRESH_PREFIX = "training_run_dir_not_fresh:"
 def materialize_config(
     *, experiment: ExperimentRecord, round_label: str, decision: ar_types.ResearchDecision, seed: int | None = None
 ) -> Path:
-    config_dir = experiment.manifest_path.parent / "configs"
+    config_dir = memory.configs_dir(experiment)
     parent_path = config_dir / str(decision.parent_config)
     if not parent_path.is_file():
         raise ar_types.AgenticResearchValidationError(
@@ -67,18 +68,18 @@ def materialize_config(
     if candidate_hash in existing and memory.journal_has_recorded_run(experiment, existing[candidate_hash]):
         raise ar_types.AgenticResearchDuplicateCandidate(f"agentic_research_candidate_duplicate:{candidate_hash[:12]}")
     path = config_dir / _round_config_filename(round_label, seed=seed)
-    memory.write_json(path, validated)
+    ar_types.write_json(path, validated)
     return path
 
 
 def baseline_config(experiment: ExperimentRecord, round_label: str) -> Path:
-    config_dir = experiment.manifest_path.parent / "configs"
+    config_dir = memory.configs_dir(experiment)
     config_dir.mkdir(parents=True, exist_ok=True)
     configs = sorted(config_dir.glob("*.json"))
     if not configs:
         raise ar_types.AgenticResearchValidationError(f"agentic_research_config_missing:{experiment.experiment_id}")
     path = config_dir / _round_config_filename(round_label)
-    memory.write_json(path, load_training_config_json(configs[0]))
+    ar_types.write_json(path, load_training_config_json(configs[0]))
     return path
 
 
@@ -94,7 +95,7 @@ def reuse_finished_run_on_hash_collision(
     run_id = parts[1]
     run_dir = root / "runs" / run_id
     try:
-        run_manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        run_manifest = json.loads(resolve_run_manifest_path(run_dir).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if run_manifest.get("status") != "FINISHED":
@@ -136,7 +137,7 @@ def link_reused_run_to_experiment(*, experiment: ExperimentRecord, run_id: str) 
     if manifest.get("status") == "draft":
         manifest["status"] = "active"
     manifest["updated_at"] = ar_types.utc_now_iso()
-    memory.write_json(experiment.manifest_path, manifest)
+    ar_types.write_json(experiment.manifest_path, manifest)
 
 
 def record_round_config_in_run_plan(*, experiment: ExperimentRecord, round_label: str, config_path: Path) -> None:

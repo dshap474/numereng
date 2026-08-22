@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+from collections.abc import Iterator
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -12,9 +12,9 @@ from pathlib import Path
 from numereng.agentic_research.engine import types as ar_types
 from numereng.features.experiments import ExperimentRecord
 
-read_text = ar_types.read_text
-write_json = ar_types.write_json
-write_text = ar_types.write_text
+# Round memos are named ``r`` + at least three digits (``r001.md``); debug sidecars such as
+# ``r001.debug.prompt.md`` are deliberately excluded by the full-stem match.
+_ROUND_LABEL_RE = re.compile(r"r\d{3,}")
 
 _STATE_DEFAULTS: dict[str, object] = {
     "schema_version": ar_types.STATE_SCHEMA_VERSION,
@@ -67,7 +67,7 @@ def load_state(path: Path) -> dict[str, object] | None:
 
 
 def save_state(experiment: ExperimentRecord, state: dict[str, object]) -> None:
-    write_json(state_path(experiment), state)
+    ar_types.write_json(state_path(experiment), state)
 
 
 def heartbeat(state: dict[str, object]) -> None:
@@ -96,20 +96,34 @@ def journal_has_recorded_run(experiment: ExperimentRecord, config_name: str) -> 
     )
 
 
-def _journal_entries(path: Path) -> list[dict[str, object]]:
+def iter_journal_lines(path: Path, *, strict: bool) -> Iterator[tuple[int, dict[str, object]]]:
+    """Yield ``(lineno, entry)`` for each non-blank journal line.
+
+    ``strict=False`` is the in-run reader: blank, unparseable, and non-dict lines are skipped.
+    ``strict=True`` raises ``JournalLineError`` on the first malformed line; closeout and the
+    portfolio resolver translate it into their own error tokens. The split is deliberate — the
+    loop must survive a torn line, the distillers must not.
+    """
     if not path.is_file():
-        return []
-    entries: list[dict[str, object]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+        return
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            if strict:
+                raise ar_types.JournalLineError(lineno) from exc
             continue
-        if isinstance(payload, dict):
-            entries.append(payload)
-    return entries
+        if not isinstance(payload, dict):
+            if strict:
+                raise ar_types.JournalLineError(lineno)
+            continue
+        yield lineno, payload
+
+
+def _journal_entries(path: Path) -> list[dict[str, object]]:
+    return [entry for _, entry in iter_journal_lines(path, strict=False)]
 
 
 def write_round_markdown(
@@ -141,27 +155,23 @@ def write_round_markdown(
     if entry.get("error"):
         lines.append(f"- error: {entry.get('error')}")
     lines.extend(extra_lines or ())
-    write_text(rounds_dir(experiment) / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
+    ar_types.write_text(rounds_dir(experiment) / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
 def write_experiment_markdown(experiment: ExperimentRecord, content: str | None) -> None:
     if not content:
         return
-    path = experiment_markdown_path(experiment)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    ar_types.write_text(experiment_markdown_path(experiment), content)
 
 
 def write_failure_debug(
     *, artifact_dir: Path, round_label: str, prompt: str, error: str, raw_response: str | None = None
 ) -> None:
     prefix = artifact_dir / f"{round_label}.debug"
-    write_text(Path(f"{prefix}.prompt.md"), prompt)
-    write_text(Path(f"{prefix}.error.txt"), error.strip() + "\n")
+    ar_types.write_text(Path(f"{prefix}.prompt.md"), prompt)
+    ar_types.write_text(Path(f"{prefix}.error.txt"), error.strip() + "\n")
     if raw_response is not None:
-        write_text(Path(f"{prefix}.llm_response.txt"), raw_response)
+        ar_types.write_text(Path(f"{prefix}.llm_response.txt"), raw_response)
 
 
 def agentic_dir(experiment: ExperimentRecord) -> Path:
@@ -170,6 +180,19 @@ def agentic_dir(experiment: ExperimentRecord) -> Path:
 
 def rounds_dir(experiment: ExperimentRecord) -> Path:
     return agentic_dir(experiment) / "rounds"
+
+
+def configs_dir(experiment: ExperimentRecord) -> Path:
+    return experiment.manifest_path.parent / "configs"
+
+
+def round_label(round_number: int) -> str:
+    return f"r{round_number:03d}"
+
+
+def parse_round_label(stem: str) -> int | None:
+    """Parse a round-memo stem (``r`` + at least three digits) to its round number, else ``None``."""
+    return int(stem[1:]) if _ROUND_LABEL_RE.fullmatch(stem) else None
 
 
 def state_path(experiment: ExperimentRecord) -> Path:
@@ -210,10 +233,11 @@ def latest_round_markdown(experiment: ExperimentRecord) -> str | None:
     directory = rounds_dir(experiment)
     if not directory.is_dir():
         return None
-    candidates = [path for path in directory.glob("r*.md") if re.fullmatch(r"r\d{3,}\.md", path.name)]
+    candidates = [path for path in directory.glob("r*.md") if parse_round_label(path.stem) is not None]
     if not candidates:
         return None
-    return read_text(max(candidates, key=lambda path: int(path.stem[1:])), limit=ar_types.MAX_CONTEXT_CHARS)
+    latest = max(candidates, key=lambda path: parse_round_label(path.stem) or 0)
+    return ar_types.read_text(latest, limit=ar_types.MAX_CONTEXT_CHARS)
 
 
 def _value(value: object) -> str:
