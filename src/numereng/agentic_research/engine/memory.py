@@ -144,15 +144,14 @@ def write_round_markdown(
     write_text(rounds_dir(experiment) / f"{round_label}.md", "\n".join(lines).rstrip() + "\n")
 
 
-def write_experiment_markdown(experiment: ExperimentRecord, content: str | None) -> int:
+def write_experiment_markdown(experiment: ExperimentRecord, content: str | None) -> None:
     if not content:
-        return 0
+        return
     path = experiment_markdown_path(experiment)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(content, encoding="utf-8")
     os.replace(tmp, path)
-    return len(content)
 
 
 def write_failure_debug(

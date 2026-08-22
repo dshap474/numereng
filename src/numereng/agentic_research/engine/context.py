@@ -32,8 +32,7 @@ def _safe_report(*, root: Path, experiment_id: str) -> ExperimentReport | None:
 def build_context(
     *, root: Path, experiment: ExperimentRecord, report: ExperimentReport | None, state: dict[str, object]
 ) -> dict[str, object]:
-    raw_budget = experiment.metadata.get(ar_types.BUDGET_ROUNDS_METADATA_KEY)
-    budget_rounds = ar_types.as_int(raw_budget, default=0) if raw_budget is not None else None
+    budget_rounds = ar_types.as_int(experiment.metadata.get(ar_types.BUDGET_ROUNDS_METADATA_KEY), default=0)
     configs = aggregate.load_config_cache(experiment.manifest_path.parent / "configs")
     journal_entries = memory.journal_all(experiment)
     recipe_groups = aggregate.aggregate_recipes(journal_entries, configs=configs)
@@ -58,7 +57,7 @@ def build_context(
             "next_round_number": ar_types.as_int(state.get("next_round_number"), default=1),
             "total_rounds_completed": ar_types.as_int(state.get("total_rounds_completed"), default=0),
             "failed_rounds_counter": ar_types.as_int(state.get("failed_rounds_counter"), default=0),
-            "budget_rounds": budget_rounds if budget_rounds and budget_rounds > 0 else None,
+            "budget_rounds": budget_rounds if budget_rounds > 0 else None,
         },
         "allowed_change_paths": list(ALLOWED_CHANGE_PATHS),
         "value_caps": {path: list(bounds) for path, bounds in boundary.program_value_caps(experiment).items()},
@@ -70,7 +69,7 @@ def build_context(
         "caps_binding": _caps_binding(experiment, configs, state),
         "observed_seed_noise": aggregate.observed_seed_noise(recipe_groups),
         "report": _report_context(report),
-        "recent_journal": memory.journal_tail(experiment, limit=ar_types.RECENT_JOURNAL_LIMIT),
+        "recent_journal": journal_entries[-ar_types.RECENT_JOURNAL_LIMIT :],
         "configs": _config_context(experiment, state=state),
         "last_round_memo": memory.latest_round_markdown(experiment),
         "experiment_notes": memory.read_text(
@@ -251,13 +250,36 @@ def best_run_from_report(report: ExperimentReport | None) -> ar_types.ResearchBe
     return ar_types.ResearchBestRun()
 
 
+BENCHMARK_CORR_METRIC = "bmc_last_200_eras.avg_corr_with_benchmark"
+
+
+def load_run_metrics(*, root: Path, run_id: str) -> dict[str, object] | None:
+    """Read a run's metrics.json once; callers dig it with ``metric_from_metrics``."""
+    try:
+        payload: object = json.loads((root / "runs" / run_id / "metrics.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def metric_from_metrics(metrics: dict[str, object] | None, dotted: str) -> float | None:
+    current: object = metrics
+    for token in dotted.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(token)
+        if current is None:
+            return None
+    return float(current) if isinstance(current, (int, float)) else None
+
+
 def run_primary_metric_from_disk(*, root: Path, run_id: str) -> float | None:
-    return _run_metric_from_disk(root=root, run_id=run_id, dotted=ar_types.PRIMARY_METRIC)
+    return metric_from_metrics(load_run_metrics(root=root, run_id=run_id), ar_types.PRIMARY_METRIC)
 
 
 def run_fnc_mean_from_disk(*, root: Path, run_id: str) -> float | None:
     """Read fnc.mean from a run's metrics.json (the report row caps below top-N drop fnc)."""
-    return _run_metric_from_disk(root=root, run_id=run_id, dotted="fnc.mean")
+    return metric_from_metrics(load_run_metrics(root=root, run_id=run_id), "fnc.mean")
 
 
 def run_benchmark_corr_from_disk(*, root: Path, run_id: str) -> float | None:
@@ -266,21 +288,7 @@ def run_benchmark_corr_from_disk(*, root: Path, run_id: str) -> float | None:
     Rising values mean the model is converging on the meta-model, which BMC punishes;
     report rows do not carry this field, so it is a from-disk read only.
     """
-    return _run_metric_from_disk(root=root, run_id=run_id, dotted="bmc_last_200_eras.avg_corr_with_benchmark")
-
-
-def _run_metric_from_disk(*, root: Path, run_id: str, dotted: str) -> float | None:
-    try:
-        current: object = json.loads((root / "runs" / run_id / "metrics.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    for token in dotted.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(token)
-        if current is None:
-            return None
-    return float(current) if isinstance(current, (int, float)) else None
+    return metric_from_metrics(load_run_metrics(root=root, run_id=run_id), BENCHMARK_CORR_METRIC)
 
 
 def _config_context(experiment: ExperimentRecord, *, state: dict[str, object]) -> list[dict[str, object]]:

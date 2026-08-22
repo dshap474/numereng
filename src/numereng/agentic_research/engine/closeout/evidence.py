@@ -33,7 +33,6 @@ from numereng.features.scoring.run_service import score_run_eras
 
 # Fixed enrichment metric set, dotted into runs/<run_id>/metrics.json (shape verified 2026-07-13).
 _ENRICHMENT_METRIC_KEYS = ("bmc.mean", "corr.mean", "mmc.mean", "cwmm.mean", "fnc.mean", "bmc.max_drawdown")
-_COVERAGE_VALUE_LIMIT = 12
 _LEADERBOARD_ENRICH_LIMIT = 5
 
 
@@ -101,19 +100,21 @@ def _wall_time_stats(values: list[float]) -> dict[str, object]:
     }
 
 
+def _first_int(params: dict[str, object], keys: tuple[str, ...]) -> int | None:
+    """First key in ``keys`` whose value is a non-bool number, coerced to int."""
+    for key in keys:
+        value = params.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+    return None
+
+
 def _tree_depth_tier(config: dict[str, object]) -> str:
-    model = config.get("model") if isinstance(config.get("model"), dict) else {}
-    params = model.get("params") if isinstance(model, dict) and isinstance(model.get("params"), dict) else {}
-    trees = None
-    for key in ("n_estimators", "num_iterations", "num_boost_round", "iterations"):
-        if isinstance(params.get(key), (int, float)) and not isinstance(params.get(key), bool):
-            trees = int(params[key])
-            break
-    depth = None
-    for key in ("max_depth", "depth"):
-        if isinstance(params.get(key), (int, float)) and not isinstance(params.get(key), bool):
-            depth = int(params[key])
-            break
+    model = config.get("model")
+    params = model.get("params") if isinstance(model, dict) else None
+    params = params if isinstance(params, dict) else {}
+    trees = _first_int(params, ("n_estimators", "num_iterations", "num_boost_round", "iterations"))
+    depth = _first_int(params, ("max_depth", "depth"))
     if trees is None and depth is None:
         return "unknown"
     return f"trees={trees if trees is not None else 'na'};depth={depth if depth is not None else 'na'}"
@@ -169,7 +170,7 @@ def _coverage(parsed: list[tuple[int, dict[str, object]]]) -> dict[str, object]:
         for value in values:
             if value not in distinct:
                 distinct.append(value)
-        entry: dict[str, object] = {"count": len(values), "distinct": distinct[:_COVERAGE_VALUE_LIMIT]}
+        entry: dict[str, object] = {"count": len(values), "distinct": distinct[: ar_types.COVERAGE_VALUE_LIMIT]}
         if numeric:
             entry["numeric_range"] = [min(numeric), max(numeric)]
         coverage[path] = entry
@@ -243,15 +244,13 @@ def _dig(payload: dict[str, object], dotted: str) -> object:
 
 def _enrich_run(runs_dir: Path, run_id: str) -> dict[str, object]:
     metrics_path = runs_dir / run_id / "metrics.json"
-    if not metrics_path.is_file():
-        return {key: "unavailable: run not pulled" for key in _ENRICHMENT_METRIC_KEYS}
     try:
         payload = json.loads(metrics_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {key: "unavailable: run not pulled" for key in _ENRICHMENT_METRIC_KEYS}
     result: dict[str, object] = {}
     for key in _ENRICHMENT_METRIC_KEYS:
-        value = _dig(payload, key) if isinstance(payload, dict) else None
+        value = _dig(payload, key)
         result[key] = (
             value if isinstance(value, (int, float)) and not isinstance(value, bool) else "unavailable: metric absent"
         )

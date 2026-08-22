@@ -309,14 +309,6 @@ def _plan(state: ct.CloseoutState, until: str | None) -> list[str]:
     return plan
 
 
-def _is_relative_to(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return False
-    return True
-
-
 def _verify_upstream(state: ct.CloseoutState, closeout_dir: Path, *, memory_root: Path, experiment_id: str) -> None:
     """Re-verify recorded upstream fingerprints of already-done phases.
 
@@ -333,7 +325,7 @@ def _verify_upstream(state: ct.CloseoutState, closeout_dir: Path, *, memory_root
             continue
         for dest_str, expected in record.outputs.items():
             dest = Path(dest_str)
-            if _is_relative_to(dest, closeout_dir) or _is_relative_to(dest, branch_dir):
+            if dest.is_relative_to(closeout_dir) or dest.is_relative_to(branch_dir):
                 actual = ct.sha256_file(dest)
             elif dest.parent == topics_dir and dest.name != ct.CURRENT_MD_FILENAME:
                 text = ar_types.read_text(dest, limit=ct.MAX_CLOSEOUT_CONTEXT_CHARS)
@@ -675,8 +667,6 @@ def run_closeout(
     if restart_from is not None:
         if restart_from not in ct.PHASE_ORDER:
             raise ct.CloseoutError(ct.err_restart_from_invalid(restart_from))
-        if restart_from not in ct.IMPLEMENTED_PHASES:
-            raise ct.CloseoutError(ct.err_phase_not_implemented(restart_from))
 
     root = resolve_store_root(store_root)
     workspace_root = root.parent
@@ -776,8 +766,6 @@ def _run_plan(
     for phase in plan:
         if state.phases[phase].status in ct.PHASE_TERMINAL_STATUSES:
             continue
-        if phase not in ct.IMPLEMENTED_PHASES:
-            return phase, ct.err_phase_not_implemented(phase)
         _verify_upstream(state, closeout_dir, memory_root=memory_root, experiment_id=experiment.experiment_id)
         try:
             started = time.monotonic()
@@ -795,7 +783,7 @@ def _run_plan(
                     closeout_dir=closeout_dir,
                     restart=restart_from == ct.PHASE_EXTRACT,
                 )
-            elif phase == ct.PHASE_SYNTHESIZE:
+            else:
                 classification = _load_classification(closeout_dir, state)
                 relevant_topics = tuple(cast("list[str]", classification["relevant_topics"]))
                 dest_content, notes, outputs = _run_synthesize(
@@ -810,8 +798,6 @@ def _run_plan(
                     closeout_dir=closeout_dir,
                     relevant_topics=relevant_topics,
                 )
-            else:  # pragma: no cover - guarded by the IMPLEMENTED_PHASES check above
-                return phase, ct.err_phase_not_implemented(phase)
             _commit_phase(
                 closeout_dir,
                 phase=phase,

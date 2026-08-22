@@ -6,7 +6,6 @@ import csv
 import json
 from collections.abc import Callable
 from copy import deepcopy
-from datetime import UTC, datetime
 from pathlib import Path
 
 from numereng.agentic_research.engine import memory
@@ -65,7 +64,7 @@ def materialize_config(
         raise ar_types.AgenticResearchValidationError(f"agentic_research_config_schema_invalid:{exc}") from exc
     candidate_hash = compute_config_hash(validated)
     existing = existing_config_hashes(config_dir)
-    if candidate_hash in existing and config_hash_has_recorded_run(experiment, existing[candidate_hash]):
+    if candidate_hash in existing and memory.journal_has_recorded_run(experiment, existing[candidate_hash]):
         raise ar_types.AgenticResearchDuplicateCandidate(f"agentic_research_candidate_duplicate:{candidate_hash[:12]}")
     path = config_dir / _round_config_filename(round_label, seed=seed)
     memory.write_json(path, validated)
@@ -136,7 +135,7 @@ def link_reused_run_to_experiment(*, experiment: ExperimentRecord, run_id: str) 
     manifest["runs"] = runs
     if manifest.get("status") == "draft":
         manifest["status"] = "active"
-    manifest["updated_at"] = datetime.now(UTC).isoformat()
+    manifest["updated_at"] = ar_types.utc_now_iso()
     memory.write_json(experiment.manifest_path, manifest)
 
 
@@ -225,10 +224,6 @@ def existing_config_hashes(config_dir: Path) -> dict[str, str]:
         except Exception:
             continue
     return hashes
-
-
-def config_hash_has_recorded_run(experiment: ExperimentRecord, config_name: str) -> bool:
-    return memory.journal_has_recorded_run(experiment, config_name)
 
 
 def _assert_horizon_matches_target(payload: dict[str, object]) -> None:

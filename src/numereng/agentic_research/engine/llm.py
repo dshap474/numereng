@@ -90,7 +90,7 @@ def _call_codex_exec(
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False) as handle:
         schema_path = Path(handle.name)
     memory.write_json(schema_path, LLM_RESPONSE_SCHEMA if schema is None else schema)
-    cmd = [_resolve_codex_executable(), "exec"]
+    cmd = [_resolve_executable("codex"), "exec"]
     if config.active_model is not None:
         cmd.extend(["--model", config.active_model])
     if config.active_model_reasoning_effort is not None:
@@ -159,7 +159,7 @@ def _call_droid_exec(
     response is validated downstream by the normal parser.
     """
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [_resolve_droid_executable(), "exec", "--output-format", "json"]
+    cmd = [_resolve_executable("droid"), "exec", "--output-format", "json"]
     if config.active_model is not None:
         cmd.extend(["--model", config.active_model])
     if config.active_model_reasoning_effort is not None:
@@ -229,16 +229,10 @@ def _parse_droid_envelope(stdout: str) -> str:
     return result
 
 
-def _resolve_droid_executable() -> str:
+def _resolve_executable(name: str) -> str:
     if os.name == "nt":
-        return shutil.which("droid.cmd") or shutil.which("droid.exe") or shutil.which("droid") or "droid.cmd"
-    return shutil.which("droid") or "droid"
-
-
-def _resolve_codex_executable() -> str:
-    if os.name == "nt":
-        return shutil.which("codex.cmd") or shutil.which("codex.exe") or shutil.which("codex") or "codex.cmd"
-    return shutil.which("codex") or "codex"
+        return shutil.which(f"{name}.cmd") or shutil.which(f"{name}.exe") or shutil.which(name) or f"{name}.cmd"
+    return shutil.which(name) or name
 
 
 def parse_llm_response(raw_response: str) -> ar_types.ResearchLLMResponse:

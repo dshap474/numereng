@@ -34,6 +34,9 @@ from numereng.features.training.errors import TrainingError
 
 __all__ = ["get_research_status", "program_markdown", "run_research"]
 
+# Per-round scratch keys stripped from the session state once the round is recorded.
+_PENDING_KEYS = ("_pending_parent", "_pending_config", "_pending_config_path", "_pending_run_id", "_pending_changes")
+
 
 def program_markdown() -> str:
     return ar_types.PROGRAM_PATH.read_text(encoding="utf-8")
@@ -104,12 +107,11 @@ def _prevalidate_seed_configs(experiment: ExperimentRecord) -> None:
     training-config error naming the offending key.
     """
     config_dir = experiment.manifest_path.parent / "configs"
-    seeds = [path for path in sorted(config_dir.glob("*.json")) if not path.name.startswith("config_")]
-    for path in seeds or sorted(config_dir.glob("*.json"))[:1]:
+    configs = sorted(config_dir.glob("*.json"))
+    seeds = [path for path in configs if not path.name.startswith("config_")]
+    for path in seeds or configs[:1]:
         try:
             load_training_config_json(path)
-        except AgenticResearchValidationError:
-            raise
         except Exception as exc:
             raise AgenticResearchValidationError(f"agentic_research_seed_config_invalid:{path.name}:{exc}") from exc
 
@@ -306,15 +308,14 @@ def _train_and_score(
             )
     report = _safe_report(root=root, experiment_id=experiment.experiment_id)
     row = context.row_for_run(report, trained.run_id)
+    metrics = context.load_run_metrics(root=root, run_id=trained.run_id)
     metric_value = getattr(row, ar_types.PRIMARY_METRIC_FIELD) if row is not None else None
-    metric_value = (
-        metric_value
-        if metric_value is not None
-        else context.run_primary_metric_from_disk(root=root, run_id=trained.run_id)
-    )
+    if metric_value is None:
+        metric_value = context.metric_from_metrics(metrics, ar_types.PRIMARY_METRIC)
     fnc_value = row.fnc_mean if row is not None else None
-    fnc_value = fnc_value if fnc_value is not None else context.run_fnc_mean_from_disk(root=root, run_id=trained.run_id)
-    benchmark_corr_value = context.run_benchmark_corr_from_disk(root=root, run_id=trained.run_id)
+    if fnc_value is None:
+        fnc_value = context.metric_from_metrics(metrics, "fnc.mean")
+    benchmark_corr_value = context.metric_from_metrics(metrics, context.BENCHMARK_CORR_METRIC)
     return report, trained.run_id, metric_value, fnc_value, benchmark_corr_value
 
 
@@ -407,20 +408,6 @@ def _execute_seed(
         )
     except (KeyboardInterrupt, SystemExit):
         raise
-    except AgenticResearchDuplicateCandidate as exc:
-        return _failed_seed_outcome(
-            experiment=experiment,
-            round_number=round_number,
-            round_label=round_label,
-            decision=decision,
-            seed=seed,
-            status="skipped",
-            error=str(exc),
-            config=None,
-            run_id=None,
-            changes=changes,
-            wall_seconds=time.monotonic() - started_at,
-        )
     except Exception as exc:
         return _failed_seed_outcome(
             experiment=experiment,
@@ -428,7 +415,7 @@ def _execute_seed(
             round_label=round_label,
             decision=decision,
             seed=seed,
-            status="failed",
+            status="skipped" if isinstance(exc, AgenticResearchDuplicateCandidate) else "failed",
             error=str(exc),
             config=None,
             run_id=None,
@@ -466,7 +453,7 @@ def _execute_seed(
         config=config_path.name,
         parent_config=decision.parent_config,
         run_id=run_id,
-        seed=_config_seed(config_path),
+        seed=seed,
         metric=ar_types.optional_float(metric_value),
         fnc=ar_types.optional_float(fnc_value),
         benchmark_corr=ar_types.optional_float(benchmark_corr_value),
@@ -564,8 +551,7 @@ def _finalize_round(
     """Round-level bookkeeping shared by single-run and multi-seed rounds (one decision = one round)."""
     memory.write_round_markdown(experiment, primary_entry, memo=memo, extra_lines=seed_lines)
     memory.write_experiment_markdown(experiment, experiment_markdown)
-    _take_pending_changes(state)
-    for key in ("_pending_parent", "_pending_config", "_pending_config_path", "_pending_run_id"):
+    for key in _PENDING_KEYS:
         state.pop(key, None)
     update: dict[str, object] = {
         "status": "running",
@@ -729,10 +715,8 @@ def _record_terminal_round(
     memory.append_journal(experiment, entry)
     memory.write_round_markdown(experiment, entry, memo=None)
     state.update({"status": "running", "next_round_number": round_number + 1, "updated_at": ar_types.utc_now_iso()})
-    state.pop("_pending_parent", None)
-    state.pop("_pending_config", None)
-    state.pop("_pending_config_path", None)
-    state.pop("_pending_run_id", None)
+    for key in _PENDING_KEYS:
+        state.pop(key, None)
     if status == "skipped":
         state.update(
             {

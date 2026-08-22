@@ -110,7 +110,6 @@ PHASE_CLASSIFY = "classify"
 PHASE_EXTRACT = "extract"
 PHASE_SYNTHESIZE = "synthesize"
 PHASE_ORDER = (PHASE_FINALIZE, PHASE_CLASSIFY, PHASE_EXTRACT, PHASE_SYNTHESIZE)
-IMPLEMENTED_PHASES = PHASE_ORDER
 PHASE_TERMINAL_STATUSES = ("done", "skipped")
 
 CLASSIFICATION_DISPOSITIONS = ("master", "branch_only", "exclude")
@@ -149,10 +148,6 @@ def err_journal_malformed(lineno: int) -> str:
 
 def err_journal_entry_invalid(lineno: int, what: str) -> str:
     return f"{ERROR_PREFIX}journal_entry_invalid:{lineno}:{what}"
-
-
-def err_phase_not_implemented(phase: str) -> str:
-    return f"{ERROR_PREFIX}phase_not_implemented:{phase}"
 
 
 def err_commit_conflict(path: str) -> str:
