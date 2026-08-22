@@ -324,16 +324,7 @@ def train_experiment(
             allow_round_batch_post_training_scoring=True,
         )
 
-    run_ids = _normalize_run_ids(manifest.get("runs"))
-    if result.run_id not in run_ids:
-        run_ids.append(result.run_id)
-    manifest["runs"] = run_ids
-    if cast(str, manifest.get("status", "draft")) == "draft":
-        manifest["status"] = "active"
-    manifest["updated_at"] = _utc_now_iso()
-
-    _save_manifest(manifest_path, manifest)
-    _index_experiment_manifest(root, manifest)
+    link_run_to_experiment(root=root, manifest_path=manifest_path, run_id=result.run_id)
     try:
         index_run(store_root=root, run_id=result.run_id)
     except StoreError as exc:
@@ -363,6 +354,26 @@ def train_experiment(
         predictions_path=result.predictions_path,
         results_path=result.results_path,
     )
+
+
+def link_run_to_experiment(*, root: Path, manifest_path: Path, run_id: str) -> None:
+    """Attach one run id to an experiment manifest and mirror it into the store index.
+
+    No-op when the run is already linked. This is the single canonical linking path: hand-editing
+    the manifest without the index write leaves the run invisible to `experiment details`.
+    """
+
+    manifest = _load_manifest(manifest_path)
+    run_ids = _normalize_run_ids(manifest.get("runs"))
+    if run_id in run_ids:
+        return
+    run_ids.append(run_id)
+    manifest["runs"] = run_ids
+    if cast(str, manifest.get("status", "draft")) == "draft":
+        manifest["status"] = "active"
+    manifest["updated_at"] = _utc_now_iso()
+    _save_manifest(manifest_path, manifest)
+    _index_experiment_manifest(root, manifest)
 
 
 def score_experiment_round(

@@ -61,6 +61,7 @@ def run_research(*, store_root: str | Path = ".numereng", experiment_id: str, ma
     if experiment.status == "archived":
         raise AgenticResearchValidationError("agentic_research_experiment_archived")
     boundary.assert_scoring_paths_frozen(experiment)
+    boundary.program_allowed_paths(experiment)  # fail a misconfigured allowlist at round 0, not mid-round
     _prevalidate_seed_configs(experiment)
     _prevalidate_program_core(experiment)
     memory.agentic_dir(experiment).mkdir(parents=True, exist_ok=True)
@@ -111,7 +112,7 @@ def _prevalidate_seed_configs(experiment: ExperimentRecord) -> None:
     """
     config_dir = memory.configs_dir(experiment)
     configs = sorted(config_dir.glob("*.json"))
-    seeds = [path for path in configs if not path.name.startswith("config_")]
+    seeds = boundary.seed_config_paths(config_dir)
     for path in seeds or configs[:1]:
         try:
             load_training_config_json(path)
@@ -554,8 +555,7 @@ def _finalize_round(
     """Round-level bookkeeping shared by single-run and multi-seed rounds (one decision = one round)."""
     memory.write_round_markdown(experiment, primary_entry, memo=memo, extra_lines=seed_lines)
     memory.write_experiment_markdown(experiment, experiment_markdown)
-    for key in _PENDING_KEYS:
-        state.pop(key, None)
+    _clear_pending(state)
     update: dict[str, object] = {
         "status": "running",
         "next_round_number": round_number + 1,
@@ -565,23 +565,8 @@ def _finalize_round(
     if primary_run_id is not None:
         update["last_run_id"] = primary_run_id
     if round_status == "failed":
-        failures = ar_types.as_int(state.get("failed_rounds_counter"), default=0) + 1
-        update.update(
-            {
-                "last_checkpoint": "round_failed",
-                "failed_rounds_counter": failures,
-                "last_error": ar_types.optional_str(primary_entry.get("error")),
-            }
-        )
-        if failures >= ar_types.CONSECUTIVE_FAILURE_BAIL_THRESHOLD:
-            update.update(
-                {
-                    "status": "stopped",
-                    "stop_reason": f"consecutive_failures:{failures}",
-                    "last_checkpoint": "consecutive_failures_bail",
-                }
-            )
         state.update(update)
+        _apply_failure(state, ar_types.optional_str(primary_entry.get("error")))
         _save(experiment, state)
         return ResearchRoundResult(
             round_number,
@@ -717,36 +702,52 @@ def _record_terminal_round(
     )
     memory.append_journal(experiment, entry)
     memory.write_round_markdown(experiment, entry, memo=None)
-    state.update({"status": "running", "next_round_number": round_number + 1, "updated_at": ar_types.utc_now_iso()})
-    for key in _PENDING_KEYS:
-        state.pop(key, None)
+    state.update(
+        {
+            "status": "running",
+            "next_round_number": round_number + 1,
+            "last_round_label": round_label,
+            "updated_at": ar_types.utc_now_iso(),
+        }
+    )
+    _clear_pending(state)
     if status == "skipped":
         state.update(
             {
                 "total_rounds_completed": ar_types.as_int(state.get("total_rounds_completed"), default=0) + 1,
                 "last_checkpoint": "round_completed",
-                "last_round_label": round_label,
                 "failed_rounds_counter": 0,
                 "last_error": None,
             }
         )
     else:
-        failures = ar_types.as_int(state.get("failed_rounds_counter"), default=0) + 1
-        state.update({"last_checkpoint": "round_failed", "failed_rounds_counter": failures, "last_error": message})
         if run_id is not None:
             state["last_run_id"] = run_id
-        if failures >= ar_types.CONSECUTIVE_FAILURE_BAIL_THRESHOLD:
-            state.update(
-                {
-                    "status": "stopped",
-                    "stop_reason": f"consecutive_failures:{failures}",
-                    "last_checkpoint": "consecutive_failures_bail",
-                }
-            )
+        _apply_failure(state, message)
     _save(experiment, state)
     return ResearchRoundResult(
         round_number, round_label, typed_action, status, config_path, run_id, None, learning, artifact_dir
     )
+
+
+def _clear_pending(state: dict[str, object]) -> None:
+    """Drop the per-round scratch keys once the round has been recorded."""
+    for key in _PENDING_KEYS:
+        state.pop(key, None)
+
+
+def _apply_failure(state: dict[str, object], message: str | None) -> None:
+    """Record a failed round: bump the consecutive-failure counter and bail at the threshold."""
+    failures = ar_types.as_int(state.get("failed_rounds_counter"), default=0) + 1
+    state.update({"last_checkpoint": "round_failed", "failed_rounds_counter": failures, "last_error": message})
+    if failures >= ar_types.CONSECUTIVE_FAILURE_BAIL_THRESHOLD:
+        state.update(
+            {
+                "status": "stopped",
+                "stop_reason": f"consecutive_failures:{failures}",
+                "last_checkpoint": "consecutive_failures_bail",
+            }
+        )
 
 
 def _take_pending_changes(state: dict[str, object]) -> list[dict[str, object]]:

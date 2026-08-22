@@ -60,7 +60,7 @@ def build_context(
             "failed_rounds_counter": ar_types.as_int(state.get("failed_rounds_counter"), default=0),
             "budget_rounds": budget_rounds if budget_rounds > 0 else None,
         },
-        "allowed_change_paths": list(ALLOWED_CHANGE_PATHS),
+        "allowed_change_paths": list(boundary.program_allowed_paths(experiment)),
         "value_caps": {path: list(bounds) for path, bounds in boundary.program_value_caps(experiment).items()},
         "champion": state.get("champion"),
         "believed_best": state.get("believed_best"),
@@ -302,7 +302,7 @@ def _relevant_config_paths(paths: list[Path], *, state: dict[str, object]) -> se
     keep: set[Path] = set()
     generated: list[Path] = []
     for path in paths:
-        if path.name.startswith("config_"):
+        if boundary.is_generated_config(path.name):
             generated.append(path)
         else:
             keep.add(path)

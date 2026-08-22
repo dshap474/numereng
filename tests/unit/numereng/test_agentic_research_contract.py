@@ -22,6 +22,7 @@ import pytest
 
 from numereng.agentic_research import (
     AgenticResearchError,
+    AgenticResearchValidationError,
     ResearchBestRun,
     ResearchRoundResult,
     ResearchRunResult,
@@ -29,6 +30,8 @@ from numereng.agentic_research import (
     get_research_status,
     run_research,
 )
+from numereng.agentic_research.engine import boundary
+from numereng.agentic_research.engine import context as research_context
 from numereng.agentic_research.engine import loop as research_module
 from numereng.features.experiments import (
     ExperimentReport,
@@ -36,6 +39,7 @@ from numereng.features.experiments import (
     ExperimentScoreRoundResult,
     ExperimentTrainResult,
     create_experiment,
+    get_experiment,
 )
 from numereng.features.training.errors import TrainingError
 
@@ -441,6 +445,84 @@ def test_disallowed_change_path_fails_round_and_loop_continues(tmp_path: Path, m
     state = _read_state(experiment_dir)
     assert state["failed_rounds_counter"] == 0  # round-2 success reset the counter
     assert state["total_rounds_completed"] == 1  # failed rounds do not count
+
+
+# ---------------------------------------------------------------------------
+# Narrowed allowlist: advertised == enforced, and invalid entries fail closed
+# ---------------------------------------------------------------------------
+
+
+def test_context_advertises_the_narrowed_allowlist_it_enforces(tmp_path: Path) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    _set_experiment_metadata(experiment_dir, {"agentic_research_allowed_change_paths": ["model.params.*"]})
+    experiment = get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    assembled = research_context.build_context(root=store_root, experiment=experiment, report=None, state={})
+
+    assert assembled["allowed_change_paths"] == list(boundary.program_allowed_paths(experiment))
+    assert assembled["allowed_change_paths"] == ["model.params.*"]
+
+
+def test_all_invalid_allowed_paths_fail_instead_of_widening(tmp_path: Path) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    _set_experiment_metadata(experiment_dir, {"agentic_research_allowed_change_paths": ["nonsense.path"]})
+    experiment = get_experiment(store_root=store_root, experiment_id=EXPERIMENT_ID)
+
+    with pytest.raises(AgenticResearchValidationError) as exc:
+        boundary.program_allowed_paths(experiment)
+    assert "agentic_research_allowed_path_invalid:'nonsense.path'" in str(exc.value)
+
+
+def test_one_invalid_allowed_path_entry_fails_the_session_at_round_zero(tmp_path: Path) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    _set_experiment_metadata(
+        experiment_dir, {"agentic_research_allowed_change_paths": ["model.params.*", "data.leaky_thing"]}
+    )
+
+    with pytest.raises(AgenticResearchValidationError) as exc:
+        run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+    assert "agentic_research_allowed_path_invalid:'data.leaky_thing'" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Baseline re-entry after a failed round prefers the authored seed
+# ---------------------------------------------------------------------------
+
+
+def test_baseline_reentry_copies_the_seed_not_a_generated_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    (experiment_dir / "configs" / "seed.json").unlink()
+    # Seed sorts AFTER the stale generated config, which is the whole trap.
+    _write_training_config(experiment_dir / "configs" / "zseed.json", learning_rate=0.01)
+    _write_training_config(experiment_dir / "configs" / "config_009.json", learning_rate=0.99)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [AgenticResearchError("train_boom"), ("run-2", 0.12)]  # r001 fails, r002 re-baselines
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
+
+    assert [round_.status for round_ in result.rounds] == ["failed", "completed"]
+    baseline = json.loads((experiment_dir / "configs" / "config_002.json").read_text(encoding="utf-8"))
+    assert baseline["model"]["params"]["learning_rate"] == 0.01
+
+
+# ---------------------------------------------------------------------------
+# Failed rounds advance the reported round label
+# ---------------------------------------------------------------------------
+
+
+def test_failed_round_advances_last_round_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.add_row("run-0", 0.10)  # scored row -> LLM round
+    seams.llm_queue = [AgenticResearchError("agentic_research_llm_down")]
+
+    result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
+
+    assert result.rounds[0].status == "failed"
+    assert _read_state(experiment_dir)["last_round_label"] == "r001"
+    assert get_research_status(store_root=store_root, experiment_id=EXPERIMENT_ID).last_round_label == "r001"
 
 
 # ---------------------------------------------------------------------------

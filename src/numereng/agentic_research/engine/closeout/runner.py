@@ -25,6 +25,7 @@ import shutil
 import socket
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -698,11 +699,10 @@ def run_closeout(
 
         # Restarting upstream of a completed merge can orphan its ledger entries. Restart at
         # SYNTHESIZE or later when master memory has already changed.
-        upstream_restarts = (ct.PHASE_FINALIZE, ct.PHASE_CLASSIFY, ct.PHASE_EXTRACT)
-        if restart_from in upstream_restarts and state.phases[ct.PHASE_SYNTHESIZE].status == "done":
-            raise ct.CloseoutError(ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE)
-        if restart_from in (ct.PHASE_FINALIZE, ct.PHASE_CLASSIFY) and state.phases[ct.PHASE_EXTRACT].status == "done":
-            raise ct.CloseoutError(ct.ERR_RESTART_BLOCKED_AFTER_EXTRACT)
+        if restart_from is not None:
+            for blocking_phase, error_token in PHASE_SPECS[restart_from].restart_blocked_by:
+                if state.phases[blocking_phase].status == "done":
+                    raise ct.CloseoutError(error_token)
 
         if restart_from is not None:
             resetting = False
@@ -726,7 +726,7 @@ def run_closeout(
             evidence = evidence_mod.build_evidence(experiment=experiment, state=run_state, store_root=root)
             ar_types.write_json(closeout_dir / ct.CLOSEOUT_EVIDENCE_FILENAME, evidence)
 
-        needs_memory_lock = any(phase in (ct.PHASE_EXTRACT, ct.PHASE_SYNTHESIZE) for phase in plan)
+        needs_memory_lock = any(PHASE_SPECS[phase].needs_memory_lock for phase in plan)
         memory_lock_path = memory_root_path / ct.MEMORY_ROOT_LOCK_FILENAME
         if needs_memory_lock:
             _acquire_lock(memory_lock_path)
@@ -756,6 +756,138 @@ def run_closeout(
         _release_lock(lock_path)
 
 
+# --------------------------------------------------------------------------- #
+# Phase registry (declarative dispatch for _run_plan)
+# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _PhaseContext:
+    """Everything a phase callable, pre-commit hook, or post-commit hook may read."""
+
+    experiment: ExperimentRecord
+    run_state: dict[str, object]
+    evidence: dict[str, object] | None
+    memory_root: Path
+    closeout_dir: Path
+    state: ct.CloseoutState
+    state_path: Path
+    restart: bool
+
+
+@dataclass(frozen=True)
+class _PhaseOutcome:
+    """What a phase produced: the commit slots, notes, optional outputs override, hook payload."""
+
+    dest_content: dict[str, str]
+    notes: str
+    outputs: dict[str, str] | None = None
+    payload: object | None = None
+
+
+@dataclass(frozen=True)
+class PhaseSpec:
+    """One phase of the closeout chain, declaratively.
+
+    ``pre_commit`` runs after ``run`` and before ``_commit_phase``; ``post_commit`` runs immediately
+    after it. ``restart_blocked_by`` pairs a phase whose completion forbids restarting here with the
+    error token to raise, in check order.
+    """
+
+    name: str
+    run: Callable[[_PhaseContext], _PhaseOutcome]
+    needs_memory_lock: bool = False
+    takes_restart: bool = False
+    pre_commit: Callable[[_PhaseContext, _PhaseOutcome], None] | None = None
+    post_commit: Callable[[_PhaseContext, _PhaseOutcome], None] | None = None
+    restart_blocked_by: tuple[tuple[str, str], ...] = ()
+
+
+def _phase_finalize(ctx: _PhaseContext) -> _PhaseOutcome:
+    dest_content, notes = _run_finalize(
+        experiment=ctx.experiment, state=ctx.run_state, evidence=ctx.evidence or {}, closeout_dir=ctx.closeout_dir
+    )
+    return _PhaseOutcome(dest_content=dest_content, notes=notes)
+
+
+def _phase_classify(ctx: _PhaseContext) -> _PhaseOutcome:
+    dest_content, notes, classification = _run_classify(closeout_dir=ctx.closeout_dir)
+    return _PhaseOutcome(dest_content=dest_content, notes=notes, payload=classification)
+
+
+def _phase_extract(ctx: _PhaseContext) -> _PhaseOutcome:
+    dest_content, notes = _run_extract(
+        experiment=ctx.experiment,
+        memory_root=ctx.memory_root,
+        closeout_dir=ctx.closeout_dir,
+        restart=ctx.restart,
+    )
+    return _PhaseOutcome(dest_content=dest_content, notes=notes)
+
+
+def _phase_synthesize(ctx: _PhaseContext) -> _PhaseOutcome:
+    classification = _load_classification(ctx.closeout_dir, ctx.state)
+    relevant_topics = tuple(cast("list[str]", classification["relevant_topics"]))
+    dest_content, notes, outputs = _run_synthesize(
+        experiment=ctx.experiment,
+        memory_root=ctx.memory_root,
+        closeout_dir=ctx.closeout_dir,
+        restart=ctx.restart,
+        relevant_topics=relevant_topics,
+    )
+    return _PhaseOutcome(dest_content=dest_content, notes=notes, outputs=outputs, payload=relevant_topics)
+
+
+def _pre_commit_synthesize(ctx: _PhaseContext, outcome: _PhaseOutcome) -> None:
+    _backup_synthesize_memory(
+        memory_root=ctx.memory_root,
+        closeout_dir=ctx.closeout_dir,
+        relevant_topics=cast("tuple[str, ...]", outcome.payload),
+    )
+
+
+def _post_commit_classify(ctx: _PhaseContext, outcome: _PhaseOutcome) -> None:
+    _apply_classification_route(cast("dict[str, object]", outcome.payload), state=ctx.state, state_path=ctx.state_path)
+
+
+def _post_commit_extract(ctx: _PhaseContext, _outcome: _PhaseOutcome) -> None:
+    _assert_branch_complete(ct.branch_dir(ctx.memory_root, ctx.experiment.experiment_id))
+
+
+PHASE_SPECS: dict[str, PhaseSpec] = {
+    ct.PHASE_FINALIZE: PhaseSpec(
+        name=ct.PHASE_FINALIZE,
+        run=_phase_finalize,
+        restart_blocked_by=(
+            (ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),
+            (ct.PHASE_EXTRACT, ct.ERR_RESTART_BLOCKED_AFTER_EXTRACT),
+        ),
+    ),
+    ct.PHASE_CLASSIFY: PhaseSpec(
+        name=ct.PHASE_CLASSIFY,
+        run=_phase_classify,
+        post_commit=_post_commit_classify,
+        restart_blocked_by=(
+            (ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),
+            (ct.PHASE_EXTRACT, ct.ERR_RESTART_BLOCKED_AFTER_EXTRACT),
+        ),
+    ),
+    ct.PHASE_EXTRACT: PhaseSpec(
+        name=ct.PHASE_EXTRACT,
+        run=_phase_extract,
+        needs_memory_lock=True,
+        takes_restart=True,
+        post_commit=_post_commit_extract,
+        restart_blocked_by=((ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),),
+    ),
+    ct.PHASE_SYNTHESIZE: PhaseSpec(
+        name=ct.PHASE_SYNTHESIZE,
+        run=_phase_synthesize,
+        needs_memory_lock=True,
+        takes_restart=True,
+        pre_commit=_pre_commit_synthesize,
+    ),
+}
+
+
 def _run_plan(
     plan: list[str],
     *,
@@ -770,54 +902,38 @@ def _run_plan(
 ) -> tuple[str | None, str | None]:
     """Execute the planned phases in order; return (stopped_at_phase, error) or (None, None)."""
     for phase in plan:
+        # CLASSIFY's post-commit hook can mark later phases skipped mid-loop; this check honours it.
         if state.phases[phase].status in ct.PHASE_TERMINAL_STATUSES:
             continue
         _verify_upstream(state, closeout_dir, memory_root=memory_root, experiment_id=experiment.experiment_id)
+        spec = PHASE_SPECS[phase]
         try:
             started = time.monotonic()
-            outputs: dict[str, str] | None = None
-            if phase == ct.PHASE_FINALIZE:
-                dest_content, notes = _run_finalize(
-                    experiment=experiment, state=run_state, evidence=evidence or {}, closeout_dir=closeout_dir
-                )
-            elif phase == ct.PHASE_CLASSIFY:
-                dest_content, notes, classification = _run_classify(closeout_dir=closeout_dir)
-            elif phase == ct.PHASE_EXTRACT:
-                dest_content, notes = _run_extract(
-                    experiment=experiment,
-                    memory_root=memory_root,
-                    closeout_dir=closeout_dir,
-                    restart=restart_from == ct.PHASE_EXTRACT,
-                )
-            else:
-                classification = _load_classification(closeout_dir, state)
-                relevant_topics = tuple(cast("list[str]", classification["relevant_topics"]))
-                dest_content, notes, outputs = _run_synthesize(
-                    experiment=experiment,
-                    memory_root=memory_root,
-                    closeout_dir=closeout_dir,
-                    restart=restart_from == ct.PHASE_SYNTHESIZE,
-                    relevant_topics=relevant_topics,
-                )
-                _backup_synthesize_memory(
-                    memory_root=memory_root,
-                    closeout_dir=closeout_dir,
-                    relevant_topics=relevant_topics,
-                )
+            ctx = _PhaseContext(
+                experiment=experiment,
+                run_state=run_state,
+                evidence=evidence,
+                memory_root=memory_root,
+                closeout_dir=closeout_dir,
+                state=state,
+                state_path=state_path,
+                restart=spec.takes_restart and restart_from == phase,
+            )
+            outcome = spec.run(ctx)
+            if spec.pre_commit is not None:
+                spec.pre_commit(ctx, outcome)
             _commit_phase(
                 closeout_dir,
                 phase=phase,
-                slots_content=dest_content,
-                notes=notes,
+                slots_content=outcome.dest_content,
+                notes=outcome.notes,
                 duration_seconds=time.monotonic() - started,
                 state=state,
                 state_path=state_path,
-                outputs=outputs,
+                outputs=outcome.outputs,
             )
-            if phase == ct.PHASE_EXTRACT:
-                _assert_branch_complete(ct.branch_dir(memory_root, experiment.experiment_id))
-            elif phase == ct.PHASE_CLASSIFY:
-                _apply_classification_route(classification, state=state, state_path=state_path)
+            if spec.post_commit is not None:
+                spec.post_commit(ctx, outcome)
         except ar_types.AgenticResearchError as exc:
             return phase, str(exc)
     return None, None

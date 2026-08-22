@@ -11,7 +11,12 @@ from pathlib import Path
 from numereng.agentic_research.engine import memory
 from numereng.agentic_research.engine import types as ar_types
 from numereng.config.training import TrainingConfig, load_training_config_json
-from numereng.features.experiments import ExperimentRecord, ExperimentTrainResult
+from numereng.features.experiments import (
+    ExperimentError,
+    ExperimentRecord,
+    ExperimentTrainResult,
+    link_run_to_experiment,
+)
 from numereng.features.training.errors import TrainingError
 from numereng.features.training.repo import resolve_run_manifest_path
 from numereng.features.training.run_store import compute_config_hash
@@ -24,6 +29,7 @@ ALLOWED_CHANGE_PATHS = tuple(
     "training.engine.profile training.engine.window_size_eras training.engine.embargo_eras "
     "training.resources.parallel_folds training.resources.max_threads_per_worker output.predictions_name".split()
 )
+GENERATED_CONFIG_PREFIX = "config_"
 _SCORING_FROZEN_PREFIXES = ("scoring", "validation", "evaluation")
 _TRAIN_RUN_DIR_NOT_FRESH_PREFIX = "training_run_dir_not_fresh:"
 
@@ -72,10 +78,22 @@ def materialize_config(
     return path
 
 
+def is_generated_config(name: str) -> bool:
+    """True for harness-minted round configs (``config_NNN.json``), false for authored seeds."""
+    return name.startswith(GENERATED_CONFIG_PREFIX)
+
+
+def seed_config_paths(configs_dir: Path) -> list[Path]:
+    """Authored seed configs (sorted), excluding anything the harness minted itself."""
+    return [path for path in sorted(configs_dir.glob("*.json")) if not is_generated_config(path.name)]
+
+
 def baseline_config(experiment: ExperimentRecord, round_label: str) -> Path:
     config_dir = memory.configs_dir(experiment)
     config_dir.mkdir(parents=True, exist_ok=True)
-    configs = sorted(config_dir.glob("*.json"))
+    # Prefer an authored seed: once a round has run, a generated ``config_NNN.json`` can sort
+    # ahead of the seed and turn the baseline into a copy of a generated config.
+    configs = seed_config_paths(config_dir) or sorted(config_dir.glob("*.json"))
     if not configs:
         raise ar_types.AgenticResearchValidationError(f"agentic_research_config_missing:{experiment.experiment_id}")
     path = config_dir / _round_config_filename(round_label)
@@ -111,7 +129,7 @@ def reuse_finished_run_on_hash_collision(
     predictions_name = output.get("predictions_name") if isinstance(output, dict) else None
     if not isinstance(predictions_name, str) or not predictions_name:
         predictions_name = "predictions"
-    link_reused_run_to_experiment(experiment=experiment, run_id=run_id)
+    link_reused_run_to_experiment(root=root, experiment=experiment, run_id=run_id)
     try:
         index_run(store_root=root, run_id=run_id)
     except Exception:
@@ -124,20 +142,15 @@ def reuse_finished_run_on_hash_collision(
     )
 
 
-def link_reused_run_to_experiment(*, experiment: ExperimentRecord, run_id: str) -> None:
+def link_reused_run_to_experiment(*, root: Path, experiment: ExperimentRecord, run_id: str) -> None:
+    """Link a reused run through the canonical service path so the store index stays in sync.
+
+    Kept tolerant of an unreadable/missing manifest: reuse is an optimization, not the round.
+    """
     try:
-        manifest = json.loads(experiment.manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        link_run_to_experiment(root=root, manifest_path=experiment.manifest_path, run_id=run_id)
+    except ExperimentError:
         return
-    runs = manifest.get("runs") if isinstance(manifest.get("runs"), list) else []
-    if run_id in runs:
-        return
-    runs.append(run_id)
-    manifest["runs"] = runs
-    if manifest.get("status") == "draft":
-        manifest["status"] = "active"
-    manifest["updated_at"] = ar_types.utc_now_iso()
-    ar_types.write_json(experiment.manifest_path, manifest)
 
 
 def record_round_config_in_run_plan(*, experiment: ExperimentRecord, round_label: str, config_path: Path) -> None:
@@ -190,12 +203,15 @@ def program_allowed_paths(experiment: ExperimentRecord) -> tuple[str, ...]:
     raw = experiment.metadata.get(ar_types.ALLOWED_PATHS_METADATA_KEY)
     if not isinstance(raw, list):
         return ALLOWED_CHANGE_PATHS
-    narrowed = tuple(
-        item.strip()
-        for item in raw
-        if isinstance(item, str) and item.strip() and _matches_any_path(item.strip(), ALLOWED_CHANGE_PATHS)
-    )
-    return narrowed or ALLOWED_CHANGE_PATHS
+    narrowed: list[str] = []
+    for item in raw:
+        entry = item.strip() if isinstance(item, str) else item
+        if not isinstance(entry, str) or not entry or not _matches_any_path(entry, ALLOWED_CHANGE_PATHS):
+            raise ar_types.AgenticResearchValidationError(f"agentic_research_allowed_path_invalid:{entry!r}")
+        narrowed.append(entry)
+    if not narrowed:
+        raise ar_types.AgenticResearchValidationError("agentic_research_allowed_paths_empty")
+    return tuple(narrowed)
 
 
 def program_value_caps(experiment: ExperimentRecord) -> dict[str, tuple[float, float]]:
@@ -259,7 +275,7 @@ def _matches_any_path(path: str, allowed: tuple[str, ...]) -> bool:
 
 def _round_config_filename(round_label: str, *, seed: int | None = None) -> str:
     suffix = round_label.removeprefix("r")
-    stem = f"config_{suffix}" if suffix.isdigit() else f"{round_label}_config"
+    stem = f"{GENERATED_CONFIG_PREFIX}{suffix}" if suffix.isdigit() else f"{round_label}_config"
     return f"{stem}_s{seed}.json" if seed is not None else f"{stem}.json"
 
 
