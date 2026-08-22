@@ -1,8 +1,10 @@
 """Phase output schemas, envelope parsing, and content validators.
 
 Each closeout phase emits exactly one JSON object as a file-oriented envelope. This module
-holds the codex ``--output-schema`` values, strict parsers, and validators that must pass before
-anything is staged (no partial writes).
+holds the response schemas, strict parsers, and validators that must pass before anything is
+staged (no partial writes). The schemas reach codex as ``--output-schema``; under the droid-exec
+transport the schema is appended to the prompt instead, so it is enforced only by the parsers and
+validators below.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import phases
@@ -18,7 +20,7 @@ from numereng.agentic_research.engine import llm
 from numereng.agentic_research.engine.closeout import types as ct
 
 # --------------------------------------------------------------------------- #
-# Shared output schema (codex --output-schema)
+# Shared output schema (codex --output-schema; prompt-appended under droid-exec)
 # --------------------------------------------------------------------------- #
 FILES_ENVELOPE_SCHEMA: dict[str, object] = {
     "type": "object",
@@ -164,7 +166,7 @@ def _collect_slots(files: list[dict[str, str]], *, allowed: tuple[str, ...]) -> 
         if path not in allowed_set:
             raise ct.CloseoutError(ct.err_output_path_not_allowed(path))
         if path in slots:
-            raise ct.CloseoutError(ct.err_output_path_not_allowed(path))
+            raise ct.CloseoutError(ct.err_output_path_duplicate(path))
         if not content.strip():
             raise ct.CloseoutError(ct.err_output_content_empty(path))
         slots[path] = content

@@ -24,9 +24,7 @@ def test_finalize_context_is_bounded_with_200_rounds(closeout_fixture: CloseoutF
     state = json.loads(closeout_fixture.state_path().read_text(encoding="utf-8"))
     evidence = {"experiment_id": closeout_fixture.experiment_id, "believed_best": {"config": "config_001.json"}}
 
-    ctx = ctx_mod.build_finalize_context(
-        experiment=experiment, state=state, evidence=evidence, program_text="PROGRAM " * 20_000
-    )
+    ctx = ctx_mod.build_finalize_context(experiment=experiment, state=state, evidence=evidence)
 
     total = len(json.dumps(ctx, default=str))
     assert total <= ct.MAX_CLOSEOUT_CONTEXT_CHARS

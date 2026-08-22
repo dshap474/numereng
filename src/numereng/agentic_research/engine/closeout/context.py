@@ -8,13 +8,13 @@ leaving an explicit ``...[truncated: N items dropped]`` marker.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import context
-    ctx = context.build_finalize_context(
-        experiment=rec, state=state_dict, evidence=summary, program_text=program_md)
+    ctx = context.build_finalize_context(experiment=rec, state=state_dict, evidence=summary)
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from numereng.agentic_research.engine import memory
@@ -23,11 +23,29 @@ from numereng.agentic_research.engine.closeout import merge
 from numereng.agentic_research.engine.closeout import types as ct
 from numereng.features.experiments import ExperimentRecord
 
-_PROGRAM_CAP = 40_000
 _WORKING_SET_CAP = 40_000
 _MEMO_CAP = ar_types.MAX_CONTEXT_CHARS  # 12_000, mirrors the in-run per-memo cap
 _DECISION_MEMO_CAP = 60_000
 _BRANCH_FILE_CAP = 20_000
+
+
+def _fill_bounded[T](running: int, items: list[T], cost_of: Callable[[T], int]) -> tuple[list[T], int]:
+    """Greedily keep items in order while the running size stays within the context cap.
+
+    Returns ``(kept, dropped)``. ``cost_of`` is caller-supplied because each context measures its
+    own serialized shape; do not normalize the formulas — the boundary decision must not shift.
+    """
+    kept: list[T] = []
+    dropped = 0
+    for index, item in enumerate(items):
+        cost = cost_of(item)
+        if running + cost <= ct.MAX_CLOSEOUT_CONTEXT_CHARS:
+            kept.append(item)
+            running += cost
+        else:
+            dropped = len(items) - index
+            break
+    return kept, dropped
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -71,31 +89,22 @@ def build_finalize_context(
     experiment: ExperimentRecord,
     state: dict[str, object],
     evidence: dict[str, object],
-    program_text: str,
 ) -> dict[str, object]:
-    """FINALIZE context: evidence (never truncated) > state > program > working set > round memos."""
+    """FINALIZE context: evidence (never truncated) > state > working set > round memos."""
     working_set = ar_types.read_text(memory.experiment_markdown_path(experiment), limit=_WORKING_SET_CAP)
     base: dict[str, object] = {
         "phase": ct.PHASE_FINALIZE,
         "experiment_id": experiment.experiment_id,
         "evidence_summary": evidence,
         "state": _state_summary(state),
-        "program": _truncate(program_text, _PROGRAM_CAP),
         "experiment_working_set": working_set,
         "round_memos": [],
     }
-    running = len(json.dumps(base, default=str))
-    kept: list[dict[str, str]] = []
-    dropped = 0
-    memos = _round_memos_newest_first(experiment)
-    for index, memo in enumerate(memos):
-        cost = len(json.dumps(memo, default=str)) + 2
-        if running + cost <= ct.MAX_CLOSEOUT_CONTEXT_CHARS:
-            kept.append(memo)
-            running += cost
-        else:
-            dropped = len(memos) - index
-            break
+    kept, dropped = _fill_bounded(
+        len(json.dumps(base, default=str)),
+        _round_memos_newest_first(experiment),
+        lambda memo: len(json.dumps(memo, default=str)) + 2,
+    )
     base["round_memos"] = kept
     if dropped:
         base["round_memos_truncation"] = f"...[truncated: {dropped} items dropped]"
@@ -119,17 +128,11 @@ def build_extract_context(
         "evidence_summary": evidence_head,
         "rounds_table": [],
     }
-    running = len(json.dumps(base, default=str))
-    kept: list[object] = []
-    dropped = 0
-    for index, row in enumerate(rounds_table):
-        cost = len(json.dumps(row, default=str)) + 2
-        if running + cost <= ct.MAX_CLOSEOUT_CONTEXT_CHARS:
-            kept.append(row)
-            running += cost
-        else:
-            dropped = len(rounds_table) - index
-            break
+    kept, dropped = _fill_bounded(
+        len(json.dumps(base, default=str)),
+        rounds_table,
+        lambda row: len(json.dumps(row, default=str)) + 2,
+    )
     base["rounds_table"] = kept
     if dropped:
         base["rounds_table_truncation"] = f"...[truncated: {dropped} rows dropped]"
@@ -170,11 +173,11 @@ def build_synthesize_context(
     relevant_topics: tuple[str, ...] = ct.MEMORY_TOPIC_FILES,
 ) -> dict[str, object]:
     """SYNTHESIZE context for selected branch topics, their ledgers, and CURRENT.md."""
-    branch_dir = memory_root / "experiments" / experiment_id
+    branch_dir = ct.branch_dir(memory_root, experiment_id)
     branch_files: dict[str, str] = {}
     for name in (ct.MEMORY_BRANCH_README, *(f"{topic}.md" for topic in relevant_topics)):
         branch_files[name] = ar_types.read_text(branch_dir / name, limit=_BRANCH_FILE_CAP) or ""
-    topics_dir = memory_root / "topics"
+    topics_dir = ct.topics_dir(memory_root)
     ledger_views = {
         topic: _ledger_view(
             ar_types.read_text(topics_dir / f"{topic}.md", limit=ct.MAX_CLOSEOUT_CONTEXT_CHARS), topic=topic
@@ -191,18 +194,14 @@ def build_synthesize_context(
         "ledgers": {},
         "current_md": "",
     }
+
+    def ledger_cost(topic: str) -> int:
+        return len(json.dumps({topic: ledger_views[topic]}, default=str))
+
     running = len(json.dumps(base, default=str))
-    ledgers: dict[str, str] = {}
-    dropped = 0
-    for index, topic in enumerate(relevant_topics):
-        view = ledger_views[topic]
-        cost = len(json.dumps({topic: view}, default=str))
-        if running + cost <= ct.MAX_CLOSEOUT_CONTEXT_CHARS:
-            ledgers[topic] = view
-            running += cost
-        else:
-            dropped = len(relevant_topics) - index
-            break
+    kept_topics, dropped = _fill_bounded(running, list(relevant_topics), ledger_cost)
+    ledgers = {topic: ledger_views[topic] for topic in kept_topics}
+    running += sum(ledger_cost(topic) for topic in kept_topics)
     base["ledgers"] = ledgers
     if dropped:
         base["ledgers_truncation"] = f"...[truncated: {dropped} ledgers dropped]"

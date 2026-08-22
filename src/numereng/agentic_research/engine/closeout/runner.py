@@ -24,6 +24,7 @@ import os
 import shutil
 import socket
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -36,6 +37,7 @@ from numereng.agentic_research.engine.closeout import merge, phases
 from numereng.agentic_research.engine.closeout import types as ct
 from numereng.features.experiments import ExperimentRecord, get_experiment
 from numereng.features.store import resolve_store_root
+from numereng.features.training.run_lock import is_pid_alive
 
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 _FINALIZE_PROMPT_PATH = _PROMPTS_DIR / "stage-1_finalize.md"
@@ -50,6 +52,10 @@ _SYNTHESIZE_PROMPT_PATH = _PROMPTS_DIR / "stage-4_synthesize.md"
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        # os.kill(pid, 0) is not a liveness probe on Windows; without this a dead holder's lock
+        # would never be reclaimable on the Windows compute host.
+        return is_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -317,8 +323,8 @@ def _verify_upstream(state: ct.CloseoutState, closeout_dir: Path, *, memory_root
     append to a shared ledger between phases does not trip staleness. CURRENT.md is a full rewrite,
     never an upstream artifact, and is never recorded/verified.
     """
-    branch_dir = memory_root / "experiments" / experiment_id
-    topics_dir = memory_root / "topics"
+    branch_dir = ct.branch_dir(memory_root, experiment_id)
+    topics_dir = ct.topics_dir(memory_root)
     for phase in ct.PHASE_ORDER:
         record = state.phases[phase]
         if record.status != "done":
@@ -339,6 +345,36 @@ def _verify_upstream(state: ct.CloseoutState, closeout_dir: Path, *, memory_root
 
 
 # --------------------------------------------------------------------------- #
+# Shared LLM phase call
+# --------------------------------------------------------------------------- #
+def _llm_phase[T](
+    *,
+    phase: str,
+    prompt: str,
+    schema: dict[str, object],
+    closeout_dir: Path,
+    parse: Callable[[str], T],
+) -> T:
+    """Call the research LLM for one phase and parse it; on failure write the debug bundle and re-raise."""
+    artifact_dir = ct.debug_dir(closeout_dir)
+    raw, _source = llm._call_research_llm(
+        prompt=prompt,
+        artifact_dir=artifact_dir,
+        round_label=phase,
+        schema=schema,
+        timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
+        transport="codex",
+    )
+    try:
+        return parse(raw)
+    except ct.CloseoutError as exc:
+        memory.write_failure_debug(
+            artifact_dir=artifact_dir, round_label=phase, prompt=prompt, error=str(exc), raw_response=raw
+        )
+        raise
+
+
+# --------------------------------------------------------------------------- #
 # FINALIZE phase (§3.1)
 # --------------------------------------------------------------------------- #
 def _run_finalize(
@@ -348,22 +384,11 @@ def _run_finalize(
     evidence: dict[str, object],
     closeout_dir: Path,
 ) -> tuple[dict[str, str], str]:
-    """Build context, call the LLM (codex transport), validate the memo; return {abs_path: content}, notes."""
-    program_text = _FINALIZE_PROMPT_PATH.read_text(encoding="utf-8")
-    finalize_context = ctx_mod.build_finalize_context(
-        experiment=experiment, state=state, evidence=evidence, program_text=program_text
-    )
+    """Build context, call the LLM, validate the memo; return {abs_path: content}, notes."""
+    finalize_context = ctx_mod.build_finalize_context(experiment=experiment, state=state, evidence=evidence)
     prompt = llm.render_prompt(finalize_context, program_path=_FINALIZE_PROMPT_PATH)
-    debug_dir = closeout_dir / "debug"
-    raw, _source = llm._call_research_llm(
-        prompt=prompt,
-        artifact_dir=debug_dir,
-        round_label=ct.PHASE_FINALIZE,
-        schema=phases.FILES_ENVELOPE_SCHEMA,
-        timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
-        transport="codex",
-    )
-    try:
+
+    def parse(raw: str) -> tuple[dict[str, str], str]:
         files, notes = phases.parse_files_envelope(raw)
         believed_best = evidence.get("believed_best", {})
         believed_best_config = believed_best.get("config") if isinstance(believed_best, dict) else None
@@ -372,11 +397,15 @@ def _run_finalize(
             experiment_id=experiment.experiment_id,
             believed_best_config=str(believed_best_config or ""),
         )
-    except ct.CloseoutError as exc:
-        memory.write_failure_debug(
-            artifact_dir=debug_dir, round_label=ct.PHASE_FINALIZE, prompt=prompt, error=str(exc), raw_response=raw
-        )
-        raise
+        return slots, notes
+
+    slots, notes = _llm_phase(
+        phase=ct.PHASE_FINALIZE,
+        prompt=prompt,
+        schema=phases.FILES_ENVELOPE_SCHEMA,
+        closeout_dir=closeout_dir,
+        parse=parse,
+    )
     dest_content = {str(closeout_dir / rel_path): content for rel_path, content in slots.items()}
     return dest_content, notes
 
@@ -394,26 +423,13 @@ def _run_classify(*, closeout_dir: Path) -> tuple[dict[str, str], str, dict[str,
         evidence=_load_evidence(closeout_dir),
     )
     prompt = llm.render_prompt(classify_context, program_path=_CLASSIFY_PROMPT_PATH)
-    debug_dir = closeout_dir / "debug"
-    raw, _source = llm._call_research_llm(
+    classification = _llm_phase(
+        phase=ct.PHASE_CLASSIFY,
         prompt=prompt,
-        artifact_dir=debug_dir,
-        round_label=ct.PHASE_CLASSIFY,
         schema=phases.CLASSIFY_SCHEMA,
-        timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
-        transport="codex",
+        closeout_dir=closeout_dir,
+        parse=phases.parse_classification,
     )
-    try:
-        classification = phases.parse_classification(raw)
-    except ct.CloseoutError as exc:
-        memory.write_failure_debug(
-            artifact_dir=debug_dir,
-            round_label=ct.PHASE_CLASSIFY,
-            prompt=prompt,
-            error=str(exc),
-            raw_response=raw,
-        )
-        raise
     content = json.dumps(classification, indent=2, sort_keys=True) + "\n"
     return (
         {str(closeout_dir / ct.CLOSEOUT_CLASSIFICATION_FILENAME): content},
@@ -482,7 +498,7 @@ def _run_extract(
     restart: bool,
 ) -> tuple[dict[str, str], str]:
     """Draft the seven-file research-memory branch (README + six topics); return {abs_path: content}, notes."""
-    branch_dir = memory_root / "experiments" / experiment.experiment_id
+    branch_dir = ct.branch_dir(memory_root, experiment.experiment_id)
     if _branch_files(branch_dir):
         if not restart:
             raise ct.CloseoutError(ct.err_branch_exists(str(branch_dir)))
@@ -497,23 +513,18 @@ def _run_extract(
 
     extract_context = ctx_mod.build_extract_context(experiment=experiment, memo_text=memo_text, evidence=evidence)
     prompt = llm.render_prompt(extract_context, program_path=_EXTRACT_PROMPT_PATH)
-    debug_dir = closeout_dir / "debug"
-    raw, _source = llm._call_research_llm(
-        prompt=prompt,
-        artifact_dir=debug_dir,
-        round_label=ct.PHASE_EXTRACT,
-        schema=phases.FILES_ENVELOPE_SCHEMA,
-        timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
-        transport="codex",
-    )
-    try:
+
+    def parse(raw: str) -> tuple[dict[str, str], str]:
         files, notes = phases.parse_files_envelope(raw)
-        slots = phases.validate_extract(files, experiment_id=experiment.experiment_id)
-    except ct.CloseoutError as exc:
-        memory.write_failure_debug(
-            artifact_dir=debug_dir, round_label=ct.PHASE_EXTRACT, prompt=prompt, error=str(exc), raw_response=raw
-        )
-        raise
+        return phases.validate_extract(files, experiment_id=experiment.experiment_id), notes
+
+    slots, notes = _llm_phase(
+        phase=ct.PHASE_EXTRACT,
+        prompt=prompt,
+        schema=phases.FILES_ENVELOPE_SCHEMA,
+        closeout_dir=closeout_dir,
+        parse=parse,
+    )
     dest_content = {str(branch_dir / rel_path): content for rel_path, content in slots.items()}
     return dest_content, notes
 
@@ -539,8 +550,8 @@ def _run_synthesize(
 ) -> tuple[dict[str, str], str, dict[str, str]]:
     """Merge selected topic deltas and rewrite CURRENT.md."""
     experiment_id = experiment.experiment_id
-    branch_dir = memory_root / "experiments" / experiment_id
-    topics_dir = memory_root / "topics"
+    branch_dir = ct.branch_dir(memory_root, experiment_id)
+    topics_dir = ct.topics_dir(memory_root)
 
     synth_context = ctx_mod.build_synthesize_context(
         experiment_id=experiment_id,
@@ -548,16 +559,8 @@ def _run_synthesize(
         relevant_topics=relevant_topics,
     )
     prompt = llm.render_prompt(synth_context, program_path=_SYNTHESIZE_PROMPT_PATH)
-    debug_dir = closeout_dir / "debug"
-    raw, _source = llm._call_research_llm(
-        prompt=prompt,
-        artifact_dir=debug_dir,
-        round_label=ct.PHASE_SYNTHESIZE,
-        schema=phases.SYNTHESIZE_SCHEMA,
-        timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
-        transport="codex",
-    )
-    try:
+
+    def parse(raw: str) -> tuple[dict[str, str], str, dict[str, str]]:
         deltas, current_md, notes = phases.parse_synthesize_envelope(raw, relevant_topics=relevant_topics)
         phases.validate_current_md(current_md, experiment_id=experiment_id)
         slots_content: dict[str, str] = {}
@@ -587,12 +590,15 @@ def _run_synthesize(
             slots_content[str(ledger_path)] = merged
             outputs[str(ledger_path)] = ct.sha256_text(merge.extract_entry_block(merged, experiment_id, topic=topic))
         slots_content[str(memory_root / ct.CURRENT_MD_FILENAME)] = current_md
-    except ct.CloseoutError as exc:
-        memory.write_failure_debug(
-            artifact_dir=debug_dir, round_label=ct.PHASE_SYNTHESIZE, prompt=prompt, error=str(exc), raw_response=raw
-        )
-        raise
-    return slots_content, notes, outputs
+        return slots_content, notes, outputs
+
+    return _llm_phase(
+        phase=ct.PHASE_SYNTHESIZE,
+        prompt=prompt,
+        schema=phases.SYNTHESIZE_SCHEMA,
+        closeout_dir=closeout_dir,
+        parse=parse,
+    )
 
 
 def _backup_synthesize_memory(
@@ -717,7 +723,7 @@ def run_closeout(
         plan = _plan(state, until)
         evidence: dict[str, object] | None = None
         if ct.PHASE_FINALIZE in plan:
-            evidence = evidence_mod.build_evidence(experiment=experiment, state=run_state, runs_dir=root / "runs")
+            evidence = evidence_mod.build_evidence(experiment=experiment, state=run_state, store_root=root)
             ar_types.write_json(closeout_dir / ct.CLOSEOUT_EVIDENCE_FILENAME, evidence)
 
         needs_memory_lock = any(phase in (ct.PHASE_EXTRACT, ct.PHASE_SYNTHESIZE) for phase in plan)
@@ -809,7 +815,7 @@ def _run_plan(
                 outputs=outputs,
             )
             if phase == ct.PHASE_EXTRACT:
-                _assert_branch_complete(memory_root / "experiments" / experiment.experiment_id)
+                _assert_branch_complete(ct.branch_dir(memory_root, experiment.experiment_id))
             elif phase == ct.PHASE_CLASSIFY:
                 _apply_classification_route(classification, state=state, state_path=state_path)
         except ar_types.AgenticResearchError as exc:

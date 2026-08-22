@@ -102,7 +102,7 @@ def test_open_holdout_none_when_not_requested(tmp_path: Path) -> None:
     result = evidence._open_holdout(
         experiment=experiment,
         believed_best=_recipe_group(("run_a",)),
-        runs_dir=store_root / "runs",
+        store_root=store_root,
     )
     assert result is None
 
@@ -120,7 +120,7 @@ def test_open_holdout_scores_restricted_then_seals(tmp_path: Path, monkeypatch: 
     record = evidence._open_holdout(
         experiment=experiment,
         believed_best=_recipe_group(("run_a", "run_b")),
-        runs_dir=store_root / "runs",
+        store_root=store_root,
     )
 
     assert record is not None
@@ -144,7 +144,7 @@ def test_open_holdout_second_pass_is_idempotent(tmp_path: Path, monkeypatch: pyt
     first = evidence._open_holdout(
         experiment=experiment,
         believed_best=_recipe_group(("run_a",)),
-        runs_dir=store_root / "runs",
+        store_root=store_root,
     )
     assert len(calls) == 1
 
@@ -152,7 +152,7 @@ def test_open_holdout_second_pass_is_idempotent(tmp_path: Path, monkeypatch: pyt
     second = evidence._open_holdout(
         experiment=reloaded,
         believed_best=_recipe_group(("run_a",)),
-        runs_dir=store_root / "runs",
+        store_root=store_root,
     )
     # Sealed already: returns the persisted record, no re-scoring.
     assert second == first
@@ -175,6 +175,6 @@ def test_open_holdout_refuses_tampered_era_universe(tmp_path: Path, monkeypatch:
         evidence._open_holdout(
             experiment=experiment,
             believed_best=_recipe_group(("run_a",)),
-            runs_dir=store_root / "runs",
+            store_root=store_root,
         )
     assert calls == []  # never reached scoring

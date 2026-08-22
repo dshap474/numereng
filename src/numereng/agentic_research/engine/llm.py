@@ -31,6 +31,13 @@ def _call_research_llm(
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
     transport: str = "auto",
 ) -> tuple[str, str]:
+    """Call the active research LLM; return ``(response_text, source)``.
+
+    ``transport`` only gates the openrouter path: ``"auto"`` allows openrouter when it is the
+    active model source, anything else (e.g. ``"codex"``) excludes it. The remaining choice is
+    made by the config alone — ``active_model_source == "droid-exec"`` dispatches to droid-exec,
+    otherwise codex-exec. So ``transport="codex"`` does not force codex.
+    """
     config = load_openrouter_config()
     if transport == "auto" and config.active_model_source == "openrouter":
         return _call_openrouter(prompt, config=config), "openrouter"

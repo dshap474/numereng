@@ -10,7 +10,7 @@ is never lost to a size guard.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import evidence
-    summary = evidence.build_evidence(experiment=rec, state=state_dict, runs_dir=Path(".numereng/runs"))
+    summary = evidence.build_evidence(experiment=rec, state=state_dict, store_root=Path(".numereng"))
 """
 
 from __future__ import annotations
@@ -307,7 +307,7 @@ def _leaderboard_row(group: aggregate.RecipeGroup) -> dict[str, object]:
 # Frozen holdout: one-time closeout opening
 # --------------------------------------------------------------------------- #
 def _open_holdout(
-    *, experiment: ExperimentRecord, believed_best: aggregate.RecipeGroup, runs_dir: Path
+    *, experiment: ExperimentRecord, believed_best: aggregate.RecipeGroup, store_root: Path
 ) -> dict[str, object] | None:
     """Score the believed-best candidate on the frozen holdout exactly once, then seal it.
 
@@ -316,8 +316,8 @@ def _open_holdout(
     writes ``holdout_result.json``, and seals. On any later pass (sealed) it returns the
     persisted record without re-scoring, so closeout restarts stay idempotent.
     """
-    root = runs_dir.parent
-    spec = get_experiment_holdout(store_root=root, experiment_id=experiment.experiment_id)
+    runs_dir = store_root / "runs"
+    spec = get_experiment_holdout(store_root=store_root, experiment_id=experiment.experiment_id)
     if spec is None or not spec.is_frozen:
         return None
 
@@ -342,7 +342,9 @@ def _open_holdout(
     era_filter = holdout.restriction_filter(spec)
     per_run: dict[str, object] = {}
     for run_id in run_ids:
-        payload = score_run_eras(run_id=run_id, era_filter=era_filter, store_root=root, stage=ar_types.SCORING_STAGE)
+        payload = score_run_eras(
+            run_id=run_id, era_filter=era_filter, store_root=store_root, stage=ar_types.SCORING_STAGE
+        )
         per_run[run_id] = _dig(payload, ar_types.PRIMARY_METRIC)
     values = [value for value in per_run.values() if isinstance(value, (int, float)) and not isinstance(value, bool)]
     record: dict[str, object] = {
@@ -363,7 +365,7 @@ def _open_holdout(
     result_path.parent.mkdir(parents=True, exist_ok=True)
     ar_types.write_json(result_path, record)
     try:
-        seal_experiment_holdout(store_root=root, experiment_id=experiment.experiment_id)
+        seal_experiment_holdout(store_root=store_root, experiment_id=experiment.experiment_id)
     except holdout.HoldoutError as exc:
         raise ct.CloseoutError(ct.ERR_HOLDOUT_REUSE) from exc
     return record
@@ -387,8 +389,9 @@ def _run_era_order(runs_dir: Path, run_id: str) -> tuple[str, ...]:
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
-def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], runs_dir: Path) -> dict[str, object]:
+def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], store_root: Path) -> dict[str, object]:
     """Strict, deterministic evidence build. Raises ``CloseoutError`` on any evidence corruption."""
+    runs_dir = store_root / "runs"
     journal_path = memory.journal_path(experiment)
     config_dir = experiment.manifest_path.parent / "configs"
     parsed = _parse_journal_strict(journal_path)
@@ -437,7 +440,7 @@ def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], ru
         "duplicate_skips": skipped,
         "rounds_table": _rounds_table(parsed),
         "metrics_enrichment": {run_id: _enrich_run(runs_dir, run_id) for run_id in enrichment_run_ids},
-        "holdout": _open_holdout(experiment=experiment, believed_best=believed_best_group, runs_dir=runs_dir),
+        "holdout": _open_holdout(experiment=experiment, believed_best=believed_best_group, store_root=store_root),
         "totals": {
             "journal_entries": len(entries),
             "completed": completed,

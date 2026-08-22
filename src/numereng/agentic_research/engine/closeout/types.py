@@ -162,6 +162,10 @@ def err_output_path_not_allowed(path: str) -> str:
     return f"{ERROR_PREFIX}output_path_not_allowed:{path}"
 
 
+def err_output_path_duplicate(path: str) -> str:
+    return f"{ERROR_PREFIX}output_path_duplicate:{path}"
+
+
 def err_output_slot_missing(path: str) -> str:
     return f"{ERROR_PREFIX}output_slot_missing:{path}"
 
@@ -272,6 +276,24 @@ def err_current_md_too_short(length: int, minimum: int) -> str:
 
 def err_branch_file_missing(path: str) -> str:
     return f"{ERROR_PREFIX}branch_file_missing:{path}"
+
+
+# --------------------------------------------------------------------------- #
+# Shared path helpers
+# --------------------------------------------------------------------------- #
+def debug_dir(closeout_dir: Path) -> Path:
+    """Per-phase LLM debug artifact directory inside a closeout dir."""
+    return closeout_dir / "debug"
+
+
+def branch_dir(memory_root: Path, experiment_id: str) -> Path:
+    """This experiment's research-memory branch directory."""
+    return memory_root / "experiments" / experiment_id
+
+
+def topics_dir(memory_root: Path) -> Path:
+    """The master topic-ledger directory of a research-memory root."""
+    return memory_root / "topics"
 
 
 # --------------------------------------------------------------------------- #

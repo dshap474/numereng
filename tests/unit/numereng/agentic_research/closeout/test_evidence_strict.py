@@ -15,7 +15,7 @@ from .conftest import CloseoutFixture
 def _build(fixture: CloseoutFixture) -> dict:
     experiment = fixture.experiment()
     state = json.loads(fixture.state_path().read_text(encoding="utf-8"))
-    return evidence.build_evidence(experiment=experiment, state=state, runs_dir=fixture.store_root / "runs")
+    return evidence.build_evidence(experiment=experiment, state=state, store_root=fixture.store_root)
 
 
 def test_build_evidence_happy_path(closeout_fixture: CloseoutFixture) -> None:
