@@ -1,3 +1,8 @@
+# Run repository readiness checks against Python and packaged Viz artifacts.
+#
+# USAGE:
+#   Triggered for pull requests, main pushes, the weekly schedule, and manual runs.
+
 name: Readiness
 
 on:
@@ -19,14 +24,28 @@ jobs:
         with:
           python-version-file: ".python-version"
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: viz/web/package-lock.json
+
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - uses: taiki-e/install-action@just
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: uv sync --extra dev --locked
+
+      - name: Install Viz dependencies
+        working-directory: viz/web
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: viz/web
+        run: npx playwright install --with-deps chromium
 
       - name: Run readiness checks
         run: just readiness

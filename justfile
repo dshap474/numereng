@@ -1,4 +1,14 @@
+# Numereng developer workflows for validation, packaging, and local operation.
+#
+# USAGE:
+#   just readiness
+#   just dev
+
 set shell := ["sh", "-cu"]
+
+# --------------------------------------------------------------------------- #
+# Development quality
+# --------------------------------------------------------------------------- #
 
 bootstrap:
     uv sync --extra dev
@@ -36,9 +46,21 @@ deps-lint:
 arch-lint:
     uv run lint-imports
 
+# --------------------------------------------------------------------------- #
+# Packaged assets and release readiness
+# --------------------------------------------------------------------------- #
+
+sync-packaged-viz:
+    cd viz/web && npm run build
+    rsync -a --delete viz/web/build/ src/numereng/assets/viz_static/
+
+viz-packaged-smoke:
+    cd viz/web && npm run test:packaged
+
 readiness:
     just deps-lint
     just arch-lint
+    just viz-packaged-smoke
     test -f AGENTS.md
     test -f .python-version
     test -f justfile
@@ -103,6 +125,10 @@ security:
 
 build:
     uv build --package numereng --wheel --no-build-logs
+
+# --------------------------------------------------------------------------- #
+# Local runtime
+# --------------------------------------------------------------------------- #
 
 kill:
     ./scripts/dev-stop.sh
