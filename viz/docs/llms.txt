@@ -15,6 +15,18 @@ core contract
   - local `build_monitor_snapshot(store_root=...)`
   - zero or more SSH `numereng monitor snapshot --json` calls
 
+submissions contract
+- `/api/submissions` returns `items[] + total + root + generated_at`
+- each item is `model_name + path + metadata (raw submission.json) + summary`
+- summary adds derived deployment fields: uploaded_at, live_started_at, live_ended_at,
+  upload_id, data_version, docker_image, pickle_path, source_experiment_id,
+  source_package_id, source_package_path, pulled_at, refresh_status, refresh_source,
+  latest_resolved_round, latest_scored_round_number, upload_count, has_upload_metadata
+- thin snapshots from other machines have no uploads/source/hosted_pickle; derived fields
+  are null and `has_upload_metadata` is false. never render them as "undefined"
+- `/api/submissions/{model}` adds `rounds` (all live_rounds.parquet columns)
+- last-pull freshness is surfaced per model as `pulled_at` in the detail panel, not as a header badge
+
 federation rules
 - stores stay per-machine; never sync full `.numereng`
 - remote snapshot fetch success sets source state; it does not imply live runs exist

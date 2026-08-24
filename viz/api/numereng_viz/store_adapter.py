@@ -341,6 +341,86 @@ def _sanitize_metrics(metrics: Any) -> dict[str, Any]:
     return {str(key): _sanitize_metric_value(value) for key, value in metrics.items()}
 
 
+def _to_int(value: Any) -> int | None:
+    """Normalize integral values, ignoring bools and non-numeric input."""
+
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Real):
+        number = float(value)
+        return int(number) if math.isfinite(number) else None
+    return None
+
+
+def _submission_uploads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return recorded upload entries from a submission snapshot."""
+
+    uploads = metadata.get("uploads")
+    if not isinstance(uploads, list):
+        return []
+    return [entry for entry in uploads if isinstance(entry, dict)]
+
+
+def _latest_submission_upload(uploads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pick the most recent upload entry, falling back to declaration order."""
+
+    if not uploads:
+        return {}
+
+    def sort_key(entry: dict[str, Any]) -> tuple[str, str]:
+        hosted = entry.get("hosted_pickle") if isinstance(entry.get("hosted_pickle"), dict) else {}
+        return (
+            _to_non_empty_str(entry.get("live_started_at")) or "",
+            _to_non_empty_str(hosted.get("uploaded_at")) or "",
+        )
+
+    return max(uploads, key=sort_key)
+
+
+def _submission_deployment_facts(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Derive null-safe deployment/provenance fields from a submission snapshot.
+
+    Rich snapshots carry `hosted_pickle`, `source`, and `uploads`. Snapshots written on
+    another machine can be thin (`model_id`/`refresh`/`status` only), so every field here
+    degrades to `None` instead of raising or inventing values.
+    """
+
+    uploads = _submission_uploads(metadata)
+    latest_upload = _latest_submission_upload(uploads)
+    latest_upload_hosted = (
+        latest_upload.get("hosted_pickle") if isinstance(latest_upload.get("hosted_pickle"), dict) else {}
+    )
+    hosted = metadata.get("hosted_pickle") if isinstance(metadata.get("hosted_pickle"), dict) else {}
+    source = metadata.get("source") if isinstance(metadata.get("source"), dict) else {}
+    latest_upload_source = latest_upload.get("source") if isinstance(latest_upload.get("source"), dict) else {}
+
+    def pick(key: str, *payloads: dict[str, Any]) -> str | None:
+        for payload in payloads:
+            value = _to_non_empty_str(payload.get(key))
+            if value is not None:
+                return value
+        return None
+
+    uploaded_at = pick("uploaded_at", hosted, latest_upload_hosted) or _to_non_empty_str(metadata.get("updated_at"))
+    live_started_at = pick("live_started_at", latest_upload) or uploaded_at
+    return {
+        "uploaded_at": uploaded_at,
+        "live_started_at": live_started_at,
+        "live_ended_at": pick("live_ended_at", latest_upload),
+        "upload_id": pick("upload_id", hosted, latest_upload_hosted, latest_upload),
+        "data_version": pick("data_version", hosted, latest_upload_hosted),
+        "docker_image": pick("docker_image", hosted, latest_upload_hosted),
+        "pickle_path": pick("pickle_path", hosted, latest_upload_hosted),
+        "source_experiment_id": pick("experiment_id", source, latest_upload_source),
+        "source_package_id": pick("package_id", source, latest_upload_source),
+        "source_package_path": pick("package_path", source, latest_upload_source),
+        "upload_count": len(uploads),
+        "has_upload_metadata": bool(uploads or hosted or source),
+    }
+
+
 def _read_json_dict(path: Path) -> dict[str, Any]:
     """Read JSON file as dict, returning empty dict when invalid."""
 
@@ -1811,6 +1891,12 @@ class VizStoreAdapter:
             "resolving_round_count": resolving_count,
             "latest_round": latest_round,
             "latest_scored_round": latest_scored_round,
+            "pulled_at": _to_non_empty_str(refresh.get("pulled_at")),
+            "refresh_status": _to_non_empty_str(refresh.get("status")),
+            "refresh_source": _to_non_empty_str(refresh.get("source")),
+            "latest_resolved_round": _to_int(refresh.get("latest_resolved_round")),
+            "latest_scored_round_number": _to_int(refresh.get("latest_scored_round")),
+            **_submission_deployment_facts(metadata),
         }
 
     def _format_submission(self, model_name: str, *, include_rounds: bool) -> dict[str, Any]:
@@ -1836,6 +1922,7 @@ class VizStoreAdapter:
             "items": items,
             "total": len(items),
             "root": str(self._submissions_root()),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
 
     def get_submission(self, model_name: str) -> dict[str, Any] | None:

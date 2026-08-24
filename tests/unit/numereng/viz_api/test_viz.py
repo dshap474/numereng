@@ -3826,3 +3826,124 @@ def test_get_submission_calibration_reads_materialized_artifacts(tmp_path: Path)
     assert payload["rows"][0]["live_mmc20"] == -0.005
     assert payload["report"]["scopes"]["all_scored"]["observation_count"] == 1
     assert payload["manifest"]["observation_count"] == 1
+
+
+def _write_submission_fixture(store_root: Path) -> None:
+    submissions_root = store_root / "submissions"
+    rich = submissions_root / "rich_model"
+    rich.mkdir(parents=True)
+    (rich / "submission.json").write_text(
+        json.dumps(
+            {
+                "hosted_pickle": {
+                    "data_version": "v5.2",
+                    "docker_image": "Python 3.12",
+                    "pickle_path": "/tmp/pkg/artifacts/pickle/model.pkl",
+                    "upload_id": "upload-rich",
+                    "uploaded_at": "2026-07-15T03:06:51Z",
+                },
+                "model_id": "model-rich",
+                "model_name": "rich_model",
+                "refresh": {
+                    "latest_resolved_round": 1314,
+                    "latest_scored_round": 1333,
+                    "pulled_at": "2026-08-20T23:28:38.883632+00:00",
+                    "source": "numerai.round_model_performances_v2",
+                    "status": "live_scores_available",
+                },
+                "source": {
+                    "experiment_id": "2026-07-10_pkg-eval",
+                    "package_id": "pkg_v1",
+                    "package_path": "/tmp/pkg",
+                },
+                "status": "live_scores_available",
+                "updated_at": "2026-07-15T03:06:51Z",
+                "uploads": [
+                    {
+                        "hosted_pickle": {"upload_id": "upload-rich", "uploaded_at": "2026-07-15T03:06:51Z"},
+                        "live_ended_at": None,
+                        "live_started_at": "2026-07-15T03:06:51Z",
+                        "upload_id": "upload-rich",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pd.DataFrame.from_records(
+        [
+            {"round": 1333, "state": "resolving", "mmc20": 0.01, "corr20": 0.02, "is_estimate": True},
+            {"round": 1314, "state": "resolved", "mmc20": -0.01, "corr20": 0.03, "is_estimate": False},
+        ]
+    ).to_parquet(rich / "live_rounds.parquet", index=False)
+
+    thin = submissions_root / "thin_model"
+    thin.mkdir(parents=True)
+    (thin / "submission.json").write_text(
+        json.dumps(
+            {
+                "model_id": "model-thin",
+                "model_name": "thin_model",
+                "refresh": {
+                    "latest_resolved_round": None,
+                    "latest_scored_round": None,
+                    "pulled_at": "2026-08-20T23:28:42.538019+00:00",
+                    "source": "numerai.round_model_performances_v2",
+                    "status": "awaiting_live_scores",
+                },
+                "status": "awaiting_live_scores",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_list_submissions_enriches_rich_snapshot_summary(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    _write_submission_fixture(store_root)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.list_submissions()
+    summary = next(item["summary"] for item in payload["items"] if item["model_name"] == "rich_model")
+
+    assert payload["generated_at"]
+    assert summary["uploaded_at"] == "2026-07-15T03:06:51Z"
+    assert summary["live_started_at"] == "2026-07-15T03:06:51Z"
+    assert summary["live_ended_at"] is None
+    assert summary["upload_id"] == "upload-rich"
+    assert summary["data_version"] == "v5.2"
+    assert summary["docker_image"] == "Python 3.12"
+    assert summary["source_experiment_id"] == "2026-07-10_pkg-eval"
+    assert summary["source_package_id"] == "pkg_v1"
+    assert summary["source_package_path"] == "/tmp/pkg"
+    assert summary["pulled_at"] == "2026-08-20T23:28:38.883632+00:00"
+    assert summary["refresh_status"] == "live_scores_available"
+    assert summary["refresh_source"] == "numerai.round_model_performances_v2"
+    assert summary["latest_resolved_round"] == 1314
+    assert summary["latest_scored_round_number"] == 1333
+    assert summary["upload_count"] == 1
+    assert summary["has_upload_metadata"] is True
+    assert summary["resolved_round_count"] == 1
+    assert summary["resolving_round_count"] == 1
+
+
+def test_list_submissions_degrades_for_thin_snapshot(tmp_path: Path) -> None:
+    store_root = tmp_path / ".numereng"
+    _write_submission_fixture(store_root)
+    adapter = VizStoreAdapter(VizStoreConfig(store_root=store_root, repo_root=tmp_path))
+
+    payload = adapter.list_submissions()
+    summary = next(item["summary"] for item in payload["items"] if item["model_name"] == "thin_model")
+
+    assert summary["has_upload_metadata"] is False
+    assert summary["upload_count"] == 0
+    assert summary["uploaded_at"] is None
+    assert summary["live_started_at"] is None
+    assert summary["upload_id"] is None
+    assert summary["data_version"] is None
+    assert summary["source_experiment_id"] is None
+    assert summary["latest_resolved_round"] is None
+    assert summary["latest_scored_round_number"] is None
+    assert summary["pulled_at"] == "2026-08-20T23:28:42.538019+00:00"
+    assert summary["refresh_status"] == "awaiting_live_scores"
+    assert summary["round_count"] == 0

@@ -79,6 +79,26 @@ Important invariants:
 - config labels must tolerate Windows-style paths
 - local-first detail reads treat canonical local artifacts as the hot path and do not probe remote overlay metadata on successful local reads; explicit remote-source requests and genuine local misses still fall through to pulled-cache compatibility and then SSH fallback
 
+### Submissions surface
+
+`/api/submissions` lists one entry per folder under `.numereng/submissions/<model>/`. Each entry carries the raw `submission.json` as `metadata` plus a derived `summary`; `/api/submissions/{model}` adds every `live_rounds.parquet` column as `rounds`.
+
+`summary` includes derived deployment/provenance fields so the list view never has to dig into `metadata`:
+
+```text
+uploaded_at, live_started_at, live_ended_at, upload_id
+data_version, docker_image, pickle_path
+source_experiment_id, source_package_id, source_package_path
+pulled_at, refresh_status, refresh_source
+latest_resolved_round, latest_scored_round_number
+upload_count, has_upload_metadata
+```
+
+Important invariants:
+- snapshots written on another machine can be thin (`model_id`/`refresh`/`status` only); every derived field degrades to `null` and `has_upload_metadata` is `false` rather than raising or inventing values
+- `latest_round`/`latest_scored_round` stay round rows; the refresh-derived round numbers use the `_number` suffix
+- the list payload emits `generated_at` (UTC iso) as the page pulse; the page shows per-model `pulled_at` in the selected-model metadata rather than a header staleness badge
+
 ## Frontend Layers
 
 ### `viz/web/src/routes/experiments/+page.ts`
