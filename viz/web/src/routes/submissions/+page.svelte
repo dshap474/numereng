@@ -355,25 +355,27 @@
 			<SubmissionDetailPanel item={selectedItem} detail={selectedDetail} loading={detailLoading} />
 		</div>
 	{:else}
-		<div class="space-y-4 px-8 pb-8 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
-			<AccentCard paddingClass="px-4 py-4" roundedClass="rounded-lg">
-				<div class="flex flex-col gap-4">
-					<div class="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-						<div>
-							<h2 class="text-sm font-semibold text-foreground">
-								{localMetricLabels[localMetric]} vs {liveMetricLabels[liveMetric]}
-							</h2>
-							<p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-								<span>{chartStats.n} usable points</span>
-								{#if chartStats.r !== null}
-									<span class="font-mono tabular-nums">r={formatNumber(chartStats.r, 3)}</span>
-									<span class="font-mono tabular-nums">R²={formatNumber(chartStats.r2, 3)}</span>
-								{:else}
-									<span>not enough points for regression</span>
-								{/if}
-							</p>
-						</div>
-						<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+		<div class="flex flex-col border-t-[1.5px] border-white/12 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+			<section class="shrink-0 bg-[#111115]">
+				<div
+					class="flex flex-col gap-3 border-y-[1.5px] border-white/12 bg-card px-5 py-4 xl:flex-row xl:items-end xl:justify-between"
+				>
+					<div>
+						<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Local vs live</p>
+						<h2 class="mt-2 text-lg font-semibold text-foreground">
+							{localMetricLabels[localMetric]} vs {liveMetricLabels[liveMetric]}
+						</h2>
+						<p class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+							<span class="font-mono tabular-nums">{chartStats.n} usable points</span>
+							{#if chartStats.r !== null}
+								<span class="font-mono tabular-nums">r={formatNumber(chartStats.r, 3)}</span>
+								<span class="font-mono tabular-nums">R²={formatNumber(chartStats.r2, 3)}</span>
+							{:else}
+								<span>not enough points for regression</span>
+							{/if}
+						</p>
+					</div>
+					<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8">
 							<label class="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
 								Scope
 								<select bind:value={calibrationScope} class="mt-1 w-full rounded-md border border-white/10 bg-background px-2 py-1.5 text-xs normal-case tracking-normal text-foreground">
@@ -447,27 +449,31 @@
 									<option value="live_rank">live rank</option>
 									<option value="live_since">live since</option>
 								</select>
-							</label>
-						</div>
+						</label>
 					</div>
+				</div>
 
+				<div class="px-5 py-4">
 					<LocalLiveCalibrationChart
 						points={chartPoints}
 						xLabel={localMetricLabels[localMetric]}
 						yLabel={liveMetricLabels[liveMetric]}
 					/>
 				</div>
-			</AccentCard>
+			</section>
 
-			<AccentCard paddingClass="p-0" roundedClass="rounded-lg" class="overflow-hidden">
-				<div class="border-b border-white/8 px-4 py-3">
-					<h2 class="text-sm font-semibold text-foreground">Calibration Observations</h2>
+			<section class="bg-[#111115]">
+				<div class="border-y-[1.5px] border-white/12 bg-card px-5 py-4">
+					<p class="font-mono text-[11px] uppercase tracking-[0.28em] text-muted-foreground">Observation history</p>
+					<h2 class="mt-2 text-lg font-semibold text-foreground">Calibration Observations</h2>
 				</div>
 				<div class="overflow-x-auto">
 					<table class="min-w-full text-left text-sm">
-						<thead class="bg-white/[0.025] text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+						<thead
+							class="sticky top-0 z-10 bg-card text-[11px] uppercase tracking-[0.16em] text-muted-foreground shadow-[inset_0_-1px_0_rgba(255,255,255,0.08)]"
+						>
 								<tr>
-									<th class="px-4 py-3 font-medium">Model</th>
+									<th class="px-5 py-3 font-medium">Model</th>
 									<th class="px-4 py-3 font-medium">Upload / Window</th>
 									<th class="px-4 py-3 text-right font-medium">Rounds</th>
 									<th class="px-4 py-3 font-medium">Feature</th>
@@ -485,8 +491,8 @@
 							</thead>
 							<tbody class="divide-y divide-white/6">
 								{#each filteredCalibrationItems as row (`${row.model_name}:${row.upload_id ?? 'current'}:${row.scope}`)}
-									<tr class="border-l {calibrationRowTone(row)}">
-										<td class="px-4 py-3">
+									<tr class="border-l-2 {calibrationRowTone(row)}">
+										<td class="px-5 py-3">
 											<div class="font-mono text-sm font-semibold text-foreground">{row.model_name}</div>
 											<div class="mt-1 text-xs text-muted-foreground">
 												{formatText(row.package_id ?? row.local_metric_source)}
@@ -531,7 +537,7 @@
 							{/each}
 							{#if filteredCalibrationItems.length === 0}
 								<tr>
-									<td class="px-4 py-6 text-sm text-muted-foreground" colspan="14">
+									<td class="px-5 py-6 text-sm text-muted-foreground" colspan="14">
 										No calibration observations match the current filters.
 									</td>
 								</tr>
@@ -539,7 +545,7 @@
 						</tbody>
 					</table>
 				</div>
-			</AccentCard>
+			</section>
 		</div>
 	{/if}
 </div>
