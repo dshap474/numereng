@@ -1,15 +1,38 @@
+<!--
+	Submissions page: live-round snapshots for submitted Numerai models plus the
+	local-vs-live calibration view.
+
+	USAGE:
+		route `/submissions`; data comes from `+page.ts` (`/api/submissions`,
+		`/api/submissions/calibration`) and per-model detail fetches.
+
+	Read-only surface: nothing here mutates the store or calls Numerai.
+-->
 <script lang="ts">
 	import {
 		api,
 		type SubmissionCalibrationObservation,
 		type SubmissionCalibrationResponse,
 		type SubmissionDetail,
-		type SubmissionItem,
-		type SubmissionListResponse,
-		type SubmissionRound
+		type SubmissionListResponse
 	} from '$lib/api/client';
 	import LocalLiveCalibrationChart from '$lib/components/charts/LocalLiveCalibrationChart.svelte';
+	import SubmissionDetailPanel from '$lib/components/submissions/SubmissionDetailPanel.svelte';
+	import SubmissionModelTable from '$lib/components/submissions/SubmissionModelTable.svelte';
+	import {
+		DASH,
+		dateTime,
+		formatNumber,
+		formatShortDate,
+		formatText,
+		sortSubmissionItems,
+		type SubmissionSortKey
+	} from '$lib/components/submissions/format';
 	import AccentCard from '$lib/components/ui/AccentCard.svelte';
+
+	// ----------------------------------------------------------------------- //
+	// Types and props
+	// ----------------------------------------------------------------------- //
 
 	type LocalMetricKey = 'bmc200' | 'bmc' | 'corr' | 'mmc' | 'fnc';
 	type LiveMetricKey = 'mmc20' | 'corr20' | 'mmc60' | 'corr60';
@@ -25,14 +48,6 @@
 		x: number;
 		y: number;
 	};
-	type RoundLike = {
-		round?: number | string | null;
-		round_number?: number | string | null;
-		close_date?: string | null;
-		resolve_date?: string | null;
-		state?: string | null;
-		status?: string | null;
-	};
 
 	let {
 		data
@@ -47,10 +62,11 @@
 	const routeCalibration = () => data.calibration;
 	let submissions = $state<SubmissionListResponse>(routeSubmissions());
 	let calibration = $state<SubmissionCalibrationResponse>(routeCalibration());
-	let selectedModel = $state<string | null>(routeSubmissions().items[0]?.model_name ?? null);
+	let selectedModel = $state<string | null>(null);
 	let selectedDetail = $state<SubmissionDetail | null>(null);
 	let detailLoading = $state(false);
 	let activeTab = $state<'live' | 'calibration'>('live');
+	let submissionSort = $state<SubmissionSortKey>('live_since');
 	let calibrationScope = $state<CalibrationScope>('all_scored');
 	let calibrationSort = $state<CalibrationSort>('live_rank');
 	let localMetric = $state<LocalMetricKey>('bmc200');
@@ -60,8 +76,12 @@
 	let recipeFilter = $state('all');
 	let confidenceFilter = $state('all');
 
-	let selectedItem = $derived(submissions.items.find((item) => item.model_name === selectedModel) ?? null);
-	let rounds = $derived(selectedDetail?.rounds ?? []);
+	// ----------------------------------------------------------------------- //
+	// Derived state
+	// ----------------------------------------------------------------------- //
+
+	let sortedItems = $derived(sortSubmissionItems(submissions.items, submissionSort));
+	let selectedItem = $derived(sortedItems.find((item) => item.model_name === selectedModel) ?? null);
 	let calibrationRows = $derived.by(() =>
 		[...(calibration.observations ?? [])]
 			.filter((row) => row.scope === calibrationScope)
@@ -81,11 +101,22 @@
 	let chartPoints = $derived.by(() => buildChartPoints(filteredCalibrationItems));
 	let chartStats = $derived.by(() => buildChartStats(chartPoints));
 
+	// ----------------------------------------------------------------------- //
+	// Effects
+	// ----------------------------------------------------------------------- //
+
 	$effect(() => {
 		submissions = routeSubmissions();
 		calibration = routeCalibration();
-		if (selectedModel == null && submissions.items.length > 0) {
-			selectedModel = submissions.items[0].model_name;
+	});
+
+	$effect(() => {
+		if (sortedItems.length === 0) {
+			selectedModel = null;
+			return;
+		}
+		if (!sortedItems.some((item) => item.model_name === selectedModel)) {
+			selectedModel = sortedItems[0].model_name;
 		}
 	});
 
@@ -114,6 +145,20 @@
 			active = false;
 		};
 	});
+
+	// ----------------------------------------------------------------------- //
+	// Header helpers
+	// ----------------------------------------------------------------------- //
+
+	function tabClass(tab: 'live' | 'calibration'): string {
+		return activeTab === tab
+			? 'rounded-md bg-white/12 px-3 py-1.5 text-sm text-foreground'
+			: 'rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-white/[0.05]';
+	}
+
+	// ----------------------------------------------------------------------- //
+	// Calibration helpers
+	// ----------------------------------------------------------------------- //
 
 	const localMetricLabels: Record<LocalMetricKey, string> = {
 		bmc200: 'Local BMC200',
@@ -150,65 +195,21 @@
 		return Number(b.scored_round_count ?? 0) - Number(a.scored_round_count ?? 0);
 	}
 
-	function formatNumber(value: unknown, digits = 4): string {
-		if (typeof value !== 'number' || Number.isNaN(value)) return 'n/a';
-		return value.toFixed(digits);
-	}
-
-	function formatText(value: unknown): string {
-		if (typeof value === 'string' && value.trim()) return value;
-		if (typeof value === 'number') return String(value);
-		return 'n/a';
-	}
-
-	function roundNumber(row: RoundLike | null | undefined): string {
-		return formatText(row?.round ?? row?.round_number);
-	}
-
-	function formatDate(value: unknown): string {
-		if (typeof value !== 'string' || !value.trim()) return 'n/a';
-		const calendarMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-		const date = calendarMatch
-			? new Date(Number(calendarMatch[1]), Number(calendarMatch[2]) - 1, Number(calendarMatch[3]))
-			: new Date(value);
-		if (Number.isNaN(date.getTime())) return value;
-		return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
-
-	function roundDates(row: RoundLike | null | undefined): string {
-		const closeDate = formatDate(row?.close_date);
-		const resolveDate = formatDate(row?.resolve_date);
-		if (closeDate === 'n/a' && resolveDate === 'n/a') return 'dates n/a';
-		if (resolveDate === 'n/a') return `close ${closeDate}`;
-		if (closeDate === 'n/a') return `resolve ${resolveDate}`;
-		return `${closeDate} -> ${resolveDate}`;
-	}
-
 	function observationRounds(row: SubmissionCalibrationObservation): string {
 		const first = row.first_round_number;
 		const latest = row.latest_round_number;
-		if (typeof first !== 'number' && typeof latest !== 'number') return 'n/a';
+		if (typeof first !== 'number' && typeof latest !== 'number') return DASH;
 		if (first === latest || typeof first !== 'number') return formatText(latest);
 		return `${first}-${latest}`;
 	}
 
 	function observationWindow(row: SubmissionCalibrationObservation): string {
-		const first = formatDate(row.first_close_date ?? row.live_started_at);
-		const latest = formatDate(row.latest_close_date ?? row.live_ended_at);
-		if (first === 'n/a' && latest === 'n/a') return 'window n/a';
-		if (latest === 'n/a' || first === latest) return first;
-		if (first === 'n/a') return latest;
+		const first = formatShortDate(row.first_close_date ?? row.live_started_at);
+		const latest = formatShortDate(row.latest_close_date ?? row.live_ended_at);
+		if (first === DASH && latest === DASH) return 'window not recorded';
+		if (latest === DASH || first === latest) return first;
+		if (first === DASH) return latest;
 		return `${first} -> ${latest}`;
-	}
-
-	function roundState(row: RoundLike | null | undefined): string {
-		return formatText(row?.state ?? row?.status);
-	}
-
-	function rowTone(item: SubmissionItem): string {
-		if (item.summary.resolving_round_count > 0) return 'border-l-sky-400/70';
-		if (item.summary.resolved_round_count > 0) return 'border-l-emerald-400/80';
-		return 'border-l-transparent';
 	}
 
 	function calibrationRowTone(row: SubmissionCalibrationObservation): string {
@@ -218,12 +219,12 @@
 	}
 
 	function rankText(value: unknown): string {
-		if (typeof value !== 'number' || Number.isNaN(value)) return 'n/a';
+		if (typeof value !== 'number' || Number.isNaN(value)) return DASH;
 		return `#${value}`;
 	}
 
 	function deltaText(value: unknown): string {
-		if (typeof value !== 'number' || Number.isNaN(value)) return 'n/a';
+		if (typeof value !== 'number' || Number.isNaN(value)) return DASH;
 		if (value === 0) return '0';
 		return value > 0 ? `+${value}` : String(value);
 	}
@@ -231,12 +232,6 @@
 	function confidenceText(value: unknown): string {
 		if (typeof value !== 'string' || !value.trim()) return 'waiting';
 		return value.replaceAll('_', ' ');
-	}
-
-	function dateTime(value: unknown): number {
-		if (typeof value !== 'string' || !value.trim()) return 0;
-		const parsed = Date.parse(value);
-		return Number.isNaN(parsed) ? 0 : parsed;
 	}
 
 	function confidenceForRow(row: SubmissionCalibrationObservation): string {
@@ -275,20 +270,22 @@
 
 	function buildChartPoints(rows: SubmissionCalibrationObservation[]): CalibrationPoint[] {
 		return rows
-			.map((row) => ({
-				id: `${row.model_name}:${row.upload_id ?? 'current'}:${row.scope}:${localMetric}:${liveMetric}`,
-				modelName: row.model_name,
-				detailLabel: `${row.scored_round_count ?? 0} scored rounds`,
-				target: row.target,
-				confidence: confidenceForRow(row),
-				liveStartedAt: row.live_started_at,
-				x: localMetricValue(row),
-				y: liveMetricValue(row)
-			}))
-			.filter(
-				(row): row is CalibrationPoint =>
-					row.x !== null && row.y !== null
-			);
+			.map((row): CalibrationPoint | null => {
+				const x = localMetricValue(row);
+				const y = liveMetricValue(row);
+				if (x === null || y === null) return null;
+				return {
+					id: `${row.model_name}:${row.upload_id ?? 'current'}:${row.scope}:${localMetric}:${liveMetric}`,
+					modelName: row.model_name,
+					detailLabel: `${row.scored_round_count ?? 0} scored rounds`,
+					target: row.target,
+					confidence: confidenceForRow(row),
+					liveStartedAt: row.live_started_at,
+					x,
+					y
+				};
+			})
+			.filter((point): point is CalibrationPoint => point !== null);
 	}
 
 	function buildChartStats(points: CalibrationPoint[]): { n: number; r: number | null; r2: number | null } {
@@ -309,142 +306,56 @@
 	<title>Submissions · Numereng</title>
 </svelte:head>
 
-<div class="space-y-6">
-	<header class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-		<div>
+<!-- ------------------------------------------------------------------------ -->
+<!-- Markup                                                                    -->
+<!-- ------------------------------------------------------------------------ -->
+
+<div class="-mx-8 -mt-14 -mb-8 flex h-screen min-h-0 flex-col overflow-x-hidden overflow-y-auto md:-mt-8 xl:overflow-hidden">
+	<header class="flex shrink-0 flex-wrap items-end justify-between gap-4 px-8 pt-14 pb-5 md:pt-8">
+		<div class="min-w-0">
 			<p class="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">Live submission snapshots</p>
 			<h1 class="mt-1 text-2xl font-semibold tracking-tight text-foreground">Submissions</h1>
 		</div>
-		<div class="text-sm text-muted-foreground">
-			<span class="font-mono text-foreground">{submissions.total}</span>
-			<span>{submissions.total === 1 ? 'model' : 'models'}</span>
-		</div>
+		{#if submissions.items.length > 0}
+			<div class="flex w-fit items-center gap-1 rounded-lg border border-white/8 bg-white/[0.02] p-1">
+				<button type="button" class={tabClass('live')} onclick={() => (activeTab = 'live')}>Live Scores</button>
+				<button type="button" class={tabClass('calibration')} onclick={() => (activeTab = 'calibration')}>
+					Calibration
+				</button>
+			</div>
+		{/if}
 	</header>
 
 	{#if submissions.items.length === 0}
-		<AccentCard paddingClass="px-5 py-5" roundedClass="rounded-lg">
-			<div class="flex flex-col gap-2">
-				<p class="text-sm font-medium text-foreground">No submission snapshots found.</p>
-				<p class="text-sm text-muted-foreground">
-					Expected local folders under <code class="font-mono text-foreground">{submissions.root}</code>.
-				</p>
-			</div>
-		</AccentCard>
-	{:else}
-		<div class="flex items-center gap-2">
-			<button
-				type="button"
-				class="rounded-md border px-3 py-1.5 text-sm transition-colors {activeTab === 'live' ? 'border-white/18 bg-white/12 text-foreground' : 'border-white/8 text-muted-foreground hover:bg-white/[0.04]'}"
-				onclick={() => (activeTab = 'live')}
-			>
-				Live Scores
-			</button>
-			<button
-				type="button"
-				class="rounded-md border px-3 py-1.5 text-sm transition-colors {activeTab === 'calibration' ? 'border-white/18 bg-white/12 text-foreground' : 'border-white/8 text-muted-foreground hover:bg-white/[0.04]'}"
-				onclick={() => (activeTab = 'calibration')}
-			>
-				Calibration
-			</button>
+		<div class="px-8 pb-8 xl:min-h-0 xl:flex-1">
+			<AccentCard paddingClass="px-5 py-5" roundedClass="rounded-lg">
+				<div class="flex flex-col gap-2">
+					<p class="text-sm font-medium text-foreground">No submission snapshots found.</p>
+					<p class="text-sm text-muted-foreground">
+						Expected local folders under <code class="font-mono text-foreground">{submissions.root}</code>.
+					</p>
+					<p class="text-sm text-muted-foreground">
+						Populate them with <code class="font-mono text-foreground">uv run numereng submissions refresh</code>, then
+						<code class="font-mono text-foreground">uv run numereng submissions calibration update</code>.
+					</p>
+				</div>
+			</AccentCard>
 		</div>
-
-		{#if activeTab === 'live'}
-			<div class="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
-				<AccentCard paddingClass="p-0" roundedClass="rounded-lg" class="overflow-hidden">
-					<div class="border-b border-white/8 px-4 py-3">
-						<h2 class="text-sm font-semibold text-foreground">Submitted Models</h2>
-					</div>
-					<div class="overflow-x-auto">
-						<table class="min-w-full text-left text-sm">
-							<thead class="bg-white/[0.025] text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-								<tr>
-									<th class="px-4 py-3 font-medium">Model</th>
-									<th class="px-4 py-3 text-right font-medium">Rounds</th>
-									<th class="px-4 py-3 text-right font-medium">MMC20</th>
-									<th class="px-4 py-3 text-right font-medium">CORR20</th>
-								</tr>
-							</thead>
-							<tbody class="divide-y divide-white/6">
-								{#each submissions.items as item (item.model_name)}
-									<tr
-										class="cursor-pointer border-l transition-colors hover:bg-white/[0.04] {selectedModel === item.model_name ? 'bg-white/[0.045]' : ''} {rowTone(item)}"
-										onclick={() => (selectedModel = item.model_name)}
-									>
-										<td class="px-4 py-3">
-											<div class="font-mono text-sm font-semibold text-foreground">{item.model_name}</div>
-											<div class="mt-1 text-xs text-muted-foreground">{formatText(item.summary.status ?? item.summary.role)}</div>
-										</td>
-										<td class="px-4 py-3 text-right font-mono text-foreground">{item.summary.round_count}</td>
-										<td class="px-4 py-3 text-right font-mono text-foreground">
-											{formatNumber(item.summary.latest_scored_round?.mmc20)}
-										</td>
-										<td class="px-4 py-3 text-right font-mono text-foreground">
-											{formatNumber(item.summary.latest_scored_round?.corr20)}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				</AccentCard>
-
-				<AccentCard paddingClass="px-4 py-4" roundedClass="rounded-lg">
-					{#if selectedItem}
-						<div class="flex items-start justify-between gap-3">
-							<div>
-								<p class="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Selected model</p>
-								<h2 class="mt-1 font-mono text-lg font-semibold text-foreground">{selectedItem.model_name}</h2>
-							</div>
-							<span class="rounded-md border border-white/10 px-2 py-1 text-xs text-muted-foreground">
-								{detailLoading ? 'loading' : `${rounds.length} rows`}
-							</span>
-						</div>
-
-						<div class="mt-4 grid grid-cols-2 gap-3">
-							<div class="rounded-md border border-white/8 bg-white/[0.025] px-3 py-3">
-								<p class="text-xs text-muted-foreground">Resolving</p>
-								<p class="mt-1 font-mono text-lg text-foreground">{selectedItem.summary.resolving_round_count}</p>
-							</div>
-							<div class="rounded-md border border-white/8 bg-white/[0.025] px-3 py-3">
-								<p class="text-xs text-muted-foreground">Resolved</p>
-								<p class="mt-1 font-mono text-lg text-foreground">{selectedItem.summary.resolved_round_count}</p>
-							</div>
-						</div>
-
-						<div class="mt-4 overflow-x-auto">
-							<table class="min-w-full text-left text-sm">
-								<thead class="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-									<tr>
-										<th class="py-2 pr-3 font-medium">Round / Dates</th>
-										<th class="py-2 pr-3 font-medium">State</th>
-										<th class="py-2 pr-3 text-right font-medium">MMC20</th>
-										<th class="py-2 pr-3 text-right font-medium">CORR20</th>
-									</tr>
-								</thead>
-								<tbody class="divide-y divide-white/6">
-									{#each rounds.slice(0, 14) as row}
-										<tr>
-											<td class="py-2 pr-3">
-												<div class="font-mono text-foreground">{roundNumber(row)}</div>
-												<div class="mt-0.5 text-xs text-muted-foreground">{roundDates(row)}</div>
-											</td>
-											<td class="py-2 pr-3 text-muted-foreground">{roundState(row)}</td>
-											<td class="py-2 pr-3 text-right font-mono text-foreground">{formatNumber(row.mmc20)}</td>
-											<td class="py-2 pr-3 text-right font-mono text-foreground">{formatNumber(row.corr20)}</td>
-										</tr>
-									{/each}
-									{#if rounds.length === 0}
-										<tr>
-											<td class="py-4 text-sm text-muted-foreground" colspan="4">No round rows found.</td>
-										</tr>
-									{/if}
-								</tbody>
-							</table>
-						</div>
-					{/if}
-				</AccentCard>
-			</div>
-		{:else}
+	{:else if activeTab === 'live'}
+		<div
+			class="grid grid-cols-1 border-t-[1.5px] border-white/12 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(0,1fr)_minmax(460px,0.92fr)] xl:overflow-hidden"
+		>
+			<SubmissionModelTable
+				items={sortedItems}
+				selected={selectedModel}
+				sortKey={submissionSort}
+				onSelect={(modelName) => (selectedModel = modelName)}
+				onSortChange={(next) => (submissionSort = next)}
+			/>
+			<SubmissionDetailPanel item={selectedItem} detail={selectedDetail} loading={detailLoading} />
+		</div>
+	{:else}
+		<div class="space-y-4 px-8 pb-8 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
 			<AccentCard paddingClass="px-4 py-4" roundedClass="rounded-lg">
 				<div class="flex flex-col gap-4">
 					<div class="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
@@ -629,6 +540,6 @@
 					</table>
 				</div>
 			</AccentCard>
-		{/if}
+		</div>
 	{/if}
 </div>

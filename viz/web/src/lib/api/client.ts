@@ -37,12 +37,18 @@ export interface SubmissionRound {
 	round_number?: number | string | null;
 	state?: string | null;
 	status?: string | null;
+	open_date?: string | null;
 	close_date?: string | null;
 	resolve_date?: string | null;
 	mmc20?: number | null;
 	corr20?: number | null;
 	mmc60?: number | null;
 	corr60?: number | null;
+	mmc?: number | null;
+	corr?: number | null;
+	bmc?: number | null;
+	fnc?: number | null;
+	is_estimate?: boolean | null;
 	[key: string]: unknown;
 }
 
@@ -60,6 +66,30 @@ export interface SubmissionSummary {
 	resolving_round_count: number;
 	latest_round?: SubmissionRound | null;
 	latest_scored_round?: SubmissionRound | null;
+	pulled_at?: string | null;
+	refresh_status?: string | null;
+	refresh_source?: string | null;
+	latest_resolved_round?: number | null;
+	latest_scored_round_number?: number | null;
+	uploaded_at?: string | null;
+	live_started_at?: string | null;
+	live_ended_at?: string | null;
+	upload_id?: string | null;
+	data_version?: string | null;
+	docker_image?: string | null;
+	pickle_path?: string | null;
+	source_experiment_id?: string | null;
+	source_package_id?: string | null;
+	source_package_path?: string | null;
+	upload_count?: number;
+	has_upload_metadata?: boolean;
+}
+
+export interface SubmissionUpload {
+	upload_id?: string | null;
+	live_started_at?: string | null;
+	live_ended_at?: string | null;
+	[key: string]: unknown;
 }
 
 export interface SubmissionItem {
@@ -77,6 +107,7 @@ export interface SubmissionListResponse {
 	items: SubmissionItem[];
 	total: number;
 	root: string;
+	generated_at?: string | null;
 }
 
 export interface SubmissionCalibrationRow {
