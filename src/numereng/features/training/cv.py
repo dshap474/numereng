@@ -317,11 +317,10 @@ def _run_fold_prediction(
         feature_cols=feature_cols,
         store_root=store_root,
     )
+    model.fit(train_data.X, train_data.y, **_optional_fit_kwargs(model, train_data))
     if getattr(model, "accepts_era", False):
-        model.fit(train_data.X, train_data.y, era=train_data.era)
         preds = model.predict(val_data.X, era=val_data.era)
     else:
-        model.fit(train_data.X, train_data.y)
         preds = model.predict(val_data.X)
 
     fold_predictions: dict[str, np.ndarray | int] = {}
@@ -410,11 +409,10 @@ def fit_full_history_model(
         feature_cols=feature_cols,
         store_root=store_root,
     )
+    model.fit(full_data.X, full_data.y, **_optional_fit_kwargs(model, full_data))
     if getattr(model, "accepts_era", False):
-        model.fit(full_data.X, full_data.y, era=full_data.era)
         preds = model.predict(full_data.X, era=full_data.era)
     else:
-        model.fit(full_data.X, full_data.y)
         preds = model.predict(full_data.X)
 
     predictions_payload: dict[str, np.ndarray] = {}
@@ -458,6 +456,22 @@ def _load_data(
 
 def _data_length(data: ModelDataBatch) -> int:
     return len(data.X)
+
+
+def _optional_fit_kwargs(model: object, data: ModelDataBatch) -> dict[str, pd.Series]:
+    """Opt-in `fit` inputs, one independent class flag each.
+
+    `accepts_era` and `accepts_id` are additive and orthogonal: a model declaring neither is
+    still called as `fit(X, y)`, exactly as before. `id` is fit-only -- inference never needs
+    row ids -- and is omitted when the loader carries no id column, so a model that requires
+    ids raises its own error instead of silently joining on the wrong key.
+    """
+    kwargs: dict[str, pd.Series] = {}
+    if getattr(model, "accepts_era", False):
+        kwargs["era"] = data.era
+    if getattr(model, "accepts_id", False) and data.id is not None:
+        kwargs["id"] = data.id
+    return kwargs
 
 
 def _filter_labeled_batch(
