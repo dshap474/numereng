@@ -307,6 +307,44 @@ def _linear_residual_groupwise(
     return resid
 
 
+def _frame_with_era_column(
+    X: pd.DataFrame,
+    transform: dict[str, Any] | str | None,
+    era: Any,
+) -> pd.DataFrame:
+    """Expose the harness's opt-in `era` fit kwarg to era-aware transforms.
+
+    The training runner never carries the era column inside `X`; it travels as the `era` fit
+    kwarg for models declaring `accepts_era` (see `cv._optional_fit_kwargs`). Without this bridge
+    every per-era transform (`per_era: true`, `subtract_benchmark_zscore`) failed with
+    `training_target_transform_era_col_missing` on any real run. Only the transform sees the
+    augmented frame — a slim copy holding the benchmark column plus eras — and the wrapped model
+    still receives the original `X` untouched.
+    """
+    if era is None or era_col_present(X, transform):
+        return X
+    era_col = _transform_era_col(transform)
+    era_values = np.asarray(era)
+    if len(era_values) != len(X):
+        raise TrainingModelError("training_target_transform_era_length_mismatch")
+    benchmark_col = transform.get("benchmark_col") if isinstance(transform, dict) else None
+    keep = [str(benchmark_col)] if benchmark_col and str(benchmark_col) in X.columns else []
+    frame = X[keep].copy()
+    frame[era_col] = era_values
+    return frame
+
+
+def era_col_present(X: pd.DataFrame, transform: dict[str, Any] | str | None) -> bool:
+    """True when `X` already carries the era column the transform expects."""
+    return _transform_era_col(transform) in X.columns
+
+
+def _transform_era_col(transform: dict[str, Any] | str | None) -> str:
+    if isinstance(transform, dict):
+        return str(transform.get("era_col", "era"))
+    return "era"
+
+
 class TargetTransformWrapper:
     """Wrap a model with target transformation behavior during fit."""
 
@@ -318,7 +356,8 @@ class TargetTransformWrapper:
         if not hasattr(y, "index") or not hasattr(X, "columns"):
             raise TrainingModelError("training_target_transform_requires_pandas_inputs")
 
-        y_transformed = apply_target_transform(y, X, self._target_transform)
+        transform_frame = _frame_with_era_column(X, self._target_transform, kwargs.get("era"))
+        y_transformed = apply_target_transform(y, transform_frame, self._target_transform)
         self._model.fit(X, y_transformed, **kwargs)
         return self
 
