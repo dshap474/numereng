@@ -18,6 +18,7 @@ from numereng.agentic_research.engine import boundary, context, llm, memory
 from numereng.agentic_research.engine import loop as research_module
 from numereng.agentic_research.engine.types import (
     BUDGET_ROUNDS_METADATA_KEY,
+    SEED_PATH_METADATA_KEY,
     AgenticResearchDuplicateCandidate,
     AgenticResearchValidationError,
     ResearchChange,
@@ -624,3 +625,59 @@ def test_run_research_prevalidates_seed_config_and_names_bad_key(tmp_path: Path)
     assert "embargo_eras" in message
     # The bad seed must not have started a session.
     assert not _state_path(experiment_dir).exists()
+
+
+# ---------------------------------------------------------------------------
+# seed-path override (agentic_research_seed_path)
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_seed_injects_at_default_random_state_path(tmp_path: Path) -> None:
+    store_root, _ = _setup_experiment(tmp_path)
+    experiment = _experiment(store_root)
+    path = boundary.materialize_config(experiment=experiment, round_label="r001", decision=_decision(), seed=17)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["model"]["params"]["random_state"] == 17
+    assert "seed" not in payload["model"]["params"]
+
+
+def test_boundary_seed_injects_at_manifest_override_path(tmp_path: Path) -> None:
+    store_root, _ = _setup_experiment(tmp_path)
+    experiment = _experiment(store_root)
+    experiment.metadata[SEED_PATH_METADATA_KEY] = "model.params.seed"
+    path = boundary.materialize_config(experiment=experiment, round_label="r001", decision=_decision(), seed=17)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["model"]["params"]["seed"] == 17
+    assert "random_state" not in payload["model"]["params"]
+
+
+def test_boundary_rejects_seed_when_seed_path_not_in_narrowed_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_root, _ = _setup_experiment(tmp_path)
+    experiment = _experiment(store_root)
+    experiment.metadata[SEED_PATH_METADATA_KEY] = "model.params.seed"
+    monkeypatch.setattr(boundary, "program_allowed_paths", lambda _exp: ("model.params.learning_rate",))
+    with pytest.raises(AgenticResearchValidationError) as exc:
+        boundary.materialize_config(experiment=experiment, round_label="r001", decision=_decision(), seed=17)
+    assert "agentic_research_seeds_path_not_allowed:model.params.seed" in str(exc.value)
+
+
+def test_config_seed_reads_random_state_then_falls_back_to_seed(tmp_path: Path) -> None:
+    rs_path = tmp_path / "rs.json"
+    _write_training_config(rs_path, random_state=42)
+    assert research_module._config_seed(rs_path) == 42
+
+    seed_payload = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled", "target_col": "target"},
+        "model": {"type": "LGBMRegressor", "params": {"learning_rate": 0.01, "seed": 99}},
+        "training": {},
+    }
+    seed_only = tmp_path / "seed_only.json"
+    seed_only.write_text(json.dumps(seed_payload), encoding="utf-8")
+    assert research_module._config_seed(seed_only) == 99
+
+    seed_payload["model"]["params"] = {"learning_rate": 0.01}
+    neither = tmp_path / "neither.json"
+    neither.write_text(json.dumps(seed_payload), encoding="utf-8")
+    assert research_module._config_seed(neither) is None

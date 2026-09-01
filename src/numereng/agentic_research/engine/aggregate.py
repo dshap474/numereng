@@ -19,10 +19,11 @@ from numereng.features.training.run_store import compute_config_hash, strip_trai
 
 # Paths normalized out of a config before hashing so seed-trio runs of one recipe collapse to one
 # key. The training-identity strips (the whole `output` block and the legacy `data.loading`) come
-# from `strip_training_identity_noise`; on top of them we drop the seed and the two pure-execution
-# resource knobs.
+# from `strip_training_identity_noise`; on top of them we drop the seed (under either param name a
+# model family uses for it) and the two pure-execution resource knobs.
 _RECIPE_DROP_DOTTED = (
     ("model", "params", "random_state"),
+    ("model", "params", "seed"),
     ("training", "resources", "parallel_folds"),
     ("training", "resources", "max_threads_per_worker"),
 )

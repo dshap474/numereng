@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from numereng.agentic_research.engine import aggregate, boundary, memory
@@ -62,6 +63,7 @@ def build_context(
         },
         "allowed_change_paths": list(boundary.program_allowed_paths(experiment)),
         "value_caps": {path: list(bounds) for path, bounds in boundary.program_value_caps(experiment).items()},
+        "seed_path": boundary.seed_change_path(experiment),
         "champion": state.get("champion"),
         "believed_best": state.get("believed_best"),
         "recipe_leaderboard": _recipe_leaderboard(recipe_groups, configs),
@@ -76,9 +78,21 @@ def build_context(
         "experiment_notes": ar_types.read_text(
             memory.experiment_markdown_path(experiment), limit=ar_types.MAX_CONTEXT_CHARS
         ),
+        "scout_digest": ar_types.read_text(memory.scout_digest_path(experiment), limit=ar_types.MAX_CONTEXT_CHARS),
+        "scout_digest_updated_at": _scout_digest_updated_at(experiment),
         "last_error": ar_types.optional_str(state.get("last_error")),
     }
     return _apply_size_guard(assembled)
+
+
+def _scout_digest_updated_at(experiment: ExperimentRecord) -> str | None:
+    """UTC mtime of the scout digest so the model can tell a stale digest from a fresh one."""
+    path = memory.scout_digest_path(experiment)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return datetime.fromtimestamp(mtime, tz=UTC).isoformat(timespec="seconds")
 
 
 def _recipe_leaderboard(

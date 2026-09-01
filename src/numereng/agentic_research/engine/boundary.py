@@ -46,10 +46,9 @@ def materialize_config(
     payload = load_training_config_json(parent_path)
     allowed_paths = program_allowed_paths(experiment)
     value_caps = program_value_caps(experiment)
-    if seed is not None and not _matches_any_path("model.params.random_state", allowed_paths):
-        raise ar_types.AgenticResearchValidationError(
-            "agentic_research_seeds_path_not_allowed:model.params.random_state"
-        )
+    seed_path = seed_change_path(experiment)
+    if seed is not None and not _matches_any_path(seed_path, allowed_paths):
+        raise ar_types.AgenticResearchValidationError(f"agentic_research_seeds_path_not_allowed:{seed_path}")
     for change in decision.changes:
         if not _matches_any_path(change.path, allowed_paths):
             raise ar_types.AgenticResearchValidationError(f"agentic_research_change_path_not_allowed:{change.path}")
@@ -63,7 +62,7 @@ def materialize_config(
                 raise ar_types.AgenticResearchValidationError(f"agentic_research_change_value_out_of_cap:{change.path}")
         _assign_dotted(payload, change.path.split("."), deepcopy(change.value))
     if seed is not None:
-        _assign_dotted(payload, ["model", "params", "random_state"], seed)
+        _assign_dotted(payload, seed_path.split("."), seed)
     _assert_horizon_matches_target(payload)
     try:
         validated = TrainingConfig.model_validate(payload).model_dump(mode="python", exclude_none=True)
@@ -76,6 +75,13 @@ def materialize_config(
     path = config_dir / _round_config_filename(round_label, seed=seed)
     ar_types.write_json(path, validated)
     return path
+
+
+def seed_change_path(experiment: ExperimentRecord) -> str:
+    """Dotted path trio-seed injection writes to (manifest override for non-`random_state` models)."""
+    raw = experiment.metadata.get(ar_types.SEED_PATH_METADATA_KEY)
+    path = raw.strip() if isinstance(raw, str) else ""
+    return path or ar_types.DEFAULT_SEED_PATH
 
 
 def is_generated_config(name: str) -> bool:

@@ -828,7 +828,12 @@ def _best_from_state(state: dict[str, object]) -> ResearchBestRun:
 def _config_seed(config_path: Path) -> int | None:
     model = load_training_config_json(config_path).get("model")
     params = model.get("params") if isinstance(model, dict) else None
-    seed = params.get("random_state") if isinstance(params, dict) else None
+    if not isinstance(params, dict):
+        return None
+    # Model families name the seed param differently (LGBM `random_state`, custom NN models `seed`).
+    seed = params.get("random_state")
+    if seed is None:
+        seed = params.get("seed")
     return seed if isinstance(seed, int) and not isinstance(seed, bool) else None
 
 

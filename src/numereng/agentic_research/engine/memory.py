@@ -203,6 +203,11 @@ def journal_path(experiment: ExperimentRecord) -> Path:
     return agentic_dir(experiment) / ar_types.JOURNAL_FILENAME
 
 
+def scout_digest_path(experiment: ExperimentRecord) -> Path:
+    """Out-of-band research digest a human-side scout may drop next to the run state."""
+    return agentic_dir(experiment) / ar_types.SCOUT_DIGEST_FILENAME
+
+
 def experiment_markdown_path(experiment: ExperimentRecord) -> Path:
     return experiment.manifest_path.parent / "EXPERIMENT.md"
 

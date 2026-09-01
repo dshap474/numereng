@@ -206,3 +206,44 @@ def test_caps_binding_flags_believed_best_at_cap_edge(tmp_path: Path) -> None:
     ctx = context.build_context(root=store_root, experiment=experiment, report=None, state=state)
     binding = ctx["caps_binding"]
     assert binding == [{"path": "model.params.max_depth", "value": 9, "edge": "max", "cap": [3.0, 9.0]}]
+
+
+# ---------------------------------------------------------------------------
+# custom-model seed param + scout digest / seed_path context keys
+# ---------------------------------------------------------------------------
+
+
+def _nn_config(*, seed: int, predictions_name: str, lr: float = 0.0005) -> dict:
+    return {
+        "data": {"data_version": "v5.3", "dataset_variant": "non_downsampled", "target_col": "target_ender_60"},
+        "model": {"type": "residual_mlp", "params": {"lr": lr, "epochs": 4, "seed": seed}},
+        "training": {"resources": {"parallel_folds": 1, "max_threads_per_worker": 10}},
+        "output": {"predictions_name": predictions_name},
+    }
+
+
+def test_recipe_key_collapses_custom_model_seed_param() -> None:
+    # Custom NN families carry the seed as `model.params.seed`; a trio must still be one recipe.
+    s42 = _nn_config(seed=42, predictions_name="pred_s42")
+    s17 = _nn_config(seed=17, predictions_name="pred_s17")
+    assert aggregate.recipe_key(s42) == aggregate.recipe_key(s17)
+    other = _nn_config(seed=42, predictions_name="pred_s42", lr=0.001)
+    assert aggregate.recipe_key(s42) != aggregate.recipe_key(other)
+
+
+def test_build_context_surfaces_seed_path_and_scout_digest(tmp_path: Path) -> None:
+    entries, configs = _trio_setup()
+    store_root, experiment, state = _experiment_with_history(tmp_path, configs=configs, journal=entries, state_extra={})
+    ctx = context.build_context(root=store_root, experiment=experiment, report=None, state=state)
+    assert ctx["seed_path"] == ar_types.DEFAULT_SEED_PATH
+    assert ctx["scout_digest"] is None
+    assert ctx["scout_digest_updated_at"] is None
+
+    experiment.metadata[ar_types.SEED_PATH_METADATA_KEY] = "model.params.seed"
+    digest_path = memory.scout_digest_path(experiment)
+    digest_path.parent.mkdir(parents=True, exist_ok=True)
+    digest_path.write_text("# Scout Digest\n\n- external finding\n", encoding="utf-8")
+    ctx = context.build_context(root=store_root, experiment=experiment, report=None, state=state)
+    assert ctx["seed_path"] == "model.params.seed"
+    assert "external finding" in ctx["scout_digest"]
+    assert isinstance(ctx["scout_digest_updated_at"], str) and ctx["scout_digest_updated_at"].endswith("+00:00")

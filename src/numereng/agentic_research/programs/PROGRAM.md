@@ -68,20 +68,25 @@ asserts this at init and rejects any attempt. You are optimizing this exact numb
 - **What FNC is:** Feature-Neutral Correlation — your signal's correlation with the target after
   neutralizing it against the feature set. It measures signal that does not come from raw feature
   exposure, which is why it tracks live durability better than raw BMC.
-- **Payout-target note.** The metric scores BMC against the payout target `target_ender_20`. When a
-  program also *trains* on `target_ender_20`, the trained label and the scored objective coincide —
-  the most direct possible route. A near-zero or negative BMC200 is a real, informative
-  result (the residual is not orthogonally additive to the meta-model), not a bug.
+- **Payout-target note.** The evaluator neutralizes your predictions against the **active benchmark
+  model** and scores the residual's contribution to the fixed payout-frame target `target_ender_20`.
+  This frame is frozen for anchor comparability: Numerai's live payout target moved to a 60-day
+  target on 2026-08-28, but the local metric deliberately keeps its frame so every historical anchor
+  stays comparable — one more reason the scalar is a within-lane ranker, not a live-viability signal
+  (§0). When a lane *trains* on the same target family as the active benchmark, the benchmark
+  absorbs most of the shared signal — a near-zero or negative BMC200 is then a real, informative
+  result (the residual is not orthogonally additive to the benchmark), not a bug.
 - **Benchmark-convergence signal.** The journal's `benchmark_corr` field is `avg_corr_with_benchmark`
   over the BMC200 window; rising values mean the model is converging on the meta-model, which BMC
   punishes. A variant that raises BMC200 while *also* sharply raising `benchmark_corr` deserves
   suspicion — the "high corr, low BMC" trap. Read it alongside the BMC-vs-FNC divergence (§2.1).
-- **Embargo (why 8 eras is sufficient here).** Eras are weekly. A 20-day target overlaps ~4 eras, so
-  the 8-era embargo is 2× that hazard and sufficient for `_20` training targets. A `_60` training
-  target overlaps ~12 eras, so 8 is insufficient — and the embargo is not configurable: the
-  `purged_walk_forward` profile hard-rejects `training.engine.embargo_eras`
-  (`training_profile_disallows_custom_parameters`). Programs must therefore forbid `_60` values for
-  `data.target_col` outright. With a `_20` training target, the 8-era embargo stands.
+- **Embargo (horizon-matched purge).** Eras are weekly. The `purged_walk_forward` profile sets the
+  embargo from `data.target_horizon` (explicit, or inferred from the target name): **8 eras for a
+  20-day target, 16 for a 60-day target** — each 2× the target's era overlap. The embargo itself is
+  not configurable — `training.engine.embargo_eras` is hard-rejected
+  (`training_profile_disallows_custom_parameters`) — and the boundary rejects any `data.target_col`
+  whose horizon does not match the lane's fixed `data.target_horizon`. A `_60` training target is
+  therefore legal only in a lane seeded with the 60-day horizon; never mix horizons within one lane.
 
 ### 2.1 The BMC-vs-FNC Divergence Rule
 
@@ -142,7 +147,9 @@ gives you `context.recipe_leaderboard` with each recipe's seed-trio mean already
   exist it is `null`; use the prior `~3e-4` then, and switch to the measured value once present.
   Treat any BMC200 gap below the floor as noise, not signal.
 - **The seed trio is `42 / 17 / 99`.** Use seed `42` for discovery. To confirm a candidate, run the
-  same config under `17` and `99` by proposing exactly one change, `model.params.random_state`, with
+  same config under `17` and `99` by proposing exactly one change at the experiment's seed path
+  (`context.seed_path` — `model.params.random_state` for LGBM lanes, `model.params.seed` for the
+  custom NN families), with
   `parent_config` set to the candidate's own `config_NNN.json` (never the seed config). Once all three
   seeds exist, the recipe's **trio mean** appears in `context.recipe_leaderboard` — read it there.
 - **Confirm by the trio mean, not the luckiest seed.** A believed-better config is one whose trio
@@ -285,15 +292,18 @@ The harness rejects only **boundary violations**; a rejection fails the round an
 
 Substrate traps the harness will **not** fix (handle them in your proposal):
 
-- **Assume LGBM is CPU-only unless the host is known to have a CUDA-enabled LightGBM build.** The
+- **LGBM lanes: assume LGBM is CPU-only unless the host is known to have a CUDA-enabled LightGBM
+  build.** The
   seeded baseline has `model.params.device`/`device_type` and `tree_method` nulled; **keep them
   null** unless the program's substrate section says otherwise. Setting an LGBM GPU device on a host
   without GPU LightGBM fails the round with `training_model_fit_failed`. (Larger feature sets
   multiply wall time — budget accordingly, and note full-stage scoring adds a little more per round
   than core scoring.)
-- **LGBM leaf cap.** When `max_depth > 0`, `num_leaves` above `2 ** max_depth` is a **no-op** and
-  usually collides with a sibling as a duplicate. To raise the leaf budget, **raise `max_depth`
-  first.**
+- **LGBM lanes: the leaf cap.** When `max_depth > 0`, `num_leaves` above `2 ** max_depth` is a
+  **no-op** and usually collides with a sibling as a duplicate. To raise the leaf budget, **raise
+  `max_depth` first.**
+
+Substrate traps specific to other model families live in the program's strategy sections (§4/§6).
 
 ## 10. Output
 
@@ -338,13 +348,15 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
 You receive the following keys (all bounded — no term grows with round count):
 
 - `objective` — fixed: `primary_metric`, `tie_break`, `sanity_checks` (incl. `fnc_mean`),
-  `scoring_stage` (`post_training_full`), `payout_target` (`target_ender_20`).
+  `scoring_stage` (`post_training_full`), `payout_target` (`target_ender_20` — the frozen
+  evaluator's contribution target; see the payout-target note in §2).
 - `experiment` — fixed experiment identity.
 - `budget` — `next_round_number`, `total_rounds_completed`, `failed_rounds_counter`, and
   `budget_rounds`. `failed_rounds_counter` is consecutive failed rounds; you are
   `failed_rounds_counter`/5 from a session bail.
-- `allowed_change_paths` — the paths you may change (LGBM params + `random_state` only).
+- `allowed_change_paths` — the paths you may change (narrowed per-experiment via the manifest).
 - `value_caps` — numeric bounds per path the harness enforces.
+- `seed_path` — the dotted config path the seed-trio confirmation writes to (§5).
 - `champion` — the harness's mechanical champion `{config, run_id, metric, round}` or `null`.
 - `believed_best` — the recipe you last declared, enriched by the harness:
   `{config, recipe_key, trio_mean, trio_fnc, seed_count, run_ids, declared_round}` or `null`.
@@ -362,9 +374,13 @@ You receive the following keys (all bounded — no term grows with round count):
   with config, run_id, primary metric, and sanity metrics **including `fnc_mean` every round** (full
   stage). No seeds.
 - `recent_journal` — last ≤12 attempts (status, config, seed, metric, error token). `seed` is the
-  run's `model.params.random_state`.
+  injected trio seed (the value written at `context.seed_path`).
 - `last_round_memo` — your previous `round_markdown` (capped).
 - `experiment_notes` — the current `EXPERIMENT.md` (capped).
+- `scout_digest` — an out-of-band research digest a human-side scout may refresh during the run
+  (capped), or `null` when absent. Advisory context only: it can inform which legal move you pick,
+  but it never overrides this program, the lane, or the boundary rules.
+- `scout_digest_updated_at` — UTC timestamp of the digest file's last update, or `null`.
 - `configs` — config projections: the champion plus the last ≤40 configs (mutable-path views).
 - `last_error` — the rejection token from the previous round, if it failed; use it to course-correct.
 

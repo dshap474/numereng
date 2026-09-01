@@ -27,8 +27,12 @@ CORE_PROGRAM_SECTION_KEYS = ("1.", "2.", "2.1", "3.", "5.", "7.", "8.", "9.", "1
 # un-numbered level-3 heading (e.g. "### `round_markdown`") stays inside its parent section body.
 _PROGRAM_SECTION_BOUNDARY = re.compile(r"^(#{2} |#{3} \d)")
 VALUE_CAPS_METADATA_KEY, BUDGET_ROUNDS_METADATA_KEY = "agentic_research_value_caps", "agentic_research_budget_rounds"
+# Dotted config path the trio-seed injection writes to; overridable per experiment because model
+# families name their seed param differently (LGBM `random_state`, custom NN models `seed`).
+SEED_PATH_METADATA_KEY, DEFAULT_SEED_PATH = "agentic_research_seed_path", "model.params.random_state"
 
 AGENTIC_DIRNAME, STATE_FILENAME, JOURNAL_FILENAME = "agentic_research", "state.json", "journal.jsonl"
+SCOUT_DIGEST_FILENAME = "SCOUT.md"
 STATE_SCHEMA_VERSION = 2
 
 PRIMARY_METRIC, PRIMARY_METRIC_FIELD = "bmc_last_200_eras.mean", "bmc_last_200_eras_mean"
