@@ -21,12 +21,15 @@ from numereng.features.training.errors import TrainingError
 from numereng.features.training.repo import resolve_run_manifest_path
 from numereng.features.training.run_store import compute_config_hash
 
+# Global ceiling on what an experiment may let the model mutate; each manifest narrows it further.
+# Deliberately absent: `data.dataset_variant` (never mix downsampled and full-data metrics) and the
+# whole `training.engine.*` block — the evaluator's profile, window, and embargo are frozen by the
+# seed config so no round can move the goalposts it is scored against.
 ALLOWED_CHANGE_PATHS = tuple(
     "data.feature_set data.target_col data.scoring_targets "
     "preprocessing.nan_missing_all_twos preprocessing.missing_value "
     "model.type model.module_path model.device model.params.* model.x_groups "
     "model.data_needed model.target_transform.* "
-    "training.engine.profile training.engine.window_size_eras training.engine.embargo_eras "
     "training.resources.parallel_folds training.resources.max_threads_per_worker output.predictions_name".split()
 )
 GENERATED_CONFIG_PREFIX = "config_"

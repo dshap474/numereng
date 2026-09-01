@@ -19,6 +19,7 @@ from numereng.features.experiments import (
     ExperimentReportRow,
     report_experiment,
 )
+from numereng.features.scoring.metrics import DEFAULT_PAYOUT_TARGET_COL
 from numereng.features.training.repo import resolve_metrics_path
 
 
@@ -37,14 +38,17 @@ def build_context(
     budget_rounds = ar_types.as_int(experiment.metadata.get(ar_types.BUDGET_ROUNDS_METADATA_KEY), default=0)
     configs = aggregate.load_config_cache(memory.configs_dir(experiment))
     journal_entries = memory.journal_all(experiment)
-    recipe_groups = aggregate.aggregate_recipes(journal_entries, configs=configs)
+    recipe_groups = aggregate.aggregate_recipes(
+        journal_entries, configs=configs, seed_path=boundary.seed_change_path(experiment)
+    )
     assembled = {
         "objective": {
             "primary_metric": ar_types.PRIMARY_METRIC_FIELD,
             "tie_break": "bmc_mean",
             "sanity_checks": ["corr_mean", "mmc_mean", "cwmm_mean", "fnc_mean"],
             "scoring_stage": ar_types.SCORING_STAGE,
-            "payout_target": ar_types.PAYOUT_TARGET_COL,
+            # The scoring layer owns the payout frame; mirror it rather than keeping a shadow constant.
+            "payout_target": DEFAULT_PAYOUT_TARGET_COL,
         },
         "experiment": {
             "experiment_id": experiment.experiment_id,

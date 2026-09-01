@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from statistics import median
 
-from numereng.agentic_research.engine import aggregate, memory
+from numereng.agentic_research.engine import aggregate, boundary, memory
 from numereng.agentic_research.engine import types as ar_types
 from numereng.agentic_research.engine.closeout import types as ct
 from numereng.config.training import load_training_config_json
@@ -380,13 +380,14 @@ def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], st
     configs = _validate_completed_configs(parsed, config_dir=config_dir)
 
     entries = [entry for _, entry in parsed]
-    leaderboard = aggregate.aggregate_recipes(entries, configs=configs)
+    seed_path = boundary.seed_change_path(experiment)
+    leaderboard = aggregate.aggregate_recipes(entries, configs=configs, seed_path=seed_path)
     if not leaderboard:
         raise ct.CloseoutError(ct.ERR_LEADERBOARD_EMPTY)
 
     believed_best_config = _believed_best_config(state)
     believed_best_group = (
-        aggregate.group_for_config(leaderboard, believed_best_config, configs)
+        aggregate.group_for_config(leaderboard, believed_best_config, configs, seed_path=seed_path)
         if believed_best_config is not None
         else None
     )

@@ -147,11 +147,12 @@ gives you `context.recipe_leaderboard` with each recipe's seed-trio mean already
   exist it is `null`; use the prior `~3e-4` then, and switch to the measured value once present.
   Treat any BMC200 gap below the floor as noise, not signal.
 - **The seed trio is `42 / 17 / 99`.** Use seed `42` for discovery. To confirm a candidate, run the
-  same config under `17` and `99` by proposing exactly one change at the experiment's seed path
-  (`context.seed_path` — `model.params.random_state` for LGBM lanes, `model.params.seed` for the
-  custom NN families), with
-  `parent_config` set to the candidate's own `config_NNN.json` (never the seed config). Once all three
-  seeds exist, the recipe's **trio mean** appears in `context.recipe_leaderboard` — read it there.
+  same config under `17` and `99` with `parent_config` set to the candidate's own `config_NNN.json`
+  (never the seed config). Two equivalent routes: propose exactly one change at the experiment's
+  seed path (`context.seed_path` — `model.params.random_state` for LGBM lanes, `model.params.seed`
+  for the custom NN families) per round, or set `decision_form.seeds` (§10) to run the same recipe
+  under up to three seeds in one round. Once all three seeds exist, the recipe's **trio mean**
+  appears in `context.recipe_leaderboard` — read it there.
 - **Confirm by the trio mean, not the luckiest seed.** A believed-better config is one whose trio
   mean beats the trio mean of your current believed-best **and** whose FNC is not materially worse
   (§2.1). Gate entry to confirmation on a single seed clearing the believed-best's *trio mean*.
@@ -292,13 +293,14 @@ The harness rejects only **boundary violations**; a rejection fails the round an
 
 Substrate traps the harness will **not** fix (handle them in your proposal):
 
-- **LGBM lanes: assume LGBM is CPU-only unless the host is known to have a CUDA-enabled LightGBM
-  build.** The
-  seeded baseline has `model.params.device`/`device_type` and `tree_method` nulled; **keep them
-  null** unless the program's substrate section says otherwise. Setting an LGBM GPU device on a host
-  without GPU LightGBM fails the round with `training_model_fit_failed`. (Larger feature sets
-  multiply wall time — budget accordingly, and note full-stage scoring adds a little more per round
-  than core scoring.)
+- **LGBM lanes: GPU is the harness default — leave the device keys alone.** When neither
+  `model.device` nor `model.params.device_type` is set, training injects `device_type = "gpu"` (the
+  OpenCL LightGBM build; hosts without a GPU-enabled build fall back to CPU at fit time). Do not
+  propose `model.device`, `model.params.device_type`, or `model.params.tree_method` changes unless
+  the program's substrate section says otherwise: `"cuda"` is a different, crash-prone build and
+  `tree_method` is an XGBoost knob with no effect on LightGBM. (Larger feature sets multiply wall
+  time — budget accordingly, and note full-stage scoring adds a little more per round than core
+  scoring.)
 - **LGBM lanes: the leaf cap.** When `max_depth > 0`, `num_leaves` above `2 ** max_depth` is a
   **no-op** and usually collides with a sibling as a duplicate. To raise the leaf budget, **raise
   `max_depth` first.**
@@ -315,6 +317,14 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
   The example below is illustrative — only paths present in `context.allowed_change_paths` are
   legal for your run.
 - `parent_config` is an existing `config_NNN.json` filename to branch from.
+- `seeds` is optional. `null` (or absent) trains the child config once as written. A list of 1 to 3
+  integers trains the same child recipe once per listed seed within this one round, writing each
+  seed to `context.seed_path` (`config_NNN_s<seed>.json`); that path must be in
+  `context.allowed_change_paths` (`agentic_research_seeds_path_not_allowed:` otherwise). Every seed
+  gets its own journal line and champion check; a seed whose config duplicates a recorded run is
+  soft-skipped, and the round fails only if every seed fails. `changes` is still required — for a
+  pure confirmation, one no-op change (re-stating the parent's value at an allowed path, conventionally
+  the seed path) satisfies it, and the per-seed injection sets the seed.
 - `believed_best` is the `config_NNN.json` of the recipe you currently trust (trio-confirmed,
   FNC-clean when possible). The harness persists it to `context.believed_best`, enriched with the
   recipe's trio stats. Set it every round; until a recipe is confirmed, name your strongest candidate.
@@ -338,6 +348,7 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
         "reason": "Why this exact change is worth testing."
       }
     ],
+    "seeds": null,
     "stop_reason": null
   },
   "round_markdown": "# rNNN Research State\n\n...",

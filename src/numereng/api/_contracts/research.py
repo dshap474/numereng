@@ -99,12 +99,29 @@ class ResearchCloseoutResponse(BaseModel):
     error: str | None = None
 
 
+class ResearchProgramRequest(WorkspaceBoundRequest):
+    experiment_id: str
+
+
+class ResearchProgramResponse(BaseModel):
+    experiment_id: str
+    program_path: str
+    base_program_path: str
+    is_base_program: bool
+    in_sync: bool
+    diverging_section: str | None = None
+    written: bool = False
+    backup_path: str | None = None
+
+
 __all__ = [
     "ResearchBestRunResponse",
     "ResearchCloseoutPhaseResponse",
     "ResearchCloseoutRequest",
     "ResearchCloseoutResponse",
     "ResearchCloseoutStatusRequest",
+    "ResearchProgramRequest",
+    "ResearchProgramResponse",
     "ResearchRoundResponse",
     "ResearchRunRequest",
     "ResearchRunResponse",

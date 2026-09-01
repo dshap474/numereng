@@ -8,6 +8,8 @@ RESEARCH_API_EXPORTS = (
     "research_status",
     "research_closeout",
     "research_closeout_status",
+    "research_program_check",
+    "research_program_resplice",
 )
 
 RESEARCH_FEATURE_EXPORTS = (
@@ -15,6 +17,8 @@ RESEARCH_FEATURE_EXPORTS = (
     "run_research",
     "run_closeout",
     "get_closeout_status",
+    "check_program_core",
+    "resplice_program_core",
 )
 
 ROOT_CONTRACT_EXPORT_EXCLUDES = (

@@ -681,3 +681,17 @@ def test_config_seed_reads_random_state_then_falls_back_to_seed(tmp_path: Path) 
     neither = tmp_path / "neither.json"
     neither.write_text(json.dumps(seed_payload), encoding="utf-8")
     assert research_module._config_seed(neither) is None
+
+
+def test_config_seed_prefers_the_experiment_seed_path(tmp_path: Path) -> None:
+    payload = {
+        "data": {"data_version": "v5.2", "dataset_variant": "non_downsampled", "target_col": "target"},
+        "model": {"type": "LGBMRegressor", "params": {"learning_rate": 0.01, "rng": 7, "random_state": 42}},
+        "training": {},
+    }
+    path = tmp_path / "rng.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    # The manifest seed path wins over the well-known names; a missing seed path falls through.
+    assert research_module._config_seed(path, seed_path="model.params.rng") == 7
+    assert research_module._config_seed(path, seed_path="model.params.absent") == 42
+    assert research_module._config_seed(path) == 42

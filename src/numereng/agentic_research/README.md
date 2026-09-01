@@ -152,7 +152,22 @@ experiment-local file is preferred because it travels with remote experiment syn
 `programs/archive/`.
 
 Every custom program is self-contained. Its CORE contract sections must match the canonical
-`PROGRAM.md` byte-for-byte or session startup fails before training.
+`PROGRAM.md` byte-for-byte or session startup fails before training
+(`agentic_research_program_core_drift:<program>:section:<key>`).
+
+**Editing a CORE section of `PROGRAM.md` is a contract change for every custom program**, including
+one whose run is live: the drift check re-runs on every session start, so the next re-entry (the
+5-failure bail re-invoke, a restart, a resume) fails until the program is re-spliced. Ship the
+re-splice with the edit, on every host that runs the program:
+
+```bash
+uv run numereng research program check --experiment-id <experiment_id>      # exit 1 on drift
+uv run numereng research program resplice --experiment-id <experiment_id>   # rewrites CORE, keeps a .bak
+```
+
+`resplice` swaps only the CORE section bodies for `PROGRAM.md`'s copies and leaves the strategy
+sections (§0, §4, §6) and preamble untouched. A program on a remote training host is a separate
+file: run the same command there (or copy the re-spliced file over) before the run next re-enters.
 
 ## Research artifacts
 
@@ -366,6 +381,7 @@ action. `stop_reason` is kept in the schema for shape stability and ignored.
         "reason": "Why this exact change is worth testing."
       }
     ],
+    "seeds": null,
     "stop_reason": null
   },
   "round_markdown": "# rNNN Research State\n\n...",
@@ -374,6 +390,10 @@ action. `stop_reason` is kept in the schema for shape stability and ignored.
 ```
 
 - `changes` carries 1 to 5 `{path, value, reason}` entries on allowed paths within the value caps.
+- `seeds` is optional: `null` trains the child once; a list of 1 to 3 integers trains the same
+  child recipe once per seed inside the one round (`config_NNN_s<seed>.json`, seed written to the
+  experiment's seed path, which must be an allowed path). Each seed gets its own journal line and
+  champion check; the round fails only if every seed fails.
 - `believed_best` is the `config_NNN.json` the model currently trusts; the harness persists it
   enriched with that recipe's seed-trio stats.
 - `round_markdown` is the model's verbatim round memo; the harness appends a `## Machine Result`
@@ -386,7 +406,10 @@ The harness rejects only boundary violations, with a stable error token surfaced
 round's `context.last_error`. A rejection fails the round and counts toward the
 5-consecutive-failure bail; a duplicate is the one exception (soft skip, no count):
 
-- disallowed change path (`agentic_research_change_path_not_allowed:`)
+- disallowed change path (`agentic_research_change_path_not_allowed:`); the global allowlist
+  already excludes `data.dataset_variant` and every `training.engine.*` path, and a manifest may
+  only narrow it further
+- multi-seed request whose seed path is not allowed (`agentic_research_seeds_path_not_allowed:`)
 - out-of-cap value (`agentic_research_change_value_out_of_cap:`) — not clamped
 - `data.target_horizon` not matching the `data.target_col` suffix
   (`agentic_research_horizon_target_mismatch:`)

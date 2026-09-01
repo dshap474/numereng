@@ -34,10 +34,11 @@ Stage E can quote them verbatim instead of reconstructing them from memory.
 These are facts about the harness and the machine, not preferences. Any proposal or seed config that
 violates one is **invalid** — reject it in Stage C rather than repairing it, and say so in the memo.
 
-- **Training profile must be `purged_walk_forward` in the seed config, and `training.engine.profile`
-  must be excluded from `metadata.agentic_research_allowed_change_paths`.** The path is globally
-  mutable, so only the per-experiment narrowing keeps the run inside the profile. A `simple` profile
-  leaks through a no-embargo holdout and systematically favors overfit large-capacity models.
+- **Training profile must be `purged_walk_forward` in the seed config.** `training.engine.*` is not
+  LLM-mutable (absent from the harness allowlist, so it cannot appear in
+  `metadata.agentic_research_allowed_change_paths` either); the profile the seed config declares is
+  the profile for the whole run. A `simple` profile leaks through a no-embargo holdout and
+  systematically favors overfit large-capacity models.
 - **The embargo must match the training-target horizon.** Eras are weekly. The profile derives the
   embargo from `data.target_horizon` (explicit, or inferred from the target name): 8 eras for a
   20-day target (~4-era overlap), 16 for a 60-day target (~12-era overlap).
@@ -49,10 +50,14 @@ violates one is **invalid** — reject it in Stage C rather than repairing it, a
   `data.target_col` are not LLM-mutable during the run. Choosing the lane is the single highest-stakes
   decision in this playbook; treat it as such.
 - **Configs are strict JSON-only and reject unknown keys.** No YAML, no comments, no legacy fields.
-- **LGBM on the training PC is CPU-only.** `model.params.device`, `model.params.device_type`, and
-  `model.params.tree_method` must be null/absent in the seed config. Setting an LGBM GPU device fails
-  every round with `training_model_fit_failed`.
-- **Seed trio is `42 / 17 / 99`; seed `42` is the discovery seed.** Confirmation is by trio mean.
+- **LGBM trains on the GPU by default.** Leave `model.device`, `model.params.device_type`, and
+  `model.params.tree_method` absent in the seed config: the harness injects `device_type = "gpu"`
+  (the OpenCL LightGBM build) for `LGBMRegressor` and falls back to CPU only on hosts without a
+  GPU-enabled LightGBM. Never set `"cuda"` (a different, crash-prone build), and keep the device
+  keys out of the allowed change paths.
+- **Seed trio is `42 / 17 / 99`; seed `42` is the discovery seed.** Confirmation is by trio mean,
+  reached either one seed per round at the seed path or several seeds in one round via
+  `decision_form.seeds`.
 - **Primary metric is `bmc_last_200_eras.mean`; FNC is co-primary directional.** Within-lane BMC200
   is a candidate ranker. It is never a live-viability signal and never a deploy signal.
 - **Package-scale local BMC200 and agentic per-era BMC200 are non-comparable surfaces.** There is no
@@ -420,10 +425,11 @@ because you never touched it. Precision points:
 **3. Author the seed config** at `.numereng/experiments/<experiment-slug>/configs/config_001.json`.
 Obey every Hard Constraint: `training.engine.profile` = `purged_walk_forward`, a target whose
 horizon matches the lane's explicit `data.target_horizon`, no `device`/`device_type`/`tree_method`
-for LGBM lanes, strict JSON with no unknown keys, and the discovery seed 42 at the experiment's
-seed path (`model.params.random_state` for LGBM; `metadata.agentic_research_seed_path` overrides it
-for model families that name the seed differently, e.g. `model.params.seed`). Include every param
-the run will vary so `value_caps` have something to bound.
+keys for LGBM lanes (the harness injects the GPU default), strict JSON with no unknown keys, and
+the discovery seed 42 at the experiment's seed path (`model.params.random_state` for LGBM;
+`metadata.agentic_research_seed_path` overrides it for model families that name the seed
+differently, e.g. `model.params.seed`). Include every param the run will vary so `value_caps` have
+something to bound.
 
 **4. Set the manifest metadata.** There is no CLI flag for these keys; edit the `metadata` object of
 `.numereng/experiments/<experiment-slug>/experiment.json` directly (the established mechanism) and set:

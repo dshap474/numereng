@@ -25,6 +25,8 @@ USAGE = (
     "  numereng research run --experiment-id <id> [--max-rounds <n>] [--workspace <path>]\n"
     "  numereng research closeout --experiment-id <id> [--until <finalize|classify|extract|synthesize>] [--restart-from <phase>] [--memory-root <path>] [--accept-stale-running] [--allow-incomplete] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng research closeout-status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research program check --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research program resplice --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
     "  numereng research portfolio status [--format <table|json>] [--write] [--workspace <path>]\n"
     "  numereng research portfolio report [--format <table|json>] [--workspace <path>]\n"
     "  numereng research portfolio diversity [--lanes <a,b,...>] [--format <table|json>] [--workspace <path>]\n"

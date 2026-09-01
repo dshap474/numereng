@@ -36,7 +36,7 @@ SCOUT_DIGEST_FILENAME = "SCOUT.md"
 STATE_SCHEMA_VERSION = 2
 
 PRIMARY_METRIC, PRIMARY_METRIC_FIELD = "bmc_last_200_eras.mean", "bmc_last_200_eras_mean"
-PAYOUT_TARGET_COL, SCORING_STAGE = "target_ender_20", "post_training_full"
+SCORING_STAGE = "post_training_full"
 RUN_PLAN_FIELDS = ("plan_index", "round", "seed", "target", "horizon", "config_path", "score_stage_default")
 
 REPORT_LIMIT, RECENT_JOURNAL_LIMIT, CONFIG_CONTEXT_RECENT = 25, 12, 40
@@ -231,21 +231,32 @@ def get_dotted(payload: object, dotted_key: str) -> object | None:
     return cursor
 
 
-def extract_core_sections(text: str) -> dict[str, str]:
-    """Parse a program's CORE sections (see ``CORE_PROGRAM_SECTION_KEYS``) keyed by section number."""
-    sections: dict[str, str] = {}
-    current_key: str | None = None
+def _split_program_sections(text: str) -> list[tuple[str | None, list[str]]]:
+    """Split a program into ``(section_key, raw_lines)`` segments in file order.
+
+    The preamble before the first section boundary has key ``None``. Each segment keeps its heading
+    line and every line up to (not including) the next boundary, blank lines included, so joining
+    the segments back reproduces the text exactly.
+    """
+    segments: list[tuple[str | None, list[str]]] = []
+    key: str | None = None
     buffer: list[str] = []
     for line in text.splitlines():
         if _PROGRAM_SECTION_BOUNDARY.match(line):
-            if current_key is not None:
-                sections[current_key] = "\n".join(buffer).strip()
-            current_key = line.lstrip("#").strip().split()[0]
-            buffer = [line]
-        elif current_key is not None:
+            segments.append((key, buffer))
+            key, buffer = line.lstrip("#").strip().split()[0], [line]
+        else:
             buffer.append(line)
-    if current_key is not None:
-        sections[current_key] = "\n".join(buffer).strip()
+    segments.append((key, buffer))
+    return segments
+
+
+def extract_core_sections(text: str) -> dict[str, str]:
+    """Parse a program's CORE sections (see ``CORE_PROGRAM_SECTION_KEYS``) keyed by section number."""
+    sections: dict[str, str] = {}
+    for key, lines in _split_program_sections(text):
+        if key is not None:
+            sections[key] = "\n".join(lines).strip()
     return {key: sections[key] for key in CORE_PROGRAM_SECTION_KEYS if key in sections}
 
 
@@ -256,3 +267,27 @@ def first_diverging_core_section(program_text: str, base_text: str) -> str | Non
         if program.get(key) != base.get(key):
             return key
     return None
+
+
+def splice_core_sections(program_text: str, base_text: str) -> str:
+    """Return ``program_text`` with every CORE section replaced by the base program's copy.
+
+    The preamble, the strategy sections, and the section order are preserved verbatim; only the CORE
+    section bodies (heading through the line before the next boundary) are swapped for the base's.
+    A splice cannot invent structure, so a CORE section missing from either file is an error.
+    """
+    base_sections = {
+        key: lines for key, lines in _split_program_sections(base_text) if key in CORE_PROGRAM_SECTION_KEYS
+    }
+    program_segments = _split_program_sections(program_text)
+    present = {key for key, _ in program_segments}
+    for key in CORE_PROGRAM_SECTION_KEYS:
+        if key not in base_sections:
+            raise AgenticResearchValidationError(f"agentic_research_program_core_missing:base:{key}")
+        if key not in present:
+            raise AgenticResearchValidationError(f"agentic_research_program_core_missing:program:{key}")
+    spliced: list[str] = []
+    for key, lines in program_segments:
+        spliced.extend(base_sections[key] if key in base_sections else lines)
+    text = "\n".join(spliced)
+    return text + "\n" if program_text.endswith("\n") else text

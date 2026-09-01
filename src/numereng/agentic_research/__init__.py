@@ -11,6 +11,11 @@ from numereng.agentic_research.engine.loop import (
     program_markdown,
     run_research,
 )
+from numereng.agentic_research.engine.program import (
+    ProgramCoreResult,
+    check_program_core,
+    resplice_program_core,
+)
 from numereng.agentic_research.engine.types import (
     AgenticResearchError,
     AgenticResearchValidationError,
@@ -25,13 +30,16 @@ __all__ = [
     "AgenticResearchValidationError",
     "CloseoutPhaseReport",
     "CloseoutResult",
+    "ProgramCoreResult",
     "ResearchBestRun",
     "ResearchRoundResult",
     "ResearchRunResult",
     "ResearchStatusResult",
     "get_closeout_status",
+    "check_program_core",
     "get_research_status",
     "program_markdown",
+    "resplice_program_core",
     "run_closeout",
     "run_research",
 ]

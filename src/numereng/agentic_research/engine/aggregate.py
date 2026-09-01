@@ -19,8 +19,9 @@ from numereng.features.training.run_store import compute_config_hash, strip_trai
 
 # Paths normalized out of a config before hashing so seed-trio runs of one recipe collapse to one
 # key. The training-identity strips (the whole `output` block and the legacy `data.loading`) come
-# from `strip_training_identity_noise`; on top of them we drop the seed (under either param name a
-# model family uses for it) and the two pure-execution resource knobs.
+# from `strip_training_identity_noise`; on top of them we drop the seed (under either well-known
+# param name, plus the experiment's own `seed_path` when the caller passes one) and the two
+# pure-execution resource knobs.
 _RECIPE_DROP_DOTTED = (
     ("model", "params", "random_state"),
     ("model", "params", "seed"),
@@ -42,10 +43,18 @@ class RecipeGroup:
     run_ids: tuple[str, ...]
 
 
-def recipe_key(config: dict[str, object]) -> str:
-    """Hash a config with seed + execution/naming knobs stripped (one key per training recipe)."""
+def recipe_key(config: dict[str, object], *, seed_path: str | None = None) -> str:
+    """Hash a config with seed + execution/naming knobs stripped (one key per training recipe).
+
+    ``seed_path`` is the experiment's dotted seed location (manifest ``agentic_research_seed_path``);
+    it is stripped alongside the well-known names so a model family with its own seed param name
+    still collapses its trio to one recipe.
+    """
     stripped = strip_training_identity_noise(deepcopy(config))
-    for parts in _RECIPE_DROP_DOTTED:
+    drops: tuple[tuple[str, ...], ...] = _RECIPE_DROP_DOTTED
+    if seed_path:
+        drops = (*drops, tuple(seed_path.split(".")))
+    for parts in drops:
         cursor: object = stripped
         for part in parts[:-1]:
             cursor = cursor.get(part) if isinstance(cursor, dict) else None
@@ -67,7 +76,9 @@ def load_config_cache(config_dir: Path) -> dict[str, dict[str, object]]:
     return cache
 
 
-def aggregate_recipes(entries: list[dict[str, object]], *, configs: dict[str, dict[str, object]]) -> list[RecipeGroup]:
+def aggregate_recipes(
+    entries: list[dict[str, object]], *, configs: dict[str, dict[str, object]], seed_path: str | None = None
+) -> list[RecipeGroup]:
     """Group completed journal entries by recipe_key; one per-seed row per distinct seed."""
     grouped: dict[str, dict[object, dict[str, object]]] = {}
     for entry in entries:
@@ -80,7 +91,7 @@ def aggregate_recipes(entries: list[dict[str, object]], *, configs: dict[str, di
             continue
         seed = entry.get("seed")
         seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else None
-        key = recipe_key(config)
+        key = recipe_key(config, seed_path=seed_path)
         # Latest completed entry for a (recipe, seed) wins; entries arrive in chronological order.
         grouped.setdefault(key, {})[seed if seed is not None else "_none"] = {
             "seed": seed,
@@ -113,13 +124,17 @@ def observed_seed_noise(groups: list[RecipeGroup]) -> float | None:
 
 
 def group_for_config(
-    groups: list[RecipeGroup], config_name: str, configs: dict[str, dict[str, object]]
+    groups: list[RecipeGroup],
+    config_name: str,
+    configs: dict[str, dict[str, object]],
+    *,
+    seed_path: str | None = None,
 ) -> RecipeGroup | None:
     """Return the recipe group a given config belongs to, if it has been scored."""
     config = configs.get(config_name)
     if config is None:
         return None
-    key = recipe_key(config)
+    key = recipe_key(config, seed_path=seed_path)
     return next((group for group in groups if group.recipe_key == key), None)
 
 

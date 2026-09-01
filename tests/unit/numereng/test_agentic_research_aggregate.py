@@ -231,6 +231,37 @@ def test_recipe_key_collapses_custom_model_seed_param() -> None:
     assert aggregate.recipe_key(s42) != aggregate.recipe_key(other)
 
 
+def test_recipe_key_strips_the_experiment_seed_path() -> None:
+    # A model family with its own seed param name only collapses to one recipe when the caller
+    # passes the manifest seed path; without it the two seeds hash as two recipes.
+    s42 = _nn_config(seed=42, predictions_name="pred_s42")
+    s17 = _nn_config(seed=17, predictions_name="pred_s17")
+    for cfg, rng in ((s42, 42), (s17, 17)):
+        cfg["model"]["params"].pop("seed")
+        cfg["model"]["params"]["rng"] = rng
+    assert aggregate.recipe_key(s42) != aggregate.recipe_key(s17)
+    assert aggregate.recipe_key(s42, seed_path="model.params.rng") == aggregate.recipe_key(
+        s17, seed_path="model.params.rng"
+    )
+
+
+def test_aggregate_recipes_groups_a_trio_under_a_custom_seed_path() -> None:
+    configs = {}
+    for name, rng in (("config_010.json", 42), ("config_011.json", 17)):
+        cfg = _nn_config(seed=rng, predictions_name=f"pred_s{rng}")
+        cfg["model"]["params"].pop("seed")
+        cfg["model"]["params"]["rng"] = rng
+        configs[name] = cfg
+    entries = [
+        _entry("config_010.json", seed=42, metric=0.002, fnc=0.02, run_id="a"),
+        _entry("config_011.json", seed=17, metric=0.001, fnc=0.02, run_id="b"),
+    ]
+    assert len(aggregate.aggregate_recipes(entries, configs=configs)) == 2
+    groups = aggregate.aggregate_recipes(entries, configs=configs, seed_path="model.params.rng")
+    assert len(groups) == 1 and groups[0].count == 2
+    assert aggregate.group_for_config(groups, "config_011.json", configs, seed_path="model.params.rng") is groups[0]
+
+
 def test_build_context_surfaces_seed_path_and_scout_digest(tmp_path: Path) -> None:
     entries, configs = _trio_setup()
     store_root, experiment, state = _experiment_with_history(tmp_path, configs=configs, journal=entries, state_extra={})

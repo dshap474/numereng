@@ -55,6 +55,11 @@ def handle_research_command(args: Sequence[str]) -> int:
 
         return handle_research_portfolio_command(args[1:])
 
+    if args[0] == "program":
+        from numereng.cli.commands.research_program import handle_research_program_command
+
+        return handle_research_program_command(args[1:])
+
     if args[0] in {"closeout", "closeout-status"}:
         from numereng.cli.commands.research_closeout import handle_research_closeout_command
 

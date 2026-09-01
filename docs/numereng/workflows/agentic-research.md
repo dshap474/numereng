@@ -87,6 +87,8 @@ Strategy (what to try, when to seed-confirm, when to diversify, what to believe)
 - Planner backend selection is controlled by `ACTIVE_MODEL_SOURCE=codex-exec|openrouter|droid-exec`.
 - The default prompt is tracked as `PROGRAM.md`; an experiment sets `metadata.agentic_research_program` to a bare filename resolved from `<experiment_root>/agentic_research/<name>.md` first, then the legacy `programs/` fallback.
 - A resolved custom program's CORE sections are checked byte-verbatim against `PROGRAM.md` at session start; start from `src/numereng/agentic_research/programs/PROGRAM.md` and keep its CORE sections verbatim.
+- After any CORE edit to `PROGRAM.md`, re-splice every custom program with `uv run numereng research program resplice --experiment-id <id>` (`... program check` reports drift with exit 1); a live run fails at its next re-entry until this is done on the host that runs it.
+- `decision_form.seeds` (optional, 1 to 3 integers) trains the same child recipe once per seed inside one round; the seed is written to the experiment's `agentic_research_seed_path`, which must be an allowed change path.
 - `research run` still relies on the normal training/scoring stack, so broken configs or missing datasets fail the same way they would in manual workflows.
 - Boundary violations (disallowed change path, out-of-cap value, target/horizon mismatch, invalid `TrainingConfig`, non-`run` action, cross-experiment stale-run reuse) fail the round and count toward the five-consecutive-failure bail; a duplicate-by-hash is the one exception (soft skip, no count).
 

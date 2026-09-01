@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory
+from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory, program
 from numereng.agentic_research.engine import types as ar_types
 
 # Bound under their underscore names on purpose: these two locals are the monkeypatch seam the
@@ -135,14 +135,11 @@ def _prevalidate_program_core(experiment: ExperimentRecord) -> None:
     line silently changes the contract the model runs under; catch it before round 1. The base
     PROGRAM.md is exempt (it is the canonical CORE).
     """
-    program = memory.program_path(experiment)
-    if program == ar_types.PROGRAM_PATH:
-        return
-    diverged = ar_types.first_diverging_core_section(
-        program.read_text(encoding="utf-8"), ar_types.PROGRAM_PATH.read_text(encoding="utf-8")
-    )
+    diverged = program.first_core_drift(experiment)
     if diverged is not None:
-        raise AgenticResearchValidationError(f"agentic_research_program_core_drift:{program.name}:section:{diverged}")
+        raise AgenticResearchValidationError(
+            f"agentic_research_program_core_drift:{memory.program_path(experiment).name}:section:{diverged}"
+        )
 
 
 def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) -> ResearchRoundResult:
@@ -256,7 +253,7 @@ def _train_score_record_round(
         config=config_path.name,
         parent_config=parent_config,
         run_id=run_id,
-        seed=_config_seed(config_path),
+        seed=_config_seed(config_path, seed_path=boundary.seed_change_path(experiment)),
         metric=ar_types.optional_float(metric_value),
         fnc=ar_types.optional_float(fnc_value),
         benchmark_corr=ar_types.optional_float(benchmark_corr_value),
@@ -663,8 +660,9 @@ def _resolve_believed_best(
     champion_config = champion.get("config") if isinstance(champion, dict) else None
     config_name = declared or (champion_config if isinstance(champion_config, str) else None) or fallback_config
     configs = aggregate.load_config_cache(memory.configs_dir(experiment))
-    groups = aggregate.aggregate_recipes(memory.journal_all(experiment), configs=configs)
-    group = aggregate.group_for_config(groups, config_name, configs)
+    seed_path = boundary.seed_change_path(experiment)
+    groups = aggregate.aggregate_recipes(memory.journal_all(experiment), configs=configs, seed_path=seed_path)
+    group = aggregate.group_for_config(groups, config_name, configs, seed_path=seed_path)
     record: dict[str, object] = {
         "config": config_name,
         "recipe_key": group.recipe_key if group else None,
@@ -825,16 +823,21 @@ def _best_from_state(state: dict[str, object]) -> ResearchBestRun:
     return ResearchBestRun(**{key: payload.get(key) for key in ResearchBestRun.__dataclass_fields__})
 
 
-def _config_seed(config_path: Path) -> int | None:
-    model = load_training_config_json(config_path).get("model")
-    params = model.get("params") if isinstance(model, dict) else None
-    if not isinstance(params, dict):
-        return None
-    # Model families name the seed param differently (LGBM `random_state`, custom NN models `seed`).
-    seed = params.get("random_state")
-    if seed is None:
-        seed = params.get("seed")
-    return seed if isinstance(seed, int) and not isinstance(seed, bool) else None
+def _config_seed(config_path: Path, *, seed_path: str | None = None) -> int | None:
+    """Read the seed a config trains under: the experiment's seed path first, then the known names.
+
+    Model families name the seed param differently (LGBM `random_state`, custom NN models `seed`);
+    the manifest's `agentic_research_seed_path` wins so a family with its own name is still recorded.
+    """
+    payload = load_training_config_json(config_path)
+    candidates = (seed_path, ar_types.DEFAULT_SEED_PATH, "model.params.seed")
+    for dotted in candidates:
+        if not dotted:
+            continue
+        seed = ar_types.get_dotted(payload, dotted)
+        if isinstance(seed, int) and not isinstance(seed, bool):
+            return seed
+    return None
 
 
 def _save(experiment: ExperimentRecord, state: dict[str, object]) -> None:
