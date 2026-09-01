@@ -312,6 +312,8 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
 
 - `decision_form.action` is always `"run"`.
 - `changes` holds 1 to 5 `{path, value, reason}` entries on allowed paths within the value caps.
+  The example below is illustrative — only paths present in `context.allowed_change_paths` are
+  legal for your run.
 - `parent_config` is an existing `config_NNN.json` filename to branch from.
 - `believed_best` is the `config_NNN.json` of the recipe you currently trust (trio-confirmed,
   FNC-clean when possible). The harness persists it to `context.believed_best`, enriched with the
@@ -325,7 +327,7 @@ Return exactly one JSON object conforming to the provided schema. Top-level fiel
   "decision_form": {
     "action": "run",
     "learning": "What the prior evidence taught us (incl. how BMC200 and FNC moved).",
-    "belief_update": "What you now believe about this medium-LGBM recipe.",
+    "belief_update": "What you now believe about this lane's recipe.",
     "next_hypothesis": "The specific hypothesis tested by the next config.",
     "parent_config": "config_001.json",
     "believed_best": "config_001.json",
