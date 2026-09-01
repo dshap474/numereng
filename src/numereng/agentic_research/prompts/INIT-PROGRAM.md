@@ -34,13 +34,17 @@ Stage E can quote them verbatim instead of reconstructing them from memory.
 These are facts about the harness and the machine, not preferences. Any proposal or seed config that
 violates one is **invalid** — reject it in Stage C rather than repairing it, and say so in the memo.
 
-- **Training profile must be `purged_walk_forward` in the seed config.** `training.engine.profile` is
-  not LLM-mutable during the run, so the seed choice is permanent. A `simple` profile leaks through a
-  no-embargo holdout and systematically favors overfit large-capacity models.
-- **`_20`-horizon training targets only; `_60` targets are forbidden.** Eras are weekly: a 20-day
-  target overlaps ~4 eras and the fixed 8-era embargo is 2x that hazard; a 60-day target overlaps ~12
-  eras and 8 is insufficient. `training.engine.embargo_eras` is hard-rejected by the profile
-  (`training_profile_disallows_custom_parameters`), so the embargo cannot be widened to compensate.
+- **Training profile must be `purged_walk_forward` in the seed config, and `training.engine.profile`
+  must be excluded from `metadata.agentic_research_allowed_change_paths`.** The path is globally
+  mutable, so only the per-experiment narrowing keeps the run inside the profile. A `simple` profile
+  leaks through a no-embargo holdout and systematically favors overfit large-capacity models.
+- **The embargo must match the training-target horizon.** Eras are weekly. The profile derives the
+  embargo from `data.target_horizon` (explicit, or inferred from the target name): 8 eras for a
+  20-day target (~4-era overlap), 16 for a 60-day target (~12-era overlap).
+  `training.engine.embargo_eras` is hard-rejected by the profile
+  (`training_profile_disallows_custom_parameters`), and the boundary rejects a `data.target_col`
+  whose horizon contradicts the lane's `data.target_horizon` — set the horizon explicitly in the
+  seed config and never mix horizons within one lane.
 - **The lane is fixed by the seed config.** `data.dataset_variant`, `data.feature_set`, and
   `data.target_col` are not LLM-mutable during the run. Choosing the lane is the single highest-stakes
   decision in this playbook; treat it as such.
@@ -289,7 +293,7 @@ same shape, or `null`). Both proposals must satisfy every Hard Constraint.
       "Closed lane 'wide/deep-trees': not entered — lane is small/xerxes_20.",
       "Retired claim 'row subsampling always hurts small lanes': not relied on.",
       "Current Constraints 'no incumbent replacement': this run proposes no deploy action.",
-      "Hard Constraint '_60 forbidden': target_col is target_xerxes_20."
+      "Hard Constraint 'horizon-matched embargo': target_xerxes_20 at the inferred 20d horizon."
     ]
   },
   "second_choice": null
@@ -414,9 +418,12 @@ because you never touched it. Precision points:
   context. (This playbook carries no such token; the program you author must.)
 
 **3. Author the seed config** at `.numereng/experiments/<experiment-slug>/configs/config_001.json`.
-Obey every Hard Constraint: `training.engine.profile` = `purged_walk_forward`, a `_20` target, no
-`device`/`device_type`/`tree_method`, strict JSON with no unknown keys, `model.params.random_state` =
-42. Include every param the run will vary so `value_caps` have something to bound.
+Obey every Hard Constraint: `training.engine.profile` = `purged_walk_forward`, a target whose
+horizon matches the lane's explicit `data.target_horizon`, no `device`/`device_type`/`tree_method`
+for LGBM lanes, strict JSON with no unknown keys, and the discovery seed 42 at the experiment's
+seed path (`model.params.random_state` for LGBM; `metadata.agentic_research_seed_path` overrides it
+for model families that name the seed differently, e.g. `model.params.seed`). Include every param
+the run will vary so `value_caps` have something to bound.
 
 **4. Set the manifest metadata.** There is no CLI flag for these keys; edit the `metadata` object of
 `.numereng/experiments/<experiment-slug>/experiment.json` directly (the established mechanism) and set:
