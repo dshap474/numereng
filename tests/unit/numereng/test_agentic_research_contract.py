@@ -431,6 +431,7 @@ def test_disallowed_change_path_fails_round_and_loop_continues(tmp_path: Path, m
     seams.add_row("run-0", 0.10)
     seams.llm_queue = [
         _mutation_response(path="data.feature_set", value="medium"),  # outside the allowlist
+        _mutation_response(path="data.feature_set", value="small"),  # the one retry re-offends
         _mutation_response(path="model.params.learning_rate", value=0.02),
     ]
     seams.train_queue = [("run-1", 0.11)]  # only round 2 trains
@@ -440,6 +441,9 @@ def test_disallowed_change_path_fails_round_and_loop_continues(tmp_path: Path, m
     assert [round_.status for round_ in result.rounds] == ["failed", "completed"]
     assert "agentic_research_change_path_not_allowed:data.feature_set" in result.rounds[0].learning
     assert result.rounds[0].config_path is None
+    # The first rejection is handed back to the model as `last_error`; the memo records the token.
+    r001 = (_rounds_dir(experiment_dir) / "r001.md").read_text(encoding="utf-8")
+    assert "- retry: agentic_research_change_path_not_allowed:data.feature_set" in r001
     assert "config_001.json" not in _config_files(experiment_dir)  # rejected round wrote nothing
     assert "config_002.json" in _config_files(experiment_dir)
     state = _read_state(experiment_dir)
@@ -540,7 +544,8 @@ def test_duplicate_config_soft_skips_and_resets_failure_counter(
     seams.llm_queue = [
         same_mutation,  # r001: trains config_001
         AgenticResearchError("agentic_research_llm_down"),  # r002: failure, counter -> 1
-        same_mutation,  # r003: identical hash -> duplicate soft skip, counter -> 0
+        same_mutation,  # r003: identical hash -> duplicate
+        same_mutation,  # r003 retry: still a duplicate -> soft skip, counter -> 0
     ]
     seams.train_queue = [("run-1", 0.11)]
 

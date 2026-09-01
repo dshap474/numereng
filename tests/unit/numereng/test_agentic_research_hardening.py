@@ -479,9 +479,9 @@ def test_baseline_score_failure_reused_unscored_run_is_rescored_on_retry(
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
 
     assert [round_.status for round_ in result.rounds] == ["failed", "completed"]
-    # The failed-round record hardcodes action="run" even though the round was a
-    # baseline (run.py:1539) — minor misleading-state wart, pinned as-is.
-    assert [round_.action for round_ in result.rounds] == ["run", "baseline"]
+    # Both rounds record action="baseline": the failed one no longer hardcodes "run",
+    # because the single execution path carries the round's own action into the record.
+    assert [round_.action for round_ in result.rounds] == ["baseline", "baseline"]
     # Scoring ran on BOTH rounds: the original failure AND the reuse retry.
     assert seams.score_calls == [("r001", "post_training_full"), ("r002", "post_training_full")]
     # The reuse round ends scored — the linked run carries its metric.
