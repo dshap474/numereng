@@ -188,7 +188,6 @@ See the [Python API reference](docs/numereng/reference/python-api.md). For full 
 - [Dashboard & Monitor](docs/numereng/workflows/dashboard.md)
 - [Custom Models](docs/numereng/reference/custom-models.md)
 - [Serving & Model Uploads](docs/numereng/workflows/serving.md)
-- [Architecture](docs/ARCHITECTURE.md)
 - [Troubleshooting Runbooks](docs/project/runbooks/)
 - [Agent Usage Guide](AGENTS.md)
 

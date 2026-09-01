@@ -113,6 +113,5 @@ Canonical coverage ratio derivation:
 Any change to run artifact schema, metric shape, or canonical field naming must update:
 
 - `src/numereng/features/training/CLAUDE.md`
-- `docs/llms.txt`
-- `docs/ARCHITECTURE.md`
+- `docs/numereng/` reference pages that describe run artifacts or metrics
 - Relevant viz adapter mappings and tests

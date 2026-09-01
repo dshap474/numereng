@@ -54,13 +54,7 @@ just test-all
 
 Internal wheel builds still exist for cloud package-transfer workflows, but they are not part of routine OSS readiness for this repo-clone workspace.
 
-Contributor-local agent context lives in:
-
-- `AGENTS.local.md`
-- `docs/llms.txt`
-- `docs/ARCHITECTURE.md`
-
-`AGENTS.local.md` is local-only and should remain untracked. The public repo-root `AGENTS.md` is for end users and agents operating numereng from a cloned checkout.
+Contributor-local agent context lives in `AGENTS.local.md`, which is local-only and should remain untracked. The public repo-root `AGENTS.md` is for end users and agents operating numereng from a cloned checkout; per-package `AGENTS.md` guides under `src/numereng/` hold the code-editing rules for each area.
 
 See [docs/project/public-repo-boundary.md](docs/project/public-repo-boundary.md) for the public repo contract, retained corpus inventory, and local-only surfaces that must stay gitignored.
 
@@ -82,7 +76,7 @@ uv run pytest -q tests/path/to/test_file.py
 - Include testing notes (what you ran and what passed).
 - Avoid unrelated refactors in the same PR.
 - Update docs when public CLI, API, or workflow behavior changes.
-- Update `docs/llms.txt` and `docs/ARCHITECTURE.md` in the same PR when contracts or flows change.
+- Update the affected package `AGENTS.md` guide and `docs/numereng/` pages in the same PR when contracts or flows change.
 
 ## Security
 

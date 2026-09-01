@@ -38,8 +38,7 @@ Explorations driven by `features.experiments` land directly in the viz read path
 Any experiment workflow change that touches the store manifest, run artifact names, experiment config metadata, or the viz schema must update:
 
 1. `src/numereng/features/experiments/CLAUDE.md` (this file)
-2. `docs/llms.txt` and `docs/ARCHITECTURE.md` so viz flows stay documented
-3. `src/numereng/features/viz/store_adapter.py` where the flattening/alias logic lives
-4. `docs/numereng/*` docs referenced by viz if there are new user-visible behaviours
+2. `src/numereng/features/viz/store_adapter.py` where the flattening/alias logic lives
+3. `docs/numereng/*` docs referenced by viz if there are new user-visible behaviours
 
 Keep the experiments store index in lockstep with the workspace and `.numereng` runtime store so viz’s SQLite-first reads always see the latest champion/promoted runs and experiment metadata.
