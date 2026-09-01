@@ -106,6 +106,29 @@ def test_resolve_model_config_rejects_conflicting_device_inputs() -> None:
         )
 
 
+def test_resolve_model_config_defaults_lgbm_device_type_to_gpu() -> None:
+    model_type, model_params = service_module.resolve_model_config(
+        {"type": "LGBMRegressor", "params": {"n_estimators": 10}}
+    )
+
+    assert model_type == "LGBMRegressor"
+    assert model_params["device_type"] == "gpu"
+
+
+def test_resolve_model_config_preserves_explicit_cpu_device_type() -> None:
+    _, model_params = service_module.resolve_model_config(
+        {"type": "LGBMRegressor", "params": {"n_estimators": 10, "device_type": "cpu"}}
+    )
+
+    assert model_params["device_type"] == "cpu"
+
+
+def test_resolve_model_config_does_not_inject_device_type_for_non_lgbm() -> None:
+    _, model_params = service_module.resolve_model_config({"type": "CustomRegressor", "params": {"alpha": 1}})
+
+    assert "device_type" not in model_params
+
+
 def test_resolve_model_config_rejects_device_for_non_lgbm() -> None:
     with pytest.raises(TrainingConfigError, match="training_model_device_requires_lgbm"):
         service_module.resolve_model_config({"type": "CustomRegressor", "device": "cuda", "params": {"alpha": 1}})

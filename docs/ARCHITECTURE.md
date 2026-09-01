@@ -448,6 +448,7 @@ Data loading and CV rules:
 - `model.device` is the canonical explicit device contract for training and is allowed only: `cpu|cuda`.
 - `model.device` is valid only for `LGBMRegressor`; legacy `model.params.device_type` remains supported but must exactly match when both are present.
 - Windows LightGBM GPU/OpenCL targets should use legacy `model.params.device_type=gpu` without top-level `model.device`; `model.device=gpu` is not a valid contract.
+- `LGBMRegressor` resolution injects `device_type=gpu` when neither `model.device` nor `model.params.device_type` is provided; explicit `device_type=cpu` forces CPU. The LGBM wrapper falls back to CPU at fit time on hosts whose LightGBM build lacks GPU support.
 - Canonical `model.x_groups` / `model.data_needed` are features-only by default; `era` and `id` are never auto-included and are rejected as input groups.
 - Model capability flag: a model class declaring `accepts_era = True` receives `era=<pd.Series>` (row-aligned with `X`) as an extra kwarg in both `fit` and `predict`, on the per-fold and full-history paths; models without the flag are called unchanged, and `era` is never added as an `X` column.
 - FNC diagnostics are computed in post-run scoring by neutralizing predictions to dataset feature set `fncv3_features`, independent of the run's training feature set, then correlating against the scoring target being evaluated (`fnc` for the native target, `fnc_<alias>` for extra scoring targets).

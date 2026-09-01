@@ -336,6 +336,7 @@ Critical invariants:
 - `model.device` is the canonical explicit training-device contract and is allowed only: `cpu|cuda`.
 - `model.device` is valid only for `LGBMRegressor`; if `model.params.device_type` is also set it must exactly match.
 - Windows LightGBM GPU/OpenCL runs should use `model.params.device_type=gpu` without top-level `model.device`; `model.device=gpu` is invalid.
+- `LGBMRegressor` defaults to `device_type=gpu` when neither `model.device` nor `model.params.device_type` is set; set `model.params.device_type=cpu` explicitly to force CPU training. Hosts without a GPU-enabled LightGBM build fall back to CPU at fit time.
 - Training profile allowed only: `simple|purged_walk_forward|full_history_refit`.
 - Active-target rows with null or non-finite labels are treated as unlabeled for that target: training drops them before fit, target-aware validation/scoring excludes them, and folds with zero labeled rows fail with `training_target_rows_all_unlabeled:split=<split>:target=<target_col>[:fold=<n>]`.
 - Legacy run flags `--method` / `--method-overrides-json` are hard-fail.

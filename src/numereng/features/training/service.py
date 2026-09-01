@@ -140,6 +140,13 @@ def resolve_model_config(model_config: dict[str, object]) -> tuple[str, dict[str
             raise TrainingConfigError("training_model_device_requires_lgbm")
         resolved_params["device_type"] = device_type
 
+    if model_type == "LGBMRegressor" and "device_type" not in resolved_params:
+        # GPU is the production default for LightGBM; an omitted key silently costs
+        # ~9x wall-clock on CPU. The wrapper falls back to CPU on hosts without a
+        # GPU-enabled build, so requesting "gpu" is safe everywhere. Set
+        # device_type "cpu" explicitly to force CPU training.
+        resolved_params["device_type"] = "gpu"
+
     return model_type, resolved_params
 
 
