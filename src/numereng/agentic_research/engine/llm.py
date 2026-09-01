@@ -37,10 +37,14 @@ def call_research_llm(
     active model source, anything else (e.g. ``"codex"``) excludes it. The remaining choice is
     made by the config alone — ``active_model_source == "droid-exec"`` dispatches to droid-exec,
     otherwise codex-exec. So ``transport="codex"`` does not force codex.
+
+    When ``ACTIVE_MODEL_ROTATION`` is configured, research rounds (``round_label`` matching
+    ``rNNN``) cycle through it by round number; non-round callers (e.g. closeout stages) keep
+    the static active model. The returned source carries the resolved model for attribution.
     """
-    config = load_openrouter_config()
+    config = load_openrouter_config().for_round(_research_round_number(round_label))
     if transport == "auto" and config.active_model_source == "openrouter":
-        return _call_openrouter(prompt, config=config), "openrouter"
+        return _call_openrouter(prompt, config=config), _source_label("openrouter", config)
     if config.active_model_source == "droid-exec":
         return _call_droid_exec(
             prompt=prompt,
@@ -49,7 +53,7 @@ def call_research_llm(
             config=config,
             schema=schema,
             timeout_seconds=timeout_seconds,
-        ), "droid-exec"
+        ), _source_label("droid-exec", config)
     return _call_codex_exec(
         prompt=prompt,
         artifact_dir=artifact_dir,
@@ -57,7 +61,21 @@ def call_research_llm(
         config=config,
         schema=schema,
         timeout_seconds=timeout_seconds,
-    ), "codex-exec"
+    ), _source_label("codex-exec", config)
+
+
+def _research_round_number(round_label: str) -> int | None:
+    """Round number for ``rNNN`` labels; None for closeout/one-off labels (no rotation)."""
+    match = re.fullmatch(r"r(\d+)", round_label)
+    return int(match.group(1)) if match else None
+
+
+def _source_label(backend: str, config: OpenRouterConfig) -> str:
+    if config.active_model is None:
+        return backend
+    if config.active_model_reasoning_effort is None:
+        return f"{backend}:{config.active_model}"
+    return f"{backend}:{config.active_model}:{config.active_model_reasoning_effort}"
 
 
 def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:

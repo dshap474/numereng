@@ -76,8 +76,57 @@ def test_droid_source_dispatches_on_auto_and_codex_transports(tmp_path: Path, mo
     monkeypatch.setattr(llm, "_call_droid_exec", lambda **kwargs: calls.append("droid") or "raw")
     for transport in ("auto", "codex"):
         raw, source = llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1", transport=transport)
-        assert (raw, source) == ("raw", "droid-exec")
+        assert (raw, source) == ("raw", "droid-exec:claude-fable-5:high")
     assert calls == ["droid", "droid"]
+
+
+# --------------------------------------------------------------------------- #
+# Model rotation
+# --------------------------------------------------------------------------- #
+
+_ROTATION = (("model-a", "medium"), ("model-b", "high"), ("model-c", "xhigh"))
+
+
+def test_rotation_cycles_models_by_round_number(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm, "load_openrouter_config", lambda: _droid_config(active_model_rotation=_ROTATION))
+    captured_configs: list[OpenRouterConfig] = []
+
+    def fake_droid(**kwargs: object) -> str:
+        captured_configs.append(kwargs["config"])  # type: ignore[arg-type]
+        return "raw"
+
+    monkeypatch.setattr(llm, "_call_droid_exec", fake_droid)
+    sources = [
+        llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label=label)[1]
+        for label in ("r001", "r002", "r003", "r004")
+    ]
+    assert [(c.active_model, c.active_model_reasoning_effort) for c in captured_configs] == [
+        ("model-b", "high"),  # 1 % 3
+        ("model-c", "xhigh"),  # 2 % 3
+        ("model-a", "medium"),  # 3 % 3
+        ("model-b", "high"),  # 4 % 3
+    ]
+    assert sources == [
+        "droid-exec:model-b:high",
+        "droid-exec:model-c:xhigh",
+        "droid-exec:model-a:medium",
+        "droid-exec:model-b:high",
+    ]
+
+
+def test_rotation_skipped_for_non_round_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm, "load_openrouter_config", lambda: _droid_config(active_model_rotation=_ROTATION))
+    captured_configs: list[OpenRouterConfig] = []
+
+    def fake_droid(**kwargs: object) -> str:
+        captured_configs.append(kwargs["config"])  # type: ignore[arg-type]
+        return "raw"
+
+    monkeypatch.setattr(llm, "_call_droid_exec", fake_droid)
+    for label in ("closeout-stage-1", "finalize", "r1x"):
+        _, source = llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label=label)
+        assert source == "droid-exec:claude-fable-5:high"
+    assert all(c.active_model == "claude-fable-5" for c in captured_configs)
 
 
 # --------------------------------------------------------------------------- #

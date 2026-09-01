@@ -29,6 +29,23 @@ class OpenRouterConfig:
     active_model_source: OpenRouterModelSource
     active_model: str | None
     active_model_reasoning_effort: ModelReasoningEffort | None = None
+    active_model_rotation: tuple[tuple[str, ModelReasoningEffort | None], ...] = ()
+
+    def for_round(self, round_number: int | None) -> OpenRouterConfig:
+        """Resolve the (model, effort) for one round when a rotation is configured.
+
+        Identity when no rotation is set or the caller has no round number; the
+        rotation cycles by round number so a resumed run stays deterministic.
+        """
+        if not self.active_model_rotation or round_number is None:
+            return self
+        model, effort = self.active_model_rotation[round_number % len(self.active_model_rotation)]
+        return OpenRouterConfig(
+            active_model_source=self.active_model_source,
+            active_model=model,
+            active_model_reasoning_effort=effort,
+            active_model_rotation=self.active_model_rotation,
+        )
 
 
 def load_openrouter_config() -> OpenRouterConfig:
@@ -65,7 +82,27 @@ def load_openrouter_config() -> OpenRouterConfig:
         active_model_reasoning_effort=cast(ModelReasoningEffort, reasoning_effort)
         if reasoning_effort is not None
         else None,
+        active_model_rotation=_parse_model_rotation(getattr(module, "ACTIVE_MODEL_ROTATION", None)),
     )
+
+
+def _parse_model_rotation(raw: object) -> tuple[tuple[str, ModelReasoningEffort | None], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise OpenRouterClientError("openrouter_active_model_rotation_invalid")
+    entries: list[tuple[str, ModelReasoningEffort | None]] = []
+    for item in raw:
+        if (
+            not isinstance(item, (list, tuple))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or (item[1] is not None and item[1] not in {"low", "medium", "high", "xhigh"})
+        ):
+            raise OpenRouterClientError("openrouter_active_model_rotation_invalid")
+        entries.append((item[0].strip(), cast("ModelReasoningEffort | None", item[1])))
+    return tuple(entries)
 
 
 def active_model_source() -> OpenRouterModelSource:

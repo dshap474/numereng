@@ -38,7 +38,14 @@ from numereng.features.training.errors import TrainingError
 __all__ = ["get_research_status", "program_markdown", "run_research"]
 
 # Per-round scratch keys stripped from the session state once the round is recorded.
-_PENDING_KEYS = ("_pending_parent", "_pending_config", "_pending_config_path", "_pending_run_id", "_pending_changes")
+_PENDING_KEYS = (
+    "_pending_parent",
+    "_pending_config",
+    "_pending_config_path",
+    "_pending_run_id",
+    "_pending_changes",
+    "_pending_llm",
+)
 
 
 def program_markdown() -> str:
@@ -168,9 +175,10 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         program_path=memory.program_path(experiment),
     )
     try:
-        raw_response, _model_source = _call_research_llm(
+        raw_response, model_source = _call_research_llm(
             prompt=prompt, artifact_dir=artifact_dir, round_label=round_label
         )
+        state["_pending_llm"] = model_source
     except Exception as exc:
         memory.write_failure_debug(artifact_dir=artifact_dir, round_label=round_label, prompt=prompt, error=str(exc))
         raise
@@ -257,6 +265,7 @@ def _train_score_record_round(
         next_hypothesis=next_hypothesis,
         changes=_take_pending_changes(state),
         wall_seconds=max(0.0, time.monotonic() - started_at),
+        llm=ar_types.optional_str(state.get("_pending_llm")),
     )
     memory.append_journal(experiment, entry)
     return _finalize_round(
@@ -425,6 +434,7 @@ def _execute_seed(
             run_id=None,
             changes=changes,
             wall_seconds=time.monotonic() - started_at,
+            llm=ar_types.optional_str(state.get("_pending_llm")),
         )
     try:
         report, run_id, metric_value, fnc_value, benchmark_corr_value = _train_and_score(
@@ -444,6 +454,7 @@ def _execute_seed(
             config=config_path.name,
             run_id=ar_types.optional_str(state.get("_pending_run_id")),
             changes=changes,
+            llm=ar_types.optional_str(state.get("_pending_llm")),
             wall_seconds=time.monotonic() - started_at,
         )
     is_champion = _advance_champion(
@@ -466,6 +477,7 @@ def _execute_seed(
         next_hypothesis=decision.next_hypothesis,
         changes=list(changes),
         wall_seconds=max(0.0, time.monotonic() - started_at),
+        llm=ar_types.optional_str(state.get("_pending_llm")),
     )
     memory.append_journal(experiment, entry)
     return {
@@ -493,6 +505,7 @@ def _failed_seed_outcome(
     run_id: str | None,
     changes: list[dict[str, object]],
     wall_seconds: float,
+    llm: str | None = None,
 ) -> dict[str, object]:
     entry = _journal_entry(
         round=round_number,
@@ -511,6 +524,7 @@ def _failed_seed_outcome(
         next_hypothesis=decision.next_hypothesis,
         changes=list(changes),
         wall_seconds=wall_seconds,
+        llm=llm,
         error=error,
     )
     memory.append_journal(experiment, entry)
@@ -698,6 +712,7 @@ def _record_terminal_round(
         next_hypothesis=None,
         changes=_take_pending_changes(state),
         wall_seconds=None,
+        llm=ar_types.optional_str(state.get("_pending_llm")),
         error=message,
     )
     memory.append_journal(experiment, entry)
