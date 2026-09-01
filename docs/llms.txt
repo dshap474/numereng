@@ -150,7 +150,7 @@ Wiring map:
   - planner backend is selected at runtime from `src/numereng/config/openrouter/active-model.py` (`ACTIVE_MODEL_SOURCE`); checked-in default is `codex-exec`
   - `state.json` (schema_version 2) persists lightweight supervisor state; `journal.jsonl` is the append-only machine log; `rounds/rNNN.md` and `EXPERIMENT.md` persist the human-readable rolling memory
   - when `ACTIVE_MODEL_SOURCE=codex-exec`, planner runtime uses the user’s ambient Codex config and environment; agentic research does not create a separate learner `CODEX_HOME`
-  - when `ACTIVE_MODEL_SOURCE=droid-exec`, planner runtime uses Factory's headless `droid exec` (default read-only autonomy, `--output-format json`); the response schema is appended to the prompt since droid has no output-schema flag
+  - when `ACTIVE_MODEL_SOURCE=droid-exec`, planner runtime uses Factory's headless `droid exec` (read-only autonomy with every default tool disabled via `--disabled-tools`, so a round is a pure prompt-in/JSON-out reasoning call; `--output-format json`); the response schema is appended to the prompt since droid has no output-schema flag
   - the mutable surface is experiment config JSON; the LLM is not allowed to edit Python source
   - the planner returns one JSON object with `action: "run"`, learning fields, `parent_config`, and 1–5 config changes
   - `"run"` rounds: Python clones the parent config, applies the changes, validates the new `TrainingConfig`, detects duplicates, and writes one child config

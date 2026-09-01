@@ -144,6 +144,10 @@ def test_droid_exec_builds_command_and_returns_envelope_result(tmp_path: Path, m
     assert "json" in cmd
     assert ["--model", "claude-fable-5"] == cmd[cmd.index("--model") : cmd.index("--model") + 2]
     assert ["--reasoning-effort", "high"] == cmd[cmd.index("--reasoning-effort") : cmd.index("--reasoning-effort") + 2]
+    disabled = cmd[cmd.index("--disabled-tools") + 1].split(",")
+    assert disabled == list(llm.DROID_DISABLED_TOOLS)
+    assert {"WebSearch", "FetchUrl", "Read", "Execute"} <= set(disabled)
+    assert "--auto" not in cmd and "--enabled-tools" not in cmd
     prompt_sent = captured["input"]
     assert isinstance(prompt_sent, str)
     assert prompt_sent.startswith("the prompt")

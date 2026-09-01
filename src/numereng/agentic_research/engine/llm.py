@@ -169,6 +169,23 @@ def _call_codex_exec(
                 pass
 
 
+# Every tool `droid exec` exposes in its default read-only autonomy (per `droid exec --list-tools`).
+# Disabled so each research round is prompt-in / JSON-out with no unlogged side inputs.
+DROID_DISABLED_TOOLS: tuple[str, ...] = (
+    "WebSearch",
+    "FetchUrl",
+    "ConnectorSearch",
+    "Read",
+    "Glob",
+    "Grep",
+    "LS",
+    "Execute",
+    "Skill",
+    "ToolSearch",
+    "TodoWrite",
+)
+
+
 def _call_droid_exec(
     *,
     prompt: str,
@@ -178,13 +195,24 @@ def _call_droid_exec(
     schema: dict[str, object] | None = None,
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
 ) -> str:
-    """Call Factory's headless `droid exec` (default read-only autonomy, JSON envelope on stdout).
+    """Call Factory's headless `droid exec` (read-only autonomy, all tools disabled, JSON envelope on stdout).
 
     droid exec has no --output-schema equivalent, so the schema is appended to the prompt and the
-    response is validated downstream by the normal parser.
+    response is validated downstream by the normal parser. Every tool droid would otherwise hand the
+    model in read-only mode is disabled (`DROID_DISABLED_TOOLS`) so a round is a pure reasoning
+    call: the model's only inputs are the program text and the bounded context the harness built.
+    External knowledge reaches the run through the auditable scout digest, never via ad-hoc web
+    search or filesystem reads that the journal cannot reproduce.
     """
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [_resolve_executable("droid"), "exec", "--output-format", "json"]
+    cmd = [
+        _resolve_executable("droid"),
+        "exec",
+        "--output-format",
+        "json",
+        "--disabled-tools",
+        ",".join(DROID_DISABLED_TOOLS),
+    ]
     if config.active_model is not None:
         cmd.extend(["--model", config.active_model])
     if config.active_model_reasoning_effort is not None:

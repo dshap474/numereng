@@ -548,7 +548,7 @@ cli research status|run
       - checked-in default: `ACTIVE_MODEL_SOURCE=codex-exec`
       - `ACTIVE_MODEL_SOURCE=codex-exec` uses headless `codex exec`
       - `ACTIVE_MODEL_SOURCE=openrouter` uses the configured OpenRouter `ACTIVE_MODEL`
-      - `ACTIVE_MODEL_SOURCE=droid-exec` uses Factory's headless `droid exec` (JSON envelope output; the response schema is appended to the prompt since droid has no output-schema flag)
+      - `ACTIVE_MODEL_SOURCE=droid-exec` uses Factory's headless `droid exec` (JSON envelope output; all default tools disabled via `--disabled-tools` so the model's only inputs are the program and the bounded context; the response schema is appended to the prompt since droid has no output-schema flag)
       - `codex-exec` and `droid-exec` inherit the user’s normal CLI configuration and environment; agentic research does not create a feature-specific `CODEX_HOME`
       - the LLM sees configs, report rows, experiment notes, recent journal rows, research memory, and the latest rolling round markdown
       - the LLM returns schema-constrained `decision_form` plus cumulative `round_markdown`
