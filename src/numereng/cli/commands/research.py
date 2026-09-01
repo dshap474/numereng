@@ -32,6 +32,7 @@ def _print_research_status_table(payload: api.ResearchStatusResponse) -> None:
     if payload.best_overall.bmc_last_200_eras_mean is not None:
         print(f"best_bmc_last_200_eras_mean: {payload.best_overall.bmc_last_200_eras_mean:.6f}")
     print(f"agentic_research_dir: {payload.agentic_research_dir}")
+    print(f"closeout_memo: {payload.closeout_memo}")
 
 
 def _print_research_run_table(payload: api.ResearchRunResponse) -> None:
@@ -45,25 +46,68 @@ def _print_research_run_table(payload: api.ResearchRunResponse) -> None:
         print(f"{item.round_label} | {item.action} | run_id={item.run_id or 'none'} | metric={metric}")
 
 
+def _print_closeout_table(payload: api.ResearchCloseoutResponse) -> None:
+    print(f"experiment_id: {payload.experiment_id}")
+    print(f"evidence_path: {payload.evidence_path}")
+    print(f"memo_path: {payload.memo_path}")
+    holdout = payload.holdout_summary or {}
+    print(f"holdout: {holdout.get('holdout_primary_mean', 'none')}")
+
+
+def _handle_closeout(args: Sequence[str]) -> int:
+    values, toggles, parse_error = _parse_simple_options(
+        args,
+        value_flags={"--experiment-id", "--workspace", "--format"},
+        bool_flags={"--allow-incomplete"},
+    )
+    if parse_error == "__help__":
+        print(USAGE)
+        return 0
+    if parse_error is not None:
+        print(parse_error, file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    experiment_id = values.get("--experiment-id")
+    if experiment_id is None:
+        print("missing required argument: --experiment-id", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    output_format = "table"
+    if "--format" in values:
+        output_format, format_error = _parse_output_format(values["--format"])
+        if format_error is not None or output_format is None:
+            print(format_error or "invalid value for --format", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
+            return 2
+    try:
+        payload = api.research_closeout(
+            api.ResearchCloseoutRequest(
+                experiment_id=experiment_id,
+                allow_incomplete="--allow-incomplete" in toggles,
+                workspace_root=values.get("--workspace", "."),
+            )
+        )
+    except ValidationError as exc:
+        print(_validation_error_message(exc), file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return 2
+    except PackageError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if output_format == "json":
+        print(payload.model_dump_json())
+    else:
+        _print_closeout_table(payload)
+    return 0
+
+
 def handle_research_command(args: Sequence[str]) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(USAGE)
         return 0
 
-    if args[0] == "portfolio":
-        from numereng.cli.commands.research_portfolio import handle_research_portfolio_command
-
-        return handle_research_portfolio_command(args[1:])
-
-    if args[0] == "program":
-        from numereng.cli.commands.research_program import handle_research_program_command
-
-        return handle_research_program_command(args[1:])
-
-    if args[0] in {"closeout", "closeout-status"}:
-        from numereng.cli.commands.research_closeout import handle_research_closeout_command
-
-        return handle_research_closeout_command(args[1:], status_only=args[0] == "closeout-status")
+    if args[0] == "closeout":
+        return _handle_closeout(args[1:])
 
     if args[0] == "status":
         values, _, parse_error = _parse_simple_options(

@@ -1,141 +1,39 @@
-"""Closeout runner: gate, locks, memory-root resolution, commit protocol, and the phase loop.
+"""Closeout runner: gate, evidence, one finalize memo.
 
-The runner turns a completed agentic experiment into finalized artifacts. It runs a strict gate
-(status, budget, memory root, locks), builds the deterministic evidence bundle (phase 0), then runs
-the phase chain up to a requested boundary. CLASSIFY routes finalized evidence to master memory, an
-experiment branch only, or exclusion; the chain ends once research memory is synthesized —
-designing the next experiment belongs to the pre-run INIT-PROGRAM playbook, not closeout.
-
-Failure model: gate and request-validation problems RAISE (``CloseoutError`` -> ``PackageError`` ->
-CLI exit 1). FINALIZE/CLASSIFY/EXTRACT/SYNTHESIZE failures are captured in ``CloseoutResult`` as errors.
-Every write goes through the commit journal so a process death rolls forward consistently.
+Closeout turns a completed agentic experiment into the two artifacts a human reads: the
+deterministic evidence bundle (including the one-time sealed-holdout opening) and one LLM-written
+decision memo. Nothing else happens here — research-memory writes belong to the
+``research-memory-update`` skill. Re-running overwrites both artifacts. Every failure raises
+``CloseoutError`` (-> ``PackageError`` -> CLI exit 1), with the raw LLM response left on disk beside
+the evidence for inspection.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import runner
-    result = runner.run_closeout(store_root=".numereng", experiment_id="x", until="finalize")
-    status = runner.get_closeout_status(store_root=".numereng", experiment_id="x")
+    result = runner.run_closeout(store_root=".numereng", experiment_id="x")
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
-import os
-import shutil
-import socket
-import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 from numereng.agentic_research.engine import llm, memory
 from numereng.agentic_research.engine import types as ar_types
-from numereng.agentic_research.engine.closeout import context as ctx_mod
 from numereng.agentic_research.engine.closeout import evidence as evidence_mod
-from numereng.agentic_research.engine.closeout import merge, phases
 from numereng.agentic_research.engine.closeout import types as ct
 from numereng.features.experiments import ExperimentRecord, get_experiment
 from numereng.features.store import resolve_store_root
-from numereng.features.training.run_lock import is_pid_alive
 
-_PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
-_FINALIZE_PROMPT_PATH = _PROMPTS_DIR / "stage-1_finalize.md"
-_CLASSIFY_PROMPT_PATH = _PROMPTS_DIR / "stage-2_classify.md"
-_EXTRACT_PROMPT_PATH = _PROMPTS_DIR / "stage-3_extract.md"
-_SYNTHESIZE_PROMPT_PATH = _PROMPTS_DIR / "stage-4_synthesize.md"
+FINALIZE_PROMPT_PATH = Path(__file__).parents[2] / "prompts" / "closeout-finalize.md"
+FINALIZE_LABEL = "finalize"
+_WORKING_SET_CAP = 40_000
+_MEMO_CAP = ar_types.MAX_CONTEXT_CHARS  # 12_000, mirrors the in-run per-memo cap
 
 
 # --------------------------------------------------------------------------- #
-# Locks (O_CREAT|O_EXCL; stale = holder dead or older than LOCK_STALE_SECONDS)
-# --------------------------------------------------------------------------- #
-def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        # os.kill(pid, 0) is not a liveness probe on Windows; without this a dead holder's lock
-        # would never be reclaimable on the Windows compute host.
-        return is_pid_alive(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
-def _lock_is_stale(payload: dict[str, object]) -> bool:
-    acquired = payload.get("acquired_at")
-    if isinstance(acquired, str):
-        try:
-            acquired_at = datetime.fromisoformat(acquired)
-            if acquired_at.tzinfo is None:
-                acquired_at = acquired_at.replace(tzinfo=UTC)
-            age = (datetime.now(UTC) - acquired_at).total_seconds()
-        except ValueError:
-            age = None
-        if age is not None and age > ct.LOCK_STALE_SECONDS:
-            return True
-    host = payload.get("hostname")
-    pid = payload.get("pid")
-    if host == socket.gethostname() and isinstance(pid, int) and not _pid_alive(pid):
-        return True
-    return False
-
-
-def _acquire_lock(path: Path) -> None:
-    """Create an exclusive lock file; raise CloseoutError if held (or stale, for manual clearing)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
-        payload: dict[str, object] = {}
-        with contextlib.suppress(OSError, json.JSONDecodeError):
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        if _lock_is_stale(payload):
-            raise ct.CloseoutError(ct.err_lock_stale(str(path)))
-        raise ct.CloseoutError(ct.err_lock_held(str(path)))
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(
-            {"pid": os.getpid(), "hostname": socket.gethostname(), "acquired_at": ar_types.utc_now_iso()},
-            handle,
-        )
-
-
-def _release_lock(path: Path) -> None:
-    with contextlib.suppress(OSError):
-        path.unlink()
-
-
-# --------------------------------------------------------------------------- #
-# Memory root resolution + validation (§2.3)
-# --------------------------------------------------------------------------- #
-def _resolve_memory_root(root: Path, memory_root: str | None, workspace_root: Path) -> Path:
-    if memory_root is None:
-        return (root / "notes" / "__RESEARCH_MEMORY__").resolve()
-    candidate = Path(memory_root).expanduser()
-    if not candidate.is_absolute():
-        candidate = workspace_root / candidate
-    return candidate.resolve()
-
-
-def _validate_memory_root(path: Path) -> None:
-    if not path.is_dir() or not (path / "CURRENT.md").is_file():
-        raise ct.CloseoutError(ct.ERR_MEMORY_ROOT_INVALID)
-    topics = path / "topics"
-    if not topics.is_dir():
-        raise ct.CloseoutError(ct.ERR_MEMORY_ROOT_INVALID)
-    for name in ct.MEMORY_TOPIC_FILES:
-        if not (topics / f"{name}.md").is_file():
-            raise ct.CloseoutError(ct.ERR_MEMORY_ROOT_INVALID)
-
-
-# --------------------------------------------------------------------------- #
-# Gate (§2.1)
+# Gate
 # --------------------------------------------------------------------------- #
 def _journal_nonempty(experiment: ExperimentRecord) -> bool:
     path = memory.journal_path(experiment)
@@ -148,792 +46,161 @@ def _journal_nonempty(experiment: ExperimentRecord) -> bool:
     return False
 
 
-def _gate(
-    experiment: ExperimentRecord,
-    state: dict[str, object] | None,
-    *,
-    accept_stale_running: bool,
-    allow_incomplete: bool,
-) -> None:
+def _gate(experiment: ExperimentRecord, state: dict[str, object] | None, *, allow_incomplete: bool) -> None:
+    """Refuse what closeout cannot distill. ``allow_incomplete`` waives the live-run and budget gates."""
     if experiment.status == "archived":
         raise ct.CloseoutError(ct.ERR_EXPERIMENT_ARCHIVED)
     if state is None or not memory.state_path(experiment).is_file():
         raise ct.CloseoutError(ct.ERR_NOT_AGENTIC)
     if not _journal_nonempty(experiment):
         raise ct.CloseoutError(ct.ERR_NO_ROUNDS)
-    if state.get("status") == "running" and not accept_stale_running:
+    if allow_incomplete:
+        return
+    if state.get("status") == "running":
         raise ct.CloseoutError(ct.ERR_RUN_ACTIVE)
     budget = experiment.metadata.get(ar_types.BUDGET_ROUNDS_METADATA_KEY)
     if isinstance(budget, int) and not isinstance(budget, bool):
         done = ar_types.as_int(state.get("total_rounds_completed"), default=0)
-        if done < budget and not allow_incomplete:
-            raise ct.CloseoutError(ct.err_budget_not_reached(done, budget))
+        if done < budget:
+            raise ct.CloseoutError(f"{ct.ERROR_PREFIX}budget_not_reached:{done}/{budget}")
 
 
 # --------------------------------------------------------------------------- #
-# Closeout state persistence
+# Bounded finalize context
 # --------------------------------------------------------------------------- #
-def _closeout_dir(experiment: ExperimentRecord) -> Path:
-    return memory.agentic_dir(experiment) / ct.CLOSEOUT_DIRNAME
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
 
 
-def _write_state(state: ct.CloseoutState, path: Path) -> None:
-    ar_types.write_json(path, state.to_dict())
+def _fill_bounded[T](running: int, items: list[T], cost_of: Callable[[T], int]) -> tuple[list[T], int]:
+    """Greedily keep items in order while the running size stays within the context cap.
 
-
-def _load_or_init_state(state_path: Path, *, experiment_id: str, memory_root_identity: str) -> ct.CloseoutState:
-    if state_path.is_file():
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-        state = ct.CloseoutState.from_dict(raw)
-        if state.memory_root_identity and state.memory_root_identity != memory_root_identity:
-            raise ct.CloseoutError(ct.ERR_MEMORY_ROOT_CHANGED)
-        phases_raw = raw.get("phases") if isinstance(raw, dict) else None
-        if isinstance(phases_raw, dict) and ct.PHASE_CLASSIFY not in phases_raw:
-            if state.phases[ct.PHASE_CLASSIFY].notes == ct.LEGACY_MASTER_NOTE:
-                _write_state(state, state_path)
-        return state
-    state = ct.CloseoutState.new(experiment_id=experiment_id, memory_root_identity=memory_root_identity)
-    _write_state(state, state_path)
-    return state
-
-
-# --------------------------------------------------------------------------- #
-# Commit protocol + crash roll-forward (§2.4)
-# --------------------------------------------------------------------------- #
-def _commit_path(closeout_dir: Path) -> Path:
-    return closeout_dir / ct.CLOSEOUT_COMMIT_FILENAME
-
-
-def _rmtree(path: Path) -> None:
-    shutil.rmtree(path, ignore_errors=True)
-
-
-def _apply_commit(closeout_dir: Path, commit: dict[str, object], state: ct.CloseoutState, state_path: Path) -> None:
-    """Idempotently apply a commit journal: write any slot still at its old hash, then mark done."""
-    phase = str(commit["phase"])
-    slots = commit.get("slots", [])
-    derived_outputs: dict[str, str] = {}
-    for slot in slots if isinstance(slots, list) else []:
-        dest = Path(str(slot["path"]))
-        stage = closeout_dir / str(slot["stage"])
-        new_sha = str(slot["new_sha256"])
-        old_sha = slot.get("old_sha256")
-        derived_outputs[str(slot["path"])] = new_sha
-        on_disk = ct.sha256_file(dest)
-        if on_disk == new_sha:
-            continue
-        if on_disk == old_sha:
-            content = stage.read_text(encoding="utf-8")
-            if ct.sha256_text(content) != new_sha:
-                raise ct.CloseoutError(ct.err_commit_conflict(str(dest)))
-            ar_types.write_text(dest, content)
-            continue
-        raise ct.CloseoutError(ct.err_commit_conflict(str(dest)))
-    # Recorded outputs default to the whole-file slot hashes, but a phase may record a different
-    # upstream fingerprint (synthesize records per-experiment entry-block hashes, not whole ledgers).
-    outputs_override = commit.get("outputs")
-    outputs = (
-        {str(k): str(v) for k, v in outputs_override.items()} if isinstance(outputs_override, dict) else derived_outputs
-    )
-    state.phases[phase] = ct.CloseoutPhaseState(
-        status="done",
-        completed_at=str(commit.get("completed_at")) if commit.get("completed_at") else ar_types.utc_now_iso(),
-        duration_seconds=commit.get("duration_seconds")
-        if isinstance(commit.get("duration_seconds"), (int, float))
-        else None,
-        notes=str(commit.get("notes")) if commit.get("notes") is not None else None,
-        outputs=outputs,
-    )
-    _write_state(state, state_path)
-    _commit_path(closeout_dir).unlink(missing_ok=True)
-    _rmtree(closeout_dir / "stage" / phase)
-
-
-def _roll_forward(closeout_dir: Path, state: ct.CloseoutState, state_path: Path) -> None:
-    commit_path = _commit_path(closeout_dir)
-    if not commit_path.is_file():
-        return
-    commit = json.loads(commit_path.read_text(encoding="utf-8"))
-    _apply_commit(closeout_dir, commit, state, state_path)
-
-
-def _commit_phase(
-    closeout_dir: Path,
-    *,
-    phase: str,
-    slots_content: dict[str, str],
-    notes: str | None,
-    duration_seconds: float | None,
-    state: ct.CloseoutState,
-    state_path: Path,
-    outputs: dict[str, str] | None = None,
-) -> None:
-    """Stage -> write commit.json -> apply slots -> mark phase done -> delete journal + stage.
-
-    ``outputs`` overrides the recorded upstream fingerprints; when None they default to the
-    whole-file slot hashes (used by finalize + extract). Synthesize passes per-experiment
-    entry-block hashes so a cross-experiment ledger change never trips ``_verify_upstream``.
+    Returns ``(kept, dropped)``. The 890 KB prompt that killed a 500-round run is the standing
+    lesson: no term of a closeout context may grow with round count.
     """
-    stage_dir = closeout_dir / "stage" / phase
-    _rmtree(stage_dir)
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    items = sorted(slots_content.items())
-    slot_records: list[dict[str, object]] = []
-    for index, (dest_str, content) in enumerate(items):
-        stage_file = stage_dir / f"slot_{index}"
-        ar_types.write_text(stage_file, content)
-        slot_records.append(
-            {
-                "path": dest_str,
-                "stage": str(stage_file.relative_to(closeout_dir)),
-                "old_sha256": ct.sha256_file(Path(dest_str)),
-                "new_sha256": ct.sha256_text(content),
-            }
-        )
-    commit: dict[str, object] = {
-        "phase": phase,
-        "completed_at": ar_types.utc_now_iso(),
-        "duration_seconds": duration_seconds,
-        "notes": notes,
-        "slots": slot_records,
-    }
-    if outputs is not None:
-        commit["outputs"] = dict(outputs)
-    ar_types.write_json(_commit_path(closeout_dir), commit)
-    _apply_commit(closeout_dir, commit, state, state_path)
-
-
-# --------------------------------------------------------------------------- #
-# Phase planning + upstream integrity
-# --------------------------------------------------------------------------- #
-def _plan(state: ct.CloseoutState, until: str | None) -> list[str]:
-    plan: list[str] = []
-    for phase in ct.PHASE_ORDER:
-        if state.phases[phase].status not in ct.PHASE_TERMINAL_STATUSES:
-            plan.append(phase)
-        if until is not None and phase == until:
+    kept: list[T] = []
+    dropped = 0
+    for index, item in enumerate(items):
+        cost = cost_of(item)
+        if running + cost <= ct.MAX_CLOSEOUT_CONTEXT_CHARS:
+            kept.append(item)
+            running += cost
+        else:
+            dropped = len(items) - index
             break
-    return plan
+    return kept, dropped
 
 
-def _verify_upstream(state: ct.CloseoutState, closeout_dir: Path, *, memory_root: Path, experiment_id: str) -> None:
-    """Re-verify recorded upstream fingerprints of already-done phases.
+def _state_summary(state: dict[str, object]) -> dict[str, object]:
+    keys = (
+        "status",
+        "stop_reason",
+        "next_round_number",
+        "total_rounds_completed",
+        "failed_rounds_counter",
+        "champion",
+        "believed_best",
+        "believed_best_changed_round",
+        "best_overall",
+        "last_error",
+    )
+    return {key: state.get(key) for key in keys if key in state}
 
-    Closeout-owned files (memo, evidence) and the extract branch files are whole-file hashes. Topic
-    ledgers are verified only by this experiment's ``### <id>`` entry-block hash, so a cross-experiment
-    append to a shared ledger between phases does not trip staleness. CURRENT.md is a full rewrite,
-    never an upstream artifact, and is never recorded/verified.
-    """
-    branch_dir = ct.branch_dir(memory_root, experiment_id)
-    topics_dir = ct.topics_dir(memory_root)
-    for phase in ct.PHASE_ORDER:
-        record = state.phases[phase]
-        if record.status != "done":
+
+def _round_memos_newest_first(experiment: ExperimentRecord) -> list[dict[str, str]]:
+    directory = memory.rounds_dir(experiment)
+    if not directory.is_dir():
+        return []
+    candidates = [path for path in directory.glob("r*.md") if memory.parse_round_label(path.stem) is not None]
+    candidates.sort(key=lambda path: memory.parse_round_label(path.stem) or 0, reverse=True)
+    memos: list[dict[str, str]] = []
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
             continue
-        for dest_str, expected in record.outputs.items():
-            dest = Path(dest_str)
-            if dest.is_relative_to(closeout_dir) or dest.is_relative_to(branch_dir):
-                actual = ct.sha256_file(dest)
-            elif dest.parent == topics_dir and dest.name != ct.CURRENT_MD_FILENAME:
-                text = ar_types.read_text(dest, limit=ct.MAX_CLOSEOUT_CONTEXT_CHARS)
-                topic = dest.stem
-                block = merge.extract_entry_block(text, experiment_id, topic=topic) if text else ""
-                actual = ct.sha256_text(block)
-            else:
-                continue
-            if actual != expected:
-                raise ct.CloseoutError(ct.err_stale_upstream(phase, dest_str))
+        memos.append({"round_label": path.stem, "memo": _truncate(text, _MEMO_CAP)})
+    return memos
+
+
+def build_finalize_context(
+    *, experiment: ExperimentRecord, state: dict[str, object], evidence: dict[str, object]
+) -> dict[str, object]:
+    """Finalize context: evidence (never truncated) > state > working set > round memos."""
+    working_set = ar_types.read_text(memory.experiment_markdown_path(experiment), limit=_WORKING_SET_CAP)
+    base: dict[str, object] = {
+        "phase": FINALIZE_LABEL,
+        "experiment_id": experiment.experiment_id,
+        "evidence_summary": evidence,
+        "state": _state_summary(state),
+        "experiment_working_set": working_set,
+        "round_memos": [],
+    }
+    kept, dropped = _fill_bounded(
+        len(json.dumps(base, default=str)),
+        _round_memos_newest_first(experiment),
+        lambda memo: len(json.dumps(memo, default=str)) + 2,
+    )
+    base["round_memos"] = kept
+    if dropped:
+        base["round_memos_truncation"] = f"...[truncated: {dropped} items dropped]"
+    return base
 
 
 # --------------------------------------------------------------------------- #
-# Shared LLM phase call
+# Finalize memo
 # --------------------------------------------------------------------------- #
-def _llm_phase[T](
-    *,
-    phase: str,
-    prompt: str,
-    schema: dict[str, object],
-    closeout_dir: Path,
-    parse: Callable[[str], T],
-) -> T:
-    """Call the research LLM for one phase and parse it; on failure write the debug bundle and re-raise."""
-    artifact_dir = ct.debug_dir(closeout_dir)
+def _write_memo(context: dict[str, object], directory: Path) -> Path:
+    """Ask the LLM for the memo, persist the raw response, validate it, then write the memo."""
     raw, _source = llm.call_research_llm(
-        prompt=prompt,
-        artifact_dir=artifact_dir,
-        round_label=phase,
-        schema=schema,
+        prompt=llm.render_context_prompt(context, prompt_path=FINALIZE_PROMPT_PATH),
+        artifact_dir=ct.debug_dir(directory),
+        round_label=FINALIZE_LABEL,
+        schema=None,
         timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
         transport="codex",
     )
-    try:
-        return parse(raw)
-    except ct.CloseoutError as exc:
-        memory.write_failure_debug(
-            artifact_dir=artifact_dir, round_label=phase, prompt=prompt, error=str(exc), raw_response=raw
-        )
-        raise
-
-
-# --------------------------------------------------------------------------- #
-# FINALIZE phase (§3.1)
-# --------------------------------------------------------------------------- #
-def _run_finalize(
-    *,
-    experiment: ExperimentRecord,
-    state: dict[str, object],
-    evidence: dict[str, object],
-    closeout_dir: Path,
-) -> tuple[dict[str, str], str]:
-    """Build context, call the LLM, validate the memo; return {abs_path: content}, notes."""
-    finalize_context = ctx_mod.build_finalize_context(experiment=experiment, state=state, evidence=evidence)
-    prompt = llm.render_prompt(finalize_context, program_path=_FINALIZE_PROMPT_PATH)
-
-    def parse(raw: str) -> tuple[dict[str, str], str]:
-        files, notes = phases.parse_files_envelope(raw)
-        believed_best = evidence.get("believed_best", {})
-        believed_best_config = believed_best.get("config") if isinstance(believed_best, dict) else None
-        slots = phases.validate_finalize(
-            files,
-            experiment_id=experiment.experiment_id,
-            believed_best_config=str(believed_best_config or ""),
-        )
-        return slots, notes
-
-    slots, notes = _llm_phase(
-        phase=ct.PHASE_FINALIZE,
-        prompt=prompt,
-        schema=phases.FILES_ENVELOPE_SCHEMA,
-        closeout_dir=closeout_dir,
-        parse=parse,
-    )
-    dest_content = {str(closeout_dir / rel_path): content for rel_path, content in slots.items()}
-    return dest_content, notes
-
-
-# --------------------------------------------------------------------------- #
-# CLASSIFY phase
-# --------------------------------------------------------------------------- #
-def _run_classify(*, closeout_dir: Path) -> tuple[dict[str, str], str, dict[str, object]]:
-    """Classify the finalized experiment before any research-memory write."""
-    memo_path = closeout_dir / ct.CLOSEOUT_MEMO_FILENAME
-    if not memo_path.is_file():
-        raise ct.CloseoutError(ct.err_memo_missing(str(memo_path)))
-    classify_context = ctx_mod.build_classify_context(
-        memo_text=memo_path.read_text(encoding="utf-8"),
-        evidence=_load_evidence(closeout_dir),
-    )
-    prompt = llm.render_prompt(classify_context, program_path=_CLASSIFY_PROMPT_PATH)
-    classification = _llm_phase(
-        phase=ct.PHASE_CLASSIFY,
-        prompt=prompt,
-        schema=phases.CLASSIFY_SCHEMA,
-        closeout_dir=closeout_dir,
-        parse=phases.parse_classification,
-    )
-    content = json.dumps(classification, indent=2, sort_keys=True) + "\n"
-    return (
-        {str(closeout_dir / ct.CLOSEOUT_CLASSIFICATION_FILENAME): content},
-        str(classification["rationale"]),
-        classification,
-    )
-
-
-def _load_classification(closeout_dir: Path, state: ct.CloseoutState) -> dict[str, object]:
-    """Load new classification state or map a progressed schema-v1 chain to legacy master."""
-    if state.phases[ct.PHASE_CLASSIFY].notes == ct.LEGACY_MASTER_NOTE:
-        return {"disposition": "master", "relevant_topics": list(ct.MEMORY_TOPIC_FILES)}
-    path = closeout_dir / ct.CLOSEOUT_CLASSIFICATION_FILENAME
-    if not path.is_file():
-        raise ct.CloseoutError(ct.err_evidence_missing(str(path)))
-    return phases.parse_classification(path.read_text(encoding="utf-8"))
-
-
-def _apply_classification_route(
-    classification: dict[str, object],
-    *,
-    state: ct.CloseoutState,
-    state_path: Path,
-) -> None:
-    """Persist downstream skips implied by one classification."""
-    disposition = str(classification["disposition"])
-    skipped: tuple[str, ...] = ()
-    if disposition == "branch_only":
-        skipped = (ct.PHASE_SYNTHESIZE,)
-    elif disposition == "exclude":
-        skipped = (ct.PHASE_EXTRACT, ct.PHASE_SYNTHESIZE)
-    for phase in skipped:
-        state.phases[phase] = ct.CloseoutPhaseState(status="skipped", notes=f"classification:{disposition}")
-    if skipped:
-        _write_state(state, state_path)
-
-
-# --------------------------------------------------------------------------- #
-# EXTRACT phase (§3.2)
-# --------------------------------------------------------------------------- #
-def _branch_files(branch_dir: Path) -> list[Path]:
-    return [p for p in branch_dir.iterdir() if p.is_file()] if branch_dir.is_dir() else []
-
-
-def _backup_branch(branch_dir: Path, closeout_dir: Path) -> None:
-    """Copy an existing branch to closeout/backups/<timestamp>/ before a restart overwrites it."""
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup_dir = closeout_dir / "backups" / stamp
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    for path in _branch_files(branch_dir):
-        shutil.copy2(path, backup_dir / path.name)
-
-
-def _load_evidence(closeout_dir: Path) -> dict[str, object]:
-    evidence_path = closeout_dir / ct.CLOSEOUT_EVIDENCE_FILENAME
-    if not evidence_path.is_file():
-        raise ct.CloseoutError(ct.err_evidence_missing(str(evidence_path)))
-    return json.loads(evidence_path.read_text(encoding="utf-8"))
-
-
-def _run_extract(
-    *,
-    experiment: ExperimentRecord,
-    memory_root: Path,
-    closeout_dir: Path,
-    restart: bool,
-) -> tuple[dict[str, str], str]:
-    """Draft the seven-file research-memory branch (README + six topics); return {abs_path: content}, notes."""
-    branch_dir = ct.branch_dir(memory_root, experiment.experiment_id)
-    if _branch_files(branch_dir):
-        if not restart:
-            raise ct.CloseoutError(ct.err_branch_exists(str(branch_dir)))
-        _backup_branch(branch_dir, closeout_dir)
-        _rmtree(branch_dir)
-
-    memo_path = closeout_dir / ct.CLOSEOUT_MEMO_FILENAME
-    if not memo_path.is_file():
-        raise ct.CloseoutError(ct.err_memo_missing(str(memo_path)))
-    memo_text = memo_path.read_text(encoding="utf-8")
-    evidence = _load_evidence(closeout_dir)
-
-    extract_context = ctx_mod.build_extract_context(experiment=experiment, memo_text=memo_text, evidence=evidence)
-    prompt = llm.render_prompt(extract_context, program_path=_EXTRACT_PROMPT_PATH)
-
-    def parse(raw: str) -> tuple[dict[str, str], str]:
-        files, notes = phases.parse_files_envelope(raw)
-        return phases.validate_extract(files, experiment_id=experiment.experiment_id), notes
-
-    slots, notes = _llm_phase(
-        phase=ct.PHASE_EXTRACT,
-        prompt=prompt,
-        schema=phases.FILES_ENVELOPE_SCHEMA,
-        closeout_dir=closeout_dir,
-        parse=parse,
-    )
-    dest_content = {str(branch_dir / rel_path): content for rel_path, content in slots.items()}
-    return dest_content, notes
-
-
-def _assert_branch_complete(branch_dir: Path) -> None:
-    """After committing extract, the branch dir must hold exactly the seven canonical files."""
-    files = {p.name for p in _branch_files(branch_dir)}
-    expected = {ct.MEMORY_BRANCH_README, *(f"{topic}.md" for topic in ct.MEMORY_TOPIC_FILES)}
-    if files != expected:
-        raise ct.CloseoutError(ct.err_branch_file_count(len(files)))
-
-
-# --------------------------------------------------------------------------- #
-# SYNTHESIZE phase (§3.3)
-# --------------------------------------------------------------------------- #
-def _run_synthesize(
-    *,
-    experiment: ExperimentRecord,
-    memory_root: Path,
-    closeout_dir: Path,
-    restart: bool,
-    relevant_topics: tuple[str, ...],
-) -> tuple[dict[str, str], str, dict[str, str]]:
-    """Merge selected topic deltas and rewrite CURRENT.md."""
-    experiment_id = experiment.experiment_id
-    branch_dir = ct.branch_dir(memory_root, experiment_id)
-    topics_dir = ct.topics_dir(memory_root)
-
-    synth_context = ctx_mod.build_synthesize_context(
-        experiment_id=experiment_id,
-        memory_root=memory_root,
-        relevant_topics=relevant_topics,
-    )
-    prompt = llm.render_prompt(synth_context, program_path=_SYNTHESIZE_PROMPT_PATH)
-
-    def parse(raw: str) -> tuple[dict[str, str], str, dict[str, str]]:
-        deltas, current_md, notes = phases.parse_synthesize_envelope(raw, relevant_topics=relevant_topics)
-        phases.validate_current_md(current_md, experiment_id=experiment_id)
-        slots_content: dict[str, str] = {}
-        outputs: dict[str, str] = {}
-        for topic in relevant_topics:
-            new_entry = str(deltas[topic]["new_entry"])
-            overview = deltas[topic]["overview"]
-            best_understanding = deltas[topic]["best_understanding"]
-            phases.validate_entry_block(topic, new_entry, experiment_id=experiment_id)
-            if not (branch_dir / f"{topic}.md").is_file():
-                raise ct.CloseoutError(ct.err_branch_file_missing(f"{topic}.md"))
-            ledger_path = topics_dir / f"{topic}.md"
-            existing = ledger_path.read_text(encoding="utf-8")
-            merged = merge.merge_ledger(
-                existing,
-                new_entry=new_entry,
-                overview_replacement=overview if isinstance(overview, str) else None,
-                best_understanding_replacement=best_understanding if isinstance(best_understanding, str) else None,
-                experiment_id=experiment_id,
-                replace_existing=restart,
-                topic=topic,
-            )
-            _preamble, _overview, _best_understanding, learnings = merge.parse_ledger(merged, topic=topic)
-            count = merge.count_entries(learnings, experiment_id)
-            if count != 1:
-                raise ct.CloseoutError(ct.err_entry_count_invalid(topic, count))
-            slots_content[str(ledger_path)] = merged
-            outputs[str(ledger_path)] = ct.sha256_text(merge.extract_entry_block(merged, experiment_id, topic=topic))
-        slots_content[str(memory_root / ct.CURRENT_MD_FILENAME)] = current_md
-        return slots_content, notes, outputs
-
-    return _llm_phase(
-        phase=ct.PHASE_SYNTHESIZE,
-        prompt=prompt,
-        schema=phases.SYNTHESIZE_SCHEMA,
-        closeout_dir=closeout_dir,
-        parse=parse,
-    )
-
-
-def _backup_synthesize_memory(
-    *,
-    memory_root: Path,
-    closeout_dir: Path,
-    relevant_topics: tuple[str, ...],
-) -> None:
-    """Snapshot CURRENT.md and selected topic ledgers before SYNTHESIZE commits."""
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    backup_root = closeout_dir / "backups"
-    backup_dir = backup_root / stamp
-    stage_dir = backup_root / f".{stamp}.tmp"
-    paths = [Path(ct.CURRENT_MD_FILENAME), *(Path("topics") / f"{topic}.md" for topic in relevant_topics)]
-    try:
-        for relative_path in paths:
-            destination = stage_dir / relative_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(memory_root / relative_path, destination)
-        os.replace(stage_dir, backup_dir)
-    except OSError as exc:
-        _rmtree(stage_dir)
-        raise ct.CloseoutError(ct.ERR_SYNTHESIZE_BACKUP_FAILED) from exc
-
-
-# --------------------------------------------------------------------------- #
-# Result assembly
-# --------------------------------------------------------------------------- #
-def _reports(state: ct.CloseoutState) -> tuple[ct.CloseoutPhaseReport, ...]:
-    return tuple(
-        ct.CloseoutPhaseReport(
-            name=phase,
-            status=state.phases[phase].status,
-            notes=state.phases[phase].notes,
-            duration_seconds=state.phases[phase].duration_seconds,
-            outputs=dict(state.phases[phase].outputs),
-        )
-        for phase in ct.PHASE_ORDER
-    )
+    ar_types.write_text(directory / ct.CLOSEOUT_RESPONSE_FILENAME, raw)
+    memo = raw.strip()
+    if ct.MEMO_REQUIRED_HEADING not in memo:
+        raise ct.CloseoutError(f"{ct.ERROR_PREFIX}memo_section_missing:{ct.MEMO_REQUIRED_HEADING}")
+    if len(memo) < ct.MEMO_MIN_CHARS:
+        raise ct.CloseoutError(f"{ct.ERROR_PREFIX}memo_too_short:{len(memo)}/{ct.MEMO_MIN_CHARS}")
+    path = directory / ct.CLOSEOUT_MEMO_FILENAME
+    ar_types.write_text(path, memo if memo.endswith("\n") else memo + "\n")
+    return path
 
 
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-def get_closeout_status(*, store_root: str | Path = ".numereng", experiment_id: str) -> ct.CloseoutResult:
-    """Read-only report of the closeout chain state; loads all-pending if never run."""
-    root = resolve_store_root(store_root)
-    experiment = get_experiment(store_root=root, experiment_id=experiment_id)
-    state_path = _closeout_dir(experiment) / ct.CLOSEOUT_STATE_FILENAME
-    if state_path.is_file():
-        state = ct.CloseoutState.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
-    else:
-        state = ct.CloseoutState.new(experiment_id=experiment.experiment_id, memory_root_identity="")
-    return ct.CloseoutResult(
-        experiment_id=experiment.experiment_id, phases=_reports(state), stopped_at_phase=None, error=None
-    )
-
-
 def run_closeout(
     *,
     store_root: str | Path = ".numereng",
     experiment_id: str,
-    until: str | None = None,
-    restart_from: str | None = None,
-    memory_root: str | None = None,
-    accept_stale_running: bool = False,
     allow_incomplete: bool = False,
 ) -> ct.CloseoutResult:
-    """Run the closeout chain up to ``until``. Gate failures raise; phase failures are captured."""
-    if until is not None and until not in ct.PHASE_ORDER:
-        raise ct.CloseoutError(ct.err_until_invalid(until))
-    if restart_from is not None:
-        if restart_from not in ct.PHASE_ORDER:
-            raise ct.CloseoutError(ct.err_restart_from_invalid(restart_from))
-
+    """Gate, build the evidence bundle, write one decision memo. Re-running overwrites both."""
     root = resolve_store_root(store_root)
-    workspace_root = root.parent
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
 
     run_state = memory.load_state(memory.state_path(experiment))
-    _gate(experiment, run_state, accept_stale_running=accept_stale_running, allow_incomplete=allow_incomplete)
+    _gate(experiment, run_state, allow_incomplete=allow_incomplete)
     run_state = run_state or {}
 
-    memory_root_path = _resolve_memory_root(root, memory_root, workspace_root)
-    _validate_memory_root(memory_root_path)
+    directory = ct.closeout_dir(memory.agentic_dir(experiment))
+    directory.mkdir(parents=True, exist_ok=True)
+    evidence = evidence_mod.build_evidence(experiment=experiment, state=run_state, store_root=root)
+    evidence_path = directory / ct.CLOSEOUT_EVIDENCE_FILENAME
+    ar_types.write_json(evidence_path, evidence)
 
-    closeout_dir = _closeout_dir(experiment)
-    closeout_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = closeout_dir / ct.CLOSEOUT_LOCK_FILENAME
-    _acquire_lock(lock_path)
-    try:
-        state_path = closeout_dir / ct.CLOSEOUT_STATE_FILENAME
-        state = _load_or_init_state(
-            state_path, experiment_id=experiment.experiment_id, memory_root_identity=str(memory_root_path)
-        )
-        _roll_forward(closeout_dir, state, state_path)
+    context = build_finalize_context(experiment=experiment, state=run_state, evidence=evidence)
+    memo_path = _write_memo(context, directory)
 
-        # Restarting upstream of a completed merge can orphan its ledger entries. Restart at
-        # SYNTHESIZE or later when master memory has already changed.
-        if restart_from is not None:
-            for blocking_phase, error_token in PHASE_SPECS[restart_from].restart_blocked_by:
-                if state.phases[blocking_phase].status == "done":
-                    raise ct.CloseoutError(error_token)
-
-        if restart_from is not None:
-            resetting = False
-            for phase in ct.PHASE_ORDER:
-                if phase == restart_from:
-                    resetting = True
-                if resetting:
-                    state.phases[phase] = ct.CloseoutPhaseState()
-            _write_state(state, state_path)
-
-        if state.phases[ct.PHASE_CLASSIFY].status == "done":
-            _apply_classification_route(
-                _load_classification(closeout_dir, state),
-                state=state,
-                state_path=state_path,
-            )
-
-        plan = _plan(state, until)
-        evidence: dict[str, object] | None = None
-        if ct.PHASE_FINALIZE in plan:
-            evidence = evidence_mod.build_evidence(experiment=experiment, state=run_state, store_root=root)
-            ar_types.write_json(closeout_dir / ct.CLOSEOUT_EVIDENCE_FILENAME, evidence)
-
-        needs_memory_lock = any(PHASE_SPECS[phase].needs_memory_lock for phase in plan)
-        memory_lock_path = memory_root_path / ct.MEMORY_ROOT_LOCK_FILENAME
-        if needs_memory_lock:
-            _acquire_lock(memory_lock_path)
-        try:
-            stopped_at_phase, error = _run_plan(
-                plan,
-                experiment=experiment,
-                run_state=run_state,
-                evidence=evidence,
-                memory_root=memory_root_path,
-                closeout_dir=closeout_dir,
-                state=state,
-                state_path=state_path,
-                restart_from=restart_from,
-            )
-        finally:
-            if needs_memory_lock:
-                _release_lock(memory_lock_path)
-
-        return ct.CloseoutResult(
-            experiment_id=experiment.experiment_id,
-            phases=_reports(state),
-            stopped_at_phase=stopped_at_phase,
-            error=error,
-        )
-    finally:
-        _release_lock(lock_path)
-
-
-# --------------------------------------------------------------------------- #
-# Phase registry (declarative dispatch for _run_plan)
-# --------------------------------------------------------------------------- #
-@dataclass(frozen=True)
-class _PhaseContext:
-    """Everything a phase callable, pre-commit hook, or post-commit hook may read."""
-
-    experiment: ExperimentRecord
-    run_state: dict[str, object]
-    evidence: dict[str, object] | None
-    memory_root: Path
-    closeout_dir: Path
-    state: ct.CloseoutState
-    state_path: Path
-    restart: bool
-
-
-@dataclass(frozen=True)
-class _PhaseOutcome:
-    """What a phase produced: the commit slots, notes, optional outputs override, hook payload."""
-
-    dest_content: dict[str, str]
-    notes: str
-    outputs: dict[str, str] | None = None
-    payload: object | None = None
-
-
-@dataclass(frozen=True)
-class PhaseSpec:
-    """One phase of the closeout chain, declaratively.
-
-    ``pre_commit`` runs after ``run`` and before ``_commit_phase``; ``post_commit`` runs immediately
-    after it. ``restart_blocked_by`` pairs a phase whose completion forbids restarting here with the
-    error token to raise, in check order.
-    """
-
-    name: str
-    run: Callable[[_PhaseContext], _PhaseOutcome]
-    needs_memory_lock: bool = False
-    takes_restart: bool = False
-    pre_commit: Callable[[_PhaseContext, _PhaseOutcome], None] | None = None
-    post_commit: Callable[[_PhaseContext, _PhaseOutcome], None] | None = None
-    restart_blocked_by: tuple[tuple[str, str], ...] = ()
-
-
-def _phase_finalize(ctx: _PhaseContext) -> _PhaseOutcome:
-    dest_content, notes = _run_finalize(
-        experiment=ctx.experiment, state=ctx.run_state, evidence=ctx.evidence or {}, closeout_dir=ctx.closeout_dir
+    holdout = evidence.get("holdout")
+    return ct.CloseoutResult(
+        experiment_id=experiment.experiment_id,
+        evidence_path=evidence_path,
+        memo_path=memo_path,
+        holdout_summary=holdout if isinstance(holdout, dict) else None,
     )
-    return _PhaseOutcome(dest_content=dest_content, notes=notes)
-
-
-def _phase_classify(ctx: _PhaseContext) -> _PhaseOutcome:
-    dest_content, notes, classification = _run_classify(closeout_dir=ctx.closeout_dir)
-    return _PhaseOutcome(dest_content=dest_content, notes=notes, payload=classification)
-
-
-def _phase_extract(ctx: _PhaseContext) -> _PhaseOutcome:
-    dest_content, notes = _run_extract(
-        experiment=ctx.experiment,
-        memory_root=ctx.memory_root,
-        closeout_dir=ctx.closeout_dir,
-        restart=ctx.restart,
-    )
-    return _PhaseOutcome(dest_content=dest_content, notes=notes)
-
-
-def _phase_synthesize(ctx: _PhaseContext) -> _PhaseOutcome:
-    classification = _load_classification(ctx.closeout_dir, ctx.state)
-    relevant_topics = tuple(cast("list[str]", classification["relevant_topics"]))
-    dest_content, notes, outputs = _run_synthesize(
-        experiment=ctx.experiment,
-        memory_root=ctx.memory_root,
-        closeout_dir=ctx.closeout_dir,
-        restart=ctx.restart,
-        relevant_topics=relevant_topics,
-    )
-    return _PhaseOutcome(dest_content=dest_content, notes=notes, outputs=outputs, payload=relevant_topics)
-
-
-def _pre_commit_synthesize(ctx: _PhaseContext, outcome: _PhaseOutcome) -> None:
-    _backup_synthesize_memory(
-        memory_root=ctx.memory_root,
-        closeout_dir=ctx.closeout_dir,
-        relevant_topics=cast("tuple[str, ...]", outcome.payload),
-    )
-
-
-def _post_commit_classify(ctx: _PhaseContext, outcome: _PhaseOutcome) -> None:
-    _apply_classification_route(cast("dict[str, object]", outcome.payload), state=ctx.state, state_path=ctx.state_path)
-
-
-def _post_commit_extract(ctx: _PhaseContext, _outcome: _PhaseOutcome) -> None:
-    _assert_branch_complete(ct.branch_dir(ctx.memory_root, ctx.experiment.experiment_id))
-
-
-PHASE_SPECS: dict[str, PhaseSpec] = {
-    ct.PHASE_FINALIZE: PhaseSpec(
-        name=ct.PHASE_FINALIZE,
-        run=_phase_finalize,
-        restart_blocked_by=(
-            (ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),
-            (ct.PHASE_EXTRACT, ct.ERR_RESTART_BLOCKED_AFTER_EXTRACT),
-        ),
-    ),
-    ct.PHASE_CLASSIFY: PhaseSpec(
-        name=ct.PHASE_CLASSIFY,
-        run=_phase_classify,
-        post_commit=_post_commit_classify,
-        restart_blocked_by=(
-            (ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),
-            (ct.PHASE_EXTRACT, ct.ERR_RESTART_BLOCKED_AFTER_EXTRACT),
-        ),
-    ),
-    ct.PHASE_EXTRACT: PhaseSpec(
-        name=ct.PHASE_EXTRACT,
-        run=_phase_extract,
-        needs_memory_lock=True,
-        takes_restart=True,
-        post_commit=_post_commit_extract,
-        restart_blocked_by=((ct.PHASE_SYNTHESIZE, ct.ERR_RESTART_BLOCKED_AFTER_SYNTHESIZE),),
-    ),
-    ct.PHASE_SYNTHESIZE: PhaseSpec(
-        name=ct.PHASE_SYNTHESIZE,
-        run=_phase_synthesize,
-        needs_memory_lock=True,
-        takes_restart=True,
-        pre_commit=_pre_commit_synthesize,
-    ),
-}
-
-
-def _run_plan(
-    plan: list[str],
-    *,
-    experiment: ExperimentRecord,
-    run_state: dict[str, object],
-    evidence: dict[str, object] | None,
-    memory_root: Path,
-    closeout_dir: Path,
-    state: ct.CloseoutState,
-    state_path: Path,
-    restart_from: str | None,
-) -> tuple[str | None, str | None]:
-    """Execute the planned phases in order; return (stopped_at_phase, error) or (None, None)."""
-    for phase in plan:
-        # CLASSIFY's post-commit hook can mark later phases skipped mid-loop; this check honours it.
-        if state.phases[phase].status in ct.PHASE_TERMINAL_STATUSES:
-            continue
-        _verify_upstream(state, closeout_dir, memory_root=memory_root, experiment_id=experiment.experiment_id)
-        spec = PHASE_SPECS[phase]
-        try:
-            started = time.monotonic()
-            ctx = _PhaseContext(
-                experiment=experiment,
-                run_state=run_state,
-                evidence=evidence,
-                memory_root=memory_root,
-                closeout_dir=closeout_dir,
-                state=state,
-                state_path=state_path,
-                restart=spec.takes_restart and restart_from == phase,
-            )
-            outcome = spec.run(ctx)
-            if spec.pre_commit is not None:
-                spec.pre_commit(ctx, outcome)
-            _commit_phase(
-                closeout_dir,
-                phase=phase,
-                slots_content=outcome.dest_content,
-                notes=outcome.notes,
-                duration_seconds=time.monotonic() - started,
-                state=state,
-                state_path=state_path,
-                outputs=outcome.outputs,
-            )
-            if spec.post_commit is not None:
-                spec.post_commit(ctx, outcome)
-        except ar_types.AgenticResearchError as exc:
-            return phase, str(exc)
-    return None, None

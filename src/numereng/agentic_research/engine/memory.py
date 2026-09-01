@@ -100,9 +100,9 @@ def iter_journal_lines(path: Path, *, strict: bool) -> Iterator[tuple[int, dict[
     """Yield ``(lineno, entry)`` for each non-blank journal line.
 
     ``strict=False`` is the in-run reader: blank, unparseable, and non-dict lines are skipped.
-    ``strict=True`` raises ``JournalLineError`` on the first malformed line; closeout and the
-    portfolio resolver translate it into their own error tokens. The split is deliberate — the
-    loop must survive a torn line, the distillers must not.
+    ``strict=True`` raises ``JournalLineError`` on the first malformed line; closeout translates it
+    into its own error token. The split is deliberate — the loop must survive a torn line, the
+    distillers must not.
     """
     if not path.is_file():
         return
@@ -212,26 +212,10 @@ def experiment_markdown_path(experiment: ExperimentRecord) -> Path:
     return experiment.manifest_path.parent / "EXPERIMENT.md"
 
 
-def program_path(experiment: ExperimentRecord) -> Path:
-    raw = experiment.metadata.get(ar_types.PROGRAM_METADATA_KEY)
-    if raw is None:
-        return ar_types.PROGRAM_PATH
-    if not isinstance(raw, str) or not raw.strip():
-        raise ar_types.AgenticResearchValidationError("agentic_research_program_invalid")
-    name = raw.strip()
-    if Path(name).name != name or not name.endswith(".md"):
-        raise ar_types.AgenticResearchValidationError(f"agentic_research_program_invalid:{name}")
-    if name == ar_types.PROGRAM_PATH.name:
-        return ar_types.PROGRAM_PATH
-    experiment_program = agentic_dir(experiment) / name
-    if experiment_program.is_file():
-        return experiment_program
-    legacy_program = ar_types.CUSTOM_PROGRAM_DIR / name
-    if legacy_program.is_file():
-        return legacy_program
-    raise ar_types.AgenticResearchValidationError(
-        f"agentic_research_program_missing:{name} (searched {experiment_program} and {legacy_program})"
-    )
+def strategy_path(experiment: ExperimentRecord) -> Path:
+    """The experiment's own brief at a fixed filename, else the tracked generic brief."""
+    experiment_strategy = agentic_dir(experiment) / ar_types.STRATEGY_FILENAME
+    return experiment_strategy if experiment_strategy.is_file() else ar_types.DEFAULT_STRATEGY_PATH
 
 
 def latest_round_markdown(experiment: ExperimentRecord) -> str | None:

@@ -2146,7 +2146,7 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
             state_path=Path("/tmp/agentic_research/state.json"),
             trace_path=Path("/tmp/agentic_research/journal.jsonl"),
             decision_path=Path("/tmp/agentic_research/journal.jsonl"),
-            program_path=Path("/tmp/agentic_research/PROGRAM.md"),
+            strategy_path=Path("/tmp/agentic_research/STRATEGY.md"),
         ),
     )
     monkeypatch.setattr(

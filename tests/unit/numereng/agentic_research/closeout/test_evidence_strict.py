@@ -34,7 +34,7 @@ def test_malformed_journal_line_raises(closeout_fixture: CloseoutFixture) -> Non
         handle.write("{not valid json\n")
     with pytest.raises(ct.CloseoutError) as exc:
         _build(closeout_fixture)
-    assert str(exc.value) == ct.err_journal_malformed(4)
+    assert str(exc.value) == f"{ct.ERROR_PREFIX}journal_malformed:4"
 
 
 def test_completed_entry_missing_config_file_raises(closeout_fixture: CloseoutFixture) -> None:
@@ -44,7 +44,7 @@ def test_completed_entry_missing_config_file_raises(closeout_fixture: CloseoutFi
         )
     with pytest.raises(ct.CloseoutError) as exc:
         _build(closeout_fixture)
-    assert str(exc.value) == ct.err_journal_entry_invalid(4, "config")
+    assert str(exc.value) == f"{ct.ERROR_PREFIX}journal_entry_invalid:4:config"
 
 
 def test_completed_entry_non_numeric_metric_raises(closeout_fixture: CloseoutFixture) -> None:
@@ -55,7 +55,7 @@ def test_completed_entry_non_numeric_metric_raises(closeout_fixture: CloseoutFix
         )
     with pytest.raises(ct.CloseoutError) as exc:
         _build(closeout_fixture)
-    assert str(exc.value) == ct.err_journal_entry_invalid(4, "metric")
+    assert str(exc.value) == f"{ct.ERROR_PREFIX}journal_entry_invalid:4:metric"
 
 
 def test_no_completed_rounds_raises_leaderboard_empty(closeout_fixture: CloseoutFixture) -> None:

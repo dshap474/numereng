@@ -11,7 +11,7 @@ argument-hint: "<experiment_id or experiment path>"
 
 Finalize one completed numereng experiment after training and scoring artifacts exist. The skill verifies artifact evidence, rewrites `EXPERIMENT.md` as the durable decision memo, and renders the generated `EXPERIMENT.pack.md`.
 
-Use `experiment-ops` for the general experiment contract and pullback, `experiment-design` for new experiment strategy, and `experiment-memory-extract` only after the final report is done.
+Use `experiment-ops` for the general experiment contract and pullback, `experiment-design` for new experiment strategy, and `research-memory-update` only after the final report is done.
 
 ## Personality / Collaboration Style
 

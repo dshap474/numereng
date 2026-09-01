@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,17 +14,13 @@ ResearchAction = Literal["baseline", "run"]
 
 CUSTOM_PROGRAM_DIR = Path(__file__).parents[1] / "programs"
 PROGRAM_PATH = CUSTOM_PROGRAM_DIR / "PROGRAM.md"
-PROGRAM_METADATA_KEY, ALLOWED_PATHS_METADATA_KEY = "agentic_research_program", "agentic_research_allowed_change_paths"
+ALLOWED_PATHS_METADATA_KEY = "agentic_research_allowed_change_paths"
 
-# CORE program sections are pure harness mechanism, identical across every experiment. The strategy
-# sections ("0." frame, "4." substrate/budget, "6." search discipline) are experiment-specific and
-# exempt. Every custom program must copy these CORE sections from PROGRAM.md byte-verbatim because
-# the runner loads exactly one self-contained file; this pin is shared by the pre-flight check and
-# the drift-lint test.
-CORE_PROGRAM_SECTION_KEYS = ("1.", "2.", "2.1", "3.", "5.", "7.", "8.", "9.", "10.", "Context")
-# A section boundary is a level-2 heading or a numbered level-3 heading (e.g. "### 2.1 ..."); an
-# un-numbered level-3 heading (e.g. "### `round_markdown`") stays inside its parent section body.
-_PROGRAM_SECTION_BOUNDARY = re.compile(r"^(#{2} |#{3} \d)")
+# The round prompt is PROGRAM.md with two substitutions: the experiment brief (its own
+# `agentic_research/STRATEGY.md`, else the tracked generic one) and the bounded context JSON.
+DEFAULT_STRATEGY_PATH = CUSTOM_PROGRAM_DIR / "STRATEGY.md"
+STRATEGY_FILENAME = "STRATEGY.md"
+STRATEGY_PLACEHOLDER, CONTEXT_PLACEHOLDER = "{{STRATEGY}}", "{{CONTEXT_JSON}}"
 VALUE_CAPS_METADATA_KEY, BUDGET_ROUNDS_METADATA_KEY = "agentic_research_value_caps", "agentic_research_budget_rounds"
 # Dotted config path the trio-seed injection writes to; overridable per experiment because model
 # families name their seed param differently (LGBM `random_state`, custom NN models `seed`).
@@ -110,7 +105,7 @@ class ResearchStatusResult:
     state_path: Path
     trace_path: Path
     decision_path: Path
-    program_path: Path
+    strategy_path: Path
 
 
 @dataclass(frozen=True)
@@ -229,65 +224,3 @@ def get_dotted(payload: object, dotted_key: str) -> object | None:
             return None
         cursor = cursor.get(part)
     return cursor
-
-
-def _split_program_sections(text: str) -> list[tuple[str | None, list[str]]]:
-    """Split a program into ``(section_key, raw_lines)`` segments in file order.
-
-    The preamble before the first section boundary has key ``None``. Each segment keeps its heading
-    line and every line up to (not including) the next boundary, blank lines included, so joining
-    the segments back reproduces the text exactly.
-    """
-    segments: list[tuple[str | None, list[str]]] = []
-    key: str | None = None
-    buffer: list[str] = []
-    for line in text.splitlines():
-        if _PROGRAM_SECTION_BOUNDARY.match(line):
-            segments.append((key, buffer))
-            key, buffer = line.lstrip("#").strip().split()[0], [line]
-        else:
-            buffer.append(line)
-    segments.append((key, buffer))
-    return segments
-
-
-def extract_core_sections(text: str) -> dict[str, str]:
-    """Parse a program's CORE sections (see ``CORE_PROGRAM_SECTION_KEYS``) keyed by section number."""
-    sections: dict[str, str] = {}
-    for key, lines in _split_program_sections(text):
-        if key is not None:
-            sections[key] = "\n".join(lines).strip()
-    return {key: sections[key] for key in CORE_PROGRAM_SECTION_KEYS if key in sections}
-
-
-def first_diverging_core_section(program_text: str, base_text: str) -> str | None:
-    """Return the first CORE section key that is missing or differs from the base, else ``None``."""
-    program, base = extract_core_sections(program_text), extract_core_sections(base_text)
-    for key in CORE_PROGRAM_SECTION_KEYS:
-        if program.get(key) != base.get(key):
-            return key
-    return None
-
-
-def splice_core_sections(program_text: str, base_text: str) -> str:
-    """Return ``program_text`` with every CORE section replaced by the base program's copy.
-
-    The preamble, the strategy sections, and the section order are preserved verbatim; only the CORE
-    section bodies (heading through the line before the next boundary) are swapped for the base's.
-    A splice cannot invent structure, so a CORE section missing from either file is an error.
-    """
-    base_sections = {
-        key: lines for key, lines in _split_program_sections(base_text) if key in CORE_PROGRAM_SECTION_KEYS
-    }
-    program_segments = _split_program_sections(program_text)
-    present = {key for key, _ in program_segments}
-    for key in CORE_PROGRAM_SECTION_KEYS:
-        if key not in base_sections:
-            raise AgenticResearchValidationError(f"agentic_research_program_core_missing:base:{key}")
-        if key not in present:
-            raise AgenticResearchValidationError(f"agentic_research_program_core_missing:program:{key}")
-    spliced: list[str] = []
-    for key, lines in program_segments:
-        spliced.extend(base_sections[key] if key in base_sections else lines)
-    text = "\n".join(spliced)
-    return text + "\n" if program_text.endswith("\n") else text

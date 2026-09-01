@@ -6,7 +6,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory, program
+from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory
 from numereng.agentic_research.engine import types as ar_types
 
 # Bound under their underscore names on purpose: these two locals are the monkeypatch seam the
@@ -35,7 +35,7 @@ from numereng.features.store import index_run, resolve_store_root
 from numereng.features.telemetry import bind_launch_metadata
 from numereng.features.training.errors import TrainingError
 
-__all__ = ["get_research_status", "program_markdown", "run_research"]
+__all__ = ["get_research_status", "run_research"]
 
 # Per-round scratch keys stripped from the session state once the round is recorded.
 _PENDING_KEYS = (
@@ -46,10 +46,6 @@ _PENDING_KEYS = (
     "_pending_changes",
     "_pending_llm",
 )
-
-
-def program_markdown() -> str:
-    return ar_types.PROGRAM_PATH.read_text(encoding="utf-8")
 
 
 def get_research_status(*, store_root: str | Path = ".numereng", experiment_id: str) -> ResearchStatusResult:
@@ -70,7 +66,7 @@ def run_research(*, store_root: str | Path = ".numereng", experiment_id: str, ma
     boundary.assert_scoring_paths_frozen(experiment)
     boundary.program_allowed_paths(experiment)  # fail a misconfigured allowlist at round 0, not mid-round
     _prevalidate_seed_configs(experiment)
-    _prevalidate_program_core(experiment)
+    _prevalidate_prompt_placeholders(experiment)
     memory.agentic_dir(experiment).mkdir(parents=True, exist_ok=True)
     state = memory.load_state(memory.state_path(experiment)) or memory.initial_state(experiment)
     state.update({"status": "running", "stop_reason": None})
@@ -127,19 +123,20 @@ def _prevalidate_seed_configs(experiment: ExperimentRecord) -> None:
             raise AgenticResearchValidationError(f"agentic_research_seed_config_invalid:{path.name}:{exc}") from exc
 
 
-def _prevalidate_program_core(experiment: ExperimentRecord) -> None:
-    """Fail fast if a custom program's CORE sections have drifted from the base PROGRAM.md.
+def _prevalidate_prompt_placeholders(experiment: ExperimentRecord) -> None:
+    """Fail fast if the round prompt would not compose.
 
-    The runner loads exactly one self-contained program file, so every custom program must copy the
-    invariant CORE (frozen evaluator, evidence doctrine, output contract, ...) verbatim. A stale CORE
-    line silently changes the contract the model runs under; catch it before round 1. The base
-    PROGRAM.md is exempt (it is the canonical CORE).
+    PROGRAM.md must carry each placeholder exactly once and the experiment brief neither, so
+    composing a round prompt stays two string replacements.
     """
-    diverged = program.first_core_drift(experiment)
-    if diverged is not None:
-        raise AgenticResearchValidationError(
-            f"agentic_research_program_core_drift:{memory.program_path(experiment).name}:section:{diverged}"
-        )
+    program_text = ar_types.PROGRAM_PATH.read_text(encoding="utf-8")
+    strategy = memory.strategy_path(experiment)
+    strategy_text = strategy.read_text(encoding="utf-8")
+    for placeholder in (ar_types.STRATEGY_PLACEHOLDER, ar_types.CONTEXT_PLACEHOLDER):
+        if program_text.count(placeholder) != 1 or placeholder in strategy_text:
+            raise AgenticResearchValidationError(
+                f"agentic_research_program_placeholder_invalid:{placeholder}:{strategy.name}"
+            )
 
 
 def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) -> ResearchRoundResult:
@@ -169,7 +166,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         )
     prompt = llm.render_prompt(
         context.build_context(root=root, experiment=experiment, report=report, state=state),
-        program_path=memory.program_path(experiment),
+        strategy_text=memory.strategy_path(experiment).read_text(encoding="utf-8"),
     )
     try:
         raw_response, model_source = _call_research_llm(
@@ -796,7 +793,7 @@ def _status_result(
         state_path=auto_dir / ar_types.STATE_FILENAME,
         trace_path=journal,
         decision_path=journal,
-        program_path=memory.program_path(experiment),
+        strategy_path=memory.strategy_path(experiment),
     )
 
 

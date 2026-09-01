@@ -1,10 +1,10 @@
 """Policy-free panel-scoring primitives extracted from ensemble/selection.py.
 
 These are the pure numeric building blocks the selection sweep and the
-research-portfolio diversity report share: per-era range indexing, the
-weight-matrix CORR/BMC scorer (last-N window as an explicit parameter, never a
-hardcode), and `score_on_panel`, which scores each column of a ranked panel as a
-standalone prediction and returns per-era CORR/BMC series.
+diversity metrics share: per-era range indexing, the weight-matrix CORR/BMC
+scorer (last-N window as an explicit parameter, never a hardcode), and
+`score_on_panel`, which scores each column of a ranked panel as a standalone
+prediction and returns per-era CORR/BMC series.
 
 `selection.py` keeps thin compatibility wrappers around these; there is no reverse
 import from `selection.py` into this module.

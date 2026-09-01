@@ -45,7 +45,7 @@ def _parse_journal_strict(journal_path: Path) -> list[tuple[int, dict[str, objec
     try:
         return list(memory.iter_journal_lines(journal_path, strict=True))
     except ar_types.JournalLineError as exc:
-        raise ct.CloseoutError(ct.err_journal_malformed(exc.lineno)) from exc
+        raise ct.CloseoutError(f"{ct.ERROR_PREFIX}journal_malformed:{exc.lineno}") from exc
 
 
 def _validate_completed_configs(
@@ -58,18 +58,18 @@ def _validate_completed_configs(
             continue
         name = entry.get("config")
         if not isinstance(name, str) or not name:
-            raise ct.CloseoutError(ct.err_journal_entry_invalid(lineno, "config"))
+            raise ct.CloseoutError(f"{ct.ERROR_PREFIX}journal_entry_invalid:{lineno}:config")
         if name not in cache:
             path = config_dir / name
             if not path.is_file():
-                raise ct.CloseoutError(ct.err_journal_entry_invalid(lineno, "config"))
+                raise ct.CloseoutError(f"{ct.ERROR_PREFIX}journal_entry_invalid:{lineno}:config")
             try:
                 cache[name] = load_training_config_json(path)
             except Exception as exc:  # noqa: BLE001 - any loader failure is an invalid config
-                raise ct.CloseoutError(ct.err_journal_entry_invalid(lineno, "config")) from exc
+                raise ct.CloseoutError(f"{ct.ERROR_PREFIX}journal_entry_invalid:{lineno}:config") from exc
         metric = entry.get("metric")
         if isinstance(metric, bool) or not isinstance(metric, (int, float)):
-            raise ct.CloseoutError(ct.err_journal_entry_invalid(lineno, "metric"))
+            raise ct.CloseoutError(f"{ct.ERROR_PREFIX}journal_entry_invalid:{lineno}:metric")
     return cache
 
 

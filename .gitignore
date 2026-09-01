@@ -13,6 +13,7 @@ src/numereng/features/models/custom_models/*
 src/numereng/agentic_research/programs/*
 !src/numereng/agentic_research/programs/README.md
 !src/numereng/agentic_research/programs/PROGRAM.md
+!src/numereng/agentic_research/programs/STRATEGY.md
 
 
 # Data directories (downloaded and generated files)

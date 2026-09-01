@@ -1,7 +1,6 @@
-"""End-to-end runner tests with a fake codex transport (no network, no training).
+"""End-to-end closeout with a stubbed LLM (no network, no training).
 
-Covers the FINALIZE happy path, the full four-phase chain, restart, the memory-root identity guard,
-the experiment lock, and get_closeout_status.
+Covers the happy path, memo validation, and the re-run-overwrites contract.
 """
 
 from __future__ import annotations
@@ -10,150 +9,90 @@ import json
 
 import pytest
 
-from numereng.agentic_research.engine import llm
 from numereng.agentic_research.engine.closeout import runner
 from numereng.agentic_research.engine.closeout import types as ct
 
-from .conftest import (
-    CloseoutFixture,
-    valid_classification,
-    valid_envelope,
-    valid_extract_envelope,
-    valid_synthesize_envelope,
-)
-
-
-def _install_transport(monkeypatch: pytest.MonkeyPatch, fixture: CloseoutFixture, *, raw: str | None = None) -> dict:
-    """Fake codex transport that answers each phase with a valid envelope (or a fixed ``raw`` payload)."""
-    calls: dict[str, int] = {"n": 0}
-
-    def fake(**kwargs):
-        calls["n"] += 1
-        if raw is not None:
-            return (raw, "codex-exec")
-        label = kwargs.get("round_label")
-        if label == ct.PHASE_CLASSIFY:
-            payload = valid_classification()
-        elif label == ct.PHASE_EXTRACT:
-            payload = valid_extract_envelope(experiment_id=fixture.experiment_id)
-        elif label == ct.PHASE_SYNTHESIZE:
-            payload = valid_synthesize_envelope(experiment_id=fixture.experiment_id)
-        else:
-            payload = valid_envelope(
-                experiment_id=fixture.experiment_id, believed_best_config=fixture.believed_best_config
-            )
-        return (payload, "codex-exec")
-
-    monkeypatch.setattr(llm, "call_research_llm", fake)
-    return calls
+from .conftest import CloseoutFixture, install_fake_llm
 
 
 def _run(fixture: CloseoutFixture, **kwargs):
     return runner.run_closeout(store_root=fixture.store_root, experiment_id=fixture.experiment_id, **kwargs)
 
 
-def test_finalize_happy_path_writes_memo_and_evidence(
+def test_closeout_writes_evidence_memo_and_raw_response(
     closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _install_transport(monkeypatch, closeout_fixture)
-    result = _run(closeout_fixture, until="finalize")
+    install_fake_llm(monkeypatch, closeout_fixture)
+    result = _run(closeout_fixture)
 
-    assert result.error is None
-    assert result.stopped_at_phase is None
-    finalize = next(p for p in result.phases if p.name == "finalize")
-    assert finalize.status == "done"
+    directory = closeout_fixture.closeout_dir()
+    assert result.experiment_id == closeout_fixture.experiment_id
+    assert result.evidence_path == directory / ct.CLOSEOUT_EVIDENCE_FILENAME
+    assert result.memo_path == directory / ct.CLOSEOUT_MEMO_FILENAME
+    assert result.holdout_summary is None
 
-    memo_path = closeout_fixture.closeout_dir() / ct.CLOSEOUT_MEMO_FILENAME
-    assert memo_path.is_file()
-    assert closeout_fixture.experiment_id in memo_path.read_text(encoding="utf-8")
-    assert (closeout_fixture.closeout_dir() / ct.CLOSEOUT_EVIDENCE_FILENAME).is_file()
-    # No commit journal or stage left behind, lock released.
-    assert not (closeout_fixture.closeout_dir() / ct.CLOSEOUT_COMMIT_FILENAME).exists()
-    assert not (closeout_fixture.closeout_dir() / ct.CLOSEOUT_LOCK_FILENAME).exists()
+    memo = result.memo_path.read_text(encoding="utf-8")
+    assert memo.startswith("## Verdict")
+    assert closeout_fixture.experiment_id in memo
+    assert closeout_fixture.believed_best_config in memo
 
-
-def test_second_finalize_is_idempotent_noop(closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _install_transport(monkeypatch, closeout_fixture)
-    _run(closeout_fixture, until="finalize")
-    assert calls["n"] == 1
-    # finalize already done -> plan is empty -> no second LLM call.
-    result = _run(closeout_fixture, until="finalize")
-    assert calls["n"] == 1
-    assert result.error is None
+    evidence = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert evidence["experiment_id"] == closeout_fixture.experiment_id
+    assert evidence["believed_best"]["config"] == closeout_fixture.believed_best_config
+    # The raw response lands beside the evidence file.
+    assert (directory / ct.CLOSEOUT_RESPONSE_FILENAME).is_file()
 
 
-def test_bare_closeout_runs_full_chain_to_synthesize(
+def test_finalize_prompt_carries_the_bounded_context(
     closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from .conftest import write_ledger_memory_root
-
-    _install_transport(monkeypatch, closeout_fixture)
-    memory_root = write_ledger_memory_root(closeout_fixture.store_root / "notes" / "__RESEARCH_MEMORY__")
-    result = _run(closeout_fixture, memory_root=str(memory_root))  # finalize -> classify -> extract -> synthesize
-
-    assert result.error is None
-    assert result.stopped_at_phase is None
-    done = {p.name for p in result.phases if p.status == "done"}
-    assert {"finalize", "classify", "extract", "synthesize"} <= done
+    calls = install_fake_llm(monkeypatch, closeout_fixture)
+    _run(closeout_fixture)
+    prompt = calls["prompts"][0]
+    assert "{{CONTEXT_JSON}}" not in prompt
+    assert "# Closeout: Finalize" in prompt
+    assert '"evidence_summary"' in prompt
+    assert len(prompt) <= ct.MAX_CLOSEOUT_CONTEXT_CHARS + len(runner.FINALIZE_PROMPT_PATH.read_text(encoding="utf-8"))
 
 
-def test_restart_from_finalize_reruns(closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _install_transport(monkeypatch, closeout_fixture)
-    _run(closeout_fixture, until="finalize")
-    result = _run(closeout_fixture, until="finalize", restart_from="finalize")
-    assert calls["n"] == 2
-    assert result.error is None
-
-
-def test_invalid_memo_captured_not_raised(closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Memo missing a required section -> phase failure captured in the result, does not raise.
-    bad = json.dumps({"files": [{"path": ct.CLOSEOUT_MEMO_FILENAME, "content": "too short"}], "notes": "x"})
-    _install_transport(monkeypatch, closeout_fixture, raw=bad)
-    result = _run(closeout_fixture, until="finalize")
-    assert result.stopped_at_phase == "finalize"
-    assert result.error is not None
-    assert result.error.startswith(ct.ERROR_PREFIX)
-    # Debug artifacts were dumped.
-    debug = closeout_fixture.closeout_dir() / "debug"
-    assert any(debug.glob("finalize.debug.*")) if debug.exists() else True
-
-
-def test_memory_root_identity_change_raises(closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_transport(monkeypatch, closeout_fixture)
-    _run(closeout_fixture, until="finalize")
-    # A different valid memory root on the second run trips the identity guard.
-    from .conftest import write_memory_root
-
-    other = write_memory_root(closeout_fixture.store_root / "notes" / "OTHER_MEMORY")
+def test_memo_without_verdict_heading_is_rejected(
+    closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_fake_llm(monkeypatch, closeout_fixture, raw="## Summary\n\n" + ("filler text. " * 400))
     with pytest.raises(ct.CloseoutError) as exc:
-        _run(closeout_fixture, until="finalize", memory_root=str(other))
-    assert str(exc.value) == ct.ERR_MEMORY_ROOT_CHANGED
+        _run(closeout_fixture)
+    assert str(exc.value) == f"{ct.ERROR_PREFIX}memo_section_missing:## Verdict"
+    # The unusable response is still on disk, the memo is not.
+    assert (closeout_fixture.closeout_dir() / ct.CLOSEOUT_RESPONSE_FILENAME).is_file()
+    assert not (closeout_fixture.closeout_dir() / ct.CLOSEOUT_MEMO_FILENAME).exists()
 
 
-def test_experiment_lock_blocks_concurrent_invocation(
+def test_short_memo_is_rejected(closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_llm(monkeypatch, closeout_fixture, raw="## Verdict\n\nToo short.")
+    with pytest.raises(ct.CloseoutError) as exc:
+        _run(closeout_fixture)
+    assert str(exc.value).startswith(f"{ct.ERROR_PREFIX}memo_too_short:")
+
+
+def test_rerunning_overwrites_both_artifacts(
     closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import os
-    import socket
+    calls = install_fake_llm(monkeypatch, closeout_fixture)
+    first = _run(closeout_fixture)
+    assert calls["n"] == 1
 
-    _install_transport(monkeypatch, closeout_fixture)
-    closeout_dir = closeout_fixture.closeout_dir()
-    closeout_dir.mkdir(parents=True, exist_ok=True)
-    lock = closeout_dir / ct.CLOSEOUT_LOCK_FILENAME
-    lock.write_text(
-        json.dumps({"pid": os.getpid(), "hostname": socket.gethostname(), "acquired_at": "2999-01-01T00:00:00+00:00"}),
-        encoding="utf-8",
+    second_memo = "## Verdict\n\nRerun verdict. " + ("Fresh evidence text. " * 200)
+    install_fake_llm(monkeypatch, closeout_fixture, raw=second_memo)
+    second = _run(closeout_fixture)
+
+    assert second.memo_path == first.memo_path
+    assert second.memo_path.read_text(encoding="utf-8").startswith("## Verdict\n\nRerun verdict.")
+    assert "Rerun verdict" in (closeout_fixture.closeout_dir() / ct.CLOSEOUT_RESPONSE_FILENAME).read_text(
+        encoding="utf-8"
     )
-    with pytest.raises(ct.CloseoutError) as exc:
-        _run(closeout_fixture, until="finalize")
-    assert str(exc.value) == ct.err_lock_held(str(lock))
-
-
-def test_get_closeout_status_reports_all_phases(closeout_fixture: CloseoutFixture) -> None:
-    status = runner.get_closeout_status(
-        store_root=closeout_fixture.store_root, experiment_id=closeout_fixture.experiment_id
-    )
-    names = [p.name for p in status.phases]
-    assert names == list(ct.PHASE_ORDER)
-    assert all(p.status == "pending" for p in status.phases)
-    assert status.error is None
+    # Exactly the expected artifacts, no stage/lock/commit leftovers.
+    assert {path.name for path in closeout_fixture.closeout_dir().iterdir() if path.is_file()} == {
+        ct.CLOSEOUT_EVIDENCE_FILENAME,
+        ct.CLOSEOUT_MEMO_FILENAME,
+        ct.CLOSEOUT_RESPONSE_FILENAME,
+    }

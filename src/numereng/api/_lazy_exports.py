@@ -7,18 +7,12 @@ RESEARCH_API_EXPORTS = (
     "research_run",
     "research_status",
     "research_closeout",
-    "research_closeout_status",
-    "research_program_check",
-    "research_program_resplice",
 )
 
 RESEARCH_FEATURE_EXPORTS = (
     "get_research_status",
     "run_research",
     "run_closeout",
-    "get_closeout_status",
-    "check_program_core",
-    "resplice_program_core",
 )
 
 ROOT_CONTRACT_EXPORT_EXCLUDES = (
@@ -66,12 +60,6 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "hpo_trials": ("numereng.api._hpo", "hpo_trials"),
     "build_monitor_snapshot": ("numereng.api._monitor", "build_monitor_snapshot"),
     "neutralize_apply": ("numereng.api._neutralization", "neutralize_apply"),
-    "portfolio_status": ("numereng.api._research_portfolio", "portfolio_status"),
-    "portfolio_diversity": ("numereng.api._research_portfolio", "portfolio_diversity"),
-    "study_freeze": ("numereng.api._research_portfolio", "study_freeze"),
-    "study_run": ("numereng.api._research_portfolio", "study_run"),
-    "study_finalize": ("numereng.api._research_portfolio", "study_finalize"),
-    "study_status": ("numereng.api._research_portfolio", "study_status"),
     "NumeraiForumScrapeResponse": ("numereng.api._numerai", "NumeraiForumScrapeResponse"),
     "download_numerai_dataset": ("numereng.api._numerai", "download_numerai_dataset"),
     "get_numerai_current_round": ("numereng.api._numerai", "get_numerai_current_round"),

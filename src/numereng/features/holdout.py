@@ -7,8 +7,7 @@ A trailing block of eras (the "frozen holdout") is carved off the chronological
 tail of an experiment's era order, separated from the search region by a purge
 gap. Every metric the LLM research loop sees excludes those eras; at closeout the
 selected candidate is scored on the holdout exactly once, sealed, and re-opening
-is refused. This mirrors the proven design in
-`features/research_portfolio/combination.py` without importing its private names.
+is refused.
 
 These are pure helpers plus a manifest reader: partition math, a sha256 tamper
 fingerprint, spec (de)serialization, and an `EraFilter` applied at the scoring

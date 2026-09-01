@@ -17,9 +17,19 @@ from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterCon
 from numereng.platform.errors import OpenRouterClientError
 
 
-def render_prompt(context: dict[str, object], *, program_path: Path = ar_types.PROGRAM_PATH) -> str:
-    context_json = json.dumps(context, indent=2, sort_keys=True, default=str)
-    return program_path.read_text(encoding="utf-8").replace("{{CONTEXT_JSON}}", context_json)
+def render_prompt(context: dict[str, object], *, strategy_text: str) -> str:
+    """The round prompt: ``PROGRAM.md`` with the experiment brief and the context substituted in."""
+    program = ar_types.PROGRAM_PATH.read_text(encoding="utf-8")
+    return _substitute_context(program.replace(ar_types.STRATEGY_PLACEHOLDER, strategy_text), context)
+
+
+def render_context_prompt(context: dict[str, object], *, prompt_path: Path) -> str:
+    """A single-file prompt (closeout) with only the context substituted in."""
+    return _substitute_context(prompt_path.read_text(encoding="utf-8"), context)
+
+
+def _substitute_context(text: str, context: dict[str, object]) -> str:
+    return text.replace(ar_types.CONTEXT_PLACEHOLDER, json.dumps(context, indent=2, sort_keys=True, default=str))
 
 
 def call_research_llm(

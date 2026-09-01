@@ -1,7 +1,0 @@
-interface:
-  display_name: "skill::ResearchMemorySynthesize"
-  short_description: "Synthesize experiment topic branches into master research-memory ledgers and CURRENT.md."
-  default_prompt: "Use $experiment-memory-synthesize to read experiment branch topic files, update master topic ledgers append-only, and refresh compressed CURRENT.md."
-
-policy:
-  allow_implicit_invocation: true

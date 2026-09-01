@@ -57,18 +57,6 @@ def research_closeout(*args, **kwargs):
     return _agentic_research_api_module().research_closeout(*args, **kwargs)
 
 
-def research_closeout_status(*args, **kwargs):
-    return _agentic_research_api_module().research_closeout_status(*args, **kwargs)
-
-
-def research_program_check(*args, **kwargs):
-    return _agentic_research_api_module().research_program_check(*args, **kwargs)
-
-
-def research_program_resplice(*args, **kwargs):
-    return _agentic_research_api_module().research_program_resplice(*args, **kwargs)
-
-
 def get_research_status(*args, **kwargs):
     return _agentic_research_feature_module().get_research_status(*args, **kwargs)
 
@@ -79,18 +67,6 @@ def run_research(*args, **kwargs):
 
 def run_closeout(*args, **kwargs):
     return _agentic_research_feature_module().run_closeout(*args, **kwargs)
-
-
-def get_closeout_status(*args, **kwargs):
-    return _agentic_research_feature_module().get_closeout_status(*args, **kwargs)
-
-
-def check_program_core(*args, **kwargs):
-    return _agentic_research_feature_module().check_program_core(*args, **kwargs)
-
-
-def resplice_program_core(*args, **kwargs):
-    return _agentic_research_feature_module().resplice_program_core(*args, **kwargs)
 
 
 __all__ = list(

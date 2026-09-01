@@ -5,8 +5,8 @@ from __future__ import annotations
 from importlib import import_module
 
 # Canonical scoring-contract revision. Bumped only when the run scoring pipeline
-# changes in a way that makes cross-run metrics incomparable; portfolio surface
-# IDs embed this so runs scored under different contracts never compare equal.
+# changes in a way that makes cross-run metrics incomparable, so runs scored
+# under different contracts are never compared as equals.
 SCORING_CONTRACT_VERSION = 1
 
 __all__ = [

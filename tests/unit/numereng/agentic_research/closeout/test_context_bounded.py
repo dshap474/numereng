@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from numereng.agentic_research.engine.closeout import context as ctx_mod
+from numereng.agentic_research.engine.closeout import runner
 from numereng.agentic_research.engine.closeout import types as ct
 
 from .conftest import CloseoutFixture
@@ -24,7 +24,7 @@ def test_finalize_context_is_bounded_with_200_rounds(closeout_fixture: CloseoutF
     state = json.loads(closeout_fixture.state_path().read_text(encoding="utf-8"))
     evidence = {"experiment_id": closeout_fixture.experiment_id, "believed_best": {"config": "config_001.json"}}
 
-    ctx = ctx_mod.build_finalize_context(experiment=experiment, state=state, evidence=evidence)
+    ctx = runner.build_finalize_context(experiment=experiment, state=state, evidence=evidence)
 
     total = len(json.dumps(ctx, default=str))
     assert total <= ct.MAX_CLOSEOUT_CONTEXT_CHARS
@@ -38,32 +38,16 @@ def test_finalize_context_is_bounded_with_200_rounds(closeout_fixture: CloseoutF
     assert kept_labels == sorted(kept_labels, reverse=True)
 
 
-def test_extract_context_drops_rounds_table_under_pressure(closeout_fixture: CloseoutFixture) -> None:
-    experiment = closeout_fixture.experiment()
-    big_rows = [{"round": i, "note": "x" * 500} for i in range(2000)]
-    evidence = {"experiment_id": closeout_fixture.experiment_id, "rounds_table": big_rows}
+def test_finalize_context_truncates_a_huge_round_memo(closeout_fixture: CloseoutFixture) -> None:
+    rounds_dir = closeout_fixture.agentic_dir() / "rounds"
+    (rounds_dir / "r003.md").write_text("# r003\n\n" + ("x" * 200_000), encoding="utf-8")
 
-    ctx = ctx_mod.build_extract_context(experiment=experiment, memo_text="MEMO " * 10_000, evidence=evidence)
-
-    assert len(json.dumps(ctx, default=str)) <= ct.MAX_CLOSEOUT_CONTEXT_CHARS
-    assert "rounds_table_truncation" in ctx
-    assert len(ctx["rounds_table"]) < len(big_rows)
-    # The evidence head keeps everything except the bulk table.
-    assert ctx["evidence_summary"]["experiment_id"] == closeout_fixture.experiment_id
-
-
-def test_synthesize_context_caps_each_ledger_with_marker(closeout_fixture: CloseoutFixture) -> None:
-    from .conftest import ledger_text, write_ledger_memory_root
-
-    memory_root = write_ledger_memory_root(closeout_fixture.store_root / "notes" / "__RESEARCH_MEMORY__")
-    # Blow one ledger far past the per-ledger cap; the view must be truncated with a marker.
-    fat = ledger_text("features").replace(
-        "Prior overview for features.", "Prior overview for features. " + ("noise " * 8000)
+    ctx = runner.build_finalize_context(
+        experiment=closeout_fixture.experiment(),
+        state=json.loads(closeout_fixture.state_path().read_text(encoding="utf-8")),
+        evidence={"experiment_id": closeout_fixture.experiment_id},
     )
-    (memory_root / "topics" / "features.md").write_text(fat, encoding="utf-8")
 
-    ctx = ctx_mod.build_synthesize_context(experiment_id=closeout_fixture.experiment_id, memory_root=memory_root)
-
-    assert len(json.dumps(ctx, default=str)) <= ct.MAX_CLOSEOUT_CONTEXT_CHARS
-    assert len(ctx["ledgers"]["features"]) <= ct.LEDGER_CONTEXT_CAP + len("\n...[truncated]")
-    assert ctx["ledgers"]["features"].endswith("...[truncated]")
+    newest = ctx["round_memos"][0]
+    assert newest["round_label"] == "r003"
+    assert newest["memo"].endswith("...[truncated]")

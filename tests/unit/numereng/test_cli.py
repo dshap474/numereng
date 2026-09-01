@@ -3631,7 +3631,8 @@ def test_cli_research_commands_success(
             state_path="/tmp/agentic_research/state.json",
             trace_path="/tmp/agentic_research/trace.jsonl",
             decision_path="/tmp/agentic_research/rounds/decision.json",
-            program_path="/tmp/agentic_research/PROGRAM.md",
+            strategy_path="/tmp/agentic_research/STRATEGY.md",
+            closeout_memo="absent",
         ),
     )
     monkeypatch.setattr(

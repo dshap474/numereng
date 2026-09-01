@@ -1,7 +1,0 @@
-interface:
-  display_name: "skill::ExperimentMemoryExtract"
-  short_description: "Extract finalized numereng experiments into per-experiment design-space topic branches."
-  default_prompt: "Use $experiment-memory-extract to read one finalized EXPERIMENT.md and write the experiment's scoped design-space topic branch files only."
-
-policy:
-  allow_implicit_invocation: true

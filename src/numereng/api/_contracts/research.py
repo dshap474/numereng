@@ -51,7 +51,8 @@ class ResearchStatusResponse(BaseModel):
     state_path: str
     trace_path: str
     decision_path: str
-    program_path: str
+    strategy_path: str
+    closeout_memo: str
 
 
 class ResearchRunRequest(WorkspaceBoundRequest):
@@ -73,55 +74,20 @@ class ResearchRunResponse(BaseModel):
 
 class ResearchCloseoutRequest(WorkspaceBoundRequest):
     experiment_id: str
-    until: str | None = None
-    restart_from: str | None = None
-    memory_root: str | None = None
-    accept_stale_running: bool = False
     allow_incomplete: bool = False
-
-
-class ResearchCloseoutStatusRequest(WorkspaceBoundRequest):
-    experiment_id: str
-
-
-class ResearchCloseoutPhaseResponse(BaseModel):
-    name: str
-    status: str
-    notes: str | None = None
-    duration_seconds: float | None = None
-    outputs: dict[str, str] = Field(default_factory=dict)
 
 
 class ResearchCloseoutResponse(BaseModel):
     experiment_id: str
-    phases: list[ResearchCloseoutPhaseResponse] = Field(default_factory=list)
-    stopped_at_phase: str | None = None
-    error: str | None = None
-
-
-class ResearchProgramRequest(WorkspaceBoundRequest):
-    experiment_id: str
-
-
-class ResearchProgramResponse(BaseModel):
-    experiment_id: str
-    program_path: str
-    base_program_path: str
-    is_base_program: bool
-    in_sync: bool
-    diverging_section: str | None = None
-    written: bool = False
-    backup_path: str | None = None
+    evidence_path: str
+    memo_path: str
+    holdout_summary: dict[str, object] | None = None
 
 
 __all__ = [
     "ResearchBestRunResponse",
-    "ResearchCloseoutPhaseResponse",
     "ResearchCloseoutRequest",
     "ResearchCloseoutResponse",
-    "ResearchCloseoutStatusRequest",
-    "ResearchProgramRequest",
-    "ResearchProgramResponse",
     "ResearchRoundResponse",
     "ResearchRunRequest",
     "ResearchRunResponse",

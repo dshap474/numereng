@@ -23,13 +23,7 @@ USAGE = (
     "  numereng experiment pack --id <id> [--workspace <path>]\n"
     "  numereng research status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
     "  numereng research run --experiment-id <id> [--max-rounds <n>] [--workspace <path>]\n"
-    "  numereng research closeout --experiment-id <id> [--until <finalize|classify|extract|synthesize>] [--restart-from <phase>] [--memory-root <path>] [--accept-stale-running] [--allow-incomplete] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
-    "  numereng research closeout-status --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research program check --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research program resplice --experiment-id <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research portfolio status [--format <table|json>] [--write] [--workspace <path>]\n"
-    "  numereng research portfolio report [--format <table|json>] [--workspace <path>]\n"
-    "  numereng research portfolio diversity [--lanes <a,b,...>] [--format <table|json>] [--workspace <path>]\n"
+    "  numereng research closeout --experiment-id <id> [--allow-incomplete] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo create (--study-config <path.json> | (--study-id <id> --study-name <name> --config <path.json> --search-space <json|path>)) [--experiment-id <id>] [--metric <metric_key>] [--direction <maximize|minimize>] [--n-trials <n>] [--timeout-seconds <n>] [--max-completed-trials <n>] [--sampler <tpe|random>] [--seed <n>] [--neutralize --neutralizer-path <path> [--neutralization-proportion <0..1>] [--neutralization-mode <era|global>] [--neutralizer-cols <csv>] [--no-neutralization-rank]] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo list [--experiment-id <id>] [--status <running|completed|failed>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng hpo details --study-id <id> [--format <table|json>] [--workspace <path>]\n"
@@ -68,10 +62,6 @@ USAGE = (
     "  numereng dataset-tools build-downsampled-full [--data-version <v>] [--data-dir <path>] [--downsample-eras-step <n>] [--downsample-eras-offset <n>] [--rebuild]\n"  # noqa: E501
     "  numereng ensemble list [--experiment-id <id>] [--limit <n>] [--offset <n>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng ensemble details --ensemble-id <id> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng ensemble study freeze --config <path.json> [--format <table|json>] [--workspace <path>]\n"
-    "  numereng ensemble study run --trials <path.json> [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
-    "  numereng ensemble study finalize --study-id <id> --select <trial_id|baseline> [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
-    "  numereng ensemble study status --study-id <id> [--experiment-id <id>] [--format <table|json>] [--workspace <path>]\n"  # noqa: E501
     "  numereng store init [--workspace <path>]\n"
     "  numereng store index --run-id <id> [--workspace <path>]\n"
     "  numereng store rebuild [--workspace <path>]\n"

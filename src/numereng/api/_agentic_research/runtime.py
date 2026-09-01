@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from numereng.agentic_research import (
     AgenticResearchError,
     AgenticResearchValidationError,
+    closeout_memo_path,
 )
 from numereng.api.contracts import (
     ResearchBestRunResponse,
+    ResearchCloseoutRequest,
+    ResearchCloseoutResponse,
     ResearchRoundResponse,
     ResearchRunRequest,
     ResearchRunResponse,
@@ -50,7 +55,8 @@ def research_status(request: ResearchStatusRequest) -> ResearchStatusResponse:
         state_path=str(result.state_path),
         trace_path=str(result.trace_path),
         decision_path=str(result.decision_path),
-        program_path=str(result.program_path),
+        strategy_path=str(result.strategy_path),
+        closeout_memo="present" if closeout_memo_path(Path(result.agentic_research_dir)).is_file() else "absent",
     )
 
 
@@ -99,6 +105,26 @@ def research_run(request: ResearchRunRequest) -> ResearchRunResponse:
             for item in result.rounds
         ],
         interrupted=result.interrupted,
+    )
+
+
+def research_closeout(request: ResearchCloseoutRequest) -> ResearchCloseoutResponse:
+    """Build the closeout evidence bundle and write the decision memo for one experiment."""
+    from numereng import api as api_module
+
+    try:
+        result = api_module.run_closeout(
+            store_root=request.store_root,
+            experiment_id=request.experiment_id,
+            allow_incomplete=request.allow_incomplete,
+        )
+    except (AgenticResearchError, ExperimentError, ValueError) as exc:
+        raise PackageError(str(exc)) from exc
+    return ResearchCloseoutResponse(
+        experiment_id=result.experiment_id,
+        evidence_path=str(result.evidence_path),
+        memo_path=str(result.memo_path),
+        holdout_summary=result.holdout_summary,
     )
 
 

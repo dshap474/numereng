@@ -311,7 +311,7 @@ def test_public_api_signatures_and_result_fields() -> None:
         "best_overall",
         "agentic_research_dir",
         "state_path",
-        "program_path",
+        "strategy_path",
     } <= status_fields
 
 
