@@ -1,0 +1,4 @@
+interface:
+  display_name: "Live Calibration Sync"
+  short_description: "Refresh and interpret local-versus-live calibration"
+  default_prompt: "Use $numerai-live-calibration-sync to refresh Numerai live rounds, rebuild calibration artifacts, and integrate material resolved evidence into research memory."

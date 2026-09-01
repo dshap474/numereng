@@ -1,0 +1,84 @@
+# Stacking Ensemble Config
+# Starter config for GM workflow Phase 5 (optional stacking).
+# Copy and customize level1_models with your best configs from Phase 2-4.
+#
+# Fields match StackingConfig dataclass in src/numereng/ensemble/stacking.py:
+#   level1_models, level2_model, n_folds, embargo_eras,
+#   per_model_targets, per_era_rank, include_original_features,
+#   min_weight, correlation_penalty, pre_neutralize
+
+run_id: stacking-ensemble-v1
+
+data:
+  target: target_ender_20  # Level 2 meta-learner always trains on payout target
+  feature_set: medium
+  dataset_variant: non_downsampled  # Stacking should run on full data
+
+model:
+  type: stacking
+  params:
+    # Level 1: 4 diverse base models (customize with your tuned configs)
+    level1_models:
+      - type: lgbm
+        params:
+          n_estimators: 2000
+          learning_rate: 0.01
+          max_depth: 5
+          num_leaves: 31
+          colsample_bytree: 0.1
+          subsample: 0.8
+          reg_alpha: 0.1
+          reg_lambda: 0.1
+
+      - type: xgboost
+        params:
+          n_estimators: 1000
+          learning_rate: 0.01
+          max_depth: 5
+          colsample_bytree: 0.1
+          subsample: 0.8
+          reg_alpha: 0.1
+          reg_lambda: 0.1
+
+      - type: catboost
+        params:
+          iterations: 2000
+          learning_rate: 0.01
+          depth: 5
+          rsm: 0.1
+          l2_leaf_reg: 3.0
+
+      - type: ridge
+        params:
+          alpha: 1.0
+
+    # Multi-target: each Level 1 model trains on a different target
+    # Level 2 always trains on the main target (target_ender_20)
+    per_model_targets:
+      0: target_ender_20
+      1: target_cyrusd_20
+      2: target_teager2b_20
+      3: target_ender_20
+
+    # Level 2: Ridge meta-learner
+    level2_model:
+      type: ridge
+      params:
+        alpha: 0.1
+
+    # CV settings for OOF prediction generation
+    n_folds: 5
+    embargo_eras: 8
+
+    # Pre-stacking transforms
+    per_era_rank: true       # Rank OOF predictions per era before meta-learner
+    pre_neutralize: 0.0      # No pre-neutralization by default
+    include_original_features: false  # Only use OOF predictions as meta-features
+
+    # Diversity constraints (optional)
+    min_weight: 0.0           # No minimum weight constraint
+    correlation_penalty: 0.0  # No correlation penalty
+
+training:
+  engine:
+    profile: purged_walk_forward

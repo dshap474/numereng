@@ -6,7 +6,6 @@
 # Local extension roots (never committed)
 /custom_models/
 /research_programs/
-/.agents/
 AGENTS.local.md
 CLAUDE.local.md
 src/numereng/features/models/custom_models/*
@@ -91,8 +90,7 @@ deterministic-evaluation/
 dev/
 !dev/hygiene/
 !dev/hygiene/*.json
-.codex/rules/
-.claude/
+.claude/settings.local.json
 /__RESEARCH_MEMORY__
 
 # Tracked README screenshots

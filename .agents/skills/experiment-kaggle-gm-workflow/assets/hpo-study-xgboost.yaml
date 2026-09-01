@@ -1,0 +1,62 @@
+# HPO Study Config: XGBoost
+# Starter Optuna study for GM workflow Phase 3.
+# Copy this file and customize target/run_id for your campaign.
+#
+# Search space based on NUMERAI_MASTER_MODEL_DESIGN_SPACE.md parameter ranges.
+# FIXED: colsample_bytree=0.1 (never tuned for Numerai)
+#
+# Model params map to XGBoostModel in src/numereng/models/xgboost.py:
+#   n_estimators, learning_rate, max_depth,
+#   subsample, reg_alpha, reg_lambda
+
+study_name: hpo-xgboost-ender
+direction: maximize
+metric: sharpe
+n_trials: 25
+
+data:
+  target: target_ender_20
+  feature_set: medium
+  dataset_variant: downsampled
+
+model:
+  type: xgboost
+
+fixed_params:
+  colsample_bytree: 0.1
+  tree_method: hist
+  device: cpu
+  verbosity: 0
+
+search_space:
+  n_estimators:
+    type: int
+    low: 500
+    high: 10000
+    log: true
+  learning_rate:
+    type: float
+    low: 0.001
+    high: 0.05
+    log: true
+  max_depth:
+    type: int
+    low: 4
+    high: 10
+  subsample:
+    type: float
+    low: 0.5
+    high: 1.0
+  reg_alpha:
+    type: float
+    low: 0.0
+    high: 5.0
+  reg_lambda:
+    type: float
+    low: 0.0
+    high: 5.0
+
+training:
+  engine:
+    profile: purged_walk_forward
+  early_stopping_rounds: 100

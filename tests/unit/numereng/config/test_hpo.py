@@ -150,7 +150,7 @@ def test_load_hpo_study_config_json_rejects_group_without_multivariate(tmp_path:
 
 
 def test_shipped_hpo_study_templates_validate_and_match() -> None:
-    source_template = Path(".codex/skills/experiment-ops/assets/hpo-study-template.json")
+    source_template = Path(".agents/skills/experiment-ops/assets/hpo-study-template.json")
     packaged_template = Path("src/numereng/assets/shipped_skills/experiment-ops/assets/hpo-study-template.json")
 
     source_payload = load_hpo_study_config_json(source_template)

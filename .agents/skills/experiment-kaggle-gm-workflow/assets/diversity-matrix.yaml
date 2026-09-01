@@ -1,0 +1,151 @@
+# Diversity Matrix: Target x Algorithm x Feature
+# Three-tier model catalog for GM workflow Phase 2.
+#
+# Priority: tier1 (must-have) > tier2 (should-have) > tier3 (nice-to-have)
+# Total: 8 + 6 + 4 = 18 model configs
+
+defaults:
+  feature_set: medium
+  dataset_variant: downsampled
+  colsample_bytree: 0.1  # FIXED - never change
+  training_profile: purged_walk_forward
+  payout_target: target_ender_20
+
+# Tier 1: Must-Have (8 configs)
+# Core diversity across algorithm + target. Train all of these.
+tier1:
+  - id: lgbm-ender
+    algorithm: lgbm
+    target: target_ender_20
+    feature_set: medium
+    priority: 1
+    notes: Primary payout target + primary algorithm
+
+  - id: lgbm-cyrusd
+    algorithm: lgbm
+    target: target_cyrusd_20
+    feature_set: medium
+    priority: 1
+    notes: Historical primary target, good baseline diversity
+
+  - id: xgb-ender
+    algorithm: xgboost
+    target: target_ender_20
+    feature_set: medium
+    priority: 1
+    notes: Different splitting strategy from LGBM
+
+  - id: xgb-teager
+    algorithm: xgboost
+    target: target_teager2b_20
+    feature_set: medium
+    priority: 1
+    notes: Auxiliary target + different algorithm
+
+  - id: catboost-ender
+    algorithm: catboost
+    target: target_ender_20
+    feature_set: medium
+    priority: 1
+    notes: Ordered boosting, handles features differently
+
+  - id: catboost-cyrusd
+    algorithm: catboost
+    target: target_cyrusd_20
+    feature_set: medium
+    priority: 1
+    notes: CatBoost on historical target
+
+  - id: ridge-ender
+    algorithm: ridge
+    target: target_ender_20
+    feature_set: medium
+    priority: 1
+    notes: Always include linear — low correlation with trees (0.12-0.21)
+
+  - id: ridge-cyrusd
+    algorithm: ridge
+    target: target_cyrusd_20
+    feature_set: medium
+    priority: 1
+    notes: Linear diversity on different target
+
+# Tier 2: Should-Have (6 configs)
+# Extended diversity. Train if budget allows.
+tier2:
+  - id: lgbm-teager
+    algorithm: lgbm
+    target: target_teager2b_20
+    feature_set: medium
+    priority: 2
+    notes: LGBM on auxiliary target
+
+  - id: lgbm-xerxes
+    algorithm: lgbm
+    target: target_xerxes_20
+    feature_set: medium
+    priority: 2
+    notes: Additional target diversity
+
+  - id: xgb-cyrusd
+    algorithm: xgboost
+    target: target_cyrusd_20
+    feature_set: medium
+    priority: 2
+    notes: XGBoost cross-target
+
+  - id: catboost-teager
+    algorithm: catboost
+    target: target_teager2b_20
+    feature_set: medium
+    priority: 2
+    notes: CatBoost on auxiliary target
+
+  - id: lgbm-ender-deep
+    algorithm: lgbm
+    target: target_ender_20
+    feature_set: medium
+    priority: 2
+    notes: Deep config variant (max_depth=10, num_leaves=1024)
+    params_override:
+      max_depth: 10
+      num_leaves: 1024
+      n_estimators: 5000
+
+  - id: ridge-teager
+    algorithm: ridge
+    target: target_teager2b_20
+    feature_set: medium
+    priority: 2
+    notes: Linear on auxiliary target
+
+# Tier 3: Nice-to-Have (4+ configs)
+# Maximum diversity. Train for full GM campaigns.
+tier3:
+  - id: lgbm-ender-all
+    algorithm: lgbm
+    target: target_ender_20
+    feature_set: all
+    priority: 3
+    notes: Full feature set — needs cloud compute
+
+  - id: xgb-ender-all
+    algorithm: xgboost
+    target: target_ender_20
+    feature_set: all
+    priority: 3
+    notes: Full feature set XGBoost
+
+  - id: lgbm-cyrusd60
+    algorithm: lgbm
+    target: target_cyrusd_60
+    feature_set: medium
+    priority: 3
+    notes: Longer horizon — different signal
+
+  - id: lgbm-ender60
+    algorithm: lgbm
+    target: target_ender_60
+    feature_set: medium
+    priority: 3
+    notes: Longer horizon on payout family

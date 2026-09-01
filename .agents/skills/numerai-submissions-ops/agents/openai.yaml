@@ -1,0 +1,4 @@
+interface:
+  display_name: "Submissions Ops"
+  short_description: "Manage submitted-model snapshots and live rounds"
+  default_prompt: "Use $numerai-submissions-ops to inspect or refresh one submitted Numerai model snapshot under .numereng/submissions."

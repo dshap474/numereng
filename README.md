@@ -41,7 +41,7 @@ Built for Numerai participants who want an end-to-end local workflow for iterati
 - **Remote and cloud training.** SSH-driven remote workstations, EC2, and Modal for when local compute runs out.
 - **Read-only dashboard.** `just dev` gives you a mission-control UI over the current checkout.
 - **Custom models.** Drop model wrappers into `src/numereng/features/models/custom_models/` and they are auto-discovered by the training pipeline.
-- **Agent-extensible.** Drop your own skills into `.codex/skills/` so Claude Code, Codex, or similar agents can be pointed at workflows you author.
+- **Agent-extensible.** Drop your own skills into `.agents/skills/` so Claude Code, Codex, or similar agents can be pointed at workflows you author.
 
 ## Prerequisites
 
@@ -153,7 +153,7 @@ Extension and authoring roots:
 - `src/numereng/features/models/custom_models/` — drop in a custom model wrapper (auto-discovered)
 - `src/numereng/agentic_research/programs/PROGRAM.md` — tracked base agentic research program
 - `src/numereng/agentic_research/programs/` — local custom research programs (gitignored except `PROGRAM.md` and `README.md`)
-- `.codex/skills/` — agent skills (shipped ones are tracked; add your own locally via the directory's gitignore allowlist)
+- `.agents/skills/` — tracked agent skills; the subset packaged into the wheel is listed in `.agents/skills/SHIPPED.txt`
 
 ## Python API
 
@@ -172,7 +172,7 @@ See the [Python API reference](docs/numereng/reference/python-api.md). For full 
 
 ## Agent Skills
 
-`numereng` ships a library of user-invocable agent skills under [`.codex/skills/`](.codex/skills/). Each is a self-contained `SKILL.md` you can point Claude Code, Codex, or a similar agent at to drive a specific workflow.
+`numereng` ships a library of user-invocable agent skills under [`.agents/skills/`](.agents/skills/). Each is a self-contained `SKILL.md` you can point Claude Code, Codex, or a similar agent at to drive a specific workflow.
 
 - **`experiment-design`** — Plan and run numereng experiments: round design, scout-to-scale decisions, plateau logic, reporting, and champion handoff.
 - **`experiment-ops`** — Source of truth for the numereng experiment contract: layout, config schema, templates, run artifacts, and valid CLI entrypoints.

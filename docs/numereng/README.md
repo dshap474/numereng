@@ -40,7 +40,7 @@ Repo-local extension roots:
 
 - `src/numereng/features/models/custom_models/` for custom model wrappers
 - `src/numereng/agentic_research/programs/PROGRAM.md` for agentic config-research policy
-- `.agents/skills/` for local custom skills; this path is gitignored
+- `.agents/skills/` for agent skills; tracked, with the packaged subset listed in `.agents/skills/SHIPPED.txt`
 
 Repo-local runtime state:
 

@@ -8,7 +8,7 @@ These are the repo-local extension directories you are expected to read and edit
 
 - `src/numereng/features/models/custom_models/`: built-in and default-discovered custom model wrappers
 - `src/numereng/agentic_research/programs/PROGRAM.md`: agentic config-research prompt policy
-- `.agents/skills/`: local custom skills; gitignored by default
+- `.agents/skills/`: tracked agent skills; `.claude/skills` symlinks here for Claude Code
 
 ## Runtime Store
 

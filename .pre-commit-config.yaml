@@ -13,7 +13,7 @@ repos:
       - id: check-json
         exclude: |
           (?x)^(
-            \.codex/skills/experiment-ops/assets/training-config-template\.json
+            \.agents/skills/experiment-ops/assets/training-config-template\.json
             |src/numereng/assets/shipped_skills/experiment-ops/assets/training-config-template\.json
           )$
       - id: check-merge-conflict

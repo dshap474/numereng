@@ -1,0 +1,6 @@
+name: "skill:NumeraiDocs"
+
+interface:
+  display_name: "skill:NumeraiDocs"
+  short_description: "Search the local Numerai docs mirror and forum archive with source-aware routing."
+  default_prompt: "Use $numerai-docs to answer this from the local Numerai docs/forum mirror. Search narrowly, distinguish official docs from community material, and cite exact local paths."

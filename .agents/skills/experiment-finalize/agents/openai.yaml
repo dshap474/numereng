@@ -1,0 +1,6 @@
+name: "skill::ExperimentFinalize"
+
+interface:
+  display_name: "skill::ExperimentFinalize"
+  short_description: "Finalize scored numereng experiment reports."
+  default_prompt: "Use $experiment-finalize to verify a completed numereng experiment, finalize EXPERIMENT.md, and render EXPERIMENT.pack.md with a Run Ops-style run table."

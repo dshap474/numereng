@@ -1,0 +1,7 @@
+# Skills packaged into the numereng wheel under src/numereng/assets/shipped_skills/.
+# One skill id per line; everything else under .agents/skills/ is tracked but not packaged.
+experiment-design
+experiment-ops
+model-implement-custom
+numerai-api-ops
+utility-store-ops

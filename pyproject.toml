@@ -85,7 +85,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    ".codex/**",
+    ".agents/**",
+    ".claude/**",
     "docs/numerai/**",
     "src/numereng/platform/remotes/profiles/*.yaml",
     "src/numereng/platform/remotes/profiles/*.yml",

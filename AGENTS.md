@@ -44,7 +44,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `src/numereng/agentic_research/programs/PROGRAM.md`: prompt policy for config-mutation research
 - `src/numereng/agentic_research/programs/`: custom agentic research programs (local-only except `PROGRAM.md`)
 - `src/numereng/platform/remotes/profiles/`: local-only remote profile directory; keep real YAMLs gitignored
-- `.agents/skills/`: local custom skills; gitignored
+- `.agents/skills/`: tracked agent skills; packaged subset listed in `.agents/skills/SHIPPED.txt`
 
 ## Local-Only Surfaces
 - `.numereng/`

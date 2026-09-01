@@ -14,7 +14,7 @@ Repo-local extension roots live under:
 
 - `src/numereng/features/models/custom_models/`
 - `src/numereng/agentic_research/programs/PROGRAM.md`
-- `.agents/skills/` for local custom skills
+- `.agents/skills/` for tracked agent skills
 
 ## Store Roots
 
