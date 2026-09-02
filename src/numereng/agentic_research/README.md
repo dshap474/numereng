@@ -73,9 +73,10 @@ run ends on the round budget, a human stop, or that bail — there is no stop ac
 
 ## The retry
 
-A boundary rejection and a duplicate config are both errors the model can fix in seconds. The
-rejection token comes back once as `context.last_error`, and the model re-proposes inside the same
-round. If the second proposal also fails, the round is recorded as failed (or skipped, for a
+A boundary rejection, a duplicate config, and a response the parser cannot read are all errors the
+model can fix in seconds. The token comes back once as `context.last_error` — the boundary's token,
+or `llm_response_invalid:<reason>` for an unparseable response — and the model re-proposes inside
+the same round. If the second attempt also fails, the round is recorded as failed (or skipped, for a
 duplicate) and counted as before. The first token lands in the round memo's `## Machine Result`
 block as `retry: <token>`.
 

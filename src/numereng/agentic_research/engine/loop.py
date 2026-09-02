@@ -480,11 +480,11 @@ def _resolve_believed_best(
 def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) -> ar_types.ResearchRoundResult:
     """Decide, execute, finalize - with one retry when the boundary refused every seed.
 
-    A rejection or a duplicate burns a round on an error the model can fix in seconds, so the token
-    goes back as `last_error`, the context is rebuilt, and the model is asked once more. It is never
-    repaired here, a second failure is recorded and counted exactly as a single failure was, and a
-    partial seed failure is not a refused round and never retries. Anything escaping decide or
-    execute becomes one failed outcome through the same finalize.
+    A rejection, a duplicate, or an unparseable response burns a round on an error the model can fix
+    in seconds, so the token goes back as `last_error`, the context is rebuilt, and the model is
+    asked once more. It is never repaired here, a second failure is recorded and counted exactly as a
+    single failure was, and a partial seed failure is not a refused round and never retries. Anything
+    escaping decide or execute becomes one failed outcome through the same finalize.
     """
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
     round_number = ar_types.as_int(state.get("next_round_number"), default=1)
@@ -499,7 +499,16 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     retry_token: str | None = None
     try:
         for attempt in (1, 2):
-            decision, memo, experiment_markdown = _decide(root, experiment, state, report, round_label, baseline)
+            try:
+                decision, memo, experiment_markdown = _decide(root, experiment, state, report, round_label, baseline)
+            except AgenticResearchValidationError as exc:
+                # A response the parser refuses is the same kind of error as a refused proposal, so
+                # it spends the round's one retry instead of the whole round.
+                if baseline or attempt == 2:
+                    raise
+                retry_token = f"llm_response_invalid:{exc}"
+                state["last_error"] = retry_token
+                continue
             outcomes = _execute_round(root, experiment, state, round_number, round_label, action, decision)
             if baseline or attempt == 2 or not all(outcome.get("rejected") for outcome in outcomes):
                 break

@@ -382,13 +382,14 @@ def test_llm_transport_failure_writes_debug_dumps(tmp_path: Path, monkeypatch: p
 def test_llm_broken_json_fails_round_and_preserves_raw_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Contract: a parse failure is a failed round (counts toward the bail), writes
-    no config, and preserves the raw response durably for postmortem."""
+    """Contract: a parse failure on both attempts is a failed round (counts toward the
+    bail), writes no config, and preserves the raw response durably for postmortem."""
     store_root, experiment_dir = _setup_experiment(tmp_path)
     seams = _install_seams(monkeypatch, store_root, experiment_dir)
     seams.add_row("run-0", 0.10)
     raw = "```json\n{ this is not json"
-    seams.llm_queue = [raw]
+    # The first parse failure spends the round's one retry; the second ends the round.
+    seams.llm_queue = [raw, raw]
 
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=1)
 
@@ -409,7 +410,8 @@ def test_llm_schema_violations_fail_rounds_and_accumulate_toward_bail(
 ) -> None:
     """Contract: structurally-valid JSON violating the decision schema (missing
     decision_form; forbidden `stop` action) fails the round with a stable token,
-    writes no config, and counts toward the consecutive-failure bail."""
+    writes no config, and counts toward the consecutive-failure bail. Each round
+    spends its one retry on the first violation, so the second one ends it."""
     store_root, experiment_dir = _setup_experiment(tmp_path)
     seams = _install_seams(monkeypatch, store_root, experiment_dir)
     seams.add_row("run-0", 0.10)
@@ -420,7 +422,7 @@ def test_llm_schema_violations_fail_rounds_and_accumulate_toward_bail(
             "round_markdown": "# r Memo",
         }
     )
-    seams.llm_queue = [missing_form, stop_action]
+    seams.llm_queue = [missing_form, missing_form, stop_action, stop_action]
 
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
 

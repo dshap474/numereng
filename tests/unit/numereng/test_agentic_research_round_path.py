@@ -145,6 +145,11 @@ def _rejected_response(*, value: object = "downsampled") -> str:
     return _response(path="data.dataset_variant", value=value)
 
 
+# A response the parser refuses (trailing comma), the failure that cost two of eight rounds in
+# 2026-08-31_nn-e60-agentic-hillclimb before the parse retry existed.
+UNPARSEABLE_RESPONSE = '{"decision_form": {"action": "run",}}'
+
+
 # --------------------------------------------------------------------------- #
 # Seams (the five approved monkeypatch points on loop)
 # --------------------------------------------------------------------------- #
@@ -419,6 +424,68 @@ def test_two_rejections_record_one_failed_round_and_increment_the_counter(
     memo = _memo(experiment_dir, "r002")
     assert "- status: failed" in memo
     assert "- retry: agentic_research_change_path_not_allowed:data.dataset_variant" in memo
+
+
+def test_unparseable_response_then_valid_one_records_a_single_completed_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10), ("run-2", 0.15)]
+    seams.llm_queue = [UNPARSEABLE_RESPONSE, _response(value=0.02)]
+
+    result = _run(store_root, max_rounds=2)
+
+    # A response the parser refuses spends the retry, not the round.
+    assert seams.llm_queue == []
+    assert len(seams.llm_prompts) == 2
+    assert "llm_response_invalid:agentic_research_json_invalid" in seams.llm_prompts[1]
+    assert [r.round_number for r in result.rounds] == [1, 2]  # type: ignore[attr-defined]
+    assert [r.status for r in result.rounds] == ["completed", "completed"]  # type: ignore[attr-defined]
+    entries = _entries(experiment_dir)
+    assert [entry["round"] for entry in entries] == [1, 2]
+    assert entries[1]["run_id"] == "run-2"
+    assert "error" not in entries[1]
+    assert seams.train_queue == []
+
+    memo = _memo(experiment_dir, "r002")
+    assert "- retry: llm_response_invalid:agentic_research_json_invalid" in memo
+    assert "- status: completed" in memo
+
+    # The failed attempt still leaves its prompt and raw response on disk.
+    rounds_dir = _agentic_dir(experiment_dir) / "rounds"
+    assert (rounds_dir / "r002.debug.prompt.md").is_file()
+    assert (rounds_dir / "r002.debug.llm_response.txt").read_text(encoding="utf-8") == UNPARSEABLE_RESPONSE
+
+    state = _state(experiment_dir)
+    assert state["failed_rounds_counter"] == 0
+    assert state["total_rounds_completed"] == 2
+
+
+def test_two_unparseable_responses_record_one_failed_round(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store_root, experiment_dir = _setup_experiment(tmp_path)
+    seams = _install_seams(monkeypatch, store_root, experiment_dir)
+    seams.train_queue = [("run-1", 0.10)]
+    seams.llm_queue = [UNPARSEABLE_RESPONSE, UNPARSEABLE_RESPONSE]
+
+    result = _run(store_root, max_rounds=2)
+
+    assert seams.llm_queue == []
+    assert [r.status for r in result.rounds] == ["completed", "failed"]  # type: ignore[attr-defined]
+    entries = _entries(experiment_dir)
+    # One failed line for the round, not one per attempt.
+    assert [entry["round"] for entry in entries] == [1, 2]
+    failed = entries[1]
+    assert failed["status"] == "failed"
+    assert failed["config"] is None
+    assert "agentic_research_json_invalid" in str(failed["error"])
+
+    # A second parse failure counts exactly as one failure, like a second rejection.
+    state = _state(experiment_dir)
+    assert state["failed_rounds_counter"] == 1
+    assert state["total_rounds_completed"] == 1
+    assert "agentic_research_json_invalid" in str(state["last_error"])
+    assert "- retry: llm_response_invalid:agentic_research_json_invalid" in _memo(experiment_dir, "r002")
 
 
 def test_duplicate_on_both_attempts_soft_skips_without_incrementing_the_counter(

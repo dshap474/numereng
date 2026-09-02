@@ -168,9 +168,9 @@ Return exactly one JSON object and nothing else.
 }
 ```
 
-If the harness rejects your proposal, or it duplicates a config already recorded, the rejection
-token comes back to you once as `last_error` and you may re-propose before the round is recorded as
-failed.
+If the harness rejects your proposal, it duplicates a config already recorded, or the parser cannot
+read your response, the token comes back to you once as `last_error` and you may re-propose before
+the round is recorded as failed.
 
 ## Context
 
@@ -197,7 +197,8 @@ Every key is bounded; nothing grows with round count.
 - `scout_digest`, `scout_digest_updated_at`: an advisory digest a human may refresh during the run,
   or `null`. It informs which legal move you pick; it overrides nothing.
 - `configs`: the champion plus the last forty configs, projected onto the mutable paths.
-- `last_error`: the rejection token from your previous proposal, if any.
+- `last_error`: why your previous proposal was refused, if any: a rejection or duplicate token, or
+  `llm_response_invalid:<reason>` when the parser could not read your response.
 
 ```json
 {{CONTEXT_JSON}}
