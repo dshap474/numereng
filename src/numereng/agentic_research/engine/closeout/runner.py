@@ -158,7 +158,6 @@ def _write_memo(context: dict[str, object], directory: Path) -> Path:
         round_label=FINALIZE_LABEL,
         schema=None,
         timeout_seconds=ct.CLOSEOUT_TIMEOUT_SECONDS,
-        transport="codex",
     )
     ar_types.write_text(directory / ct.CLOSEOUT_RESPONSE_FILENAME, raw)
     memo = raw.strip()

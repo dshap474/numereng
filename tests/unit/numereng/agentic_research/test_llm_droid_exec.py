@@ -1,8 +1,7 @@
-"""Droid-exec transport contract for the agentic-research LLM layer.
+"""Backend contract for the agentic-research LLM layer.
 
-Pins the `droid exec` provider path added alongside codex-exec and openrouter:
-dispatch selection by ACTIVE_MODEL_SOURCE, command construction, JSON envelope
-parsing, and the stable error tokens for each failure mode. `subprocess.run` is
+Pins what ACTIVE_MODEL_SOURCE selects, how the `droid exec` command is built, how its JSON
+envelope is parsed, and the stable error token for each failure mode. `subprocess.run` is
 mocked throughout — no droid binary is required.
 """
 
@@ -70,14 +69,25 @@ def _run_ok(captured: dict[str, object], stdout: str) -> object:
 # --------------------------------------------------------------------------- #
 
 
-def test_droid_source_dispatches_on_auto_and_codex_transports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm, "load_openrouter_config", _droid_config)
+def test_active_model_source_picks_the_backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The config alone decides: droid-exec dispatches to droid, anything else to codex."""
     calls: list[str] = []
     monkeypatch.setattr(llm, "_call_droid_exec", lambda **kwargs: calls.append("droid") or "raw")
-    for transport in ("auto", "codex"):
-        raw, source = llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1", transport=transport)
-        assert (raw, source) == ("raw", "droid-exec:claude-fable-5:high")
-    assert calls == ["droid", "droid"]
+    monkeypatch.setattr(llm, "_call_codex_exec", lambda **kwargs: calls.append("codex") or "raw")
+
+    monkeypatch.setattr(llm, "load_openrouter_config", _droid_config)
+    assert llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1") == (
+        "raw",
+        "droid-exec:claude-fable-5:high",
+    )
+
+    codex_config = OpenRouterConfig(active_model_source="codex-exec", active_model="gpt-5.5")
+    monkeypatch.setattr(llm, "load_openrouter_config", lambda: codex_config)
+    assert llm.call_research_llm(prompt="p", artifact_dir=tmp_path, round_label="r1") == (
+        "raw",
+        "codex-exec:gpt-5.5",
+    )
+    assert calls == ["droid", "codex"]
 
 
 # --------------------------------------------------------------------------- #

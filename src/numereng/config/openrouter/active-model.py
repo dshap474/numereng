@@ -1,6 +1,6 @@
 """
 Set ACTIVE_MODEL_SOURCE to one of:
-ACTIVE_MODEL_SOURCE=codex-exec|openrouter|droid-exec
+ACTIVE_MODEL_SOURCE=codex-exec|droid-exec
 
 ACTIVE_MODEL_ROTATION (optional) cycles research rounds through (model, effort)
 pairs by round number; ACTIVE_MODEL/ACTIVE_MODEL_REASONING_EFFORT remain the

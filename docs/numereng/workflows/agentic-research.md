@@ -85,7 +85,7 @@ Strategy (what to try, when to seed-confirm, when to diversify, what to believe)
 - Codex CLI runs with a JSON output schema so successful responses contain `decision_form` and `round_markdown`.
 - Candidate configs must validate as `TrainingConfig`.
 - A rejected proposal or a duplicate config comes back to the model once as `context.last_error` for one in-round retry; the round is only recorded as failed (or skipped, for a duplicate) if the second proposal fails too. The round memo's `## Machine Result` block carries the first token as `retry: <token>`.
-- Planner backend selection is controlled by `ACTIVE_MODEL_SOURCE=codex-exec|openrouter|droid-exec`.
+- Planner backend selection is controlled by `ACTIVE_MODEL_SOURCE=codex-exec|droid-exec`.
 - `PROGRAM.md` must keep the `{{STRATEGY}}` and `{{CONTEXT_JSON}}` placeholders exactly once each, and a brief must contain neither; the run refuses to start otherwise.
 - `decision_form.seeds` (optional, 1 to 3 integers) trains the same child recipe once per seed inside one round; the seed is written to the experiment's `agentic_research_seed_path`, which must be an allowed change path.
 - `research run` still relies on the normal training/scoring stack, so broken configs or missing datasets fail the same way they would in manual workflows.

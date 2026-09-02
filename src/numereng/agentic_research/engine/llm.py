@@ -13,8 +13,7 @@ from pathlib import Path
 
 from numereng.agentic_research.engine import memory
 from numereng.agentic_research.engine import types as ar_types
-from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterConfig, load_openrouter_config
-from numereng.platform.errors import OpenRouterClientError
+from numereng.platform.clients.openrouter import OpenRouterConfig, load_openrouter_config
 
 # --------------------------------------------------------------------------- #
 # Round decision schema
@@ -83,7 +82,6 @@ def call_research_llm(
     round_label: str,
     schema: dict[str, object] | None = LLM_RESPONSE_SCHEMA,
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
-    transport: str = "auto",
 ) -> tuple[str, str]:
     """Call the active research LLM; return ``(response_text, source)``.
 
@@ -91,18 +89,14 @@ def call_research_llm(
     call (the closeout memo), which drops codex's ``--output-schema`` and droid's appended
     JSON-Schema instruction so the model answers in markdown instead of a JSON envelope.
 
-    ``transport`` only gates the openrouter path: ``"auto"`` allows openrouter when it is the
-    active model source, anything else (e.g. ``"codex"``) excludes it. The remaining choice is
-    made by the config alone — ``active_model_source == "droid-exec"`` dispatches to droid-exec,
-    otherwise codex-exec. So ``transport="codex"`` does not force codex.
+    The backend is the config's choice alone: ``active_model_source == "droid-exec"`` dispatches
+    to droid-exec, otherwise codex-exec.
 
     When ``ACTIVE_MODEL_ROTATION`` is configured, research rounds (``round_label`` matching
     ``rNNN``) cycle through it by round number; non-round callers (e.g. closeout stages) keep
     the static active model. The returned source carries the resolved model for attribution.
     """
     config = load_openrouter_config().for_round(_research_round_number(round_label))
-    if transport == "auto" and config.active_model_source == "openrouter":
-        return _call_openrouter(prompt, config=config), _source_label("openrouter", config)
     if config.active_model_source == "droid-exec":
         return _call_droid_exec(
             prompt=prompt,
@@ -134,28 +128,6 @@ def _source_label(backend: str, config: OpenRouterConfig) -> str:
     if config.active_model_reasoning_effort is None:
         return f"{backend}:{config.active_model}"
     return f"{backend}:{config.active_model}:{config.active_model_reasoning_effort}"
-
-
-def _call_openrouter(prompt: str, *, config: OpenRouterConfig) -> str:
-    payload: dict[str, object] = {
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-    }
-    if config.active_model_reasoning_effort is not None:
-        payload["reasoning"] = {"effort": config.active_model_reasoning_effort}
-    try:
-        response = OpenRouterClient(timeout_seconds=180.0).chat_completions(payload=payload)
-    except OpenRouterClientError as exc:
-        raise ar_types.AgenticResearchError(str(exc)) from exc
-    choices = response.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise ar_types.AgenticResearchError("agentic_research_openrouter_response_missing")
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str) or not content.strip():
-        raise ar_types.AgenticResearchError("agentic_research_openrouter_content_missing")
-    return content
 
 
 def _call_codex_exec(

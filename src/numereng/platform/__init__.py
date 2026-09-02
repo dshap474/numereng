@@ -1,6 +1,5 @@
 """Shared infrastructure surface for numereng."""
 
-from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterStreamEvent
 from numereng.platform.errors import (
     ForumScraperError,
     NumeraiClientError,
@@ -20,9 +19,7 @@ __all__ = [
     "ForumScraperError",
     "NumeraiClient",
     "NumeraiClientError",
-    "OpenRouterClient",
     "OpenRouterClientError",
-    "OpenRouterStreamEvent",
     "PackageError",
     "RemoteTargetError",
     "SshRemoteTargetProfile",
