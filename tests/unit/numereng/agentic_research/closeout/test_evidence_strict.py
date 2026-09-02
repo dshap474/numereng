@@ -24,9 +24,6 @@ def test_build_evidence_happy_path(closeout_fixture: CloseoutFixture) -> None:
     assert summary["believed_best"]["config"] == "config_001.json"
     assert summary["totals"]["completed"] == 3
     assert summary["sweep_abandoned"]["count"] == 1
-    # runs are not pulled in unit fixtures: enrichment is marked, never silently dropped.
-    for run_metrics in summary["metrics_enrichment"].values():
-        assert all(value == "unavailable: run not pulled" for value in run_metrics.values())
 
 
 def test_malformed_journal_line_raises(closeout_fixture: CloseoutFixture) -> None:

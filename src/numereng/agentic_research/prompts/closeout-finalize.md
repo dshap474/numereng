@@ -26,8 +26,7 @@ strong, positive but marginal, mixed, weak, or missing. FNC is positive, mixed, 
 Drawdown is clean, target-dependent, or warning. Exposure is measured, missing, or a promotion gate.
 Call out limited coverage, missing full summaries, target preselection, feature-set differences,
 recipe changes, and post-selection effects. Never write an unqualified "no conflict" when a
-supporting metric is small, mixed, seed-sensitive, or coverage-limited, and explain any reading that
-rests on `mmc_coverage_ratio_rows`.
+supporting metric is small, mixed, seed-sensitive, or coverage-limited.
 
 ## The Memo
 

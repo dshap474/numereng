@@ -4,9 +4,8 @@ The in-run readers (``memory.journal_all``, ``aggregate.load_config_cache``,
 ``aggregate.aggregate_recipes``) are lenient: they silently drop malformed journal lines, skip
 invalid configs, and ignore completed entries without a config/metric. Closeout cannot distill
 corrupted evidence, so this module re-parses the journal strictly and computes the deterministic
-run-record summaries the memo depends on. The output survives context
-truncation, so the real distillation signal (sweep ranges, wall-time bands, failure archaeology)
-is never lost to a size guard.
+run-record summaries the memo depends on. The output survives context truncation, so the real
+distillation signal (sweep ranges, failure archaeology) is never lost to a size guard.
 
 USAGE:
     from numereng.agentic_research.engine.closeout import evidence
@@ -17,7 +16,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from statistics import median
 
 from numereng.agentic_research.engine import aggregate, boundary, memory
 from numereng.agentic_research.engine import types as ar_types
@@ -30,11 +28,7 @@ from numereng.features.experiments import (
     seal_experiment_holdout,
 )
 from numereng.features.scoring.run_service import score_run_eras
-from numereng.features.training.repo import resolve_metrics_path, resolve_run_manifest_path
-
-# Fixed enrichment metric set, dotted into runs/<run_id>/metrics.json (shape verified 2026-07-13).
-_ENRICHMENT_METRIC_KEYS = ("bmc.mean", "corr.mean", "mmc.mean", "cwmm.mean", "fnc.mean", "bmc.max_drawdown")
-_LEADERBOARD_ENRICH_LIMIT = 5
+from numereng.features.training.repo import resolve_run_manifest_path
 
 
 # --------------------------------------------------------------------------- #
@@ -76,63 +70,6 @@ def _validate_completed_configs(
 # --------------------------------------------------------------------------- #
 # Deterministic summaries
 # --------------------------------------------------------------------------- #
-def _wall_time_stats(values: list[float]) -> dict[str, object]:
-    if not values:
-        return {"count": 0}
-    ordered = sorted(values)
-    idx = max(0, int(round(0.9 * (len(ordered) - 1))))
-    return {
-        "count": len(ordered),
-        "min": ordered[0],
-        "max": ordered[-1],
-        "mean": sum(ordered) / len(ordered),
-        "median": median(ordered),
-        "p90": ordered[idx],
-    }
-
-
-def _first_int(params: dict[str, object], keys: tuple[str, ...]) -> int | None:
-    """First key in ``keys`` whose value is a non-bool number, coerced to int."""
-    for key in keys:
-        value = params.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return int(value)
-    return None
-
-
-def _tree_depth_tier(config: dict[str, object]) -> str:
-    model = config.get("model")
-    params = model.get("params") if isinstance(model, dict) else None
-    params = params if isinstance(params, dict) else {}
-    trees = _first_int(params, ("n_estimators", "num_iterations", "num_boost_round", "iterations"))
-    depth = _first_int(params, ("max_depth", "depth"))
-    if trees is None and depth is None:
-        return "unknown"
-    return f"trees={trees if trees is not None else 'na'};depth={depth if depth is not None else 'na'}"
-
-
-def _wall_time_summary(
-    parsed: list[tuple[int, dict[str, object]]], configs: dict[str, dict[str, object]]
-) -> dict[str, object]:
-    overall: list[float] = []
-    by_tier: dict[str, list[float]] = {}
-    for _, entry in parsed:
-        if entry.get("status") != "completed":
-            continue
-        wall = ar_types.optional_float(entry.get("wall_seconds"))
-        if wall is None:
-            continue
-        overall.append(wall)
-        name = entry.get("config")
-        config = configs.get(name) if isinstance(name, str) else None
-        tier = _tree_depth_tier(config) if isinstance(config, dict) else "unknown"
-        by_tier.setdefault(tier, []).append(wall)
-    return {
-        "overall": _wall_time_stats(overall),
-        "by_tier": {tier: _wall_time_stats(values) for tier, values in sorted(by_tier.items())},
-    }
-
-
 def _failure_taxonomy(parsed: list[tuple[int, dict[str, object]]]) -> dict[str, int]:
     taxonomy: dict[str, int] = {}
     for _, entry in parsed:
@@ -219,44 +156,6 @@ def _rounds_table(parsed: list[tuple[int, dict[str, object]]]) -> list[dict[str,
             }
         )
     return table
-
-
-# --------------------------------------------------------------------------- #
-# Metrics enrichment (optional; structural "unavailable" markers, never silent omission)
-# --------------------------------------------------------------------------- #
-def _enrich_run(runs_dir: Path, run_id: str) -> dict[str, object]:
-    metrics_path = resolve_metrics_path(runs_dir / run_id)
-    try:
-        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {key: "unavailable: run not pulled" for key in _ENRICHMENT_METRIC_KEYS}
-    result: dict[str, object] = {}
-    for key in _ENRICHMENT_METRIC_KEYS:
-        value = ar_types.get_dotted(payload, key)
-        result[key] = (
-            value if isinstance(value, (int, float)) and not isinstance(value, bool) else "unavailable: metric absent"
-        )
-    return result
-
-
-def _collect_enrichment_run_ids(
-    *,
-    believed_best: aggregate.RecipeGroup | None,
-    champion: dict[str, object] | None,
-    leaderboard: list[aggregate.RecipeGroup],
-) -> list[str]:
-    run_ids: list[str] = []
-    if believed_best is not None:
-        run_ids.extend(believed_best.run_ids)
-    if isinstance(champion, dict) and isinstance(champion.get("run_id"), str):
-        run_ids.append(str(champion["run_id"]))
-    for group in leaderboard[:_LEADERBOARD_ENRICH_LIMIT]:
-        run_ids.extend(group.run_ids)
-    ordered: list[str] = []
-    for run_id in run_ids:
-        if run_id and run_id not in ordered:
-            ordered.append(run_id)
-    return ordered
 
 
 # --------------------------------------------------------------------------- #
@@ -373,7 +272,6 @@ def _run_era_order(runs_dir: Path, run_id: str) -> tuple[str, ...]:
 # --------------------------------------------------------------------------- #
 def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], store_root: Path) -> dict[str, object]:
     """Strict, deterministic evidence build. Raises ``CloseoutError`` on any evidence corruption."""
-    runs_dir = store_root / "runs"
     journal_path = memory.journal_path(experiment)
     config_dir = memory.configs_dir(experiment)
     parsed = _parse_journal_strict(journal_path)
@@ -395,9 +293,6 @@ def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], st
         raise ct.CloseoutError(ct.ERR_BELIEVED_BEST_UNRESOLVED)
 
     champion = state.get("champion") if isinstance(state.get("champion"), dict) else None
-    enrichment_run_ids = _collect_enrichment_run_ids(
-        believed_best=believed_best_group, champion=champion, leaderboard=leaderboard
-    )
     completed = sum(1 for e in entries if e.get("status") == "completed")
     failed = sum(1 for e in entries if e.get("status") == "failed")
     skipped = sum(1 for e in entries if e.get("status") == "skipped")
@@ -415,14 +310,12 @@ def build_evidence(*, experiment: ExperimentRecord, state: dict[str, object], st
         "champion": champion,
         "leaderboard": [_leaderboard_row(group) for group in leaderboard],
         "observed_seed_noise": aggregate.observed_seed_noise(leaderboard),
-        "wall_time": _wall_time_summary(parsed, configs),
         "failure_taxonomy": _failure_taxonomy(parsed),
         "coverage": _coverage(parsed),
         "parentage": _parentage(parsed),
         "sweep_abandoned": _sweep_abandoned(experiment),
         "duplicate_skips": skipped,
         "rounds_table": _rounds_table(parsed),
-        "metrics_enrichment": {run_id: _enrich_run(runs_dir, run_id) for run_id in enrichment_run_ids},
         "holdout": _open_holdout(experiment=experiment, believed_best=believed_best_group, store_root=store_root),
         "totals": {
             "journal_entries": len(entries),
