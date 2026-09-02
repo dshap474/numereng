@@ -3626,12 +3626,8 @@ def test_cli_research_commands_success(
             total_rounds_completed=1,
             last_checkpoint="round_completed",
             stop_reason=None,
-            best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
+            champion={"config": "config_004.json", "run_id": "run-4", "metric": 0.123, "round": 1},
             agentic_research_dir="/tmp/agentic_research",
-            state_path="/tmp/agentic_research/state.json",
-            trace_path="/tmp/agentic_research/trace.jsonl",
-            decision_path="/tmp/agentic_research/rounds/decision.json",
-            strategy_path="/tmp/agentic_research/STRATEGY.md",
             closeout_memo="absent",
         ),
     )
@@ -3645,7 +3641,7 @@ def test_cli_research_commands_success(
             total_rounds_completed=2,
             last_checkpoint="stopped",
             stop_reason="max_rounds_reached",
-            best_overall=api_module.ResearchBestRunResponse(run_id="run-4"),
+            champion={"config": "config_004.json", "run_id": "run-4", "metric": 0.123, "round": 1},
             rounds=[
                 api_module.ResearchRoundResponse(
                     round_number=2,

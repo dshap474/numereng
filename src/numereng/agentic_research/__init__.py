@@ -12,7 +12,6 @@ from numereng.agentic_research.engine.loop import (
 from numereng.agentic_research.engine.types import (
     AgenticResearchError,
     AgenticResearchValidationError,
-    ResearchBestRun,
     ResearchRoundResult,
     ResearchRunResult,
     ResearchStatusResult,
@@ -22,7 +21,6 @@ __all__ = [
     "AgenticResearchError",
     "AgenticResearchValidationError",
     "CloseoutResult",
-    "ResearchBestRun",
     "ResearchRoundResult",
     "ResearchRunResult",
     "ResearchStatusResult",

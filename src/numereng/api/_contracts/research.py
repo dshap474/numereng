@@ -10,17 +10,6 @@ from numereng.api._contracts.shared import (
 )
 
 
-class ResearchBestRunResponse(BaseModel):
-    experiment_id: str | None = None
-    run_id: str | None = None
-    bmc_last_200_eras_mean: float | None = None
-    bmc_mean: float | None = None
-    corr_mean: float | None = None
-    mmc_mean: float | None = None
-    cwmm_mean: float | None = None
-    updated_at: str | None = None
-
-
 class ResearchRoundResponse(BaseModel):
     round_number: int
     round_label: str
@@ -46,12 +35,8 @@ class ResearchStatusResponse(BaseModel):
     last_round_label: str | None = None
     last_run_id: str | None = None
     stop_reason: str | None = None
-    best_overall: ResearchBestRunResponse
+    champion: dict[str, object] | None = None
     agentic_research_dir: str
-    state_path: str
-    trace_path: str
-    decision_path: str
-    strategy_path: str
     closeout_memo: str
 
 
@@ -67,7 +52,7 @@ class ResearchRunResponse(BaseModel):
     total_rounds_completed: int
     last_checkpoint: str
     stop_reason: str | None = None
-    best_overall: ResearchBestRunResponse
+    champion: dict[str, object] | None = None
     rounds: list[ResearchRoundResponse] = Field(default_factory=list)
     interrupted: bool = False
 
@@ -85,7 +70,6 @@ class ResearchCloseoutResponse(BaseModel):
 
 
 __all__ = [
-    "ResearchBestRunResponse",
     "ResearchCloseoutRequest",
     "ResearchCloseoutResponse",
     "ResearchRoundResponse",

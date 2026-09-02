@@ -28,11 +28,12 @@ def _print_research_status_table(payload: api.ResearchStatusResponse) -> None:
     print(f"last_round_label: {payload.last_round_label or 'none'}")
     print(f"last_run_id: {payload.last_run_id or 'none'}")
     print(f"stop_reason: {payload.stop_reason or 'none'}")
-    print(f"best_run_id: {payload.best_overall.run_id or 'none'}")
-    if payload.best_overall.bmc_last_200_eras_mean is not None:
-        print(f"best_bmc_last_200_eras_mean: {payload.best_overall.bmc_last_200_eras_mean:.6f}")
+    champion = payload.champion or {}
+    metric = champion.get("metric")
+    print(f"champion_config: {champion.get('config') or 'none'}")
+    print(f"champion_run_id: {champion.get('run_id') or 'none'}")
+    print(f"champion_metric: {metric:.6f}" if isinstance(metric, float) else "champion_metric: none")
     print(f"agentic_research_dir: {payload.agentic_research_dir}")
-    print(f"strategy_path: {payload.strategy_path}")
     print(f"closeout_memo: {payload.closeout_memo}")
 
 

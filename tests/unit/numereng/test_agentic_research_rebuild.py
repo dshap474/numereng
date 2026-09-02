@@ -443,7 +443,7 @@ def test_loop_happy_path_baseline_then_mutation_round(tmp_path: Path, monkeypatc
 
     assert [r.action for r in result.rounds] == ["baseline", "run"]
     assert [r.status for r in result.rounds] == ["completed", "completed"]
-    assert result.best_overall.run_id == "run-2"
+    assert result.champion is not None and result.champion["run_id"] == "run-2"
     state = json.loads(_state_path(experiment_dir).read_text(encoding="utf-8"))
     assert state["champion"]["run_id"] == "run-2"
     assert state["champion"]["metric"] == pytest.approx(0.15)

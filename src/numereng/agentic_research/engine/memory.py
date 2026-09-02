@@ -6,7 +6,6 @@ import json
 import re
 from collections.abc import Iterator
 from copy import deepcopy
-from dataclasses import asdict
 from pathlib import Path
 
 from numereng.agentic_research.engine import types as ar_types
@@ -29,7 +28,6 @@ _STATE_DEFAULTS: dict[str, object] = {
     "champion": None,
     "believed_best": None,
     "believed_best_changed_round": None,
-    "best_overall": None,
     "last_error": None,
     "last_heartbeat": None,
 }
@@ -38,6 +36,8 @@ _STATE_DEFAULTS: dict[str, object] = {
 def apply_state_defaults(state: dict[str, object]) -> dict[str, object]:
     for key, value in _STATE_DEFAULTS.items():
         state.setdefault(key, deepcopy(value))
+    # `best_overall` was a report-derived duplicate of `champion`; older state files still carry it.
+    state.pop("best_overall", None)
     state["schema_version"] = ar_types.STATE_SCHEMA_VERSION
     return state
 
@@ -47,7 +47,6 @@ def initial_state(experiment: ExperimentRecord) -> dict[str, object]:
     return apply_state_defaults(
         {
             "experiment_id": experiment.experiment_id,
-            "best_overall": asdict(ar_types.ResearchBestRun()),
             "created_at": now,
             "updated_at": now,
         }

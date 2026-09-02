@@ -44,7 +44,7 @@ sync carries. An experiment with no brief falls back to the tracked generic
 - `### Confirmation And Handoff` — how a candidate is confirmed and what the run hands forward.
 
 Substrate facts for the model family — legal shapes, enum values, host limits — belong in the brief
-too. `research status` reports the resolved `strategy_path`.
+too.
 
 # Running The Loop
 

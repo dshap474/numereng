@@ -252,23 +252,6 @@ def row_for_run(report: ExperimentReport | None, run_id: str) -> ExperimentRepor
     return None
 
 
-def best_run_from_report(report: ExperimentReport | None) -> ar_types.ResearchBestRun:
-    if report is not None:
-        for row in report.rows:
-            if getattr(row, ar_types.PRIMARY_METRIC_FIELD) is not None:
-                return ar_types.ResearchBestRun(
-                    experiment_id=report.experiment_id,
-                    run_id=row.run_id,
-                    bmc_last_200_eras_mean=row.bmc_last_200_eras_mean,
-                    bmc_mean=row.bmc_mean,
-                    corr_mean=row.corr_mean,
-                    mmc_mean=row.mmc_mean,
-                    cwmm_mean=row.cwmm_mean,
-                    updated_at=row.created_at,
-                )
-    return ar_types.ResearchBestRun()
-
-
 BENCHMARK_CORR_METRIC = "bmc_last_200_eras.avg_corr_with_benchmark"
 
 

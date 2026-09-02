@@ -66,18 +66,6 @@ class JournalLineError(AgenticResearchError):
 
 
 @dataclass(frozen=True)
-class ResearchBestRun:
-    experiment_id: str | None = None
-    run_id: str | None = None
-    bmc_last_200_eras_mean: float | None = None
-    bmc_mean: float | None = None
-    corr_mean: float | None = None
-    mmc_mean: float | None = None
-    cwmm_mean: float | None = None
-    updated_at: str | None = None
-
-
-@dataclass(frozen=True)
 class ResearchRoundResult:
     round_number: int
     round_label: str
@@ -100,12 +88,8 @@ class ResearchStatusResult:
     last_round_label: str | None
     last_run_id: str | None
     stop_reason: str | None
-    best_overall: ResearchBestRun
+    champion: dict[str, object] | None
     agentic_research_dir: Path
-    state_path: Path
-    trace_path: Path
-    decision_path: Path
-    strategy_path: Path
 
 
 @dataclass(frozen=True)
@@ -116,7 +100,7 @@ class ResearchRunResult:
     total_rounds_completed: int
     last_checkpoint: str
     stop_reason: str | None
-    best_overall: ResearchBestRun
+    champion: dict[str, object] | None
     rounds: tuple[ResearchRoundResult, ...]
     interrupted: bool = False
 

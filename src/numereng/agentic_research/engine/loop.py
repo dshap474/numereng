@@ -13,7 +13,6 @@ USAGE:
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory
@@ -90,10 +89,10 @@ def _apply_failure(state: dict[str, object], message: str | None) -> None:
         state["last_checkpoint"] = "consecutive_failures_bail"
 
 
-def _best_from_state(state: dict[str, object]) -> ar_types.ResearchBestRun:
-    stored = state.get("best_overall")
-    payload = stored if isinstance(stored, dict) else {}
-    return ar_types.ResearchBestRun(**{k: payload.get(k) for k in ar_types.ResearchBestRun.__dataclass_fields__})
+def _champion(state: dict[str, object]) -> dict[str, object] | None:
+    """The state's mechanically advanced champion `{config, run_id, metric, round}`, if any."""
+    champion = state.get("champion")
+    return dict(champion) if isinstance(champion, dict) else None
 
 
 def _run_result(
@@ -110,7 +109,7 @@ def _run_result(
         total_rounds_completed=ar_types.as_int(state.get("total_rounds_completed"), default=0),
         last_checkpoint=str(state.get("last_checkpoint") or "initialized"),
         stop_reason=ar_types.optional_str(state.get("stop_reason")),
-        best_overall=_best_from_state(state),
+        champion=_champion(state),
         rounds=tuple(rounds),
         interrupted=interrupted,
     )
@@ -223,7 +222,7 @@ def _execute_round(
             outcome.update({"config": config_path.name, "config_path": config_path})
             if seed is None:
                 outcome["seed"] = _config_seed(config_path, seed_path=seed_path)
-            report, run_id, metric, fnc, corr = _train_and_score(root, experiment, state, round_label, config_path)
+            run_id, metric, fnc, corr = _train_and_score(root, experiment, state, round_label, config_path)
             outcome.update(
                 {
                     "status": "completed",
@@ -232,7 +231,6 @@ def _execute_round(
                     "fnc": ar_types.optional_float(fnc),
                     "benchmark_corr": ar_types.optional_float(corr),
                     "is_champion": _advance_champion(state, round_number, config_path, run_id, metric),
-                    "report": report,
                 }
             )
         except (KeyboardInterrupt, SystemExit):
@@ -255,7 +253,7 @@ def _execute_round(
 
 def _train_and_score(
     root: Path, experiment: ExperimentRecord, state: dict[str, object], round_label: str, config_path: Path
-) -> tuple[ExperimentReport | None, str, float | None, float | None, float | None]:
+) -> tuple[str, float | None, float | None, float | None]:
     """Train one config, materialize deferred scoring, and read back its metrics from the report/disk."""
     reused = False
     with bind_launch_metadata(source="feature.agentic_research.train", operation_type="run", job_type="run"):
@@ -289,7 +287,6 @@ def _train_and_score(
     if fnc_value is None:
         fnc_value = context.metric_from_metrics(metrics, "fnc.mean")
     return (
-        report,
         trained.run_id,
         metric_value,
         fnc_value,
@@ -377,9 +374,6 @@ def _finalize_round(
         state["total_rounds_completed"] = ar_types.as_int(state.get("total_rounds_completed"), default=0) + 1
         state.update({"last_checkpoint": "round_completed", "last_error": None, "failed_rounds_counter": 0})
         state.update({"believed_best": believed, "believed_best_changed_round": changed_round})
-        report = next((o["report"] for o in reversed(outcomes) if o.get("report") is not None), None)
-        if report is not None:
-            state["best_overall"] = asdict(context.best_run_from_report(report))
     _save(experiment, state)
     config_path = primary.get("config_path")
     return ar_types.ResearchRoundResult(
@@ -545,7 +539,6 @@ def get_research_status(*, store_root: str | Path = ".numereng", experiment_id: 
     root = resolve_store_root(store_root)
     experiment = get_experiment(store_root=root, experiment_id=experiment_id)
     state = memory.load_state(memory.state_path(experiment)) or memory.initial_state(experiment)
-    auto_dir, journal = memory.agentic_dir(experiment), memory.journal_path(experiment)
     return ar_types.ResearchStatusResult(
         experiment_id=experiment.experiment_id,
         status=ar_types.status_value(state.get("status")),
@@ -555,12 +548,8 @@ def get_research_status(*, store_root: str | Path = ".numereng", experiment_id: 
         last_round_label=ar_types.optional_str(state.get("last_round_label")),
         last_run_id=ar_types.optional_str(state.get("last_run_id")),
         stop_reason=ar_types.optional_str(state.get("stop_reason")),
-        best_overall=context.best_run_from_report(_safe_report(root=root, experiment_id=experiment_id)),
-        agentic_research_dir=auto_dir,
-        state_path=auto_dir / ar_types.STATE_FILENAME,
-        trace_path=journal,
-        decision_path=journal,
-        strategy_path=memory.strategy_path(experiment),
+        champion=_champion(state),
+        agentic_research_dir=memory.agentic_dir(experiment),
     )
 
 

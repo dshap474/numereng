@@ -36,8 +36,9 @@ carries it with the experiment. Write it at experiment creation. An experiment w
 back to the tracked generic brief at `src/numereng/agentic_research/programs/STRATEGY.md`, whose
 headings a real brief follows.
 
-`uv run numereng research status --experiment-id <id> --format json` reports the resolved
-`strategy_path`. The tracked `src/numereng/agentic_research/README.md` explains the full flow.
+`uv run numereng research status --experiment-id <id> --format json` reports the loop's status,
+its champion, and whether the closeout memo exists. The tracked
+`src/numereng/agentic_research/README.md` explains the full flow.
 
 ## Run The Loop
 

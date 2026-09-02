@@ -23,7 +23,6 @@ import pytest
 from numereng.agentic_research import (
     AgenticResearchError,
     AgenticResearchValidationError,
-    ResearchBestRun,
     ResearchRoundResult,
     ResearchRunResult,
     ResearchStatusResult,
@@ -272,7 +271,7 @@ def test_public_api_signatures_and_result_fields() -> None:
         "total_rounds_completed",
         "last_checkpoint",
         "stop_reason",
-        "best_overall",
+        "champion",
         "rounds",
         "interrupted",
     }
@@ -287,32 +286,18 @@ def test_public_api_signatures_and_result_fields() -> None:
         "learning",
         "artifact_dir",
     }
-    assert {f.name for f in fields(ResearchBestRun)} == {
-        "experiment_id",
-        "run_id",
-        "bmc_last_200_eras_mean",
-        "bmc_mean",
-        "corr_mean",
-        "mmc_mean",
-        "cwmm_mean",
-        "updated_at",
-    }
-    # Subset only: log-file path fields (trace/decision) are expected to change
-    # when the memory artifacts consolidate to journal.jsonl.
-    status_fields = {f.name for f in fields(ResearchStatusResult)}
-    assert {
+    assert {f.name for f in fields(ResearchStatusResult)} == {
         "experiment_id",
         "status",
         "next_round_number",
         "total_rounds_completed",
+        "last_checkpoint",
         "last_round_label",
         "last_run_id",
         "stop_reason",
-        "best_overall",
+        "champion",
         "agentic_research_dir",
-        "state_path",
-        "strategy_path",
-    } <= status_fields
+    }
 
 
 def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
@@ -325,10 +310,9 @@ def test_status_synthesizes_blank_state(tmp_path: Path) -> None:
     assert status.next_round_number == 1
     assert status.total_rounds_completed == 0
     assert status.stop_reason is None
-    assert status.best_overall == ResearchBestRun()
-    assert status.state_path == experiment_dir / "agentic_research" / "state.json"
+    assert status.champion is None
     # Synthesized status must not create state on disk.
-    assert not status.state_path.exists()
+    assert not (experiment_dir / "agentic_research" / "state.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +387,7 @@ def test_llm_mutation_round_materializes_config_and_records_artifacts(
 # ---------------------------------------------------------------------------
 
 
-def test_best_overall_tracks_highest_metric_across_rounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_champion_tracks_highest_metric_across_rounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store_root, experiment_dir = _setup_experiment(tmp_path)
     seams = _install_seams(monkeypatch, store_root, experiment_dir)
     seams.add_row("run-0", 0.10)
@@ -413,10 +397,12 @@ def test_best_overall_tracks_highest_metric_across_rounds(tmp_path: Path, monkey
     result = run_research(store_root=store_root, experiment_id=EXPERIMENT_ID, max_rounds=2)
 
     assert [round_.run_id for round_ in result.rounds] == ["run-1", "run-2"]
-    assert result.best_overall.run_id == "run-1"
-    assert result.best_overall.bmc_last_200_eras_mean == pytest.approx(0.15)
+    assert result.champion is not None
+    assert result.champion["run_id"] == "run-1"
+    assert result.champion["metric"] == pytest.approx(0.15)
     status = get_research_status(store_root=store_root, experiment_id=EXPERIMENT_ID)
-    assert status.best_overall.run_id == "run-1"
+    assert status.champion is not None
+    assert status.champion["run_id"] == "run-1"
 
 
 # ---------------------------------------------------------------------------

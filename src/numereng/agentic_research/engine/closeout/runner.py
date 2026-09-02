@@ -101,7 +101,6 @@ def _state_summary(state: dict[str, object]) -> dict[str, object]:
         "champion",
         "believed_best",
         "believed_best_changed_round",
-        "best_overall",
         "last_error",
     )
     return {key: state.get(key) for key in keys if key in state}

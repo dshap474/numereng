@@ -10,7 +10,6 @@ from numereng.agentic_research import (
     closeout_memo_path,
 )
 from numereng.api.contracts import (
-    ResearchBestRunResponse,
     ResearchCloseoutRequest,
     ResearchCloseoutResponse,
     ResearchRoundResponse,
@@ -50,12 +49,8 @@ def research_status(request: ResearchStatusRequest) -> ResearchStatusResponse:
         last_round_label=result.last_round_label,
         last_run_id=result.last_run_id,
         stop_reason=result.stop_reason,
-        best_overall=_best_response(result.best_overall),
+        champion=result.champion,
         agentic_research_dir=str(result.agentic_research_dir),
-        state_path=str(result.state_path),
-        trace_path=str(result.trace_path),
-        decision_path=str(result.decision_path),
-        strategy_path=str(result.strategy_path),
         closeout_memo="present" if closeout_memo_path(Path(result.agentic_research_dir)).is_file() else "absent",
     )
 
@@ -89,7 +84,7 @@ def research_run(request: ResearchRunRequest) -> ResearchRunResponse:
         total_rounds_completed=result.total_rounds_completed,
         last_checkpoint=result.last_checkpoint,
         stop_reason=result.stop_reason,
-        best_overall=_best_response(result.best_overall),
+        champion=result.champion,
         rounds=[
             ResearchRoundResponse(
                 round_number=item.round_number,
@@ -125,17 +120,4 @@ def research_closeout(request: ResearchCloseoutRequest) -> ResearchCloseoutRespo
         evidence_path=str(result.evidence_path),
         memo_path=str(result.memo_path),
         holdout_summary=result.holdout_summary,
-    )
-
-
-def _best_response(best: object) -> ResearchBestRunResponse:
-    return ResearchBestRunResponse(
-        experiment_id=getattr(best, "experiment_id", None),
-        run_id=getattr(best, "run_id", None),
-        bmc_last_200_eras_mean=getattr(best, "bmc_last_200_eras_mean", None),
-        bmc_mean=getattr(best, "bmc_mean", None),
-        corr_mean=getattr(best, "corr_mean", None),
-        mmc_mean=getattr(best, "mmc_mean", None),
-        cwmm_mean=getattr(best, "cwmm_mean", None),
-        updated_at=getattr(best, "updated_at", None),
     )

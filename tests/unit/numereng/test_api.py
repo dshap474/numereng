@@ -11,7 +11,6 @@ from pydantic import ValidationError
 import numereng.api as api_module
 from numereng import __version__
 from numereng.agentic_research import (
-    ResearchBestRun,
     ResearchRoundResult,
     ResearchRunResult,
     ResearchStatusResult,
@@ -2141,12 +2140,8 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
             last_round_label="r001",
             last_run_id="run-4",
             stop_reason=None,
-            best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
+            champion={"config": "config_004.json", "run_id": "run-4", "metric": 0.123, "round": 1},
             agentic_research_dir=Path("/tmp/agentic_research"),
-            state_path=Path("/tmp/agentic_research/state.json"),
-            trace_path=Path("/tmp/agentic_research/journal.jsonl"),
-            decision_path=Path("/tmp/agentic_research/journal.jsonl"),
-            strategy_path=Path("/tmp/agentic_research/STRATEGY.md"),
         ),
     )
     monkeypatch.setattr(
@@ -2159,7 +2154,7 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
             total_rounds_completed=2,
             last_checkpoint="stopped",
             stop_reason="max_rounds_reached",
-            best_overall=ResearchBestRun(run_id="run-4", bmc_last_200_eras_mean=0.123),
+            champion={"config": "config_004.json", "run_id": "run-4", "metric": 0.123, "round": 1},
             rounds=(
                 ResearchRoundResult(
                     round_number=2,
@@ -2180,7 +2175,12 @@ def test_research_api_success(monkeypatch: pytest.MonkeyPatch) -> None:
     status_payload = research_status(ResearchStatusRequest(experiment_id="2026-02-22_test-exp"))
     assert isinstance(status_payload, ResearchStatusResponse)
     assert status_payload.experiment_id == "2026-02-22_test-exp"
-    assert status_payload.best_overall.run_id == "run-4"
+    assert status_payload.champion == {
+        "config": "config_004.json",
+        "run_id": "run-4",
+        "metric": 0.123,
+        "round": 1,
+    }
 
     run_payload = research_run(ResearchRunRequest(experiment_id="2026-02-22_test-exp", max_rounds=1))
     assert isinstance(run_payload, ResearchRunResponse)
