@@ -30,7 +30,6 @@ TARGETED_STRAY_DIRS: tuple[str, ...] = (
 CANONICAL_STORE_DIRNAME = ".numereng"
 _FEATURES_ROOT = Path(__file__).resolve().parents[1]
 _BUILTIN_CUSTOM_MODELS_ROOT = _FEATURES_ROOT / "models" / "custom_models"
-_BUILTIN_AGENTIC_RESEARCH_ROOT = _FEATURES_ROOT / "agentic_research"
 
 
 @dataclass(frozen=True)
@@ -43,7 +42,6 @@ class WorkspaceLayout:
     submissions_root: Path
     notes_root: Path
     custom_models_root: Path
-    agentic_research_root: Path
     skills_root: Path
 
 
@@ -82,7 +80,6 @@ def resolve_workspace_layout(workspace_root: str | Path = ".") -> WorkspaceLayou
         submissions_root=store_root / "submissions",
         notes_root=store_root / "notes",
         custom_models_root=_BUILTIN_CUSTOM_MODELS_ROOT,
-        agentic_research_root=_BUILTIN_AGENTIC_RESEARCH_ROOT,
         skills_root=resolved_workspace_root / ".agents" / "skills",
     )
 
@@ -102,7 +99,6 @@ def resolve_workspace_layout_from_store_root(store_root: str | Path = CANONICAL_
         submissions_root=resolved_store_root / "submissions",
         notes_root=layout.notes_root,
         custom_models_root=layout.custom_models_root,
-        agentic_research_root=layout.agentic_research_root,
         skills_root=layout.skills_root,
     )
 
