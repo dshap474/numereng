@@ -1,5 +1,6 @@
 <!--
-README.md — operator guide to the agentic research loop, its prompt, and its closeout.
+README.md — the agentic research loop: its prompt, its round, its closeout, and the rules for
+changing its code.
 USAGE: read this before running `uv run numereng research run` or
 `uv run numereng research closeout` from the repository root.
 -->
@@ -44,7 +45,11 @@ sync carries. An experiment with no brief falls back to the tracked generic
 - `### Confirmation And Handoff` — how a candidate is confirmed and what the run hands forward.
 
 Substrate facts for the model family — legal shapes, enum values, host limits — belong in the brief
-too.
+too. A brief carries neither placeholder.
+
+`programs/` tracks only `PROGRAM.md`, `STRATEGY.md`, and this repository's gitignore rules for
+them. Everything else there, `archive/` included, is local-only history and nothing in it is loaded
+at run time.
 
 # Running The Loop
 
@@ -69,7 +74,25 @@ round trains the seed config as the baseline; every later round goes through the
 
 The session is resumable. Five consecutive failed rounds end the invocation with
 `stop_reason=consecutive_failures:5`; calling `research run` again continues from durable state. A
-run ends on the round budget, a human stop, or that bail — there is no stop action.
+run ends on the round budget, a human stop, or that bail — there is no stop action. No status is
+terminal across invocations: `run_research` writes `status=running` on entry, so only a supervisor
+that stops calling it actually ends the run. `last_heartbeat` is written every round, which is how
+`research status` tells a live session from one whose host died still marked `running`.
+
+## Round outcomes
+
+A round's status comes from its seed outcomes. The primary outcome — the best completed seed, else
+the last — is what the memo, the state, and the returned result speak for.
+
+- **completed** — at least one seed trained and scored. The champion advances per completed run when
+  `metric > champion.metric`, one mechanical comparison with no margin. Resets the failure counter.
+- **skipped** — no seed completed and at least one was a duplicate-by-hash soft skip. Resets the
+  failure counter and does not count toward the bail.
+- **failed** — everything else: an LLM transport failure, an unreadable or wrongly shaped response, a
+  non-`run` action, a boundary rejection, or a training or scoring failure. Increments the counter.
+
+In a multi-seed round, seeds that fail to materialize on their own are skipped and the round
+proceeds with the rest.
 
 ## The retry
 
@@ -80,32 +103,28 @@ the same round. If the second attempt also fails, the round is recorded as faile
 duplicate) and counted as before. The first token lands in the round memo's `## Machine Result`
 block as `retry: <token>`.
 
-In a multi-seed round, seeds that fail to materialize on their own are skipped and the round
-proceeds with the rest.
-
-For the per-round state machine, see
-[docs/numereng/reference/agentic-research-state-diagram.md](../../../docs/numereng/reference/agentic-research-state-diagram.md).
-
 # Reading Results
 
-```text
-.numereng/experiments/<experiment_id>/
-|-- configs/config_NNN.json
-|-- run_plan.csv
-|-- EXPERIMENT.md
-`-- agentic_research/
-    |-- STRATEGY.md
-    |-- state.json
-    |-- journal.jsonl
-    |-- rounds/rNNN.md
-    `-- closeout/
-```
+Everything below is written under `.numereng/experiments/<experiment_id>/`.
 
-`journal.jsonl` is append-only, one line per round attempt, carrying status, parent and child
-config, seed, `metric` (BMC200), `fnc`, `benchmark_corr`, run id, and wall time. `state.json`
-(schema v2) is the resumable session: status, counters, champion, `believed_best`, heartbeat, last
-error. `rounds/rNNN.md` is the model's verbatim memo with the harness's `## Machine Result` block
-appended, and `rounds/rNNN.debug.*` appears only after an LLM transport or parse failure.
+| Path | Writer | Trigger |
+| --- | --- | --- |
+| `agentic_research/state.json` | `save_state` | each round |
+| `agentic_research/journal.jsonl` | `_finalize_round` | one line per seed outcome, at least one per round attempt (append-only) |
+| `agentic_research/rounds/rNNN.md` | `_finalize_round` | each round: the model's memo verbatim plus the `## Machine Result` block, with `retry:` and per-seed lines when present |
+| `agentic_research/rounds/rNNN.debug.*` | failure debug dump | LLM transport or parse failures only |
+| `agentic_research/closeout/` | `research closeout` | once the run is down |
+| `EXPERIMENT.md` | passthrough write | each round the model returns a non-null `experiment_markdown` |
+| `configs/config_NNN.json` | `materialize_config` (`baseline_config` on the baseline round) | each accepted seed; `config_NNN_s<seed>.json` in a multi-seed round |
+| `run_plan.csv` | run-plan recorder | each round that trains a run |
+
+A journal line carries status, parent and child config, seed, `metric` (BMC200), `fnc`,
+`benchmark_corr`, run id, and wall time. `state.json` is the resumable session at
+`schema_version: 2`: `experiment_id`, `status`, `next_round_number`, `total_rounds_completed`,
+`failed_rounds_counter`, `stop_reason`, `champion {config, run_id, metric, round} | null`,
+`believed_best`, `believed_best_changed_round`, `last_round_label`, `last_run_id`,
+`last_checkpoint`, `last_error`, `last_heartbeat`, `created_at`, `updated_at`. An older state loads
+through `apply_state_defaults`, which fills missing keys and drops a stale `best_overall`.
 `EXPERIMENT.md` is the model's curated working set, not a verdict.
 
 `aggregate_recipes()` in `engine/aggregate.py` rebuilds the recipe-trio groups from the journal when
@@ -185,3 +204,64 @@ trains, launches, or deploys.
 - Confirm which experiment is live before launching a round; `research run` mutates durable state.
 - Do not treat the within-lane champion as a deployment winner.
 - Do not hand-edit `state.json` or `journal.jsonl`. The journal is the audit trail.
+
+# Changing This Code
+
+## Layout
+
+- `engine/` — all harness code: `types.py`, `memory.py`, `aggregate.py`, `boundary.py`, `llm.py`,
+  `context.py`, `loop.py`, plus `engine/closeout/` (`evidence.py`, `runner.py`, `types.py`), which
+  turns a finished run into an evidence bundle and one decision memo.
+- `prompts/` — `closeout-finalize.md`, the one closeout LLM call, plus the pre-run
+  `INIT-PROGRAM.md` playbook that designs and stages the next experiment from research memory.
+- `programs/` — the round prompt and the generic brief, as described above.
+
+## The one boundary
+
+The LLM proposes one `decision_form` per round; Python validates, executes, and records — it never
+edits a proposal. The harness holds no research strategy: what to try, when to confirm, when to
+diversify all live in `PROGRAM.md` and the experiment's brief. If a change adds strategy to Python,
+it is in the wrong place.
+
+## Invariants to preserve
+
+- **Bounded context.** No term assembled by `engine/context.py` may grow with round count. This
+  killed a 500-round run once (prompts grew to ~890 KB and the API stream-disconnected).
+- **No auto-stop.** The only LLM action is `"run"`. Runs end on CLI budget, human stop, or the
+  5-consecutive-failure bail (resumable).
+- **Reject whole, never clamp.** Boundary violations (path allowlist, value caps, horizon/target
+  match, strict `TrainingConfig`) fail the round with a stable error token; see `engine/boundary.py`.
+  The one in-round retry hands that token back as `last_error` and re-asks; it never repairs a
+  proposal, and a second failure is recorded and counted exactly as a single failure was.
+- **The prompt is `PROGRAM.md` plus the experiment's `STRATEGY.md`**, composed at run time by two
+  placeholder substitutions in `engine/llm.py`. Editing `PROGRAM.md` reaches every run, live ones
+  included, at its next round. Keep both placeholders present exactly once and keep briefs free of
+  them.
+- **`data.dataset_variant` and `training.engine.*` are not LLM-mutable** — deliberately absent
+  from `ALLOWED_CHANGE_PATHS` so one experiment can never mix downsampled and full-data metrics or
+  move its own evaluator (profile, window, embargo). Manifests may only narrow the allowlist.
+- **The seed path is data, not a name.** `agentic_research_seed_path` (manifest) drives seed
+  injection, journal seed extraction (`loop._config_seed`), and recipe grouping
+  (`aggregate.recipe_key`); do not hard-code `random_state`/`seed` anywhere new.
+- **The payout target is owned by the scoring layer.** Context mirrors
+  `features.scoring.metrics.DEFAULT_PAYOUT_TARGET_COL`; do not reintroduce a shadow constant here.
+- **Dedup versus orphan.** A config hash that already has a recorded run in the journal is a true
+  duplicate and soft-skips. A hash with no recorded run is a crash orphan, rewritten under this
+  round's filename and run, so a mid-round crash cannot poison the hash and dead-end the search.
+- **Stale-run reuse is same-experiment only.** Linking a FINISHED run on a hash collision is allowed
+  within one experiment; a cross-experiment reuse hard-fails with
+  `agentic_research_stale_run_reuse_blocked:`.
+- **Scored or failed.** A round that links a FINISHED run must end with that run scored; a reused run
+  with no primary metric on disk is rescored. Never complete a round with an unscored run.
+- **Closeout never launches anything.** It ends at the evidence bundle and the memo; research-memory
+  writes belong to the `research-memory-update` skill and next-experiment design to
+  `prompts/INIT-PROGRAM.md`, both behind a human gate. Do not add auto-launch.
+- **BMC200 is the search objective, not a deploy signal.** Never wire deploy automation to the
+  within-lane champion.
+
+## Verify
+
+```bash
+uv run pytest tests/unit/numereng -k agentic_research -q
+uv run pytest tests/unit/numereng/agentic_research -q
+```

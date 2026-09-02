@@ -11,7 +11,6 @@ CLAUDE.local.md
 src/numereng/features/models/custom_models/*
 !src/numereng/features/models/custom_models/template_model.py
 src/numereng/agentic_research/programs/*
-!src/numereng/agentic_research/programs/README.md
 !src/numereng/agentic_research/programs/PROGRAM.md
 !src/numereng/agentic_research/programs/STRATEGY.md
 

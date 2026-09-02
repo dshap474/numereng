@@ -33,6 +33,5 @@
 * [Configuration](reference/configuration.md)
 * [Custom Models](reference/custom-models.md)
 * [Metrics](reference/metrics.md)
-* [Agentic Research State Diagram](reference/agentic-research-state-diagram.md)
 * [Runtime Artifacts & Paths](reference/runtime-artifacts.md)
 * [Config-Only Runtime](reference/presets.md)

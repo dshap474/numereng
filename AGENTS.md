@@ -42,7 +42,7 @@ This mirror is intentional for repo-clone use. Follow `docs/numerai/SYNC_POLICY.
 - `docs/numerai/`: tracked synced Numerai docs mirror for local browsing; see `docs/numerai/SYNC_POLICY.md`
 - `src/numereng/features/models/custom_models/`: default custom model discovery root
 - `src/numereng/agentic_research/programs/PROGRAM.md`: prompt policy for config-mutation research
-- `src/numereng/agentic_research/programs/`: tracked `PROGRAM.md`, `STRATEGY.md`, and `README.md`; anything else there is local-only
+- `src/numereng/agentic_research/programs/`: tracked `PROGRAM.md` and `STRATEGY.md`; anything else there is local-only
 - `src/numereng/platform/remotes/profiles/`: local-only remote profile directory; keep real YAMLs gitignored
 - `.agents/skills/`: tracked agent skills; packaged subset listed in `.agents/skills/SHIPPED.txt`
 
