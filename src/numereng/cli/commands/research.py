@@ -32,6 +32,7 @@ def _print_research_status_table(payload: api.ResearchStatusResponse) -> None:
     if payload.best_overall.bmc_last_200_eras_mean is not None:
         print(f"best_bmc_last_200_eras_mean: {payload.best_overall.bmc_last_200_eras_mean:.6f}")
     print(f"agentic_research_dir: {payload.agentic_research_dir}")
+    print(f"strategy_path: {payload.strategy_path}")
     print(f"closeout_memo: {payload.closeout_memo}")
 
 

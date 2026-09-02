@@ -4,7 +4,7 @@ The in-run readers (``memory.journal_all``, ``aggregate.load_config_cache``,
 ``aggregate.aggregate_recipes``) are lenient: they silently drop malformed journal lines, skip
 invalid configs, and ignore completed entries without a config/metric. Closeout cannot distill
 corrupted evidence, so this module re-parses the journal strictly and computes the deterministic
-run-record summaries the memo and downstream phases depend on. The output survives context
+run-record summaries the memo depends on. The output survives context
 truncation, so the real distillation signal (sweep ranges, wall-time bands, failure archaeology)
 is never lost to a size guard.
 

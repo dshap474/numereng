@@ -8,8 +8,9 @@ argument-hint: "<experiment-id>"
 # Research Memory Update
 
 Fold one closed-out experiment into `.numereng/notes/__RESEARCH_MEMORY__/`. Read, under
-`.numereng/experiments/<id>/`, the finalized `EXPERIMENT.closeout.md`, then
-`agentic_research/closeout/evidence.json`, then `EXPERIMENT.md` for the model's own working notes.
+`.numereng/experiments/<id>/`, the finalized
+`agentic_research/closeout/EXPERIMENT.closeout.md`, then
+`agentic_research/closeout/evidence_summary.json`, then `EXPERIMENT.md` for the model's own working notes.
 Use only their numbers. Never edit anything under `.numereng/experiments/`.
 
 ## 1. Decide The Disposition

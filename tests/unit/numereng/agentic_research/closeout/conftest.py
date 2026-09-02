@@ -58,11 +58,12 @@ def install_fake_llm(
     """Stub the research LLM with a valid memo (or a fixed ``raw`` payload); record the calls."""
     from numereng.agentic_research.engine import llm
 
-    calls: dict[str, object] = {"n": 0, "prompts": []}
+    calls: dict[str, object] = {"n": 0, "prompts": [], "kwargs": []}
 
     def fake(**kwargs: object) -> tuple[str, str]:
         calls["n"] = int(calls["n"]) + 1
         calls["prompts"].append(kwargs.get("prompt"))  # type: ignore[union-attr]
+        calls["kwargs"].append(dict(kwargs))  # type: ignore[union-attr]
         return (raw if raw is not None else fixture.memo()), "codex-exec"
 
     monkeypatch.setattr(llm, "call_research_llm", fake)

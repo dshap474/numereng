@@ -55,6 +55,15 @@ def test_finalize_prompt_carries_the_bounded_context(
     assert len(prompt) <= ct.MAX_CLOSEOUT_CONTEXT_CHARS + len(runner.FINALIZE_PROMPT_PATH.read_text(encoding="utf-8"))
 
 
+def test_finalize_asks_for_plain_text_not_the_round_schema(
+    closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The memo is markdown: the finalize call must pass ``schema=None``, not the decision schema."""
+    calls = install_fake_llm(monkeypatch, closeout_fixture)
+    _run(closeout_fixture)
+    assert calls["kwargs"][0]["schema"] is None
+
+
 def test_memo_without_verdict_heading_is_rejected(
     closeout_fixture: CloseoutFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

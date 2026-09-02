@@ -490,14 +490,14 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     round_number = ar_types.as_int(state.get("next_round_number"), default=1)
     round_label = memory.round_label(round_number)
     memory.rounds_dir(experiment).mkdir(parents=True, exist_ok=True)
-    action: ar_types.ResearchAction = "run"
+    report = _safe_report(root=root, experiment_id=experiment_id)
+    baseline = not context.has_scored_primary_row(report)
+    # Fixed before the try so a terminal failure is journaled under the round's real action.
+    action: ar_types.ResearchAction = "baseline" if baseline else "run"
     memo: str | None = None
     experiment_markdown: str | None = None
     retry_token: str | None = None
     try:
-        report = _safe_report(root=root, experiment_id=experiment_id)
-        baseline = not context.has_scored_primary_row(report)
-        action = "baseline" if baseline else "run"
         for attempt in (1, 2):
             decision, memo, experiment_markdown = _decide(root, experiment, state, report, round_label, baseline)
             outcomes = _execute_round(root, experiment, state, round_number, round_label, action, decision)
@@ -509,7 +509,7 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         raise
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
-        action, memo, experiment_markdown = "run", None, None
+        memo, experiment_markdown = None, None
         parent = ar_types.optional_str(state.get("_pending_parent"))
         decision = ar_types.ResearchDecision("run", message, "", None, parent, (), None)
         outcomes = [

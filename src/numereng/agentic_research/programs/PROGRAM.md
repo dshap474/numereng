@@ -188,8 +188,10 @@ Every key is bounded; nothing grows with round count.
   `trio_fnc_mean`, `bmc_std`, and `per_seed`.
 - `rounds_since_new_believed_best`, `coverage` (distinct values tried per path; a large cell becomes
   `{min, max, count, recent_samples}`), `caps_binding`, `observed_seed_noise`.
-- `report.rows`: up to twenty-five runs ranked by the primary metric, with config, run id, primary
-  metric, and sanity metrics including `fnc_mean`.
+- `report.rows`: up to twenty-five runs ranked by the primary metric, each with `run_id`, `status`,
+  `created_at`, `metric_value`, `is_champion`, and the sanity metrics `corr_mean`, `mmc_mean`,
+  `cwmm_mean`, `bmc_mean`, `bmc_last_200_eras_mean`, `fnc_mean`. Rows carry no config name; map a
+  run to its config through `recent_journal` or the leaderboards.
 - `recent_journal`: the last twelve attempts with status, config, seed, metric, and error token.
 - `last_round_memo`, `experiment_notes`: your previous memo and the current `EXPERIMENT.md`, capped.
 - `scout_digest`, `scout_digest_updated_at`: an advisory digest a human may refresh during the run,

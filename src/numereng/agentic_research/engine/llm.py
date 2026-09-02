@@ -16,6 +16,50 @@ from numereng.agentic_research.engine import types as ar_types
 from numereng.platform.clients.openrouter import OpenRouterClient, OpenRouterConfig, load_openrouter_config
 from numereng.platform.errors import OpenRouterClientError
 
+# --------------------------------------------------------------------------- #
+# Round decision schema
+# --------------------------------------------------------------------------- #
+_SCALAR_TYPES = [{"type": kind} for kind in ("string", "number", "integer", "boolean", "null")]
+_CHANGE_PROPS: dict[str, object] = {
+    "path": {"type": "string"},
+    "value": {"anyOf": [*_SCALAR_TYPES, {"type": "array", "items": {"anyOf": _SCALAR_TYPES}}]},
+    "reason": {"type": "string"},
+}
+_DECISION_PROPS: dict[str, object] = {
+    "action": {"type": "string", "enum": ["run"]},
+    "learning": {"type": "string"},
+    "belief_update": {"type": "string"},
+    "next_hypothesis": {"type": ["string", "null"]},
+    "parent_config": {"type": ["string", "null"]},
+    "believed_best": {"type": ["string", "null"]},
+    "seeds": {"type": ["array", "null"], "items": {"type": "integer"}, "minItems": 1, "maxItems": 3},
+    "changes": {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": _CHANGE_PROPS,
+            "required": list(_CHANGE_PROPS),
+            "additionalProperties": False,
+        },
+    },
+    "stop_reason": {"type": ["string", "null"]},
+}
+LLM_RESPONSE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "decision_form": {
+            "type": "object",
+            "properties": _DECISION_PROPS,
+            "required": list(_DECISION_PROPS),
+            "additionalProperties": False,
+        },
+        "round_markdown": {"type": "string"},
+        "experiment_markdown": {"type": ["string", "null"]},
+    },
+    "required": ["decision_form", "round_markdown", "experiment_markdown"],
+    "additionalProperties": False,
+}
+
 
 def render_prompt(context: dict[str, object], *, strategy_text: str) -> str:
     """The round prompt: ``PROGRAM.md`` with the experiment brief and the context substituted in."""
@@ -37,11 +81,15 @@ def call_research_llm(
     prompt: str,
     artifact_dir: Path,
     round_label: str,
-    schema: dict[str, object] | None = None,
+    schema: dict[str, object] | None = LLM_RESPONSE_SCHEMA,
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
     transport: str = "auto",
 ) -> tuple[str, str]:
     """Call the active research LLM; return ``(response_text, source)``.
+
+    ``schema`` defaults to the round decision schema; pass ``schema=None`` for a plain-text
+    call (the closeout memo), which drops codex's ``--output-schema`` and droid's appended
+    JSON-Schema instruction so the model answers in markdown instead of a JSON envelope.
 
     ``transport`` only gates the openrouter path: ``"auto"`` allows openrouter when it is the
     active model source, anything else (e.g. ``"codex"``) excludes it. The remaining choice is
@@ -116,28 +164,29 @@ def _call_codex_exec(
     artifact_dir: Path,
     round_label: str,
     config: OpenRouterConfig,
-    schema: dict[str, object] | None = None,
+    schema: dict[str, object] | None = LLM_RESPONSE_SCHEMA,
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
 ) -> str:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_output_", suffix=".txt", delete=False) as handle:
         output_path = Path(handle.name)
-    with tempfile.NamedTemporaryFile(dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False) as handle:
-        schema_path = Path(handle.name)
-    ar_types.write_json(schema_path, LLM_RESPONSE_SCHEMA if schema is None else schema)
+    schema_path: Path | None = None
+    if schema is not None:
+        with tempfile.NamedTemporaryFile(
+            dir=artifact_dir, prefix=".codex_schema_", suffix=".json", delete=False
+        ) as handle:
+            schema_path = Path(handle.name)
+        ar_types.write_json(schema_path, schema)
     cmd = [_resolve_executable("codex"), "exec"]
     if config.active_model is not None:
         cmd.extend(["--model", config.active_model])
     if config.active_model_reasoning_effort is not None:
         cmd.extend(["-c", f'model_reasoning_effort="{config.active_model_reasoning_effort}"'])
+    cmd.extend(["--disable", "image_generation", "--skip-git-repo-check", "--ephemeral"])
+    if schema_path is not None:
+        cmd.extend(["--output-schema", str(schema_path)])
     cmd.extend(
         [
-            "--disable",
-            "image_generation",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "--output-schema",
-            str(schema_path),
             "--json",
             "--color",
             "never",
@@ -173,6 +222,8 @@ def _call_codex_exec(
         return output_path.read_text(encoding="utf-8")
     finally:
         for tmp in (output_path, schema_path):
+            if tmp is None:
+                continue
             try:
                 tmp.unlink()
             except OSError:
@@ -202,13 +253,14 @@ def _call_droid_exec(
     artifact_dir: Path,
     round_label: str,
     config: OpenRouterConfig,
-    schema: dict[str, object] | None = None,
+    schema: dict[str, object] | None = LLM_RESPONSE_SCHEMA,
     timeout_seconds: float = ar_types.CODEX_TIMEOUT_SECONDS,
 ) -> str:
     """Call Factory's headless `droid exec` (read-only autonomy, all tools disabled, JSON envelope on stdout).
 
-    droid exec has no --output-schema equivalent, so the schema is appended to the prompt and the
-    response is validated downstream by the normal parser. Every tool droid would otherwise hand the
+    droid exec has no --output-schema equivalent, so the schema (when one is given) is appended to
+    the prompt and the response is validated downstream by the normal parser; ``schema=None`` sends
+    the prompt alone for a plain-text answer. Every tool droid would otherwise hand the
     model in read-only mode is disabled (`DROID_DISABLED_TOOLS`) so a round is a pure reasoning
     call: the model's only inputs are the program text and the bounded context the harness built.
     External knowledge reaches the run through the auditable scout digest, never via ad-hoc web
@@ -227,12 +279,14 @@ def _call_droid_exec(
         cmd.extend(["--model", config.active_model])
     if config.active_model_reasoning_effort is not None:
         cmd.extend(["--reasoning-effort", config.active_model_reasoning_effort])
-    schema_text = json.dumps(LLM_RESPONSE_SCHEMA if schema is None else schema, indent=2)
-    full_prompt = (
-        f"{prompt}\n\n"
-        "Respond with ONLY one JSON object (no prose, no code fences) that validates against this "
-        f"JSON Schema:\n{schema_text}"
-    )
+    if schema is None:
+        full_prompt = prompt
+    else:
+        full_prompt = (
+            f"{prompt}\n\n"
+            "Respond with ONLY one JSON object (no prose, no code fences) that validates against this "
+            f"JSON Schema:\n{json.dumps(schema, indent=2)}"
+        )
     try:
         completed = subprocess.run(
             cmd,
@@ -358,48 +412,6 @@ def _parse_change(payload: object) -> ar_types.ResearchChange:
         value=deepcopy(payload.get("value")),
         reason=ar_types.required_str(payload, "reason"),
     )
-
-
-_SCALAR_TYPES = [{"type": kind} for kind in ("string", "number", "integer", "boolean", "null")]
-_CHANGE_PROPS: dict[str, object] = {
-    "path": {"type": "string"},
-    "value": {"anyOf": [*_SCALAR_TYPES, {"type": "array", "items": {"anyOf": _SCALAR_TYPES}}]},
-    "reason": {"type": "string"},
-}
-_DECISION_PROPS: dict[str, object] = {
-    "action": {"type": "string", "enum": ["run"]},
-    "learning": {"type": "string"},
-    "belief_update": {"type": "string"},
-    "next_hypothesis": {"type": ["string", "null"]},
-    "parent_config": {"type": ["string", "null"]},
-    "believed_best": {"type": ["string", "null"]},
-    "seeds": {"type": ["array", "null"], "items": {"type": "integer"}, "minItems": 1, "maxItems": 3},
-    "changes": {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": _CHANGE_PROPS,
-            "required": list(_CHANGE_PROPS),
-            "additionalProperties": False,
-        },
-    },
-    "stop_reason": {"type": ["string", "null"]},
-}
-LLM_RESPONSE_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {
-        "decision_form": {
-            "type": "object",
-            "properties": _DECISION_PROPS,
-            "required": list(_DECISION_PROPS),
-            "additionalProperties": False,
-        },
-        "round_markdown": {"type": "string"},
-        "experiment_markdown": {"type": ["string", "null"]},
-    },
-    "required": ["decision_form", "round_markdown", "experiment_markdown"],
-    "additionalProperties": False,
-}
 
 
 def extract_json_object(text: str) -> dict[str, object]:

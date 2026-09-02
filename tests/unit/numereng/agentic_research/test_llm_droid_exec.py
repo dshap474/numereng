@@ -185,6 +185,36 @@ def test_droid_exec_custom_schema_replaces_default_in_prompt(tmp_path: Path, mon
     assert '"decision_form"' not in prompt_sent
 
 
+def test_droid_exec_schema_none_sends_plain_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`schema=None` (the closeout memo call) must not append any JSON-Schema instruction."""
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(llm.subprocess, "run", _run_ok(captured, _envelope("## Verdict\n\nmemo")))
+    llm._call_droid_exec(prompt="p", artifact_dir=tmp_path, round_label="closeout", config=_droid_config(), schema=None)
+    assert captured["input"] == "p"
+
+
+def test_codex_exec_schema_none_omits_output_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The codex transport drops `--output-schema` (and its temp file) for a plain-text call."""
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        captured["cmd"] = cmd
+        Path(cmd[cmd.index("-o") + 1]).write_text("## Verdict\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(llm.subprocess, "run", fake_run)
+    result = llm._call_codex_exec(
+        prompt="p",
+        artifact_dir=tmp_path,
+        round_label="closeout",
+        config=OpenRouterConfig(active_model_source="codex-exec", active_model=None),
+        schema=None,
+    )
+    assert result == "## Verdict\n"
+    assert "--output-schema" not in captured["cmd"]
+    assert not list(tmp_path.glob(".codex_schema_*"))
+
+
 # --------------------------------------------------------------------------- #
 # Failure modes
 # --------------------------------------------------------------------------- #

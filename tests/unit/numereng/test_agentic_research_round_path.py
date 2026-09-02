@@ -271,6 +271,27 @@ def test_baseline_round_writes_one_journal_line_through_the_shared_builder(
     assert "- per-seed results:" not in memo
 
 
+def test_baseline_round_failure_is_journaled_as_baseline_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A terminal failure in the baseline round keeps the round's real action in the journal."""
+    store_root, experiment_dir = _setup_experiment(tmp_path, random_state=42)
+    _install_seams(monkeypatch, store_root, experiment_dir)
+
+    def boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("baseline_config_exploded")
+
+    monkeypatch.setattr(research_module.boundary, "baseline_config", boom)
+
+    result = _run(store_root, max_rounds=1)
+
+    assert [r.status for r in result.rounds] == ["failed"]  # type: ignore[attr-defined]
+    entry = _entries(experiment_dir)[0]
+    assert entry["action"] == "baseline"
+    assert entry["status"] == "failed"
+    assert "baseline_config_exploded" in str(entry["error"])
+
+
 def test_single_seed_round_writes_one_journal_line_with_the_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
