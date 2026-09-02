@@ -15,13 +15,14 @@ Related skills: `numerai-live-calibration-sync` for the calibration refresh/inte
 ## Inputs
 
 - Experiment id of the finished agentic run.
-- Candidate recipe(s): default to the closeout proposal / `believed_best`; optionally 1–2 diverse
-  runners-up.
+- Candidate recipe(s): default to the closeout memo's candidate / `believed_best`; optionally 1–2
+  diverse runners-up.
 
 ## Phase 1: Identify Candidates
 
 1. Read `.numereng/experiments/<id>/agentic_research/state.json` → `believed_best`
-   (`config` + `run_ids`) and `champion`; cross-check `closeout/next/PROPOSAL.md`.
+   (`config` + `run_ids`) and `champion`; cross-check the closeout memo at
+   `agentic_research/closeout/EXPERIMENT.closeout.md`.
 2. For runners-up, reconstruct recipe-trio groups from `journal.jsonl` via `aggregate_recipes()`
    in `src/numereng/agentic_research/engine/aggregate.py`.
 3. Confirm the candidate's seed-trio run ids exist and are `FINISHED`. Note which machine holds

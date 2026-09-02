@@ -3,7 +3,7 @@
 The state machine after the 7-invariants rebuild. The harness is deliberately small: the LLM
 proposes one `decision_form` per round; the harness validates, executes, and records it. There is
 no phase machine, no confirmation accounting, and no diversification enforcement — those moved into
-`PROGRAM.md`.
+`PROGRAM.md` and the experiment's `STRATEGY.md` brief.
 
 Two machines remain:
 
@@ -50,71 +50,77 @@ Notes:
 
 ## 2. Per-Round Outcome
 
-One call to `_run_one_round`. The first round with no scored primary row takes the **baseline**
-branch (copy the seed config, train, score). Every later round goes through the LLM.
+One call to `_run_one_round`, which is three steps: `_decide` produces one proposal, `_execute_round`
+materializes and trains one config per requested seed, and `_finalize_round` records the round. The
+first round with no scored primary row takes the baseline decision (a copy of the seed config, no
+LLM call) and otherwise records like any other round.
 
 ```mermaid
 flowchart TD
     Start([_run_one_round]) --> Base{scored primary<br/>row exists?}
 
-    Base -- no --> Baseline[_run_baseline_round<br/>copy seed config]
-    Baseline --> Train
+    Base -- no --> Baseline[_decide: synthetic baseline decision<br/>parent = copy of the seed config]
+    Base -- yes --> Ask[_decide: render PROGRAM.md + STRATEGY.md,<br/>call the LLM, parse]
 
-    Base -- yes --> Ctx[build_context -> render_prompt]
-    Ctx --> LLM[_call_research_llm]
-    LLM -- transport error --> Fail[record FAILED round<br/>debug dumps + token]
-    LLM -- ok --> Parse[parse_llm_response]
-    Parse -- non-run action / bad shape --> Fail
-    Parse -- ok --> Mat[materialize_config<br/>REJECT, never edit]
+    Ask -- transport / parse / bad shape --> Term[one failed outcome<br/>debug dump + error token]
+    Baseline --> Exec
+    Ask -- ok --> Exec[_execute_round<br/>seeds = decision.seeds or None]
 
-    Mat -- path / cap / horizon / invalid --> Fail
-    Mat -- duplicate-by-hash --> Dedup{config hash has<br/>a recorded run?}
-    Dedup -- yes (true duplicate) --> Skip[record SKIPPED round<br/>counter resets]
-    Dedup -- no (crash orphan) --> Adopt[adopt/overwrite config] --> Train
+    Exec --> Mat[per seed: materialize_config<br/>REJECT, never edit]
+    Mat -- path / cap / horizon / schema --> Rejected[outcome failed, rejected]
+    Mat -- duplicate-by-hash with a recorded run --> Dup[outcome skipped, rejected]
+    Mat -- accepted --> Train[_train_and_score: train, record run_plan,<br/>freeze holdout, score, read metrics]
+    Train -- cross-experiment stale-run reuse --> Failed[outcome failed]
+    Train -- ok --> Champ{metric > champion.metric?}
+    Champ -- yes --> Advance[champion advances] --> Ok[outcome completed]
+    Champ -- no --> Ok
 
-    Mat -- accepted --> Train[train_experiment]
-    Train -- stale-run-reuse --> Reuse{same experiment?}
-    Reuse -- yes --> RecordPlan
-    Reuse -- no (cross-exp) --> Fail2[record FAILED round<br/>stale_run_reuse_blocked]
-    Train -- ok --> RecordPlan[record config in run_plan.csv]
+    Rejected --> Gate{every seed rejected,<br/>first attempt,<br/>not baseline?}
+    Dup --> Gate
+    Failed --> Gate
+    Ok --> Gate
+    Gate -- yes --> Retry[token to state.last_error,<br/>rebuild context, ask once more] --> Ask
+    Gate -- no --> Fin
 
-    RecordPlan --> Score[score unless reused AND<br/>primary metric already on disk]
-    Score --> Metric[metric from report or disk]
-    Metric --> Champ{metric > champion.metric?}
-    Champ -- yes --> Advance[champion advances]
-    Champ -- no --> Keep[champion unchanged]
-
-    Advance --> Persist
-    Keep --> Persist[write rounds/rN.md + append journal<br/>+ EXPERIMENT.md passthrough<br/>+ heartbeat + save_state]
-    Persist --> Done([return COMPLETED])
-
-    Skip --> Persist
-    Fail --> CheckBail{failures >= 5?}
-    Fail2 --> CheckBail
-    CheckBail -- yes --> Bail([status=stopped<br/>consecutive_failures:5])
-    CheckBail -- no --> DoneFail([return FAILED, loop continues])
+    Term --> Fin[_finalize_round: one journal line per outcome,<br/>memo + Machine Result, state, believed_best]
+    Fin --> Status{any seed completed?}
+    Status -- yes --> Done([return COMPLETED])
+    Status -- no, a duplicate --> Skip([return SKIPPED, counter resets])
+    Status -- no --> Failr([return FAILED, counter + 1])
+    Failr --> Bail{failures >= 5?}
+    Bail -- yes --> Stop([status=stopped<br/>consecutive_failures:5])
+    Bail -- no --> Cont([loop continues])
 ```
 
 ## 3. Round Outcomes And Invariants
 
-Round outcome ∈ `completed | failed | skipped`, recorded as one append-only line in `journal.jsonl`
-and one `rounds/rN.md` memo.
+One decision is one round. `_execute_round` builds one outcome per seed, `_entry_from_outcome`
+shapes each into a journal line, and `_finalize_round` — the only journal-write site — appends them
+all, writes the memo, and updates state. The round's own status comes from the outcomes, and the
+primary outcome (the best completed seed, else the last) is what the memo, the state, and the
+returned result speak for.
 
-- **completed** — config trained and scored; champion advances iff `metric > champion.metric` (one
-  mechanical comparison, no margin). Resets `failed_rounds_counter`.
-- **failed** — LLM transport failure, bad response shape, non-`run` action, or a boundary rejection
-  (disallowed path, out-of-cap value, horizon/target mismatch, invalid TrainingConfig, cross-
-  experiment stale-run reuse). Increments `failed_rounds_counter`; bails at 5.
-- **skipped** — duplicate-by-hash with a recorded run (soft skip). Resets `failed_rounds_counter`
-  and does **not** count toward the bail.
+- **completed** — at least one seed trained and scored. The champion advances per completed run iff
+  `metric > champion.metric` (one mechanical comparison, no margin). Resets `failed_rounds_counter`.
+- **failed** — no seed completed and none was a duplicate: an LLM transport failure, a bad response
+  shape, a non-`run` action, a boundary rejection (disallowed path, out-of-cap value, horizon/target
+  mismatch, invalid TrainingConfig, cross-experiment stale-run reuse), or a training or scoring
+  failure. Increments `failed_rounds_counter`; bails at 5.
+- **skipped** — no seed completed and at least one was a duplicate-by-hash soft skip. Resets
+  `failed_rounds_counter` and does **not** count toward the bail.
 
 Key guards:
 
 - **Boundary-only rejection.** The harness never edits a proposed config; out-of-bounds proposals are
   rejected whole, never clamped or normalized.
+- **One retry per round.** When the boundary refuses every seed on the first attempt of a non-baseline
+  round — a rejection or a duplicate — the token goes back as `state.last_error`, the context is
+  rebuilt, and the model is asked once more. A second failure is recorded and counted exactly as a
+  single failure was. A partial seed failure is not a refused round and never retries. The first
+  token appears in the memo's `## Machine Result` block as `retry: <token>`.
 - **Dedup vs. orphan.** A config hash that already has a recorded run in the journal is a true
-  duplicate → soft skip. A config hash with no recorded run is a crash orphan → adopt/overwrite and
-  run (so a mid-round crash does not poison the hash and dead-end the search).
+  duplicate → soft skip. A config hash with no recorded run is a crash orphan → written under this
+  round's filename and run (so a mid-round crash does not poison the hash and dead-end the search).
 - **Stale-run-reuse guard.** Linking a FINISHED run to the experiment on a hash collision is allowed
   within the same experiment; a cross-experiment reuse hard-fails
   (`agentic_research_stale_run_reuse_blocked:`).
@@ -126,11 +132,11 @@ Key guards:
 | Path | Writer | Trigger |
 | --- | --- | --- |
 | `agentic_research/state.json` (schema_version 2) | `save_state` | each round |
-| `agentic_research/journal.jsonl` | journal append | one line per round attempt (append-only) |
-| `agentic_research/rounds/rN.md` | round memo writer | each round (model memo verbatim + machine block) |
+| `agentic_research/journal.jsonl` | `_finalize_round` | one line per seed outcome, at least one per round attempt (append-only) |
+| `agentic_research/rounds/rN.md` | `_finalize_round` | each round: model memo verbatim + machine block, with `retry:` and per-seed lines when present |
 | `agentic_research/rounds/rN.debug.*` | failure debug dump | LLM transport/parse failures only |
 | `EXPERIMENT.md` | passthrough write | each round the model returns non-null `experiment_markdown` |
-| `configs/config_NNN.json` | `materialize_config` | each accepted `run` / baseline round |
+| `configs/config_NNN.json` | `materialize_config` (`baseline_config` on the baseline round) | each accepted seed; `config_NNN_s<seed>.json` in a multi-seed round |
 | `run_plan.csv` | run-plan recorder | each round that trains a run |
 
 ## 5. state.json (v2)
@@ -140,5 +146,6 @@ Key guards:
 `best_overall` derives from the experiment report). Keys: `experiment_id`, `status`,
 `next_round_number`, `total_rounds_completed`,
 `failed_rounds_counter`, `stop_reason`, `champion {config, run_id, metric, round} | null`,
+`believed_best`, `believed_best_changed_round`,
 `best_overall` (public-typed view derived from the report), `last_round_label`, `last_run_id`,
 `last_checkpoint`, `last_error`, `last_heartbeat`, `created_at`, `updated_at`.
