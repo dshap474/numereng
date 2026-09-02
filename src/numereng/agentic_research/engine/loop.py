@@ -13,6 +13,7 @@ USAGE:
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from numereng.agentic_research.engine import aggregate, boundary, context, llm, memory
@@ -41,9 +42,10 @@ from numereng.features.training.errors import TrainingError
 
 __all__ = ["get_research_status", "run_research"]
 
-# Per-round scratch keys, dropped from the session state once the round is recorded. The two config
-# keys are only written by older versions of this module; they stay listed so a state file resumed
-# from one is still cleaned.
+# Per-round scratch keys, dropped from the session state once the round is recorded. Only
+# `_pending_run_id` and `_pending_llm` are still written: both carry a fact across a `raise`, which
+# a return value cannot. The rest stay listed so a state file resumed from an older version of this
+# module is still cleaned.
 _PENDING_KEYS = (
     "_pending_parent",
     "_pending_config",
@@ -72,11 +74,6 @@ def _clear_pending(state: dict[str, object]) -> None:
     """Drop the per-round scratch keys once the round has been recorded."""
     for key in _PENDING_KEYS:
         state.pop(key, None)
-
-
-def _take_pending_changes(state: dict[str, object]) -> list[dict[str, object]]:
-    pending = state.pop("_pending_changes", None)
-    return pending if isinstance(pending, list) else []
 
 
 def _apply_failure(state: dict[str, object], message: str | None) -> None:
@@ -149,6 +146,16 @@ def _prevalidate_prompt_placeholders(experiment: ExperimentRecord) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True)
+class _Proposal:
+    """One round's accepted proposal: what to run, what to write, and which model said so."""
+
+    decision: ar_types.ResearchDecision
+    memo: str
+    experiment_markdown: str | None
+    llm_source: str | None = None
+
+
 def _decide(
     root: Path,
     experiment: ExperimentRecord,
@@ -156,7 +163,7 @@ def _decide(
     report: ExperimentReport | None,
     round_label: str,
     baseline: bool,
-) -> tuple[ar_types.ResearchDecision, str, str | None]:
+) -> _Proposal:
     """One proposal: the synthetic baseline decision, or one rendered, called, parsed LLM round.
 
     The baseline round asks nobody - it copies the authored seed and returns a decision whose parent
@@ -167,7 +174,7 @@ def _decide(
         name = boundary.baseline_config(experiment, round_label).name
         learning = f"Baseline round (copy of seed `{name}`) before asking the LLM for mutations."
         decision = ar_types.ResearchDecision("run", learning, "", None, name, (), None, name)
-        return decision, f"# {round_label} Research State\n\n{learning}\n", None
+        return _Proposal(decision, f"# {round_label} Research State\n\n{learning}\n", None)
     artifact_dir = memory.rounds_dir(experiment)
     prompt = llm.render_prompt(
         context.build_context(root=root, experiment=experiment, report=report, state=state),
@@ -178,6 +185,7 @@ def _decide(
         raw_response, model_source = _call_research_llm(
             prompt=prompt, artifact_dir=artifact_dir, round_label=round_label
         )
+        # Attribution has to survive a parse failure, which leaves by `raise` and not by return.
         state["_pending_llm"] = model_source
         response = llm.parse_llm_response(raw_response)
     except Exception as exc:
@@ -185,9 +193,7 @@ def _decide(
             artifact_dir=artifact_dir, round_label=round_label, prompt=prompt, error=str(exc), raw_response=raw_response
         )
         raise
-    state["_pending_changes"] = [{"path": change.path, "value": change.value} for change in response.decision.changes]
-    state["_pending_parent"] = response.decision.parent_config
-    return response.decision, response.round_markdown, response.experiment_markdown
+    return _Proposal(response.decision, response.round_markdown, response.experiment_markdown, model_source)
 
 
 def _execute_round(
@@ -197,7 +203,7 @@ def _execute_round(
     round_number: int,
     round_label: str,
     action: ar_types.ResearchAction,
-    decision: ar_types.ResearchDecision,
+    proposal: _Proposal,
 ) -> list[dict[str, object]]:
     """Materialize, train, score, and champion-check one config per requested seed.
 
@@ -206,7 +212,8 @@ def _execute_round(
     aborts the rest, and the champion advances per completed run. An outcome is flagged `rejected`
     when the boundary refused it outright - unanimous, that flag earns the round its one retry.
     """
-    changes = [{"path": change.path, "value": change.value} for change in decision.changes]
+    decision = proposal.decision
+    changes = _changes_payload(decision)
     seed_path = boundary.seed_change_path(experiment)
     baseline_path = memory.configs_dir(experiment) / str(decision.parent_config) if action == "baseline" else None
     outcomes: list[dict[str, object]] = []
@@ -245,7 +252,7 @@ def _execute_round(
                     "error": str(exc),
                 }
             )
-        outcome.update({"llm": ar_types.optional_str(state.get("_pending_llm")), "at": ar_types.utc_now_iso()})
+        outcome.update({"llm": proposal.llm_source, "at": ar_types.utc_now_iso()})
         outcome["wall_seconds"] = max(0.0, time.monotonic() - started_at)
         outcomes.append(outcome)
     return outcomes
@@ -426,6 +433,10 @@ def _entry_from_outcome(
     return entry
 
 
+def _changes_payload(decision: ar_types.ResearchDecision) -> list[dict[str, object]]:
+    return [{"path": change.path, "value": change.value} for change in decision.changes]
+
+
 def _metric_sort_key(outcome: dict[str, object]) -> float:
     metric = ar_types.optional_float(outcome.get("metric"))
     return metric if metric is not None else float("-inf")
@@ -488,13 +499,14 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
     baseline = not context.has_scored_primary_row(report)
     # Fixed before the try so a terminal failure is journaled under the round's real action.
     action: ar_types.ResearchAction = "baseline" if baseline else "run"
+    proposal: _Proposal | None = None
     memo: str | None = None
     experiment_markdown: str | None = None
     retry_token: str | None = None
     try:
         for attempt in (1, 2):
             try:
-                decision, memo, experiment_markdown = _decide(root, experiment, state, report, round_label, baseline)
+                proposal = _decide(root, experiment, state, report, round_label, baseline)
             except AgenticResearchValidationError as exc:
                 # A response the parser refuses is the same kind of error as a refused proposal, so
                 # it spends the round's one retry instead of the whole round.
@@ -503,7 +515,8 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
                 retry_token = f"llm_response_invalid:{exc}"
                 state["last_error"] = retry_token
                 continue
-            outcomes = _execute_round(root, experiment, state, round_number, round_label, action, decision)
+            decision, memo, experiment_markdown = proposal.decision, proposal.memo, proposal.experiment_markdown
+            outcomes = _execute_round(root, experiment, state, round_number, round_label, action, proposal)
             if baseline or attempt == 2 or not all(outcome.get("rejected") for outcome in outcomes):
                 break
             retry_token = ar_types.optional_str(outcomes[0].get("error"))
@@ -512,21 +525,31 @@ def _run_one_round(*, root: Path, experiment_id: str, state: dict[str, object]) 
         raise
     except Exception as exc:
         message = str(exc) or exc.__class__.__name__
-        memo, experiment_markdown = None, None
-        parent = ar_types.optional_str(state.get("_pending_parent"))
+        parent = proposal.decision.parent_config if proposal is not None else None
+        changes = _changes_payload(proposal.decision) if proposal is not None else []
         decision = ar_types.ResearchDecision("run", message, "", None, parent, (), None)
+        memo, experiment_markdown = None, None
         outcomes = [
             {
                 "status": "skipped" if isinstance(exc, AgenticResearchDuplicateCandidate) else "failed",
                 "run_id": ar_types.optional_str(state.get("_pending_run_id")),
-                "changes": _take_pending_changes(state),
+                "changes": changes,
                 "learning": f"Round skipped: {message}",
                 "error": message,
                 "llm": ar_types.optional_str(state.get("_pending_llm")),
             }
         ]
     return _finalize_round(
-        experiment, state, round_number, round_label, action, decision, outcomes, memo, experiment_markdown, retry_token
+        experiment,
+        state,
+        round_number,
+        round_label,
+        action,
+        decision,
+        outcomes,
+        memo,
+        experiment_markdown,
+        retry_token,
     )
 
 
