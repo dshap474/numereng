@@ -9,9 +9,9 @@ static fallback for non-round callers (e.g. closeout stages).
 
 ACTIVE_MODEL_SOURCE = "droid-exec"
 ACTIVE_MODEL = "claude-opus-5"
-ACTIVE_MODEL_REASONING_EFFORT = "medium"
+ACTIVE_MODEL_REASONING_EFFORT = "high"
 ACTIVE_MODEL_ROTATION = [
-    ("claude-opus-5", "medium"),
+    ("claude-opus-5", "high"),
     ("gpt-5.6-sol", "high"),
     ("grok-4.6", "xhigh"),
 ]
